@@ -29,6 +29,7 @@
 import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationRequirements,
+  assertNativeInvocationRequirementsIssued,
   assertNativeInvocationRequirementsCurrent,
   type NativeInvocationRequirements,
 } from "./program/native-invocation-requirements.js";
@@ -421,6 +422,14 @@ export function acceptedPhysicalSetupPlan(accepted: AcceptedPreparedIrProgram): 
   return record.physical;
 }
 
+/** The currentness of the accepted invocation requirements (the accepted-program validator stage). */
+export function verifyAcceptedNativeInvocation(accepted: AcceptedPreparedIrProgram): void {
+  const record = acceptances.get(accepted);
+  if (!record)
+    programInvariant("invalid-transaction-capability", "acceptance was not produced by acceptPreparedIrProgram");
+  if (record.nativeInvocation) assertNativeInvocationRequirementsCurrent(record.nativeInvocation);
+}
+
 /** Function index of the startup adapter this emission constructed, if any. */
 export function emittedStartupAdapterIndex(emitted: EmittedPreparedIrProgram): number | undefined {
   return startupAdapters.get(emitted)?.startupAdapterIndex;
@@ -538,7 +547,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.nativeInvocation) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation acceptance/physical plan mismatch");
   if (record.nativeInvocation) {
-    assertNativeInvocationRequirementsCurrent(record.nativeInvocation);
+    assertNativeInvocationRequirementsIssued(record.nativeInvocation);
     if (
       record.nativeInvocation.source !== record.sourceClosures ||
       record.nativeStrings?.invocationRequirements !== record.nativeInvocation ||

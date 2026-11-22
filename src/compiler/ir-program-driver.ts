@@ -1,5 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { acceptPreparedIrProgram, emitAcceptedIrProgram, verifyEmittedLayout } from "../ir/program-consumer.js";
+import {
+  acceptPreparedIrProgram,
+  emitAcceptedIrProgram,
+  verifyAcceptedNativeInvocation,
+  verifyEmittedLayout,
+} from "../ir/program-consumer.js";
 import { prepareWholeIrProgram, type IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import { freezePreparedIrValue, type PreparedIrBackendOptions } from "../ir/program.js";
 import { validatePreparedStage } from "../ir/program/prepared-validator.js";
@@ -31,6 +36,7 @@ export function runIrProgramDriver(
   if (accepted.kind === "unsupported") {
     return Object.freeze({ kind: "unsupported", phase: "acceptance", failure: accepted });
   }
+  validatePreparedStage("accepted program", () => verifyAcceptedNativeInvocation(accepted));
   // C authenticates and consumes this exact token once. Exceptions stay fatal.
   const emission = emitAcceptedIrProgram(accepted);
   validatePreparedStage("physical module", () => {

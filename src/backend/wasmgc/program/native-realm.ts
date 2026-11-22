@@ -13,7 +13,7 @@ import { deriveNativeStringOutputRequirements } from "../../../ir/program/native
 import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import {
   planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
 import {
@@ -150,7 +150,7 @@ export function prepareNativeProgramStringInput(
   realmRequirements?: NativeRealmRequirements,
 ): NativeStringValueReservationInput | PreparedIrProgramFailure | undefined {
   const demands = collectNativeStringValueDemands(program, projection);
-  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsCurrent(invocationRequirements);
+  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsIssued(invocationRequirements);
   const invocation =
     invocationRequirements ??
     (realmRequirements?.source
