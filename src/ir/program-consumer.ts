@@ -85,7 +85,7 @@ import {
 } from "./program-native-invocation.js";
 import type { NativeSourceClosureRequirements } from "./program/native-source-closure-requirements.js";
 import { assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
+import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import {
   reserveNativeStringLiteralResources,
   nativeStringLiteralReservationInventory,
@@ -180,7 +180,6 @@ interface AcceptedNativeNumberFormat {
   readonly requirements: NativeNumberFormatRequirements;
   readonly support: PreparedIrRuntimeManifest;
   readonly body: PreparedIrFunction;
-  readonly snapshot: unknown;
 }
 /** Only this module can mint acceptance or retain its issued dependencies. */
 const acceptances = new WeakMap<AcceptedPreparedIrProgram, AcceptanceRecord>();
@@ -281,7 +280,10 @@ function prepareNativeNumberFormat(
   const body = support.functions[0];
   if (support.functions.length !== 1 || !body || body.asyncPlan || body.asyncRuntime)
     programInvariant("invalid-prepared-data", "formatter preparation must retain one synchronous support body");
-  return Object.freeze({ requirements, support, body, snapshot: freezePreparedIrValue(body) });
+  // Frozen in place at creation, so emission lowers exactly the body acceptance planned from, without a snapshot.
+  // The manifest itself cannot be frozen (its `providers` is a live Map); emission still compares it with a fresh one.
+  freezePreparedIrRuntimeValue(body);
+  return Object.freeze({ requirements, support, body });
 }
 
 /**
@@ -565,7 +567,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     if (
       !fresh ||
       preparedIrDataMismatch(fresh.support, formatter.support) !== undefined ||
-      preparedIrDataMismatch(formatter.body, formatter.snapshot) !== undefined ||
       formatter.support.functions[0] !== formatter.body
     )
       emissionFailed("formatter support changed after acceptance");
@@ -847,7 +848,6 @@ function fillFormatterSupport(
 ): void {
   const { requirements, body } = record;
   assertNativeNumberFormatRequirementsCurrent(requirements, requirements);
-  if (preparedIrDataMismatch(body, record.snapshot) !== undefined) emissionFailed("formatter support body changed");
   const declarations = numberFormatRadixSupportDeclarations(requirements.batch.sourceId);
   const calls = [...declarations.kernels, declarations.implementation];
   const supportResolver: IrLowerResolver = {

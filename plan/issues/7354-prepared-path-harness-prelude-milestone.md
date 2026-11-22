@@ -4969,6 +4969,19 @@ ratchet; dead exports — all pass. `check:compiler-boundaries:inventory` fails 
 - The 1024 MB column after the base is implied by the 512 MB pass, not run.
 - The 512 MB column was not run for the first, third and fourth commits.
 
+### Perf6 review round and follow-ups (same branch)
+
+- Review fixes: runtime data is flagged deeply frozen only after the whole walk and only in the shapes the settled
+  verdicts accept; the Promise producer observation checks the string plan's issue (options compared only where a
+  caller holds its own) instead of re-planning; `issuedPacks` refuses with each planner's own error.
+- (a) Partial: the formatter support body is frozen at creation and its snapshot copy/compares are gone. The manifest
+  itself cannot be frozen in place (`support.providers` is a live `Map`), so the fresh-manifest compare and the
+  formatter re-plan stay.
+- (b) `preparedIrDataMismatch` answers equal at once for a deeply frozen value compared with itself.
+- (c) Not done: the per-emit completion checks (`completedOwner`, ~0.8 s) read the mutable module ledger, which
+  emission keeps writing between phases; only the boundary audit would cover a later change, so they stay.
+- Prelude after these: off 6.2–7.3 s, on 18.7–19.5 s, both pass at 512 MB; binary and the 804 rows unchanged.
+
 ## Slice W plan (2026-11-22, branch `claude/7354-w` from `claude/7354-u` `f8fd70dc1c`)
 
 **Blocker.** 41 of the 47 `propertyHelper.js` rows of the 420-row ES5 sample stop at
@@ -5142,7 +5155,17 @@ whole program. Switched on only by `src/test262/test262-prepared-entry.ts`.
     `aborted in unlowerable unit <name>: <detail> [in …]`.
 - Step 7: `runPreparedIrPipelinePresentation(input, unlowerableBodies?)` → preparation input `unlowerableBodies` →
   `SourceUnitLowering.abortBodies`. The entry passes `new AbortBodies()`. Its `compile` has a test seam,
-  `unlowerableBodies: "abort" | "refuse"`.
+  `unlowerableBodies: "abort" | "refuse"`. It is kept on purpose: it mirrors the existing `elide` seam (a positional,
+  test-only default), it is the only door to the policy-off position, and `compileMulti` has neither seam because no
+  test needs one there.
+- Abort-table names are Wasm function names. For an anonymous closure (`<module-init>__closure_10`) the name depends
+  on the closures lowered before it, so the same harness closure can have a different name in different rows. Only
+  the message text is affected; the trap is still joined to its row within one compile.
+- (Review follow-up) The test262 compiler-pool worker (`scripts/compiler-pool.ts`, the one place its env is built)
+  sets `JS2WASM_VALIDATE_PREPARED=0`. The worker measures the compiler as shipped. vitest.config.ts turns the
+  Prepared self-checks on for its own processes, and the worker inherited that, which tripled a prelude compile
+  against the 30 s row limit. The self-checks stay on for every vitest test; there is no escape hatch, because the
+  runner honours no such switch.
 
 ### Differs from the plan
 
@@ -5198,11 +5221,11 @@ Changed expectations, and why. Every one of these files goes through the test262
   - the innermost-first owner (killed by the new closure-in-a-function-expression probe).
 - Mutations that survive:
   - the registry truncation: the leftover sites are inert in every probe;
-  - the async/generator exclusion: today generators and async functions refuse before any function can own them,
-    through program-wide signature planning or the enclosing function. It is kept because an aborted generator would
-    be wrong, since calling it runs no body.
   - The native-family / Promise-delay exclusion was not exercised.
 - Removed as implied by another check: the module-init exclusion, because a module-init has no declaration.
+- Removed in review as unreachable: the async/generator exclusion of the owner rule. Such a declaration refuses in
+  signature planning, and such an expression refuses in its enclosing function. Without it, all 384 sweep programs
+  give the same outcomes and tables. The slice that lowers generators adds the rule, with a program.
 
 ### Sample (411 rows, real runner, at the runner's DEFAULT settings: 512 MB worker, 30 s per row, after Perf6)
 
@@ -5233,6 +5256,8 @@ Changed expectations, and why. Every one of these files goes through the test262
 - Before Perf6, at default settings, the 22 compiling rows died with OOM (SIGABRT, 512 MB). At measurement settings
   (3072 MB, 300 s — not CI's) they gave the same 17 passes. The runner compile then took 48–87 s; after Perf6 it is
   20–27 s and fits 512 MB.
+- With the worker's self-checks off (review follow-up, at 131f7bd4c1, default settings), the 17 positive rows still
+  pass: 17/17. Compile time per row is 5.9–8.1 s, median 6.9 s, against the 30 s limit.
 - CI's IR job sets `TEST262_WORKER_MAX_OLD_SPACE_SIZE=1024` (`test262-sharded.yml`). The row limit is 30 s, hard-coded
   in tests/test262-shared.ts. A tsx prelude compile on the pre-Perf6 head OOMed at 1024 MB and passed at 1536 MB.
 
