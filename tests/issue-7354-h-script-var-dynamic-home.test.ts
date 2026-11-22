@@ -68,8 +68,12 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string, fileName = "test.js", target: "standalone" | "gc" = "standalone") {
-  const result = await compile(source, options(fileName, target));
+  const result = await compile(source, options(fileName, target), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -213,12 +217,8 @@ describe("#7354 H — the dynamic home of a script var", () => {
     // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
     ["holding an array literal", "var arr = [1]; var r = arr;", "resolver cannot register vec for array literal"],
     // (#7354 Fa) A function expression is stored now (tests/issue-7354-fa-function-values.test.ts).
+    // (#7354 F1b) A function declaration read as a value is stored now (tests/issue-7354-f1b-declaration-values.test.ts).
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],
-    [
-      "holding a function declaration (slice Fa)",
-      "function id(v) { return v; } var g = id;",
-      'identifier "id" is not in scope',
-    ],
     // An exported var is a host boundary (slice G), not a script var.
     ["exported", "export var x; x = 1;", "top-level global storage needs a numeric source classification"],
   ] as const)("refuses a script var %s", async (name, program, message) => {
@@ -304,7 +304,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     // (#7364) the Prepared path has no RegExp provider, so the literal itself refuses first
     ["a regular expression", "function k() { return /a/; } k();", "RegExp literal has no provider"],
-    ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
+    // (#7354 F1b) A function read as a value is a value now (tests/issue-7354-f1b-declaration-values.test.ts).
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
   });
