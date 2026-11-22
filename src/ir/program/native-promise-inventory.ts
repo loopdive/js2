@@ -4,7 +4,8 @@ import type { IrFuncRef } from "../core/value-references.js";
 import type { IrUnitId, IrBindingId } from "../../shared/contracts/ir-identity.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import { preparedIrDataMismatch } from "./data.js";
+import { issuedPacks } from "./issued-packs.js";
 import {
   collectNativeStringValueDemands,
   type NativeStringValueDemands,
@@ -35,19 +36,6 @@ export interface NativePromiseInventoryObligation {
   readonly detail: string;
 }
 
-/** Locators into borrowed objects, including signatures, captures and recursive class layouts.
- * A cycle edge is recorded, but its descendants are not expanded a second time on that path. */
-export type NativePromiseSourcePathStep =
-  | PropertyKey
-  | { readonly kind: "map-key" | "map-value" | "set-value"; readonly index: number };
-export interface NativePromiseSourcePath {
-  readonly root:
-    | { readonly kind: "program" | "projection" | "support"; readonly index: number; readonly unitId: IrUnitId }
-    | { readonly kind: "abi"; readonly index: number; readonly bindingId: IrBindingId }
-    | { readonly kind: "allocations" };
-  readonly path: readonly NativePromiseSourcePathStep[];
-  readonly value: unknown;
-}
 /** Only the selected flags consumed by this descriptive sidecar; no coordinator facade. */
 export interface NativePromiseInventoryOptions {
   readonly backend: PreparedIrProgramRuntimeProjection["backend"];
@@ -65,14 +53,15 @@ interface NativePromiseSourceCensusEvidence {
   readonly supportOccurrences: readonly NativeStringValueOccurrence[];
   readonly abiEntries: PreparedIrProgram["abi"]["entries"];
   readonly allocations: PreparedIrProgram["allocations"];
-  readonly paths: readonly NativePromiseSourcePath[];
 }
 export type NativePromiseSourceCensus = NativePromiseSourceCensusEvidence &
   (
     | { readonly required: false; readonly anchorUnitId?: never }
     | { readonly required: true; readonly anchorUnitId: IrUnitId }
   );
-const snapshots = new WeakMap<NativePromiseSourceCensus, unknown>();
+const censuses = issuedPacks<NativePromiseSourceCensus>(() =>
+  invalid("uncollected source census (not issued by collectNativePromiseSourceCensus)"),
+);
 
 /** Descriptive census only. The live coordinator authenticates the whole program before acting on it. */
 export function collectNativePromiseSourceCensus(
@@ -133,44 +122,6 @@ export function collectNativePromiseSourceCensus(
       );
     }
   });
-  const paths: NativePromiseSourcePath[] = [];
-  const pathActive = new Set<object>();
-  const record = (
-    root: NativePromiseSourcePath["root"],
-    value: unknown,
-    path: readonly NativePromiseSourcePathStep[],
-  ): void => {
-    paths.push(Object.freeze({ root, path: Object.freeze(path), value }));
-    if (value === null || typeof value !== "object" || pathActive.has(value)) return;
-    pathActive.add(value);
-    // Prepared source data uses own data fields, including symbol class-shape cells.
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-      if (!("value" in descriptor)) invalid("non-data source path");
-      record(root, descriptor.value, [...path, key]);
-    }
-    if (value instanceof Map) {
-      let index = 0;
-      for (const [key, item] of Map.prototype.entries.call(value)) {
-        record(root, key, [...path, Object.freeze({ kind: "map-key", index })]);
-        record(root, item, [...path, Object.freeze({ kind: "map-value", index: index++ })]);
-      }
-    } else if (value instanceof Set) {
-      let index = 0;
-      for (const item of Set.prototype.values.call(value))
-        record(root, item, [...path, Object.freeze({ kind: "set-value", index: index++ })]);
-    }
-    pathActive.delete(value);
-  };
-  demands.owners.forEach((owner, index) => {
-    record(Object.freeze({ kind: "program", index, unitId: owner.unitId }), owner.programFunction, []);
-    record(Object.freeze({ kind: "projection", index, unitId: owner.unitId }), owner.projectedFunction, []);
-  });
-  supportFunctions.forEach((fn, index) => record(Object.freeze({ kind: "support", index, unitId: fn.unitId }), fn, []));
-  program.abi.entries.forEach((entry, index) =>
-    record(Object.freeze({ kind: "abi", index, bindingId: entry.plan.id }), entry, []),
-  );
-  record(Object.freeze({ kind: "allocations" }), program.allocations, []);
   const required =
     demands.owners.some((owner) => owner.projectedFunction.asyncPlan !== undefined) ||
     projection.prepared.manifest.providers.some(
@@ -202,56 +153,15 @@ export function collectNativePromiseSourceCensus(
     supportOccurrences: Object.freeze(supportOccurrences),
     abiEntries: program.abi.entries,
     allocations: program.allocations,
-    paths: Object.freeze(paths),
   });
-  snapshots.set(census, freezePreparedIrValue({ program, options }));
-  return census;
+  return censuses.issue(census);
 }
 
-/** Snapshot and borrowed-identity consistency, not whole-program admission or an acceptance capability. */
-export function assertNativePromiseSourceCensusCurrent(census: NativePromiseSourceCensus): void {
-  const snapshot = snapshots.get(census);
-  if (!snapshot || preparedIrDataMismatch(snapshot, { program: census.program, options: census.options }) !== undefined)
-    invalid("uncollected or stale source census");
-  const fresh = collectNativePromiseSourceCensus(census.program, census.projection, census.options);
-  if (
-    fresh.supportFunctions.length !== census.supportFunctions.length ||
-    fresh.supportFunctions.some((fn, i) => fn !== census.supportFunctions[i]) ||
-    fresh.supportBuffers.length !== census.supportBuffers.length ||
-    fresh.supportBuffers.some((row, i) => {
-      const prior = census.supportBuffers[i];
-      return (
-        !prior ||
-        row.instructions !== prior.instructions ||
-        row.ownerUnitId !== prior.ownerUnitId ||
-        row.view !== prior.view ||
-        preparedIrDataMismatch(row.root, prior.root) !== undefined ||
-        preparedIrDataMismatch(row.path, prior.path) !== undefined
-      );
-    }) ||
-    fresh.supportOccurrences.length !== census.supportOccurrences.length ||
-    fresh.supportOccurrences.some((row, i) => {
-      const prior = census.supportOccurrences[i];
-      return (
-        !prior ||
-        row.instruction !== prior.instruction ||
-        row.bufferIndex !== prior.bufferIndex ||
-        row.instructionIndex !== prior.instructionIndex
-      );
-    })
-  )
-    invalid("detached support buffer or occurrence association");
-  if (
-    fresh.paths.length !== census.paths.length ||
-    fresh.paths.some(
-      (row, i) =>
-        !Object.is(row.value, census.paths[i]!.value) ||
-        preparedIrDataMismatch(row.root, census.paths[i]!.root) !== undefined ||
-        preparedIrDataMismatch(row.path, census.paths[i]!.path) !== undefined,
-    )
-  )
-    invalid("detached source association");
-}
+/**
+ * The census was issued by `collectNativePromiseSourceCensus`. It is frozen and borrowed from a frozen prepared
+ * program, so it cannot come to disagree with that program; a use never re-collects it.
+ */
+export const assertNativePromiseSourceCensusIssued = censuses.assertIssued;
 
 export type CarrierEvidence =
   | { readonly kind: "source-occurrence"; readonly occurrence: number }

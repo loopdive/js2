@@ -3,7 +3,7 @@
 // (#7354 Perf) The IR program's settled verdicts: the shared mechanism (`shared/contracts/settled-verdict.ts`) bound
 // to the IR's own frozen collections, for the requirement checks under `src/ir/program/`.
 import { preparedIrSettledVerdicts } from "../../shared/contracts/settled-verdict.js";
-import { preparedIrFrozenCollectionMembers } from "./data.js";
+import { isDeeplyFrozenPreparedIrValue, preparedIrFrozenCollectionMembers } from "./data.js";
 
 export type { PreparedIrSettlement } from "../../shared/contracts/settled-verdict.js";
 
@@ -12,4 +12,4 @@ export const {
   checkUnlessSettled,
   settledAtIssue,
   settledChecks,
-} = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers);
+} = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers, isDeeplyFrozenPreparedIrValue);

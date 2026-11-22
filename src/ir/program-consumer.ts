@@ -85,7 +85,7 @@ import {
 } from "./program-native-invocation.js";
 import type { NativeSourceClosureRequirements } from "./program/native-source-closure-requirements.js";
 import { assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
+import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import {
   reserveNativeStringLiteralResources,
   nativeStringLiteralReservationInventory,
@@ -171,7 +171,6 @@ interface AcceptanceRecord {
   readonly physical: PhysicalSetupPlan;
   /** Exact issued dependencies; never deep-clone the native-value plan. */
   readonly nativeStrings?: NativeStringValueReservationInput;
-  readonly nativeSnapshot?: unknown;
   readonly nativeNumberFormat?: AcceptedNativeNumberFormat;
   readonly sourceClosures?: NativeSourceClosureRequirements;
   readonly nativeInvocation?: NativeInvocationRequirements;
@@ -181,7 +180,6 @@ interface AcceptedNativeNumberFormat {
   readonly requirements: NativeNumberFormatRequirements;
   readonly support: PreparedIrRuntimeManifest;
   readonly body: PreparedIrFunction;
-  readonly snapshot: unknown;
 }
 /** Only this module can mint acceptance or retain its issued dependencies. */
 const acceptances = new WeakMap<AcceptedPreparedIrProgram, AcceptanceRecord>();
@@ -282,7 +280,10 @@ function prepareNativeNumberFormat(
   const body = support.functions[0];
   if (support.functions.length !== 1 || !body || body.asyncPlan || body.asyncRuntime)
     programInvariant("invalid-prepared-data", "formatter preparation must retain one synchronous support body");
-  return Object.freeze({ requirements, support, body, snapshot: freezePreparedIrValue(body) });
+  // Frozen in place at creation, so emission lowers exactly the body acceptance planned from, without a snapshot.
+  // The manifest itself cannot be frozen (its `providers` is a live Map); emission still compares it with a fresh one.
+  freezePreparedIrRuntimeValue(body);
+  return Object.freeze({ requirements, support, body });
 }
 
 /**
@@ -394,7 +395,7 @@ export function acceptPreparedIrProgram(
     accepted,
     Object.freeze({
       physical: physical.plan,
-      ...(nativeStrings ? { nativeStrings, nativeSnapshot: freezePreparedIrValue(nativeStrings.demands) } : {}),
+      ...(nativeStrings ? { nativeStrings } : {}),
       ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
       ...(sourceClosures ? { sourceClosures } : {}),
       ...(nativeInvocation ? { nativeInvocation } : {}),
@@ -556,15 +557,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       preparedIrDataMismatch(description, plan.sourceClosures) !== undefined
     )
       emissionFailed("source closure input differs from its accepted physical plan");
-    const current = planPhysicalSetup(
-      program,
-      accepted.options,
-      runtime,
-      record.nativeStrings,
-      record.nativeNumberFormat,
-    );
-    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
-      emissionFailed("source closure physical plan is no longer current");
   }
   if (Boolean(record.nativeNumberFormat) !== Boolean(plan.nativeNumberFormat))
     emissionFailed("formatter acceptance/physical plan mismatch");
@@ -575,7 +567,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     if (
       !fresh ||
       preparedIrDataMismatch(fresh.support, formatter.support) !== undefined ||
-      preparedIrDataMismatch(formatter.body, formatter.snapshot) !== undefined ||
       formatter.support.functions[0] !== formatter.body
     )
       emissionFailed("formatter support changed after acceptance");
@@ -586,8 +577,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (record.nativeStrings) {
     if (record.nativeStrings.demands.program !== program || record.nativeStrings.demands.projection !== runtime)
       emissionFailed("native demands belong to another program/projection");
-    if (preparedIrDataMismatch(record.nativeStrings.demands, record.nativeSnapshot) !== undefined)
-      emissionFailed("native demands changed after acceptance");
     if (record.nativeStrings.valueRequirements)
       assertNativeValueResourcePlanFor(record.nativeStrings.valueRequirements, program, runtime, "native-string");
   }
@@ -624,17 +613,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     );
     if (preparedIrDataMismatch(fresh, plan.nativeNumberFormat.resources) !== undefined)
       emissionFailed("formatter resources or scratch join changed");
-  }
-  if (plan.asyncFrames || plan.hostNumberBoundary) {
-    const current = planPhysicalSetup(
-      program,
-      accepted.options,
-      runtime,
-      record.nativeStrings,
-      record.nativeNumberFormat,
-    );
-    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
-      emissionFailed("async physical plan is no longer current");
   }
   let abi: ProgramAbiMap | undefined;
   if (native || plan.asyncFrames || plan.hostNumberBoundary) {
@@ -870,7 +848,6 @@ function fillFormatterSupport(
 ): void {
   const { requirements, body } = record;
   assertNativeNumberFormatRequirementsCurrent(requirements, requirements);
-  if (preparedIrDataMismatch(body, record.snapshot) !== undefined) emissionFailed("formatter support body changed");
   const declarations = numberFormatRadixSupportDeclarations(requirements.batch.sourceId);
   const calls = [...declarations.kernels, declarations.implementation];
   const supportResolver: IrLowerResolver = {
