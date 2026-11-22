@@ -9408,13 +9408,14 @@ function lowerArrayPrototypeBorrowCall(borrow: PrototypeBorrowCall, cx: LowerCtx
  * Is `receiver` the unshadowed ambient global of its name — no scope, module or
  * source binding of it? The self-host stdlib builder has no checker-backed
  * ambient callback; user-source builds do, and an explicit `false` preserves
- * shadow safety.
+ * shadow safety; (#7354 O1) Prepared also asks `builtin-global-binding.ts`.
  */
 function isAmbientReceiver(receiver: ts.Identifier, isDirectModuleBinding: boolean, cx: LowerCtx): boolean {
   return (
     !isDirectModuleBinding &&
     cx.scope.get(receiver.text) === undefined &&
-    cx.resolver?.isAmbientBinding?.(receiver) !== false
+    cx.resolver?.isAmbientBinding?.(receiver) !== false &&
+    cx.resolver?.isPristineBuiltinGlobal?.(receiver) !== false
   );
 }
 

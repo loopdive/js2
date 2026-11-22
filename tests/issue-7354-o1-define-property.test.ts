@@ -154,6 +154,7 @@ describe("#7354 O1 — a shadowed or assigned Object never takes the native stat
       "an assignment in a function never called",
       "function never(){ Object = 1; } Object.defineProperty({}, 'p', {value: 1});",
     ],
+    ["Object.is under a function declaration (#7106)", "function Object(){} var out = String(Object.is(1, 1));"],
   ])(
     "%s refuses by name",
     async (_name, source) => {
