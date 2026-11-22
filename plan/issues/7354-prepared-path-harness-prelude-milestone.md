@@ -4644,3 +4644,98 @@ brand dispatch: arrays, #7352), 6 `verifyProperty … is written`, 14 pass, 5 ot
 - Review round 1 (lead): findings 1-5 fixed — explicit dispatcher-arm key; one `packedCallable` helper; the binding
   call's doc names both lanes; the lane picks the call before any not-callable text is built; one lane predicate
   (`createsFunctionObjects`, read through the host).
+
+## Perf5 result (2026-11-22, branch `claude/7354-perf5` from `claude/7354-f2` `1de4a6f2e7`)
+
+The invocation requirements are no longer re-derived at every use. Two commits: `3e670a6858` (the per-use sites take
+an O(1) issue check; the re-derivation runs once, in a new accepted-program validator stage) and `eac330ed5f` (that
+check compares once; a seeded stale plan is refused only by that comparison).
+
+### Measurements (strict Prepared entry, standalone, tsx, one command at a time, load 2–3 from another agent)
+
+Program: `var cI = function (x) { return x; };` for I < N, then `var s = c0(0) + c1(1) + …;` (N calls, an N-term `+`
+chain) and `if (s !== …) throw 1;`. `harness` = F2's `assert.sameValue` shape, `prelude` = F1b's stand-in prelude
+(both from the tests). Each run after a 1-closure warm-up in the same process. Off = production; on =
+`JS2WASM_VALIDATE_PREPARED=1`. "After" gives both commits' runs where they differ (noise: 20 closures measured 22.2 s
+and 30.6 s off in two processes).
+
+| program | off, before | off, after | on, before | on, after |
+| --- | ---: | ---: | ---: | ---: |
+| harness | 3.80 s | 1.37 / 1.39 s | 5.20 s | 2.87 / 2.59 s |
+| prelude | 6.22 s | 1.78 / 1.72 s | 8.11 s | 3.75 / 3.37 s |
+| N = 5 | 16.35 s | 4.53 / 4.18 s | 20.10 s | 9.57 / 8.55 s |
+| N = 10 | 34.03 s | 9.48 / 10.11 s | 44.83 s | 21.17 / 18.56 s |
+| N = 20 | 92.43 s | 24.26 / 22.20–30.57 s | 101.28 s | 46.07 / 47.62 s |
+
+Same binary before and after in every cell. The real harness prelude still refuses at C2 (F2's sample), so a realm
+prelude compile is not measurable yet; `harness`/`prelude` are the tests' stand-ins.
+
+### Profile
+
+Before (N = 10, 31 s compile under the profiler): `assertNativeInvocationRequirementsCurrent` 21.0 s inclusive (68 %),
+20.5 s of it `assertNativePromiseSourceCensusCurrent` — its whole-program snapshot compare (`preparedIrDataMismatch`,
+18.8 s) and a fresh census (4.1 s), at every use. Callers: `nativeStringInvocationRequirements` 4.4 s,
+`selectNativeBooleans` 4.4 s, `authenticate` 3.5 s, `resolveEntries` 2.8 s, `planNativeInvocationInput` 2.3 s,
+`nativeInvocationAbiBindings` 2.2 s, `prepareNativeProgramStringInput` 0.8 s, `prepareNativeEmission` 0.7 s.
+
+After (N = 20, 20 s compile): no frame above 25 % with the per-use re-proof shape, so no third commit. Largest:
+`immutableCopy` 5.0 s (one-time copies in `acceptPreparedIrProgram` and `reserveNativeStringValueResources`), the
+settled-verdict immutability walk 5.6 s (2.3 s under `assertNativeStringValueReservationInput`), `ownerFor` 3.6 s,
+`nativeCallAbiBindings` 3.1 s. Switch on (N = 10): the validator's invocation check costs 0.14 s; the on-only cost is
+`hasNativeCollectionState` (6.0 s, the slot probes) and `same` in `native-string-values.ts` (4.1 s).
+
+### Each site
+
+| site | what it did | decision | why |
+| --- | --- | --- | --- |
+| `assertNativeInvocationRequirementsCurrent` at 8 uses (`authenticate`, `resolveEntries`, `nativeStringInvocationRequirements`, `planNativeInvocationInput`, `nativeInvocationAbiBindings`, `selectNativeBooleans`, `prepareNativeProgramStringInput`, `prepareNativeEmission`) | per use: the census's whole-program snapshot compare, a fresh census, a fresh derivation, two compares | **`assertNativeInvocationRequirementsIssued`** (a `WeakSet` lookup) | The pack and the program it was derived from are frozen (Perf3), so it cannot go stale between uses; the same argument Perf4 made for the realm requirements. |
+| the re-derivation itself | — | **the accepted-program validator stage** (`verifyAcceptedNativeInvocation`, called by `runIrProgramDriver` after acceptance, under the switch): once per compile | The one place that compares. Checked by a probe: with the check made to throw, a compile with the switch on fails with `prepared validator (accepted program): …`, with it off compiles. |
+| the census self-check inside it, and the snapshot `WeakMap` | a second compare (the census against its whole-program snapshot) and a snapshot equal to the frozen pack by construction | **deleted** from the invocation check; the snapshot became the issue `WeakSet` | One comparison: a fresh census's gap joins the fresh derivation, compared with the issued uses/gaps. `assertNativePromiseSourceCensusCurrent` stays for its own consumer (`observeNativeStringValueProducer`). The runtime-created gap text has one helper (`runtimeCreatedGaps`) for planning and checking. |
+
+### Tests (each file alone, `VITEST_MAX_FORKS=1`, switch on)
+
+| file | result |
+| --- | --- |
+| `issue-7354-f2-calls-through-values` | 10/10, exit 0 |
+| `issue-7354-fa-function-values` | 44/44, exit 0 |
+| `issue-3518-native-builtin-functions` | 36/36, exit 0 |
+| `issue-3518-native-getter-invocation` (modified) | 43/43, exit 0 |
+| `issue-3518-native-invocation-consumer` | 61/61, exit 0 |
+| `issue-3518-native-object-get-owner` | 64/64, exit 0 |
+| `issue-3518-builtin-request-literal-authentication` | 24/24, exit 0 |
+| `issue-3525-public-prepared-driver` | 16/16, exit 0 |
+| `issue-7364-prepared-empty-program` | 11/11, exit 0 |
+| `issue-3518-native-getter-results` | 19/21, exit 1 — same 2 red on the base (`string.const runtime is unavailable`) |
+| `issue-3518-native-getter-resource-join` | 13 + 2 skipped, 2 suites fail, exit 1 — same on the base (same error) |
+| `issue-3518-native-object-realm-declarations` | 21/25, exit 1 — same 4 red on the base (same error) |
+| `issue-3518-native-invocation-substrate` | 41/45, exit 1 — same 4 red on the base (post-completion mutation, Perf4's boundary audit) |
+| `issue-3518-native-realm-requirements` | 24/25, exit 1 — same 1 red on the base (`js.object.init-function` realm row) |
+| `issue-3518-native-realm-source-integration` | 22/24, exit 1 — same 2 red on the base |
+
+Changes in `issue-3518-native-getter-invocation`:
+- New: "the validator refuses requirements whose call population changed after planning" — a seeded invalid plan for
+  the validator (#7380 acceptance 3): a source call made a non-invocation, which the derivation accepts, so only the
+  comparison refuses it (`stale invocation source`). Kill check: with the comparison removed this case fails and the
+  other 42 pass; before this case no test in the file noticed (the existing stale-provenance cases are refused by the
+  derivation's own checks).
+- "refuses changed function/global ownership/layout" were red on the base (Perf4 moved the ledger audit to the phase
+  boundaries); they now expect the refusal at `freezeReservations` ("altered").
+
+### Bytes and gates
+
+- `check:prepared-bytes`: all 804 rows identical, base vs head, switch off; and base on vs head on (both commits).
+- 109 F2 probe programs (`f2set.p`) and 71 F2 regression programs (`reg.p`) through the strict entry: identical
+  (binary sha or refusal text).
+- Ordinary pipeline: F2's 20 test262 files × (default, standalone) identical.
+- Gates, each bare: typecheck, LOC, function budget (both also with `LOC_GATE_BASE` = main `d6a09c082d`), coercion
+  sites, oracle ratchet, dead exports.
+
+### Not verified, left
+
+- Node 25 (CI's version) is not installed here.
+- Compile time is still superlinear (5 → 10 → 20 closures: ×2.2, ×2.3–3). Candidate: `nativeCallAbiBindings` rebuilds
+  the owner function's type map (`nativeAsyncCallableValueTypes`) per call use — 3.1 s (15 %) at N = 20, quadratic in
+  calls per function. Not per-use re-proof, below the 25 % bar; next slice.
+- The remaining one-time copies and settled walks (#7380 step 5b) and, switch on, the slot probes.
+- No test proves the driver calls the validator stage (only the probe above); a stale plan cannot arise in a real
+  compile, so such a test would need a forged plan.
