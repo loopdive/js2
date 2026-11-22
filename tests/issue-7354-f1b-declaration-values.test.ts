@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7354 F1b — a top-level function declaration read as a value (one closure per declaration, made by the module-init
-// before the first statement, in an immutable home) and direct calls inside closures (R7). Each accepted program runs
-// twice: with node's answer (returns) and with a wrong one (throws); a refusal is asserted by its exact text.
+// before the first statement, in its home, immutable unless written: H2) and direct calls inside closures (R7). Each
+// accepted program runs twice: with node's answer (returns) and with a wrong one (throws); a refusal is asserted by its
+// exact text.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/test262/test262-prepared-entry.js";
 import { abortBodies, preparedOptions, refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
@@ -61,30 +62,9 @@ describe("#7354 F1b — function declarations as values", () => {
     SLOW,
   );
 
+  // (#7354 H2) A written declaration is no refusal: its home is mutable (issue-7354-h2-written-function-declarations),
+  // and each other route to the binding refuses at its own site (issue-7354-h2-script-binding-routes).
   it.each([
-    ["written", "function f() {} var g = f; f = 1;", "function declaration 'f' read as a value is written"],
-    [
-      "written through `this`",
-      "function f() {} var g = f; function w() { this.f = 0; }",
-      "function declaration 'f' read as a value is written",
-    ],
-    // Each route the binding proof refuses (binding-holds-declaration.ts), in a program that reaches no other refusal
-    // first: code the source does not spell, a reflective route to `Function`, the global object escaping.
-    [
-      "written by code the source does not spell",
-      'function f() {} var g = f; Function("f = 1")();',
-      "function declaration 'f' read as a value is written",
-    ],
-    [
-      "written through `constructor`",
-      'function f() {} var g = f; f.constructor("f = 0")();',
-      "function declaration 'f' read as a value is written",
-    ],
-    [
-      "written through an escaping global object",
-      "function f() {} var g = f; function w() { return this; }",
-      "function declaration 'f' read as a value is written",
-    ],
     [
       "in a script that runs no top-level code",
       "function k() { return k2; } function k2() { return 1; }",

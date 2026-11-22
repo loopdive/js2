@@ -20,7 +20,7 @@
 import { ts } from "../ts-api.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
-import { scriptVarWrites } from "./module-binding-script-var.js";
+import { scriptBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
@@ -149,11 +149,19 @@ export function sourceDynamicProvenance(
   return { scriptVarHome, carries: (expression) => carries(expression) };
 }
 
-/** The source function declaration with a body that `call` calls directly, if any. */
+/**
+ * The source function declaration with a body that `call` calls directly, if any. (#7354 H2) A call of a rewritten
+ * declaration reads its binding, which may hold any value.
+ */
 export function sourceFunctionCallee(
   checker: ts.TypeChecker,
   call: ts.CallExpression,
 ): ts.FunctionDeclaration | undefined {
   const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
-  return callee !== undefined && ts.isFunctionDeclaration(callee) && callee.body !== undefined ? callee : undefined;
+  return callee !== undefined &&
+    ts.isFunctionDeclaration(callee) &&
+    callee.body !== undefined &&
+    !scriptBindingRewritten(checker, callee)
+    ? callee
+    : undefined;
 }

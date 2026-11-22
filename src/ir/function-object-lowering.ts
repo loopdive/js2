@@ -203,9 +203,22 @@ export function concreteIntoDynamic(
 }
 
 /**
- * A dynamic member store's key or value, or (#7354 C2) a dynamic construct's argument (`role`), onto the carrier: a
- * concrete value boxed, and (#7354 F1b) where closures are function values ({@link createsFunctionObjects}) a closure
- * as its function value. A value with no carrier refuses by name.
+ * A value stored into a dynamic carrier: a concrete value boxed, and (#7354 F1b) where closures are function values
+ * ({@link createsFunctionObjects}) a closure as its function value. A value with no carrier is returned as it is, for
+ * the caller to refuse.
+ */
+export function storedCarrierValue(value: IrValueId, source: ts.Expression, cx: FunctionObjectLoweringHost): IrValueId {
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const boxed = createsFunctionObjects(cx)
+    ? concreteIntoDynamic(value, source, cx)
+    : cx.boxConcrete(value, type, source);
+  return boxed ?? value;
+}
+
+/**
+ * A dynamic member store's key or value, or (#7354 C2) a dynamic construct's argument (`role`), onto the carrier
+ * ({@link storedCarrierValue}). A value with no carrier refuses by name.
  */
 export function dynamicStoreOperand(
   value: IrValueId,
@@ -213,16 +226,12 @@ export function dynamicStoreOperand(
   cx: FunctionObjectLoweringHost,
   role: "member-store" | "construct argument",
 ): IrValueId {
-  const type = cx.builder.typeOf(value);
-  if (type.kind === "dynamic") return value;
-  const boxed = createsFunctionObjects(cx)
-    ? concreteIntoDynamic(value, source, cx)
-    : cx.boxConcrete(value, type, source);
-  if (boxed !== null && cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
+  const boxed = storedCarrierValue(value, source, cx);
+  if (cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
   throw new IrUnsupportedError(
     "operand-coercion-unsupported",
     "build",
-    `ir/from-ast: dynamic ${role} operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
+    `ir/from-ast: dynamic ${role} operand of ${describeIrType(cx.builder.typeOf(value))} has no dynamic carrier (${cx.funcName})`,
   );
 }
 

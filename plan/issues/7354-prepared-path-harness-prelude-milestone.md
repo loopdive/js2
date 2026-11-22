@@ -52,6 +52,8 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-21 (slices M1 + M2, corrected after review): the figures above are per slice. Against main this PR grows
 # src/ir/program-source.ts by 0 and src/ir/from-ast.ts by 16 (three lowering arms: `isRawExternrefReceiver`, the
 # member write's externref receiver, the object-literal box in `boxConcreteToDynamic`).
+# 2026-11-22 (slice H2): src/ir/program-source.ts +1, the checker argument of `functionDeclarationValues` (it asks
+# `scriptBindingRewritten` instead of the deleted whole-program binding proof); from-ast.ts shrinks by 1.
 loc-budget-allow:
   - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts

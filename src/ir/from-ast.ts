@@ -13205,11 +13205,10 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
   cx.builder.emitEarlyReturn(coerceReturnValue(v, cx, stmt.expression));
 }
 
-/** (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value. */
+/** (#7106) A dynamic module slot (`var o; o = 4`) takes the boxed value; (#7354 H2) a closure its function value. */
 function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Expression, cx: LowerCtx): IrValueId {
-  const type = cx.builder.typeOf(value);
-  if (target.kind !== "dynamic" || type.kind === "dynamic") return value;
-  return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
+  if (target.kind !== "dynamic") return value;
+  return functionObjects.storedCarrierValue(value, rhs, functionObjectLoweringHost(cx));
 }
 
 /**

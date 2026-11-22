@@ -4,6 +4,14 @@
  * every certifier of one (#7252's class instance, #7292's string vec, #7274's
  * native buffers, #7354's IR-owned typed home): where the binding is written,
  * and whether a use reads a slot that has been written.
+ *
+ * (#7354 H2) A script binding (a top-level `var` or function declaration) is a property of the global object
+ * (§9.1.1.4, §16.1.7), so besides an identifier reference it is reached by the global object as a value (script or
+ * sloppy-function `this`, `globalThis`, `Object.defineProperty(this, …)`), by dynamic code (`eval`, `Function`,
+ * `x.constructor(…)`), by `with`, by an Annex B block function (§B.3.3.2) and by `delete`. On the Prepared path
+ * every one of those refuses or aborts at its own site, so {@link scriptVarWrites} — the identifier writes, by
+ * checker identity — are all the writes there are. A slice that admits one of those routes writes the binding's
+ * home or refuses; tests/issue-7354-h2-script-binding-routes.test.ts holds a program for each route.
  */
 import { ts } from "../ts-api.js";
 import {
@@ -19,31 +27,48 @@ import {
 } from "../shared/intrinsic-prototype-writes.js";
 import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var-declaration-lists.js";
 
-const scriptVarWritesCache = new WeakMap<ts.VariableDeclaration, readonly IdentifierWrite[] | null>();
+type ScriptBindingDeclaration = ts.VariableDeclaration | ts.FunctionDeclaration;
+
+const identifierWritesCache = new WeakMap<ScriptBindingDeclaration, readonly IdentifierWrite[] | null>();
 
 /**
- * Every write of the script var `declaration` anywhere in its source (the
- * declaration's own included), or `undefined` when a `with` / direct `eval`
- * could write it outside checker identity.
+ * Every write of the script binding `declaration` anywhere in its source (a `var`'s own initializer included; a
+ * function declaration writes none), or `undefined` when a `with` / direct `eval` could write it outside checker
+ * identity.
  */
 export function scriptVarWrites(
   checker: ts.TypeChecker,
-  declaration: ts.VariableDeclaration,
+  declaration: ScriptBindingDeclaration,
 ): readonly IdentifierWrite[] | undefined {
-  let cached = scriptVarWritesCache.get(declaration);
+  return hasDynamicScope(declaration.getSourceFile()) ? undefined : identifierWrites(checker, declaration);
+}
+
+/**
+ * (#7354 H2) Whether anything but `declaration` itself stores into its binding on the Prepared path, where the
+ * identifier writes are all the writes (above): `with` and `eval` refuse or abort at their own sites.
+ */
+export function scriptBindingRewritten(checker: ts.TypeChecker, declaration: ScriptBindingDeclaration): boolean {
+  return identifierWrites(checker, declaration)?.some((write) => write.target !== declaration.name) ?? true;
+}
+
+/** The identifier writes of `declaration`'s binding, by checker identity; `undefined` for a pattern or a nameless declaration. */
+function identifierWrites(
+  checker: ts.TypeChecker,
+  declaration: ScriptBindingDeclaration,
+): readonly IdentifierWrite[] | undefined {
+  let cached = identifierWritesCache.get(declaration);
   if (cached === undefined) {
-    cached = collectScriptVarWrites(checker, declaration) ?? null;
-    scriptVarWritesCache.set(declaration, cached);
+    cached = collectIdentifierWrites(checker, declaration) ?? null;
+    identifierWritesCache.set(declaration, cached);
   }
   return cached ?? undefined;
 }
 
-function collectScriptVarWrites(
+function collectIdentifierWrites(
   checker: ts.TypeChecker,
-  declaration: ts.VariableDeclaration,
+  declaration: ScriptBindingDeclaration,
 ): IdentifierWrite[] | undefined {
-  const sourceFile = declaration.getSourceFile();
-  if (!ts.isIdentifier(declaration.name) || hasDynamicScope(sourceFile)) return undefined;
+  if (!declaration.name || !ts.isIdentifier(declaration.name)) return undefined;
   const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
   const writes: IdentifierWrite[] = [];
   const visit = (node: ts.Node): void => {
@@ -52,7 +77,7 @@ function collectScriptVarWrites(
     }
     ts.forEachChild(node, visit);
   };
-  ts.forEachChild(sourceFile, visit);
+  ts.forEachChild(declaration.getSourceFile(), visit);
   return writes;
 }
 

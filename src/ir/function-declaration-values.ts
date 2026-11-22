@@ -3,13 +3,15 @@
  * (#7354 F1b) A top-level function declaration read as a value on the Prepared path (`var g = f`, `f.x = 1`,
  * `typeof f`). The declaration's own unit stays what a call of the name reaches; the value is one closure per
  * declaration, made by its script's module-init before the first statement (GlobalDeclarationInstantiation,
- * §16.1.7: the function object exists before any code of the script runs) and kept in an immutable dynamic home.
+ * §16.1.7: the function object exists before any code of the script runs) and kept in a dynamic home.
  * Every read of the name is that home's read, so two reads are the same value. The closure's function is a
  * trampoline that calls the declaration's unit with its own arguments and puts the result into the carrier.
  *
- * The home is sound only while the binding holds its declaration: nothing writes the name, by any route
- * (`bindingHoldsItsDeclaration`), and the script is the program's only source, whose module-init runs before any
- * code that could read the home (a script that runs first would read the home before its value is stored).
+ * The script must be the program's only source, whose module-init runs before any code that could read the home (a
+ * script that runs first would read the home before its value is stored). (#7354 H2) The binding is writable
+ * (§9.1.1.4.18): where an identifier writes it (`scriptBindingRewritten`, which sees every write on this path), the
+ * home is mutable and untagged, and a call of the name reads it: the call planner plans no direct call of a
+ * reassigned declaration (`imported-functions.ts`).
  */
 import { ts } from "../ts-api.js";
 import { IR_DYN_CALL_BOX_FN } from "../shared/contracts/dynamic-call-helpers.js";
@@ -32,7 +34,7 @@ import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/star
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
-import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
+import { scriptBindingRewritten } from "./module-binding-script-var.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
@@ -113,16 +115,17 @@ export interface FunctionValueGlobal {
     readonly ownerUnitId: IrUnitId;
     readonly storageOwnerUnitId: IrUnitId;
     readonly sourceId: IrSourceId;
-    readonly mutable: false;
+    readonly mutable: boolean;
   };
 }
 
 /**
- * Each declaration's value, with its home on the startup binding its script's plan holds for it. A declaration whose
- * binding may hold another value, or whose unit's contract the trampoline cannot carry, refuses by name, owned by the
- * declaration's unit (`diagnostic`).
+ * Each declaration's value, with its home on the startup binding its script's plan holds for it. A name with a second
+ * declaration (whose last-wins and Annex B semantics are not modelled), or a unit whose contract the trampoline
+ * cannot carry, refuses by name, owned by the declaration's unit (`diagnostic`).
  */
 export function functionDeclarationValues(
+  checker: ts.TypeChecker,
   declarations: readonly ts.FunctionDeclaration[],
   startup: readonly IrModuleInitPlan[],
   identity: Pick<IrPlanningIdentityContext, "unitIdByDeclaration" | "terminalByUnitId">,
@@ -133,7 +136,9 @@ export function functionDeclarationValues(
     const name = declaration.name!.text;
     const unitId = identity.unitIdByDeclaration.get(declaration)!;
     diagnostic.active = unitId;
-    if (!bindingHoldsItsDeclaration(declaration.name!, declaration)) refuse(name, "is written");
+    if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.length > 1)
+      refuse(name, "has a second declaration");
+    const rewritten = scriptBindingRewritten(checker, declaration);
     const { params, returnType } = signatures.get(unitId)!;
     if (params.some((type) => type.kind !== "dynamic")) refuse(name, "has a typed parameter");
     const start = declaration.getStart();
@@ -147,7 +152,7 @@ export function functionDeclarationValues(
       tdzGlobalRef: null,
       globalName: name,
       tdzGlobalName: null,
-      type: irDynamic(JS_TAG_IDS.Function),
+      type: irDynamic(rewritten ? undefined : JS_TAG_IDS.Function),
     };
     return {
       declaration,
@@ -158,7 +163,12 @@ export function functionDeclarationValues(
       home,
       global: {
         binding: home,
-        identity: { ownerUnitId: moduleInit, storageOwnerUnitId: moduleInit, sourceId: plan.sourceId, mutable: false },
+        identity: {
+          ownerUnitId: moduleInit,
+          storageOwnerUnitId: moduleInit,
+          sourceId: plan.sourceId,
+          mutable: rewritten,
+        },
       },
     };
   });
