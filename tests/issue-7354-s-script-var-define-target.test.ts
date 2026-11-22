@@ -125,13 +125,29 @@ describe("#7354 S — a script var named by Object.defineProperty", () => {
   }, 180_000);
 
   // The sweep of object operations on such a var found one from-ast arm that threw an invariant out of `compile()`:
-  // the own-property test on a dynamic script var, which only the selector refused. It is the selector's refusal now.
+  // the own-property test on a dynamic script var, which only the selector refused. (#7354 P1) It is the method call
+  // now (Object.prototype holds `hasOwnProperty`): it runs where the program has function values, the define-target
+  // var included, and refuses by name where the function kind is not admitted.
   it.each([
-    ["at top level", "var o = {p: 1}; if (!o.hasOwnProperty('p')) throw 1;", "<module-init>"],
-    ["in a function", "var o = {p: 1}; function t() { return o.hasOwnProperty('p'); } t();", "t"],
-  ])("refuses an own-property test on the var %s by name", async (_, program, unit) => {
-    expect(await refusals(program)).toEqual([
-      `ir/from-ast: own-property test on a script var planned by neither #7335's arm nor the row (${unit})`,
+    ["at top level", "var o = {p: 1}; if (!o.hasOwnProperty('p') || o.hasOwnProperty('q')) throw 1;"],
+    ["in a function", "var o = {p: 1}; function t() { return o.hasOwnProperty('p'); } if (!t()) throw 1;"],
+    [
+      "defined by Object.defineProperty",
+      "var o = {}; Object.defineProperty(o, 'p', {value: 1}); if (!o.hasOwnProperty('p') || o.propertyIsEnumerable('p')) throw 1;",
+    ],
+  ])(
+    "runs an own-property test on the var %s",
+    async (_, program) => {
+      const functionValue = "var fv = function(){ return 1; }; fv(); ";
+      expect(await run(functionValue + program)).toBe("returned");
+      expect(await run(functionValue + program.replace("throw 1", "{} else throw 1"))).toBe("threw");
+    },
+    180_000,
+  );
+
+  it("refuses an own-property test on the var in a program without function values by name", async () => {
+    expect(await refusals("var o = {p: 1}; if (!o.hasOwnProperty('p')) throw 1;")).toEqual([
+      "dynamic operation member read 'hasOwnProperty' in a program that creates no function value has no Prepared intrinsic",
     ]);
   });
 

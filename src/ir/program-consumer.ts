@@ -1417,6 +1417,7 @@ function materializePhysicalProgram(
       invocationPack,
       nativeSourceClosureCallableBindings(reservations, sourceClosures, record.nativeInvocation),
       exceptionTag,
+      (record.nativeRealm?.description.prototypeMethods.length ?? 0) > 0,
     );
   }
 

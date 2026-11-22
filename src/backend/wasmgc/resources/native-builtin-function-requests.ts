@@ -18,9 +18,15 @@ import {
 } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 
+/**
+ * What a built-in entry is: one of the realm's two bootstrap functions, or (#7354 P1) a method the realm's
+ * Object.prototype holds, whose call through the dispatcher is the run-time abort (the Prepared path writes its
+ * algorithm where a call reads it, `dynamic-prototype-methods.ts`).
+ */
+export type NativeBuiltinFunctionBehavior = "function-prototype" | "throw-type-error" | "object-prototype-method";
 export interface NativeBuiltinFunctionRequirement {
   readonly id: string;
-  readonly behavior: "function-prototype" | "throw-type-error";
+  readonly behavior: NativeBuiltinFunctionBehavior;
   readonly signatureId: string;
   readonly metadataId: string;
   readonly initialName: string;
@@ -135,14 +141,18 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
       )
     )
       fail("unsupported dynamic naming, async, or constructor requirement");
-    if (!["function-prototype", "throw-type-error"].includes(row.behavior) || behaviors.has(row.behavior))
-      fail("unavailable or duplicate intrinsic behavior");
+    const method = row.behavior === "object-prototype-method";
+    if (!["function-prototype", "throw-type-error", "object-prototype-method"].includes(row.behavior))
+      fail("unavailable intrinsic behavior");
+    if (!method && behaviors.has(row.behavior)) fail("duplicate bootstrap intrinsic behavior");
     behaviors.add(row.behavior);
+    // A bootstrap function is anonymous with length 0; a method carries its catalog name and length.
     if (
       typeof row.initialName !== "string" ||
-      row.initialName !== "" ||
+      (row.initialName === "") === method ||
       !Number.isSafeInteger(row.initialLength) ||
-      row.initialLength !== 0 ||
+      row.initialLength < 0 ||
+      (!method && row.initialLength !== 0) ||
       row.userFormalCount !== 0
     )
       fail("unsupported intrinsic name/length/formal metadata (dynamic and infinite lengths require another owner)");

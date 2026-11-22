@@ -252,6 +252,66 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
   };
 }
 
+/**
+ * (#7354 P1) `js.object.prototype-method(selector) -> externref`: the built-in function object of the realm's
+ * Object.prototype method `selector`, through its entry's getter (which initializes the realm first). `getters` are in
+ * selector order; the caller passes only selectors it names.
+ */
+export function buildSourceObjectPrototypeMethodDefinition(d: {
+  readonly getters: readonly FuncHandle[];
+}): SourceObjectDefinition {
+  return {
+    locals: [],
+    body: [
+      ...d.getters.flatMap((getter, selector): Instr[] => [
+        { op: "local.get", index: 0 },
+        { op: "i32.const", value: selector },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "call", funcIdx: getter }, { op: "return" }] },
+      ]),
+      { op: "unreachable" },
+    ],
+  };
+}
+
+/**
+ * (#7354 P1) `js.object.has-own(object, key, selector) -> i32`: HasOwnProperty (§7.3.12) of a canonical key on an
+ * ordinary or function object, through the kernel's own-property find (a function's own properties are in its bag);
+ * selector 1 also requires the property to be enumerable (`propertyIsEnumerable`, §20.1.3.4).
+ */
+export function buildSourceObjectHasOwnDefinition(d: {
+  readonly entryTypeIdx: TypeHandle;
+  readonly findOwn: FuncHandle;
+}): SourceObjectDefinition {
+  const entry = 3;
+  return {
+    locals: [{ name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } }],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: d.findOwn },
+      { op: "local.tee", index: entry },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+      { op: "local.get", index: 2 },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: entry },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.flags },
+          { op: "i32.const", value: flags.enumerable },
+          { op: "i32.and" },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ne" },
+        ],
+        else: [{ op: "i32.const", value: 1 }],
+      },
+    ],
+  };
+}
+
 /** (#7354 M2) `js.object.is-error(value) -> i32`: whether `value` is the realm's error layout (`$Error_struct`). */
 export function buildSourceObjectIsErrorDefinition(d: { readonly errorTypeIdx: number }): SourceObjectDefinition {
   return {

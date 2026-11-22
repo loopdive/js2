@@ -35,7 +35,10 @@ export interface NativeRealmIntrinsic {
     readonly initialName: string;
     readonly length: number;
     readonly algorithm: string;
-    /** (#7354 O1) `native`: the Prepared path lowers the built-in's call form (`src/ir/realm-static-call.ts`). */
+    /**
+     * (#7354 O1) `native`: the Prepared path lowers the built-in's call form (`src/ir/realm-static-call.ts`); (P1) for
+     * an Object.prototype method, the realm also holds it as a function object.
+     */
     readonly implementation: "function-prototype" | "throw-type-error" | "native" | "unavailable";
     readonly requires: readonly string[];
   };
@@ -115,7 +118,8 @@ const objectStatics: readonly Method[] = [
 ];
 /**
  * (#7354 O1) The `Object` statics whose call form the Prepared path lowers: the realm's descriptor bodies serve them
- * (`object-static-bodies.ts`). The one list of what is native; every other row is `unavailable`.
+ * (`object-static-bodies.ts`). With {@link NATIVE_OBJECT_PROTOTYPE_METHODS}, the lists of what is native; every other
+ * row is `unavailable`.
  */
 const NATIVE_OBJECT_STATICS = Object.freeze([
   "create",
@@ -124,8 +128,22 @@ const NATIVE_OBJECT_STATICS = Object.freeze([
   "getOwnPropertyDescriptor",
 ] as const);
 export type NativeObjectStatic = (typeof NATIVE_OBJECT_STATICS)[number];
-const isNativeObjectStatic = (name: string): name is NativeObjectStatic =>
-  (NATIVE_OBJECT_STATICS as readonly string[]).includes(name);
+/**
+ * (#7354 P1) The Object.prototype methods the realm populates: each is a built-in function object on the realm's
+ * Object.prototype, and the Prepared path writes its algorithm where a call reads it (`dynamic-prototype-methods.ts`).
+ */
+export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+] as const);
+export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
+/** The one answer to "is `parent.name` native": the two lists above. */
+const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
+  Object: NATIVE_OBJECT_STATICS,
+  "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
+};
+const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
 const objectMethods: readonly Method[] = [
   ["hasOwnProperty", 1, ["ToPropertyKey", "ToObject", "HasOwnProperty"]],
   ["isPrototypeOf", 1, ["ToObject", "GetPrototypeOf", "SameValue"]],
@@ -150,24 +168,25 @@ const functionMethods: readonly Method[] = [
   ["call", 1, ["IsCallable", "Call"]],
   ["toString", 0, ["HostHasSourceTextAvailable", "SourceText", "InitialName", "IsCallable"]],
 ];
-const methodId = (parent: string, name: string) => `%${parent}.${name}%`;
+/** The catalog id of the member `name` of the intrinsic `parent` (`%Object.prototype.hasOwnProperty%`). */
+export const realmMethodId = (parent: string, name: string) => `%${parent}.${name}%`;
 function members(parent: string, rows: readonly Method[], legacy = false): NativeRealmIntrinsic[] {
   return rows.map(([name, length, requires]) =>
     callable(
-      methodId(parent, name),
+      realmMethodId(parent, name),
       name,
       length,
       parent + "." + name,
       requires,
       [],
       false,
-      parent === "Object" && isNativeObjectStatic(name) ? "native" : "unavailable",
+      isNativeMember(parent, name) ? "native" : "unavailable",
       legacy,
     ),
   );
 }
 const methodProperties = (parent: string, rows: readonly Method[]) =>
-  rows.map(([name]) => reference(name, methodId(parent, name)));
+  rows.map(([name]) => reference(name, realmMethodId(parent, name)));
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);

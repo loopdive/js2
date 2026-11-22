@@ -80,13 +80,25 @@ describe("#7354 F1b — function objects", () => {
       "member read 'call' of a function needs Function.prototype's properties",
     ],
     [
-      "an Object.prototype key",
-      "function a() {} var c = a.hasOwnProperty;",
-      "member read 'hasOwnProperty' of a function needs Function.prototype's properties",
+      "an Object.prototype key the realm does not hold",
+      "function a() {} var c = a.valueOf;",
+      "member read 'valueOf' of a function needs Function.prototype's properties",
     ],
   ])("refuses a read of %s off a function by name", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);
   });
+
+  // (#7354 P1) An Object.prototype method the realm holds is found on a function's chain.
+  const METHOD = "function a() {} var h = a.hasOwnProperty;\n";
+  it(
+    "reads Object.prototype's hasOwnProperty off a function",
+    () =>
+      agrees(
+        `${METHOD}if (typeof h !== "function" || !a.hasOwnProperty("length")) throw 1;`,
+        `${METHOD}if (typeof h !== "function" || a.hasOwnProperty("length")) throw 1;`,
+      ),
+    SLOW,
+  );
 });
 
 describe("#7354 F1b — the harness's module-init statements against stand-in declarations", () => {
