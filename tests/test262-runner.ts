@@ -20,12 +20,15 @@ import { buildTemporalProvider, compileWithTemporalGlobal, type TemporalProvider
 import { buildImports, markCoherentBuiltinRealm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
+import { runtimeNegativeThrowAccepted } from "../scripts/test262-runtime-verdict.mjs";
 // (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
 // Two copies "kept in sync" by a comment is exactly how the local lane came to
 // report the opaque #2870 label where CI reported the real assertion text.
 import {
+  readHarnessThrown,
   renderHarnessThrownText,
   safeStringifyThrown as sharedSafeStringifyThrown,
+  thrownErrorKinds,
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal, isScriptGoal } from "../scripts/test262-module-goal.mjs";
@@ -4141,18 +4144,31 @@ const safeStringifyThrown = sharedSafeStringifyThrown;
 const tryNativeExnRender = sharedTryNativeExnRender;
 
 export function extractWasmExceptionMessage(err: any, instance: any): string {
+  return readWasmException(err, instance).text;
+}
+
+/**
+ * (#7354 X) The thrown value's error kinds (`thrownErrorKinds`; none when it was not read) and its text, for the
+ * runtime-negative rule in scripts/test262-runtime-verdict.mjs.
+ */
+export function readWasmException(err: any, instance: any): { kinds: string[]; text: string } {
   if (typeof WebAssembly !== "undefined" && err instanceof (WebAssembly as any).Exception) {
     let payload: any = null;
+    let unread = instance ? "the module exports no exception tag" : undefined;
     if (instance) {
       try {
         const tag = instance.exports?.__exn_tag ?? instance.exports?.__tag;
-        if (tag) payload = err.getArg(tag, 0);
+        if (tag) {
+          unread = "the module's exception tag does not carry it";
+          payload = err.getArg(tag, 0);
+          unread = undefined;
+        }
       } catch {
         // Tag lookup failed — fall through to generic message.
       }
     }
     if (payload instanceof Error) {
-      return payload.message ?? safeStringifyThrown(payload);
+      return { kinds: thrownErrorKinds(payload), text: payload.message ?? safeStringifyThrown(payload) };
     }
     if (payload != null) {
       // (#2962) A host-opaque GC payload (typeof "object"/"function") renders
@@ -4161,16 +4177,23 @@ export function extractWasmExceptionMessage(err: any, instance: any): string {
       const t = typeof payload;
       if (t === "object" || t === "function") {
         const native = tryNativeExnRender(instance, payload);
-        if (native != null) return native;
+        if (native != null) return { kinds: thrownErrorKinds(payload, native), text: native };
       }
-      return safeStringifyThrown(payload);
+      return { kinds: thrownErrorKinds(payload), text: safeStringifyThrown(payload) };
     }
-    return instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
+    // A null payload is the ordinary codegen's null guard or TDZ throw, or a user `throw null`: its kind is not known.
+    const text =
+      unread !== undefined
+        ? `unknown thrown value: ${unread}`
+        : instance
+          ? "TypeError (null/undefined access)"
+          : "wasm exception during module init";
+    return { kinds: [], text };
   }
   if (err instanceof Error) {
-    return err.message ?? safeStringifyThrown(err);
+    return { kinds: thrownErrorKinds(err), text: err.message ?? safeStringifyThrown(err) };
   }
-  return safeStringifyThrown(err);
+  return { kinds: thrownErrorKinds(err), text: safeStringifyThrown(err) };
 }
 
 /**
@@ -4288,8 +4311,8 @@ interface OriginalVariantResult {
  * (non-stringifiable payload)") while CI reported the real assertion text.
  * Consequences: message-derived triage against the local runner saw one giant
  * undifferentiated bucket, and a standalone runtime-negative test could not
- * match its expected error TYPE (`originalNegativeMatches` searches the
- * detail for `meta.negative.type`, which the opaque label does not contain).
+ * match its expected error TYPE (the match then searched the detail for
+ * `meta.negative.type`; since #7354 X it compares the read error kind).
  *
  * `oracle-version-exempt:` this is the LOCAL in-process runner only. The
  * committed baseline rows are produced exclusively by
@@ -4301,12 +4324,6 @@ const originalHarnessThrownText = renderHarnessThrownText as (
   error: unknown,
   instance?: WebAssembly.Instance,
 ) => string;
-
-function originalNegativeMatches(meta: Test262Meta, detail: string): boolean {
-  const expected = meta.negative?.type;
-  if (!expected) return Boolean(meta.negative);
-  return detail.includes(expected);
-}
 
 function appendOriginalHarnessFailureContext(detail: string, source: string): string {
   const lines = source.split("\n");
@@ -4741,7 +4758,15 @@ async function runOriginalHarnessVariant(
       );
       const detail = appendOriginalHarnessFailureContext(enriched, originalSource);
       return {
-        pass: meta.negative?.phase === "runtime" && originalNegativeMatches(meta, detail),
+        pass:
+          meta.negative?.phase === "runtime" &&
+          runtimeNegativeThrowAccepted(error, instance, {
+            expectedErrorType: meta.negative.type,
+            originalHarness: true,
+            prepared: false,
+            // A trap matches by the frame names of the enriched text (#7447).
+            read: (err: unknown, inst: unknown) => ({ kinds: readHarnessThrown(err, inst).kinds, text: detail }),
+          }),
         phase: "runtime",
         detail,
         timing: timing(),

@@ -101,34 +101,71 @@ export function exceptionPayload(error, instance) {
 }
 
 /**
- * THE renderer for an original-harness thrown value. One policy, both lanes:
+ * (#7354 X) The error kinds of a thrown value that was READ: its `name` and its constructor's name (a
+ * `class Test262Error extends Error` instance is named "Error"); none for a primitive or an object with neither.
+ * A runtime-negative verdict compares these and never the message, so `new Error("expected a TypeError")` is an
+ * `Error`.
+ *
+ * A host-opaque WasmGC payload has neither; `rendered` is then the module's own `String(payload)`
+ * (`__exn_render_*`, standalone/wasi), whose §20.5.3.4 form is `name: message`, or the bare name for an empty
+ * message, so the kind is the text before the first `": "`. That split is a stopgap: a thrown string or an object
+ * whose `toString` renders `"TypeError: x"` reads as a TypeError. The real fix is a kind export in ordinary codegen.
+ *
+ * @param {unknown} value
+ * @param {string} [rendered]
+ * @returns {string[]}
+ */
+export function thrownErrorKinds(value, rendered) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return [];
+  let kinds;
+  try {
+    kinds = [value.name, value.constructor?.name].filter((kind) => typeof kind === "string");
+  } catch {
+    // A throwing `name`/`constructor` getter: the kind was not read.
+    return [];
+  }
+  if (kinds.length > 0 || rendered === undefined) return kinds;
+  const colon = rendered.indexOf(": ");
+  return [colon < 0 ? rendered : rendered.slice(0, colon)];
+}
+
+/**
+ * THE reader for an original-harness thrown value: its error kinds (see `thrownErrorKinds`; none when the value
+ * could not be read) and its text. One policy, both lanes:
  *
  *   1. host-readable `.name` on the payload  → `"Name: message"`.
- *      The NAME PREFIX IS LOAD-BEARING: `originalNegativeMatches` decides a
- *      runtime-negative verdict with `detail.includes(meta.negative.type)`, so
- *      dropping the name would silently fail every host-lane runtime negative.
  *   2. host-opaque WasmGC payload → render through the module's own exports.
- *      This is the step the local runner was missing; the rendered text
- *      carries the error name too (`"TypeError: …"` per §20.5.3.4), so the
- *      negative-type match keeps working on the standalone lane as well.
+ *      This is the step the local runner was missing.
  *   3. anything else → the #2870 guarded fallback.
  *
  * @param {unknown} error
  * @param {any} [instance]
- * @returns {string}
+ * @returns {{ kinds: string[], text: string }}
  */
-export function renderHarnessThrownText(error, instance) {
+export function readHarnessThrown(error, instance) {
   const payload = exceptionPayload(error, instance);
   if (payload !== undefined) {
     if (payload != null && (typeof payload === "object" || typeof payload === "function")) {
       const name = payload.name;
       const message = payload.message;
-      if (typeof name === "string") return `${name}${message ? `: ${String(message)}` : ""}`;
+      if (typeof name === "string")
+        return { kinds: thrownErrorKinds(payload), text: `${name}${message ? `: ${String(message)}` : ""}` };
       const native = tryNativeExnRender(instance, payload);
-      if (native != null) return native;
+      if (native != null) return { kinds: thrownErrorKinds(payload, native), text: native };
     }
-    if (payload !== null) return safeStringifyThrown(payload);
+    if (payload !== null) return { kinds: thrownErrorKinds(payload), text: safeStringifyThrown(payload) };
   }
-  if (error instanceof Error) return `${error.name}: ${error.message}`;
-  return safeStringifyThrown(error);
+  if (error instanceof Error) return { kinds: thrownErrorKinds(error), text: `${error.name}: ${error.message}` };
+  // A WebAssembly.Exception whose payload was not read has no kind; its constructor is the carrier, not the value.
+  if (error instanceof WebAssembly.Exception) return { kinds: [], text: safeStringifyThrown(error) };
+  return { kinds: thrownErrorKinds(error), text: safeStringifyThrown(error) };
+}
+
+/**
+ * @param {unknown} error
+ * @param {any} [instance]
+ * @returns {string}
+ */
+export function renderHarnessThrownText(error, instance) {
+  return readHarnessThrown(error, instance).text;
 }

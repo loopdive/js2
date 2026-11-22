@@ -44,29 +44,27 @@ export function renderHostError(err, abortBodies = []) {
   return `${info}]`;
 }
 
-/** Did `err` carry the expected error type? `render` is the worker's message renderer. */
-function originalHarnessExceptionMatches(err, instance, expectedErrorType, render) {
+/**
+ * (#7354 X) Did `err` carry the expected error type? Only a KIND the reader read counts — never message text, and
+ * never a label the reader writes for a value it could not read (it then reads no kind): a pass needs the thrown
+ * value positively known to be of that type. `read(err, instance)` is the lane's reader, `{ kinds, text }`.
+ */
+function originalHarnessExceptionMatches(err, instance, expectedErrorType, read) {
   if (!expectedErrorType) return true;
-  if (err instanceof WebAssembly.Exception && instance) {
-    try {
-      const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-      const payload = tag ? err.getArg(tag, 0) : undefined;
-      const name = payload?.name ?? payload?.constructor?.name;
-      if (name === expectedErrorType) return true;
-    } catch {}
-  } else if (err?.name === expectedErrorType || err?.constructor?.name === expectedErrorType) {
-    return true;
-  }
-  return render(err, instance).includes(expectedErrorType);
+  const { kinds, text } = read(err, instance);
+  // #7447 keeps the published trap rule on the non-Prepared lanes until it is measured: a trap matches by the
+  // frame names in its text.
+  if (isWasmTrap(err)) return text.includes(expectedErrorType);
+  return kinds.includes(expectedErrorType);
 }
 
 /**
  * Does a throw out of a runtime-negative test's instantiate or module init
  * count as the expected throw? Without the original harness any throw does.
  */
-export function runtimeNegativeThrowAccepted(err, instance, { expectedErrorType, originalHarness, prepared, render }) {
+export function runtimeNegativeThrowAccepted(err, instance, { expectedErrorType, originalHarness, prepared, read }) {
   if (prepared && isWasmTrap(err)) return false;
-  return !originalHarness || originalHarnessExceptionMatches(err, instance, expectedErrorType, render);
+  return !originalHarness || originalHarnessExceptionMatches(err, instance, expectedErrorType, read);
 }
 
 /**
