@@ -5,13 +5,19 @@
  * native buffers, #7354's IR-owned typed home): where the binding is written,
  * and whether a use reads a slot that has been written.
  *
- * (#7354 H2) A script binding (a top-level `var` or function declaration) is a property of the global object
- * (§9.1.1.4, §16.1.7), so besides an identifier reference it is reached by the global object as a value (script or
- * sloppy-function `this`, `globalThis`, `Object.defineProperty(this, …)`), by dynamic code (`eval`, `Function`,
- * `x.constructor(…)`), by `with`, by an Annex B block function (§B.3.3.2) and by `delete`. On the Prepared path
- * every one of those refuses or aborts at its own site, so {@link scriptVarWrites} — the identifier writes, by
- * checker identity — are all the writes there are. A slice that admits one of those routes writes the binding's
- * home or refuses; tests/issue-7354-h2-script-binding-routes.test.ts holds a program for each route.
+ * (#7354 H2) On the Prepared path a script binding (a top-level `var` or function declaration) is written only by
+ * the identifier writes {@link preparedBindingRewritten} sees. The binding is a property of the global object
+ * (§9.1.1.4, §16.1.7), so other routes reach it too, and on this path each refuses or aborts at its own site:
+ *   - the global object as a value: script or sloppy-function `this`, `globalThis`, `Object.defineProperty(this, …)`;
+ *   - dynamic code: `eval`, `Function`, `x.constructor(…)`;
+ *   - `with`: the checker resolves no symbol for a name in its body, so a write there is invisible to the query;
+ *   - an Annex B block function (§B.3.3.2) and `delete`;
+ *   - a parameter initializer (`function w(a = (f = v)) { var f; }`): the checker resolves `f` to the body's `var`,
+ *     but the write hits the outer binding (§10.2.11).
+ * A slice that admits one of these routes writes the binding's home or refuses;
+ * tests/issue-7354-h2-script-binding-routes.test.ts holds a program for each. The ordinary pipeline has no such
+ * invariant (a host `eval` runs there), so {@link scriptVarWrites}, which its certifiers share, still declines under
+ * `with` / direct `eval`.
  */
 import { ts } from "../ts-api.js";
 import {
@@ -27,57 +33,51 @@ import {
 } from "../shared/intrinsic-prototype-writes.js";
 import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var-declaration-lists.js";
 
-type ScriptBindingDeclaration = ts.VariableDeclaration | ts.FunctionDeclaration;
-
-const identifierWritesCache = new WeakMap<ScriptBindingDeclaration, readonly IdentifierWrite[] | null>();
+const identifierWritesCache = new WeakMap<ts.Identifier, readonly IdentifierWrite[]>();
 
 /**
- * Every write of the script binding `declaration` anywhere in its source (a `var`'s own initializer included; a
- * function declaration writes none), or `undefined` when a `with` / direct `eval` could write it outside checker
- * identity.
+ * Every write of the script var `declaration` anywhere in its source (its own initializer included), or `undefined`
+ * when a `with` / direct `eval` could write it outside checker identity.
  */
 export function scriptVarWrites(
   checker: ts.TypeChecker,
-  declaration: ScriptBindingDeclaration,
+  declaration: ts.VariableDeclaration,
 ): readonly IdentifierWrite[] | undefined {
-  return hasDynamicScope(declaration.getSourceFile()) ? undefined : identifierWrites(checker, declaration);
+  const { name } = declaration;
+  if (!ts.isIdentifier(name) || hasDynamicScope(declaration.getSourceFile())) return undefined;
+  return identifierWrites(checker, name);
 }
 
 /**
- * (#7354 H2) Whether anything but `declaration` itself stores into its binding on the Prepared path, where the
- * identifier writes are all the writes (above): `with` and `eval` refuse or abort at their own sites.
+ * (#7354 H2) Whether anything but its own declaration stores into the binding `name` declares (a `var`'s or a
+ * function declaration's name), on the Prepared path (module doc).
  */
-export function scriptBindingRewritten(checker: ts.TypeChecker, declaration: ScriptBindingDeclaration): boolean {
-  return identifierWrites(checker, declaration)?.some((write) => write.target !== declaration.name) ?? true;
+export function preparedBindingRewritten(checker: ts.TypeChecker, name: ts.Identifier): boolean {
+  return identifierWrites(checker, name).some((write) => write.target !== name);
 }
 
-/** The identifier writes of `declaration`'s binding, by checker identity; `undefined` for a pattern or a nameless declaration. */
-function identifierWrites(
-  checker: ts.TypeChecker,
-  declaration: ScriptBindingDeclaration,
-): readonly IdentifierWrite[] | undefined {
-  let cached = identifierWritesCache.get(declaration);
-  if (cached === undefined) {
-    cached = collectIdentifierWrites(checker, declaration) ?? null;
-    identifierWritesCache.set(declaration, cached);
+/**
+ * The identifier writes of the binding `name` declares, by checker identity. A shorthand target (`({ f } = o)`)
+ * resolves to its property, so its binding is the shorthand's value symbol.
+ */
+function identifierWrites(checker: ts.TypeChecker, name: ts.Identifier): readonly IdentifierWrite[] {
+  let writes = identifierWritesCache.get(name);
+  if (writes === undefined) {
+    const binding = checker.getSymbolAtLocation(name);
+    const found: IdentifierWrite[] = [];
+    const visit = (node: ts.Node): void => {
+      for (const write of identifierWritesOf(node)) {
+        const { parent } = write.target;
+        const symbol = ts.isShorthandPropertyAssignment(parent)
+          ? checker.getShorthandAssignmentValueSymbol(parent)
+          : checker.getSymbolAtLocation(write.target);
+        if (symbol === binding) found.push(write);
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(name.getSourceFile(), visit);
+    identifierWritesCache.set(name, (writes = found));
   }
-  return cached ?? undefined;
-}
-
-function collectIdentifierWrites(
-  checker: ts.TypeChecker,
-  declaration: ScriptBindingDeclaration,
-): IdentifierWrite[] | undefined {
-  if (!declaration.name || !ts.isIdentifier(declaration.name)) return undefined;
-  const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
-  const writes: IdentifierWrite[] = [];
-  const visit = (node: ts.Node): void => {
-    for (const write of identifierWritesOf(node)) {
-      if (checker.getSymbolAtLocation(write.target) === bindingSymbol) writes.push(write);
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(declaration.getSourceFile(), visit);
   return writes;
 }
 

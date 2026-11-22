@@ -20,7 +20,7 @@
 import { ts } from "../ts-api.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
-import { scriptBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
+import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
@@ -161,7 +161,7 @@ export function sourceFunctionCallee(
   return callee !== undefined &&
     ts.isFunctionDeclaration(callee) &&
     callee.body !== undefined &&
-    !scriptBindingRewritten(checker, callee)
+    (callee.name === undefined || !preparedBindingRewritten(checker, callee.name))
     ? callee
     : undefined;
 }

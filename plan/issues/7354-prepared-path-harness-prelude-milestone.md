@@ -5829,10 +5829,10 @@ Still refused, and why each refusal is sound:
 
 - **One writes query** (`module-binding-script-var.ts`). The module doc states the invariant in one place: on this
   path every route to a script binding other than an identifier refuses or aborts at its own site.
-  - `scriptVarWrites` now also takes a function declaration. Its writes come from a shared cache,
-    `identifierWrites`.
-  - `scriptBindingRewritten` = any identifier write other than the declaration's own, by checker identity.
-    `with`/`eval` do not void the answer, because both refuse at their sites.
+  - `scriptVarWrites` and `preparedBindingRewritten` (named `scriptBindingRewritten` before review round 1) read one
+    cache, `identifierWrites`, keyed by the declaration's name.
+  - `preparedBindingRewritten` = any identifier write other than the declaration's own, by checker identity. It is
+    Prepared-only: `with`/`eval` do not void it, because both refuse at their sites there.
 - **Declaration values** (`function-declaration-values.ts`).
   - The read-site proof is gone.
   - A rewritten declaration's home is mutable and untagged.
@@ -5925,8 +5925,60 @@ function expression). All 96 refuse or abort on the head.
   - the call planner's `reassigned` set (`imported-functions.ts`, shared with the ordinary pipeline);
   - `identifierWrites`.
 
-  They agree on every write form this path lowers. Folding them is a follow-up, because it touches the ordinary
-  pipeline's call planning.
+  Until review round 1 they disagreed on shorthand targets (`({ f } = o)`): only `reassigned` resolved the value
+  symbol. Both resolve it now. Folding them is a follow-up, because it touches the ordinary pipeline's call planning.
 - `new f()` after a write was checked with the runner's options in probes. The H2 test uses plain constructors,
   because without `skipSemanticDiagnostics` TypeScript calls `function f(){ this.a = 1 }` a class and refuses `f = C`.
-- No adversarial review run yet. Node 25 is not installed.
+- Node 25 is not installed.
+
+### Review round 1 (PR 7408, NOT MET; fixed on the branch, `main` 88fd45a0c5 merged)
+
+1. **Exception out of `compile()`** (`with ({ a: 1 }) { f = 5; }`). from-ast threw a bare `Error` when a `with` target
+   lowered to no closed object; any top-level `with ({…})` reaches it on main too. It is now `refuseUnselected`:
+   on the Prepared path it is the named refusal `with target not closed`, on the ordinary pipeline it stays an
+   invariant.
+   - `with` is named in the invariant doc. The checker resolves no symbol inside a `with` body, so the query cannot
+     see a write there.
+   - New routes rows: `with ({})` and `with ({ a: 1 })`, at top level and in a function, for a declaration and for a
+     script var.
+   - Other bare `Error`s on the `with`/`eval`/`this` routes: none reachable in from-ast. Those in integration.ts
+     (`dyn.global_object`, `dyn.current_this`) are lane-capability invariants of the ordinary backend, and the 237
+     review probes reached none.
+2. **Shorthand targets.** `identifierWrites` resolves `({ f } = o)` and `({ f = 3 } = o)` through
+   `getShorthandAssignmentValueSymbol`.
+   - Pinned through Fa's contract: such a write declines the static closure. Both rows fail without the fix.
+   - `scriptVarWrites` shares the cache, so the ordinary pipeline's certifiers see these writes too. Ordinary bytes
+     are identical on 20 test262 files and 69 probes, six of them shorthand writes to script vars.
+3. **Parameter initializer** (§10.2.11): named in the invariant doc as a route that must keep refusing; routes rows
+   added. It refuses today (`rest/default/optional param not in Phase 1 IR scope`).
+4. **One module, two answers, both needed.**
+   - `scriptVarWrites` serves the ordinary pipeline's certifiers (string, vec, class-instance homes, via
+     `makeIrModuleBindingResolver` in codegen/index.ts and integration.ts). There a host `eval` runs, so its
+     `with`/`eval` decline is required.
+   - `preparedBindingRewritten` is called only by Prepared code (function-declaration-values, Fa,
+     source-dynamic-provenance), where the invariant holds.
+   - The module doc says this; the name now says it.
+5. **`dynamic-home-open-object.ts` `everyUseIsServed` is not folded.**
+   - Its only user is `select.ts`, the ordinary pipeline's selector, where `eval`, `with` and the global object are
+     lowered and live, so the site-refusal argument does not hold.
+   - It also answers a different question: whether `Object.prototype` stays the realm's (`sourceMayPatchPrototype`,
+     `sourceNamesReflectiveRoute`).
+   - A cleanup would have to move its write half (`bindingIsUniqueAndNeverWritten` + `sourceWritesMemberNamed`) onto
+     a checker-identity query that keeps the ordinary pipeline's dynamic-scope decline. That is a candidate for
+     `scriptVarWrites` plus a global-object member-write scan.
+6. **Nits.**
+   - The `?? true` is gone (the query is keyed by an identifier name).
+   - Renamed to `preparedBindingRewritten(checker, name)`; it serves nested function declarations too.
+   - The second-declaration count is not shared with imported-functions' `functions.length === 1`. That one lives
+     inside `targetForSymbol` beside overload-set admission (TypeScript overloads), which a JS function value has no
+     use for, and extracting it is not cheap.
+
+Proof (round 1):
+- Review probes `.tmp/adv/a1`–`a9` plus the round-1 programs (237), previous head vs this head:
+  - 13 exceptions → named refusals (every `with ({…})` program);
+  - 0 other changes;
+  - right 57 = 57, 0 wrong.
+- Tests: h2 routes 120/120, fa 42/42, f1b 6/6.
+- `check:prepared-bytes`: 804 rows identical. Ordinary bytes are identical, as in item 2.
+- Gates exit 0, against the merge base and against `LOC_GATE_BASE` = main 88fd45a0c5: LOC, func budget, coercion,
+  oracle, dead exports, import cycles, boundaries, typecheck. from-ast.ts shrinks by 2 more lines.

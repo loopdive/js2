@@ -9,7 +9,7 @@
  *
  * The script must be the program's only source, whose module-init runs before any code that could read the home (a
  * script that runs first would read the home before its value is stored). (#7354 H2) The binding is writable
- * (§9.1.1.4.18): where an identifier writes it (`scriptBindingRewritten`, which sees every write on this path), the
+ * (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this path), the
  * home is mutable and untagged, and a call of the name reads it: the call planner plans no direct call of a
  * reassigned declaration (`imported-functions.ts`).
  */
@@ -34,7 +34,7 @@ import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/star
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
-import { scriptBindingRewritten } from "./module-binding-script-var.js";
+import { preparedBindingRewritten } from "./module-binding-script-var.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
@@ -139,7 +139,7 @@ export function functionDeclarationValues(
     // A JS symbol also lists the member stores of its function (`f.x = 1`), which declare no binding.
     if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration).length > 1)
       refuse(name, "has a second declaration");
-    const rewritten = scriptBindingRewritten(checker, declaration);
+    const rewritten = preparedBindingRewritten(checker, declaration.name!);
     const { params, returnType } = signatures.get(unitId)!;
     if (params.some((type) => type.kind !== "dynamic")) refuse(name, "has a typed parameter");
     const start = declaration.getStart();

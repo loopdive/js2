@@ -293,6 +293,12 @@ describe("#7354 Fa — the closure contracts", () => {
     ["written in a function", ["var f = function (a) { return a; }; function w() { f = undefined; }"]],
     ["written at top level", ["var f = function (a) { return a; }; f = undefined;"]],
     ["declared in a block", ["{ var f = function (a) { return a; }; }"]],
+    // (#7354 H2) A shorthand target resolves to the property; the query reads its value symbol.
+    ["written by a shorthand destructuring", ["var f = function (a) { return a; }; function w(o) { ({ f } = o); }"]],
+    [
+      "written by a shorthand with a default",
+      ["var f = function (a) { return a; }; function w(o) { ({ f = 3 } = o); }"],
+    ],
     ["in a program of two scripts", ["var f = function (a) { return a; };", "var k = 1;"]],
     ["initialized with a literal without the contract", ["var f = function (a = 1) { return a; };"]],
   ])("refuses a static closure to a var %s", (_, sources) => {
