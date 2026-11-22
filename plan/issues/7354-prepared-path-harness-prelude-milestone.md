@@ -5054,6 +5054,61 @@ probe reaches one.
 The 41 rows now stop at `CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param
 functionLength of verifyCallableProperty` (W2).
 
+### W2 — a JSDoc tag is a comment (`a612dbe004`, after merging slice U `56d405c3ca`)
+
+**Cause.** The native lane's parameter contract (`sourceDynamicParameter`) types a parameter only by a syntactic
+annotation, so a `@param {number}` parameter is dynamic. Three readers took the tag as an annotation anyway:
+from-ast's `resolveIrType` (via `effectiveIr{Param,Return}TypeNode` → "type override (dynamic) disagrees with
+annotation (f64)"), provenance `bindingCarries` (a JSDoc parameter is checker `number`, so it "did not carry"), and
+the implicit-flow rule (the tag is the argument's or the return's contextual type).
+
+**Fix.** The rule is stated once, on `sourceDynamicParameter`; each reader consults the contract it produces.
+`annotationUnder` (`select-expression-structure.ts`, beside `effectiveIr*TypeNode`) lets a dynamic contract win over
+a JSDoc node for parameters and results; #7106's `jsDocExternref` special case is an instance of it and is removed.
+`sourceDynamicProvenance` takes the parameter contract as a callback. The flow rule's `storedIntoCarrier` became
+`landsInCarrier`: also the un-annotated initializer of a carrier binding, an argument for a dynamic-contract
+parameter, a value returned from a dynamic-result function. A syntactic annotation keeps its contract and its flow
+check (tested). `from-ast.ts` net +0 for W2.
+
+| Proof | Result |
+| --- | --- |
+| `tests/issue-7354-w2-jsdoc-is-a-comment.test.ts` (7: `@param` / `@returns` / `@type` local / `@type` script var, with string, undefined and object callers — node agreement + wrong twin; a TS annotation still types and still refuses a dynamic argument) | 7/7; the `@param` and `@returns` cases fail on W1 head |
+| W test file after the U merge | 6/6 |
+| 101 W1 probes, strict entry | unchanged vs W1 (0 exceptions, 0 wrong) |
+| Ordinary pipeline: 20 test262 files + 7 JSDoc programs (incl. #7106's bracketed / `{object}` / `{*}` params) + 101 probes, × default + standalone | byte-identical to W1 head |
+| 7106-s1d-jsdoc-logical, 7272 isWritable, 7135, 7354 d1 / h / t / u-abort / u-prelude / m-refusals / f2 / c2-this / str2c | all pass |
+| typecheck, LOC + func budget (merge base and `LOC_GATE_BASE` = main `2b9f6f6e48`), coercion sites, oracle ratchet, dead exports, boundaries inventory, `check:prepared-bytes` | pass |
+
+**Tally.** All 41 rows now stop at `CE ir/from-ast: identifier "Array" is not in scope in <module-init>`; the other 6
+`propertyHelper` rows still stop at `function declaration 'formatIdentityFreeValue' read as a value is written`
+(approximate driver: `assert.js` + `sta.js` + includes + body through the strict entry, standalone, with the runner's
+`skipSemanticDiagnostics` / `deferTopLevelInit`; not the runner itself).
+
+**Found, not fixed.**
+- Ordinary pipeline, wrong value: `/** @param {number} x */ export function h(x) { return x + 1; }` compiled with
+  `compile(src, { fileName: "test.js", allowJs: true })` (default target): `h("a")` called from JS returns `NaN`
+  (a number); node returns `"a1"`. With `skipSemanticDiagnostics: true` (the test262 runner's setting) an internal
+  `f("a")` of the same function also returns `NaN`, and `typeof f("a")` is `"number"`. Standalone: not verified (my
+  harness could not instantiate the standalone binary).
+- Prepared: a `@type {number}` script var whose every store is typed still gets the f64 home from the tag, so
+  `/** @type {number} */ var t = "s";` (semantic diagnostics off) is refused by name
+  (`module binding 't' initializer is string but its global is f64`). A dynamic store moves it to the dynamic home
+  and gives node's value (tested).
+
+**Fatal invariants.** Unchanged by design (`runIrProgramDriver` rethrows). I know of no invariant site the Prepared
+lane still reaches by construction; the remaining #5092 sites fire only under the env-gated tamper seams.
+
+**W3 candidate (measured, not started).** `propertyHelper.js`'s module-init reads, in order: L27 `Array.isArray`;
+L28 `Object.defineProperty`; L29 `Object.getOwnPropertyDescriptor`; L30 `Object.getOwnPropertyNames`;
+L31 `Function.prototype.call.bind(Array.prototype.join)`; L32 `…bind(Array.prototype.push)`;
+L33 `…bind(Object.prototype.hasOwnProperty)`; L34 `…bind(Object.prototype.propertyIsEnumerable)`;
+L35 `Math.pow(2, 32) - 1`. Globals: `Array`, `Object`, `Function`, `Math`. Members: `Array.isArray`,
+`Array.prototype.{join,push}`, `Object.{defineProperty,getOwnPropertyDescriptor,getOwnPropertyNames}`,
+`Object.prototype.{hasOwnProperty,propertyIsEnumerable}`, `Function.prototype.call.bind`, `Math.pow`.
+
+**Not verified.** Node 25 (CI's version) is not installed here; everything ran on local Node 22 under tsx. The 41-row
+tally is from my driver, not the test262 runner.
+
 ## Slice U result (2026-11-22, branch `claude/7354-u` from `claude/7354-c2` 8bbebca651; C2 7debc3daf0, Perf5 204d6f575e, Perf6 4521fc831f merged)
 
 Abort bodies: a function whose body the path cannot lower gets the run-time abort as its body instead of refusing the
