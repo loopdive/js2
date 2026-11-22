@@ -188,8 +188,10 @@ export function functionObjectDynamicValue(
 /**
  * A concrete value for a dynamic parameter, return or argument crosses the same explicit carrier boundary as a
  * concrete equality operand (#2949 S5.P): the canonical tag-aware boxer, and (#7320) a closure boxes as a function
- * value (`functionObjectDynamicValue`). A value with no box (an ambiguous ref or i32) is returned as it is, so the
- * caller's assignability check refuses it.
+ * value (`functionObjectDynamicValue`). (#7354 O1c) Where closures are function objects, a raw externref (a #7128
+ * open-carrier local) boxes as it is: the legalization proves its kind from its definition (`carrierKindOf`) and
+ * refuses one it cannot. A value with no box (an ambiguous ref or i32) is returned as it is, so the caller's
+ * assignability check refuses it.
  */
 export function concreteIntoDynamic(
   value: IrValueId,
@@ -199,7 +201,11 @@ export function concreteIntoDynamic(
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return value;
   const boxed =
-    type.kind === "closure" ? functionObjectDynamicValue(value, source, cx) : cx.boxConcrete(value, type, source);
+    type.kind === "closure"
+      ? functionObjectDynamicValue(value, source, cx)
+      : asVal(type)?.kind === "externref" && createsFunctionObjects(cx)
+        ? cx.builder.emitBox(value, irDynamic())
+        : cx.boxConcrete(value, type, source);
   return boxed ?? value;
 }
 

@@ -5,7 +5,7 @@
 // test262 runner's options. Each accepted program runs twice against node: its answer returns, a wrong one throws. A
 // TypeError the specification demands is caught by the program itself, so it is part of node's answer.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agreesWithNode, nodeOut, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, agreesWithNode, nodeOut, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";
 import { CATCHES, FIELDS } from "./helpers/object-static-probes.js";
 
@@ -167,6 +167,41 @@ describe("#7354 O1 — a shadowed or assigned Object never takes the native stat
       agrees(
         "function f(Object){ var o = {}; Object.defineProperty(o, 'p', {value: 1}); return String(o.p); }" +
           " var out = f({defineProperty: function(){}});",
+      ),
+    SLOW,
+  );
+});
+
+/** The four statics on `o`, and a dynamic reader of what they did (a parameter of a top-level function). */
+const STATICS = `Object.defineProperty(o, "a", { value: 1, enumerable: true });
+  Object.defineProperties(o, { b: { value: 2, writable: true } });
+  var d = Object.getOwnPropertyDescriptor(o, "a");
+  var c = Object.create(o, { z: { value: 3 } });`;
+const SHOW = `function show(o, d, c){ return "" + o.a + o.b + d.value + d.enumerable + d.writable + c.a + c.z; }\n`;
+const RESULT = "return show(o, d, c);";
+
+describe("#7354 O1c — the statics inside a function body", () => {
+  it.each([
+    ["a function-local object", `function f(){ var o = {}; ${STATICS} ${RESULT} } var out = f();`],
+    ["a parameter", `function f(o){ ${STATICS} ${RESULT} } var out = f({});`],
+    [
+      "an object a call returns",
+      `function mk(){ return {}; } function f(){ var o = mk(); ${STATICS} ${RESULT} } var out = f();`,
+    ],
+    [
+      "a function-local object a call returns",
+      `function mk(){ var o = {}; return o; } function f(){ var o = mk(); ${STATICS} ${RESULT} } var out = f();`,
+    ],
+    ["a constructor", `function C(){ var o = {}; ${STATICS} this.r = show(o, d, c); } var out = new C().r;`],
+  ])("%s agrees with node", (_name, body) => agrees(SHOW + body), SLOW);
+  // A closure reads the captured object from its capture, whose kind the legalization cannot prove: the closure's
+  // body is the run-time abort, never a wrong value.
+  it(
+    "a nested closure over a function-local object aborts",
+    () =>
+      abortsAtRunTime(
+        SHOW + `function f(){ var o = {}; var g = function(){ ${STATICS} ${RESULT} }; return g(); } var out = f();`,
+        runnerOptions(),
       ),
     SLOW,
   );
