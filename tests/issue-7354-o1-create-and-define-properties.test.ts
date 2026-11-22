@@ -19,8 +19,16 @@ describe("#7354 O1 — Object.defineProperties and Object.create", () => {
       `${CATCHES} ${FIELDS} var o = {}; Object.defineProperties(o, {a: {value: 1}, b: {value: 2, enumerable: true}});` +
         " var out = fields(Object.getOwnPropertyDescriptor(o, 'a')) + '|' + fields(Object.getOwnPropertyDescriptor(o, 'b'));" +
         " var p = {}; out = out + t(function(){ Object.defineProperties(p, {a: {value: 1}, b: 1}); }) + String(p.a);" +
+        // A getter that is no function, and accessor beside data fields, in the second descriptor: the first defines
+        // nothing either (ToPropertyDescriptor's TypeErrors come before any define).
+        " out = out + t(function(){ Object.defineProperties(p, {c: {value: 1}, d: {get: 1}}); }) + String(p.c);" +
+        " out = out + t(function(){ Object.defineProperties(p, {e: {value: 1}, f: {value: 1, set: function(v){}}}); }) + String(p.e);" +
         " out = out + t(function(){ Object.defineProperties(p, undefined); }) + t(function(){ Object.defineProperties(1, {}); });" +
         " out = out + (Object.defineProperties(p, 5) === p ? 'y' : 'n');",
+    ],
+    [
+      "(13) a program whose only object comes from Object.create(null)",
+      "var n = Object.create(null); n.v = 3; var out = String(n.v);",
     ],
     [
       "(12) only own enumerable properties of the map count; the map may be a function",

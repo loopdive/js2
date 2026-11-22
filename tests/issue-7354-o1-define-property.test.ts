@@ -46,7 +46,10 @@ describe("#7354 O1 — Object.defineProperty", () => {
       `${CATCHES} var n = 0; function d(){ n = n + 1; return {value: 1}; }` +
         " var out = t(function(){ Object.defineProperty(1, 'p', d()); }) + t(function(){ Object.defineProperty(undefined, 'p', d()); })" +
         " + t(function(){ Object.defineProperty('s', 'p', d()); }) + t(function(){ Object.defineProperty(null, 'p', d()); })" +
-        " + t(function(){ Object.defineProperty(true, 'p', d()); }) + String(n);",
+        " + t(function(){ Object.defineProperty(true, 'p', d()); }) + String(n);" +
+        // The target's TypeError comes before ToPropertyKey: the key's toString is not called.
+        " var m = 0; var k = {toString: function(){ m = m + 1; return 'p'; }};" +
+        " out = out + t(function(){ Object.defineProperty(1, k, {}); }) + String(m);",
     ],
     [
       "(6) a descriptor that is no literal: written to after creation, and filled in by a function",
