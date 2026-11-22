@@ -5933,3 +5933,118 @@ regression probes give the same transitions as before r1 (nothing right became a
 `assert(true);` sha256 e23f5dca… equals the O1 head it now sits on (8085f52549); gates exit 0 (LOC/func also against
 main 42f2df53e2). Sample not re-measured: r1 changes only calls whose receiver is not the [[Get]]'s (detached calls),
 and none of the 12 new passes has one (each was read); `check:prepared-bytes` not re-run.
+
+## Slice G1 plan (2026-11-22, branch `claude/7354-g1` from `claude/7354-p1` eb98b057ec)
+
+`Error`, the six NativeErrors and `Error.prototype.toString` as realm values on the Prepared path.
+
+### What exists (read, plus probes on the base)
+
+- Base probes (runner options, strict entry): `typeof TypeError` → `identifier "TypeError" is not in scope`;
+  `new TypeError('m')` and `throw new TypeError('m')` → `unknown class "TypeError"`; `typeof undeclaredX` →
+  "undefined" (node's answer); a read of `undeclaredX` → the not-in-scope refusal.
+- Catalog: Object/Function rows only. Kernel entries: two bootstrap functions plus P1's methods, each a closure-root
+  carrier with a bag (`createNull`, a null-proto `$Object`) and a separate `prototype` field; the realm's [[Get]] on a
+  function already walks that field (`buildBuiltinFunctionLookup` / `ParentStep`), so a function whose [[Prototype]] is
+  another entry is read correctly. Entry algorithms: undefined / ThrowTypeError / `unreachable`.
+- Every realm TypeError (kernel, descriptor defines, the dispatcher's "Value is not callable", the legalization's
+  `js.object.create-type-error`, promise resolution) is ONE function, `__new_TypeError` (`native-errors.ts`), which
+  builds `$Error_struct` (tag −11, message, name, stack, brand). That struct type is `createErrorStructType`, shared
+  with the legacy codegen (`registry/types.ts`), so it cannot change without moving ordinary-pipeline bytes.
+- The `error` kind exists only where the program reads a catch binding (`readsCatchPayload`), answered by
+  `js.object.is-error` (`ref.test $Error_struct`), `js.object.error-field` (name/message), and a row in every kind
+  table (`TO_STRING_ARM` "error", `ADD_ROLE`, `TO_NUMBER_ARM` "nan", `MEMBER_ACCESS_ARM` "error", `ERROR_OWN_KEYS`,
+  `ERROR_PROTOTYPE_KEYS`, aborts in the statics and P1's own-property arm, refused writes).
+- Realm literals (`native-realm-literals.ts`) are taken from the WHOLE catalog: adding rows naively adds strings to
+  every realm program. They must come from the families the realm holds.
+
+### Design
+
+1. **An error is an ordinary realm object** (`$Object`): [[Prototype]] `%XError.prototype%`, an own non-enumerable
+   `message` only when one was given, and an `[[ErrorData]]` bit in `$Object.flags` (0x800 is free in both the realm's
+   and the legacy encodings). Every realm operation (get, set, has, has-own, inherits, define, create-with-prototype)
+   is already total over `$Object`; a bag on `$Error_struct` would be a second object layout every one of them must
+   branch on, and would change the legacy struct. The bit is what `Object.prototype.toString` reads (`[object
+   Error]`); prototypes do not carry it (ES2015+).
+2. **When.** The realm holds the error family, and builds its own TypeErrors as such objects, iff the program can
+   observe an error: it reads a pristine error global (a `js.object.intrinsic` use naming a family id) or binds a catch
+   payload (an IR `try` with `payloadSlot >= 0`; a rethrow-only catch is included, harmlessly). Otherwise
+   `__new_TypeError` keeps the struct: no code of such a program reads a thrown value, and the Prepared artifact
+   exports no tag, so the payload is unobservable. Granularity: Error + TypeError + `Error.prototype.toString` for a
+   catching program; each other NativeError (with Error) when named. Literals per held family.
+3. **One getter** `js.object.intrinsic(selector) -> externref` replaces P1's `js.object.prototype-method`: the selector
+   indexes one catalog list of realm function values (the three Object.prototype methods, the seven constructors,
+   `Error.prototype.toString`). Same `js.object` family on purpose: a `js.realm.*` family needs its own manifest
+   feature/provider lists for one row. The realm populates from the constant selectors it is called with.
+4. **Kernel.** New entry behaviors `error-constructor` (constructible; own `prototype` {!w,!e,!c} → its prototype
+   object; [[Prototype]] `%Function.prototype%` for Error, `%Error%` for a NativeError; algorithm `unreachable`, so the
+   value form aborts as in P1) and the toString method entry. The initializer creates each held prototype
+   (`%Error.prototype%` → Object.prototype; a NativeError's → `%Error.prototype%`) with `constructor`, `name`,
+   `message` "" and (Error only) `toString`. One kernel function `createError(selector, message)` (create + bit +
+   `message` defined only if not undefined) serves the contract `js.object.create-error` and, in the error-objects
+   mode, is what `__new_TypeError` calls: one creation path for realm and program errors.
+5. **Construction at the site** (`src/ir/program/dynamic-error-constructors.ts`, sibling of
+   `dynamic-prototype-methods.ts`): `X(m)` / `new X(m)` lower as F2's call / C2's `dyn.construct` through the
+   identifier's value; the legalization recognises a call or construct whose callee is defined by
+   `js.object.intrinsic(<ctor>)` (the identifier read proved the pristine global) and expands §20.5.1.1: arguments
+   already evaluated left to right (front end); `undefined` → `create-error(sel, undefined)`; else `stringOf` once (a
+   message object's `toString` runs once, a throw is catchable), then `create-error(sel, s)`. Creating the object
+   before ToString is unobservable. Any other callee (`var E = TypeError; new E()` through a script var) is the
+   dispatcher's built-in abort.
+6. **`Error.prototype.toString`** (§20.5.3.4) is one realm contract `js.object.error-to-string(o)`: name (undefined →
+   "Error"), message (undefined → ""), the empty-string rules; a name/message that is neither a string nor undefined
+   is the realm's abort (a program wrote a non-string; never a wrong text). Called where the IR proves the method is
+   the intrinsic: (a) OrdinaryToPrimitive's `toString` step — `method === intrinsic(toString)` ? contract :
+   dispatcher (so an override `Error.prototype.toString = …` and `TypeError.prototype.name = "X"` are seen); (b) the
+   method call `e.toString()`, a fourth row of P1's call expansion. When P2 lets the dispatcher call built-ins, the
+   same function becomes the entry's `(this, vector)` algorithm and both identity rows go.
+7. **IR kinds.** The `error` kind is deleted from every table; a caught value is the object kind (admitted where the
+   program builds objects or reads a catch binding); `carrierKindOf` answers object for `create-error`. ToString /
+   ToNumber / `+` of an error take the object's ToPrimitive. `dyn.object_tag`'s object arm tests `is-error` (now the
+   bit) where the family is held. P1's error abort arms, the statics' error abort, the refused error writes and
+   `ERROR_OWN_KEYS` / `ERROR_PROTOTYPE_KEYS` / `js.object.error-field` go.
+8. **Identifier read.** `identifier-read.ts` gains `realm-intrinsic` (pristine global, catalog marks the constructor
+   native, function-object lane), lowered to the getter; `typeof TypeError` folds through the function kind. `new X`'s
+   dynamic-callee gate and the flow rule (arguments as carriers) accept it. `source-plain-objects` counts such a read
+   as creating a function value and objects.
+9. **Premise change, `instanceof` / `isPrototypeOf`.** With `%Error%` a value, a NativeError constructor's chain holds
+   an obtainable object, so "a function's chain holds no program value" (C2, P1) is false there. Where the family is
+   held: a function-kind left operand / argument answers `false` unless the prototype / receiver is `%Error%`, which is
+   the run-time abort (only `F.prototype = Error` or `Error.isPrototypeOf(TypeError)` reach it). The exact answer (the
+   kernel's heterogeneous `ParentStep` inside `inherits`) is left to the slice that needs it.
+
+### Stays refused / aborts (each sound)
+
+- A second argument (`cause`, ES2022 options) refuses by name: InstallErrorCause would read a property of it.
+- The value form (`E(m)`, `new E()` through a variable, `.call` / `.apply`): dispatcher abort, as P1.
+- Shadowed or assigned names (`function TypeError(){}`, `TypeError = …`, `globalThis.TypeError = …`): not pristine,
+  existing rules (refusal by name).
+- V8-only keys: in a program holding the family, a constant-key read of `stack`, `captureStackTrace`,
+  `stackTraceLimit`, `prepareStackTrace` refuses by name (specification: absent; V8: present).
+- **Not in G1: ReferenceError at GetValue.** An "unresolved" identifier on this path is often a lib global the path
+  does not implement (`Array`, `Math`), and the lib is not the exact list of globals (`Iterator` missing, DOM names
+  present): a ReferenceError there would be a wrong answer. Sound only with a list of standard globals; own slice.
+- Runtime negatives (`negative: phase: runtime`) stay unread on this lane (no exported tag; PR 7401's renderer).
+
+### Placement, removals, size
+
+- Catalog rows + one native list (`native-realm-catalog.ts`); kernel behaviors and prototype seeding in a new
+  `error-intrinsic-bodies.ts` beside `builtin-function-bodies.ts`; contracts in `native-source-objects.ts` (+3, −2);
+  requirements (`native-realm-requirements.ts`: families, payload binding); literals per held family.
+- IR: `dynamic-error-constructors.ts` (new); `dynamic-prototype-methods.ts` generalised to the realm's methods (one
+  more row); kinds / chains / member access lose the error kind (net negative); identifier-read +1 arm.
+- from-ast: +3 lines (one `case`, the `new` gate), offset by moving code out; ends ≤ base.
+- Estimate: src +600 / −250, tests ~700.
+
+### Test plan (node agreement + wrong twin each; A = abort, R = refusal)
+
+The brief's hazards, one test each: `e.constructor === TypeError` for realm-thrown (`o.x` on a null parameter) and
+program-made errors; `instanceof Error` across the family, `instanceof RangeError` false for a TypeError;
+`hasOwnProperty('message')` for none / `undefined` / `""`; a counting and a throwing message `toString`;
+`TypeError.prototype.name = "X"` then `String(e)`; an `Error.prototype.toString` override used by `"" + e`; `typeof`,
+`.length`, `.name`, `X.prototype.constructor`, `isPrototypeOf` between prototypes; `typeof undeclared`;
+`f(a(), undeclared)` (stays the refusal: pinned as such); `throw new TypeError("m")` caught and inspected;
+`Object.prototype.toString.call(e)`; `assert.throws(TypeError, …)` through the real harness, passing and failing
+(wrong constructor). R: `cause`, shadowed / assigned names, `e.stack`. A: value form,
+`F.prototype = Error; TypeError instanceof F`. Pins that move: M2 rows of m-refusals, x-dynamic-throw, o3, P1's error
+receiver, C2's caught-error rows.
