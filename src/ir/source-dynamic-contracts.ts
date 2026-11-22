@@ -239,7 +239,8 @@ export function nativeDynamicLane(policy: SourcePolicy): boolean {
   return dynamicLane(policy, undefined) === "native";
 }
 
-type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) => {
+/** {@link ProgramDynamicContracts.codeStrictness}. */
+export type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) => {
   readonly functionCodeStrict?: boolean;
   readonly ambientThisStrict?: boolean;
 };
@@ -287,7 +288,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
      */
     readonly closuresBindReceivers?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
-    readonly closureCodeStrictness?: (expression: ts.FunctionLikeDeclaration) => ReturnType<CodeStrictness>;
+    readonly closureCodeStrictness?: CodeStrictness;
   };
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is

@@ -72,7 +72,7 @@ export interface ExactClosureLoweringOptions {
   /** (#7354 C2) The closure's code strictness: a dynamic PutValue's failure rule. Absent → unknown. */
   readonly functionCodeStrict?: boolean;
   /** (#7106 Stage 4, #7354 C2) The closure reads its own `this`, bound at entry with this strictness. */
-  readonly thisStrict?: boolean;
+  readonly ambientThisStrict?: boolean;
 }
 
 type PromiseDelayBuilder = Pick<IrFunctionBuilder, "emitCall" | "emitCallablePack" | "typeOf">;

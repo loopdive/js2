@@ -46,3 +46,8 @@ export function typeError(b: TypeErrorBuilders, message: string): IrInstr[] {
     { kind: "throw", value: error, result: null, resultType: null },
   ];
 }
+
+/** {@link typeError}, then `answer`: the value of an arm that ends in the throw, which no code reads. */
+export function typeErrorThen(b: TypeErrorBuilders, message: string, answer: IrInstr): IrInstr[] {
+  return [...typeError(b, message), answer];
+}

@@ -114,25 +114,6 @@ export const IS_OBJECT: Readonly<Record<CarrierKind, boolean>> = {
 };
 
 /**
- * (#7354 C2) Whether each kind's values are ordinary objects of the realm's layout, whose [[Prototype]] links are
- * ordinary objects too (`create-default`, `create-with-prototype`) up to the realm's Object.prototype. Only such an
- * object can be [[Construct]]'s link to a constructor's `prototype` (another object, a function or an error, is the
- * run-time abort; a non-object is not linked, `IS_OBJECT`), and only its chain is walked by `instanceof`: a function's
- * or an error's chain holds built-in prototypes alone, which no Prepared program obtains (M1, C1;
- * tests/issue-7354-m-prototype-premise.test.ts), so no constructor's `prototype` is on it.
- */
-export const ORDINARY_CHAIN: Readonly<Record<CarrierKind, boolean>> = {
-  number: false,
-  boolean: false,
-  string: false,
-  undefined: false,
-  null: false,
-  error: false,
-  function: false,
-  object: true,
-};
-
-/**
  * How ToNumber (§7.1.4) answers each kind: the primitive unboxer (a number its payload, a Boolean 0/1, `undefined`
  * NaN, `null` 0), (O2b) an object's ToPrimitive, a string that reads as NaN, or (M2) NaN for an error, whose
  * ToPrimitive is "TypeError: …" and cannot throw. (F1b) A function's is its ToPrimitive too: an own `valueOf` or
@@ -184,6 +165,14 @@ export const MEMBER_ACCESS_ARM: Readonly<
   function: "function",
   object: "object",
 };
+
+/**
+ * (#7354 C2) Whether a kind's values are ordinary objects of the realm's layout: the kind whose member access is the
+ * realm's ordinary [[Get]] / [[Set]] (`MEMBER_ACCESS_ARM` "object"). Their [[Prototype]] links are ordinary objects too
+ * (`create-default`, `create-with-prototype`) up to the realm's Object.prototype, so only such an object can be linked
+ * as [[Construct]]'s prototype, and only its chain is walked by `instanceof`.
+ */
+export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] === "object";
 
 /**
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one

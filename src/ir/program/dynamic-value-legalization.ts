@@ -40,6 +40,7 @@ import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynam
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
+  IS_OBJECT,
   KINDS_OF_TYPEOF,
   OBJECT_TAG,
   TYPEOF_NAME,
@@ -98,7 +99,7 @@ export function legalizeDynamicValues(
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
-  const functionOperations = { ...builders, program };
+  const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.

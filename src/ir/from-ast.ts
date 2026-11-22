@@ -97,6 +97,7 @@ import {
 } from "./analysis/operand-admissibility.js"; // (#7144)
 import { producesCarrier } from "./analysis/carrier-expression.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
+import type { CodeStrictness } from "./source-dynamic-contracts.js";
 import {
   fixedClosureParameters,
   lowerSourceClosureInvocation,
@@ -998,10 +999,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
-  closureCodeStrictness?(expression: ts.FunctionLikeDeclaration): {
-    readonly functionCodeStrict?: boolean;
-    readonly ambientThisStrict?: boolean;
-  };
+  readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
   /**
@@ -16397,15 +16395,14 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       demoteToLegacy("body-shape-rejected", "function-member closure source proof is stale");
     return lowerClosureExpressionWithSignature(expr, memberPlan.signature, new Set(), cx, {
       functionMemberClosure: memberPlan,
-      thisStrict: memberPlan.thisStrict,
+      ambientThisStrict: memberPlan.thisStrict,
     });
   }
   const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
   if (dynamicSignature)
     return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, {
       writtenParameterSlots: true,
-      functionCodeStrict: cx.resolver?.closureCodeStrictness?.(expr).functionCodeStrict,
-      thisStrict: cx.resolver?.closureCodeStrictness?.(expr).ambientThisStrict,
+      ...cx.resolver?.closureCodeStrictness?.(expr),
     });
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
@@ -16853,7 +16850,7 @@ function liftClosureBody(
     functionMemberClosure,
     writtenParameterSlots,
     functionCodeStrict,
-    thisStrict,
+    ambientThisStrict: thisStrict,
   }: ExactClosureLoweringOptions = {},
 ): IrFunction {
   const body = expr.body;
