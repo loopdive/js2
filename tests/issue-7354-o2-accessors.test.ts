@@ -55,6 +55,11 @@ describe("#7354 O2 — the getter's receiver", () => {
       "var o = {n: 3, get m(){ return function(){ return this === o; }; }}; var out = String(o.m()) + String(o.n);",
     ],
     [
+      "a getter that defines an Object.prototype method's name: the call runs what it returns, `this` the object",
+      "var o = {}; Object.defineProperty(o, 'hasOwnProperty', {get: function(){ return function(k){ return String(this === o) + k; }; }});" +
+        " var out = o.hasOwnProperty('x');",
+    ],
+    [
       "a descriptor's getter, called through a value, gets that call's receiver",
       "var o = {get x(){ return this === o ? 'o' : 'other'; }}; var g = Object.getOwnPropertyDescriptor(o, 'x').get;" +
         " var q = {g: g}; var out = q.g();",
