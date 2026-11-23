@@ -102,20 +102,26 @@ export function buildSourceObjectInheritsDefinition(d: {
  * Object.prototype.
  */
 export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
+  const operands: Instr[] = [0, 1, 2].map((index) => ({ op: "local.get", index }));
   return {
     locals: [{ name: "value", type: { kind: "externref" } }],
-    body: [
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "call", funcIdx: d.get },
-      { op: "local.set", index: 3 },
-      { op: "i32.const", value: 2 },
-      { op: "i32.gt_u" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-      { op: "local.get", index: 3 },
-    ],
+    body: [...kernelGetInto(d.get, operands, 3), { op: "local.get", index: 3 }],
   };
+}
+
+/**
+ * The kernel's [[Get]] over `operands` (object, key, receiver) into the local `value`, by the get adapter's rule: a
+ * status up to 2 answers the value, any other traps. (#7354 G1) Also Error.prototype.toString's reads.
+ */
+export function kernelGetInto(get: FuncHandle, operands: readonly Instr[], value: number): Instr[] {
+  return [
+    ...operands,
+    { op: "call", funcIdx: get },
+    { op: "local.set", index: value },
+    { op: "i32.const", value: 2 },
+    { op: "i32.gt_u" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+  ];
 }
 
 /** A data property's whole descriptor, every attribute present and true, with its value: CreateDataProperty's. */

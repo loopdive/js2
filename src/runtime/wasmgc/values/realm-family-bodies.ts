@@ -11,6 +11,7 @@
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { kernelGetInto } from "./source-object-bodies.js";
 
 /** A family property: a string, or a realm entry or object by catalog id. */
 export interface RealmFamilyProperty {
@@ -231,15 +232,7 @@ export function buildErrorToStringDefinition(d: ErrorToStringOperands): { locals
     },
   ];
   const part = (key: string, local: number, absent: string): Instr[] => [
-    { op: "local.get", index: 0 },
-    ...d.text(key),
-    { op: "local.get", index: 0 },
-    { op: "call", funcIdx: d.get },
-    { op: "local.set", index: local },
-    // Status 3 (no ordinary carrier) cannot be met: the caller passes an object of this realm.
-    { op: "i32.const", value: 2 },
-    { op: "i32.gt_u" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+    ...kernelGetInto(d.get, [{ op: "local.get", index: 0 }, ...d.text(key), { op: "local.get", index: 0 }], local),
     ...isUndefined(local),
     {
       op: "if",
