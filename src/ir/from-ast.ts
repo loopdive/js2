@@ -12837,10 +12837,8 @@ function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
   }
   const receiver = lowerObjectLiteral(stmt.expression, cx);
   const receiverType = cx.builder.typeOf(receiver);
-  if (receiverType.kind !== "object") {
-    // invariant (producer-promise): the lowering just invoked promised this shape — #4502.
-    throw new Error(`ir/from-ast: with target did not lower to an object (${cx.funcName})`);
-  }
+  if (receiverType.kind !== "object")
+    refuseUnselected(cx.unselected, "body-shape-rejected", `ir/from-ast: with target not closed (${cx.funcName})`);
 
   const bodyCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
   for (const field of receiverType.shape.fields) {
@@ -13196,11 +13194,10 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
   cx.builder.emitEarlyReturn(coerceReturnValue(v, cx, stmt.expression));
 }
 
-/** (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value. */
+/** (#7106) A dynamic module slot (`var o; o = 4`) takes the boxed value; (#7354 H2) a closure its function value. */
 function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Expression, cx: LowerCtx): IrValueId {
-  const type = cx.builder.typeOf(value);
-  if (target.kind !== "dynamic" || type.kind === "dynamic") return value;
-  return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
+  if (target.kind !== "dynamic") return value;
+  return functionObjects.storedCarrierValue(value, rhs, functionObjectLoweringHost(cx));
 }
 
 /**

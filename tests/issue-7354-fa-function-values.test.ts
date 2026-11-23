@@ -126,11 +126,7 @@ describe("#7354 Fa — function values on the Prepared path", () => {
   it.each([
     // (#7354 F2) A call from another function, before the declaration, or with another arity is the dispatcher's
     // (tests/issue-7354-f2-calls-through-values).
-    [
-      "a second store into the binding",
-      "var f = function (a) { return a; }; f = function (a) { return 2; }; f(1);",
-      'assignment to module binding "f" (dynamic) got closure(dynamic)->dynamic',
-    ],
+    // (#7354 H2) A second store into the binding is a store into its home: tests/issue-7354-h2-*.test.ts.
     // Function objects: `arguments` and properties (slice C). (#7354 C2) `this` binds: tests/issue-7354-c2-this.test.ts.
     [
       "`arguments` in the body",
@@ -196,13 +192,7 @@ describe("#7354 Fa — function values on the Prepared path", () => {
     ],
     // (#7354 F1) `+=` on a parameter, `+`, `String(f)` and `typeof` of a function value:
     // tests/issue-7354-f1-*.test.ts.
-    // (#7354 F1b) A declaration read as a value whose binding something else writes (the value itself runs:
-    // tests/issue-7354-f1b-*.test.ts).
-    [
-      "a function declaration read as a value and written",
-      "function id(v) { return v; } var g = id; id = 1;",
-      "function declaration 'id' read as a value is written",
-    ],
+    // (#7354 H2) A declaration read as a value and written has a mutable home: tests/issue-7354-h2-*.test.ts.
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
   });
@@ -313,23 +303,32 @@ describe("#7354 Fa — the closure contracts", () => {
     ["written in a function", ["var f = function (a) { return a; }; function w() { f = undefined; }"]],
     ["written at top level", ["var f = function (a) { return a; }; f = undefined;"]],
     ["declared in a block", ["{ var f = function (a) { return a; }; }"]],
-    ["in a source that lets the global object escape", ["var f = function (a) { return a; }; var g = globalThis;"]],
-    ["in a source that runs dynamic code", ['var f = function (a) { return a; }; eval("");']],
-    // A script var is a property of the global object: a member write of its name rewrites it.
-    ["rewritten through `this`", ["var f = function (a) { return 1; }; this.f = function (a) { return 2; };"]],
-    ["rewritten through `this` in a function", ["var f = function (a) { return 1; }; function w() { this.f = 0; }"]],
-    ["rewritten through `globalThis.f`", ["var f = function (a) { return 1; }; globalThis.f = 0;"]],
-    ['rewritten through `globalThis["f"]`', ['var f = function (a) { return 1; }; globalThis["f"] = 0;']],
-    // Annex B: in sloppy code a block-level function declaration also assigns the `var` of its name.
-    ["redeclared by a block-level function", ["var f = function (a) { return 1; }; { function f(a) { return 2; } }"]],
-    ["redeclared by a function in an `if`", ["var f = function (a) { return 1; }; if (1) { function f(a) {} }"]],
-    ["in a source that reaches `Function` by `constructor`", ['var f = function (a) {}; f.constructor("f = 0")();']],
-    // The proof is name-based: another binding of the name declines, whichever scope it is in.
-    ["sharing its name with another binding", ["var f = function (a) { return a; }; function w(f) { return f; }"]],
+    // (#7354 H2) A shorthand target resolves to the property; the query reads its value symbol.
+    ["written by a shorthand destructuring", ["var f = function (a) { return a; }; function w(o) { ({ f } = o); }"]],
+    [
+      "written by a shorthand with a default",
+      ["var f = function (a) { return a; }; function w(o) { ({ f = 3 } = o); }"],
+    ],
     ["in a program of two scripts", ["var f = function (a) { return a; };", "var k = 1;"]],
     ["initialized with a literal without the contract", ["var f = function (a = 1) { return a; };"]],
   ])("refuses a static closure to a var %s", (_, sources) => {
     const { resolver, f } = contractsOf(sources);
     expect(resolver.staticFunctionValue!(f)).toBe(false);
+  });
+
+  // (#7354 H2) Only identifier writes, by checker identity, decline: every other route to the binding refuses or aborts
+  // at its own site (tests/issue-7354-h2-script-binding-routes.test.ts), so the program never runs past it.
+  it.each([
+    ["in a source that lets the global object escape", "var f = function (a) { return a; }; var g = globalThis;"],
+    ["in a source that runs dynamic code", 'var f = function (a) { return a; }; eval("");'],
+    ["rewritten through `this`", "var f = function (a) { return 1; }; this.f = function (a) { return 2; };"],
+    ["rewritten through `this` in a function", "var f = function (a) { return 1; }; function w() { this.f = 0; }"],
+    ["rewritten through `globalThis.f`", "var f = function (a) { return 1; }; globalThis.f = 0;"],
+    ["redeclared by a block-level function", "var f = function (a) { return 1; }; { function f(a) { return 2; } }"],
+    ["in a source that reaches `Function` by `constructor`", 'var f = function (a) {}; f.constructor("f = 0")();'],
+    ["sharing its name with a parameter", "var f = function (a) { return a; }; function w(f) { f = 1; return f; }"],
+  ])("knows a var holds its closure %s", (_, source) => {
+    const { resolver, f } = contractsOf([source]);
+    expect(resolver.staticFunctionValue!(f)).toBe(true);
   });
 });

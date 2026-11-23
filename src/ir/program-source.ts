@@ -1641,6 +1641,7 @@ export function prepareIrProgramSources(
     );
     prepareSourceGlobals(sourceFiles, identity, moduleResolver, globalById, globalByDeclaration, diagnostic);
     const functionValues = functionDeclarationValues(
+      input.checker,
       dynamicContracts.functionDeclarationValues,
       startup,
       identity,
