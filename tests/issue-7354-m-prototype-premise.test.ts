@@ -6,8 +6,9 @@
 // "primitive"). Each route to a prototype refuses by its exact text here, or (#7354 C2, C2-D1) where a kind beside it
 // answers, ends at the run-time abort before any prototype is a value.
 //
-// The slice that makes any of these routes compile (G1's built-in globals as values, `Object.getPrototypeOf`, ...)
-// must reintroduce a program-wide gate on the primitive arm, or populate the realm's prototypes and read through them.
+// The slice that makes any of these routes compile (`Object.getPrototypeOf`, a wrapper or Object as a value, ...) must
+// reintroduce a program-wide gate on the primitive arm, or populate the realm's prototypes and read through them.
+// (#7354 G1) The Error family is a value now, and no route from it reaches one of these prototypes (the rows below).
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { abortBodies, abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
@@ -67,6 +68,14 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
         `a method of ${receiver}'s ${key}`,
         `var fv = function(){ return 1; }; fv(); function f(v){ return v.hasOwnProperty.${key}; } f(${receiver});`,
       ]),
+    ),
+    // (#7354 G1) The Error family's values and prototypes are the program's to read and write, but none leads on to a
+    // prototype the premise covers: each route past them (a function's or an object's [[Prototype]], Function) aborts.
+    ...["TypeError.__proto__", "TypeError.constructor", "TypeError.call", "Error.prototype.__proto__"].map(
+      (route): [string, string] => [
+        `the Error family's ${route}`,
+        `var fv = function(){ return 1; }; fv(); function f(){ return ${route}; } f();`,
+      ],
     ),
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
 });

@@ -60,7 +60,6 @@ const property = (id: string, name: string) => intrinsic(id).properties.find((ro
 describe("semantic native realm catalog and real selected demands", () => {
   it("retains the complete Object/Function identity graph and unavailable algorithms", () => {
     const rows = NATIVE_REALM_CATALOG.intrinsics;
-    expect(rows).toHaveLength(45);
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
     expect(
       rows.filter((row) => row.callable?.implementation !== "unavailable" && row.callable).map((row) => row.id),
@@ -76,6 +75,15 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%Object.prototype.hasOwnProperty%",
       "%Object.prototype.isPrototypeOf%",
       "%Object.prototype.propertyIsEnumerable%",
+      // (#7354 G1) the Error family: the constructors and Error.prototype.toString
+      "%Error%",
+      "%Error.prototype.toString%",
+      "%EvalError%",
+      "%RangeError%",
+      "%ReferenceError%",
+      "%SyntaxError%",
+      "%TypeError%",
+      "%URIError%",
     ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);

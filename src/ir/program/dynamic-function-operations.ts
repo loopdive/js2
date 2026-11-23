@@ -14,7 +14,14 @@ import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-i
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { IS_OBJECT, isOrdinaryObject, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
+import {
+  IS_OBJECT,
+  holdsErrors,
+  isOrdinaryObject,
+  type CarrierKind,
+  type LegalizationProgram,
+} from "./dynamic-value-kinds.js";
+import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
@@ -114,6 +121,9 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
   const isConstructor = holds(b, instr, callee, ["function"]);
+  // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
+  // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
+  const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
   const construct = (r: IrValueId): IrInstr[] => {
     const [prototype, object, answer] = [b.fresh(), b.fresh(), b.fresh()];
     const link = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
@@ -143,15 +153,19 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
-  return [...isConstructor.instrs, b.branch(isConstructor.cond, construct, notConstructor, result, CARRIER)];
+  return [
+    ...isConstructor.instrs,
+    b.branch(isConstructor.cond, b.program.objects.functions ? construct : builtin, notConstructor, result, CARRIER),
+  ];
 }
 
 /**
  * `v instanceof C` (§13.10.2 InstanceofOperator) without `@@hasInstance`, which only a program that names `Symbol`
  * can reach: IsCallable(C), else a TypeError; then OrdinaryHasInstance (§7.3.21): a non-object `v` is not an
  * instance (before `prototype` is read); C's `prototype` must be an object, else a TypeError; and an ordinary
- * object's chain is walked (`isOrdinaryObject`): a function's or an error's holds built-in prototypes alone, which no
- * Prepared program obtains (M1, C1; tests/issue-7354-m-prototype-premise.test.ts), so no `prototype` is on it.
+ * object's chain is walked (`isOrdinaryObject`, (#7354 G1) an error's included): a function's holds built-in
+ * prototypes alone, which no Prepared program obtains (M1, C1; tests/issue-7354-m-prototype-premise.test.ts), so no
+ * `prototype` is on it, but (G1) %Error% (`functionChainAnswer`).
  */
 export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   if (b.program.objects.namesSymbol) gap("instanceof in a program that names 'Symbol'");
@@ -164,7 +178,9 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const objectValue = holds(b, instr, value, b.objects);
     const prototypeObject = holds(b, instr, prototype, b.objects);
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
-      isOrdinaryObject(kind) ? [realmCall("js.object.inherits", [value, prototype], s)] : [unread(s)];
+      isOrdinaryObject(kind)
+        ? [realmCall("js.object.inherits", [value, prototype], s)]
+        : functionChainAnswer(b, instr, holdsErrors(b.program), prototype, (t) => [unread(t)], s, BOOLEAN);
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,

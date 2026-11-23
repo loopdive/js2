@@ -16,6 +16,9 @@ import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { describeIrType } from "./describe-ir-type.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
+import { realmIntrinsicRead } from "./identifier-read.js";
+import type { IrFromAstResolver } from "./from-ast.js";
+import { realmIntrinsicHelper } from "./program/dynamic-realm-calls.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -336,16 +339,38 @@ export function lowerDynamicMemberCall(
  */
 export function lowerPreparedValueCallee(
   expr: ts.CallExpression,
-  lane: { createsFunctionObjects?(): boolean } | undefined,
+  lane: Parameters<typeof realmIntrinsicRead>[1],
   host: () => FunctionObjectLoweringHost,
 ): IrValueId | undefined {
   if (!createsFunctionObjects(lane)) return undefined;
   const callee = skipOuterExpressions(expr.expression);
   if (ts.isElementAccessExpression(expr.expression))
     return lowerFunctionObjectMemberCall(expr, expr.expression, host());
+  // (#7354 G1) A built-in the realm holds as a value (`TypeError(m)`) is called through it.
+  if (ts.isIdentifier(callee) && realmIntrinsicRead(callee, lane) !== undefined)
+    return lowerBindingCall(expr, undefined, host());
   if (ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
     return undefined;
   return lowerBindingCall(expr, undefined, host());
+}
+
+/**
+ * (#7354 C2, G1) On the Prepared lane, whether an identifier no scope binds reads the dynamic value: a dynamic module
+ * home, or a built-in function object the realm holds (`realmIntrinsicRead`).
+ */
+export function readsDynamicGlobal(node: ts.Identifier, resolver: IrFromAstResolver | undefined): boolean {
+  if (!createsFunctionObjects(resolver)) return false;
+  return (
+    resolver?.resolveModuleBinding?.(node)?.type.kind === "dynamic" || realmIntrinsicRead(node, resolver) !== undefined
+  );
+}
+
+/**
+ * (#7354 G1) A read of the realm's built-in function object `id` (`identifier-read.ts`): one front-end helper, which the
+ * dynamic-value legalization writes as `js.object.intrinsic`. The value is a function.
+ */
+export function lowerRealmIntrinsicRead(id: string, builder: IrFunctionBuilder): IrValueId {
+  return builder.emitCall(irRuntimeFuncRef(realmIntrinsicHelper(id)), [], irDynamic(JS_TAG_IDS.Function))!;
 }
 
 /**

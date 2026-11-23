@@ -28,6 +28,12 @@ describe("#7354 P1 — isPrototypeOf", () => {
         " var out = check(C.prototype, new C());",
     ],
     [
+      "(#7354 G1) a caught error is an ordinary object: its own message, and Error.prototype on its chain",
+      "function nul(){ return null; } var out; try { nul().x; } catch (e) {" +
+        " out = String(e.hasOwnProperty('message')) + String(e.propertyIsEnumerable('message'))" +
+        " + String(TypeError.prototype.isPrototypeOf(e)) + String(e.isPrototypeOf(e)); }",
+    ],
+    [
       "a primitive or function receiver is no object's prototype",
       "function id(v){ return v; } var o = {}; var out = String(id(1).isPrototypeOf(o)) + String(id('s').isPrototypeOf(o))" +
         " + String(fv.isPrototypeOf(o));",
@@ -92,7 +98,6 @@ describe("#7354 P1 — what ends at the run-time abort", () => {
       "a string receiver (the String exotic's own keys)",
       "function id(v){ return v; } id('abc').hasOwnProperty('length');",
     ],
-    ["a caught error receiver", "var u = null; try { u.x; } catch (e) { e.hasOwnProperty('message'); }"],
     [
       "a getter that defines the method (calling it needs O2)",
       "var o = {}; Object.defineProperty(o, 'hasOwnProperty', {get: function(){ return fv; }}); o.hasOwnProperty('x');",

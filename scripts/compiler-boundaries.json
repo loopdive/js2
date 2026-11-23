@@ -17274,6 +17274,21 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-error-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-realm-families.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-family-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/ir/builtin-global-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
