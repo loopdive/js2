@@ -22,8 +22,8 @@ describe("#7354 C2 — this", () => {
         " var out = String(o.m()) + (o.self() === o ? 'y' : 'n');",
     ],
     [
-      // A separate program: a function returning its `this` is a route to the global object, which no declaration's
-      // binding survives (`bindingHoldsItsDeclaration`).
+      // A separate program: before #7354 H2 a function returning its `this` refused every declaration read as a
+      // value (the whole-program binding proof); the route now aborts at its own site.
       "a function object's method call",
       "function a(){} a.k = 2; a.m = function(){ return this.k; }; var out = String(a.m());",
     ],

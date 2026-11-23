@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// Runtime-phase verdict rules of scripts/test262-worker.mjs that depend only on
-// the thrown value, so they can be tested without a compiler bundle (#7354 U0).
+// Runtime-phase verdict rules of every test262 lane (the worker, the fixture lane,
+// the local runner) that depend only on the thrown value, so they can be tested
+// without a compiler bundle (#7354 U0, X).
 //
 // A Wasm trap is never a JavaScript throw. Its message carries the frame names
 // (`unreachable [in Test262Error() ← assert]`), so a name match on the rendered
@@ -9,64 +10,29 @@
 // expected throw. The Prepared lane refuses that; every other lane keeps the
 // published behaviour until #7447 measures and lands the same rule there.
 
-/**
- * A trap (`unreachable`, out of bounds, illegal cast, null dereference). A
- * JavaScript throw leaves Wasm as a `WebAssembly.Exception` carried by the
- * exception tag, or as the host's own error object, never as this class.
- */
-function isWasmTrap(err) {
-  return err instanceof WebAssembly.RuntimeError;
-}
+import { isWasmTrap } from "./lib/wasm-exn-render.mjs";
 
 /**
- * A host error's message, followed for a trap by its Wasm frames in
- * trap-first order (#1316/#1317: the leaf is often a tiny lifted helper whose
- * name alone says nothing without its callers).
+ * (#7354 X) Did `err` carry the expected error type? `thrown` is its reading by `readThrownValue`
+ * (scripts/lib/wasm-exn-render.mjs), `{ kinds, text }`. Only a KIND that was read counts — never message text, and
+ * never the label written for a value that could not be read (it has no kind): a pass needs the thrown value
+ * positively known to be of that type.
  */
-export function renderHostError(err, abortBodies = []) {
-  let info = err.message ?? String(err);
-  if (!/illegal cast|null|unreachable|out of bounds/.test(info)) return info;
-  const frameRe = /at\s+(\S+)\s+\(wasm:\/\//g;
-  const frames = [];
-  let m;
-  while ((m = frameRe.exec(err.stack ?? "")) !== null) frames.push(m[1]);
-  if (frames.length === 0) return info;
-  // (#7354 U) A Prepared function whose body could not be lowered has the abort as its whole body, so a trap whose
-  // top frame is that function is its abort.
-  // oracle-version-exempt: only the error TEXT of a trap changes, and only for a row that carries an abort table
-  // (the Prepared lane with abort bodies, new in this slice); no row's pass/fail scoring changes.
-  const aborted = isWasmTrap(err) ? abortBodies.find((row) => row.name === frames[0]) : undefined;
-  if (aborted) info = `aborted in unlowerable unit ${aborted.name}: ${aborted.detail}`;
-  info = `${info} [in ${frames[0]}()`;
-  // Cap at 3 caller frames so the line stays readable inside the 300-char
-  // `error.substring(0, 300)` truncation downstream.
-  if (frames.length > 1) info += ` ← ${frames.slice(1, 4).join(" ← ")}`;
-  return `${info}]`;
-}
-
-/** Did `err` carry the expected error type? `render` is the worker's message renderer. */
-function originalHarnessExceptionMatches(err, instance, expectedErrorType, render) {
+function originalHarnessExceptionMatches(err, thrown, expectedErrorType) {
   if (!expectedErrorType) return true;
-  if (err instanceof WebAssembly.Exception && instance) {
-    try {
-      const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-      const payload = tag ? err.getArg(tag, 0) : undefined;
-      const name = payload?.name ?? payload?.constructor?.name;
-      if (name === expectedErrorType) return true;
-    } catch {}
-  } else if (err?.name === expectedErrorType || err?.constructor?.name === expectedErrorType) {
-    return true;
-  }
-  return render(err, instance).includes(expectedErrorType);
+  // #7447 keeps the published trap rule on the non-Prepared lanes until it is measured: a trap matches by the
+  // frame names in its reader text.
+  if (isWasmTrap(err)) return thrown.text.includes(expectedErrorType);
+  return thrown.kinds.includes(expectedErrorType);
 }
 
 /**
- * Does a throw out of a runtime-negative test's instantiate or module init
- * count as the expected throw? Without the original harness any throw does.
+ * Does a throw out of a runtime-negative test count as the expected throw? Without the original harness any throw
+ * does.
  */
-export function runtimeNegativeThrowAccepted(err, instance, { expectedErrorType, originalHarness, prepared, render }) {
+export function runtimeNegativeThrowAccepted(err, thrown, { expectedErrorType, originalHarness, prepared }) {
   if (prepared && isWasmTrap(err)) return false;
-  return !originalHarness || originalHarnessExceptionMatches(err, instance, expectedErrorType, render);
+  return !originalHarness || originalHarnessExceptionMatches(err, thrown, expectedErrorType);
 }
 
 /**
