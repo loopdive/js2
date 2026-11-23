@@ -52,6 +52,8 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-21 (slices M1 + M2, corrected after review): the figures above are per slice. Against main this PR grows
 # src/ir/program-source.ts by 0 and src/ir/from-ast.ts by 16 (three lowering arms: `isRawExternrefReceiver`, the
 # member write's externref receiver, the object-literal box in `boxConcreteToDynamic`).
+# 2026-11-22 (slice H2): src/ir/program-source.ts +1, the checker argument of `functionDeclarationValues` (it asks
+# `preparedBindingRewritten` instead of the deleted whole-program binding proof); from-ast.ts shrinks by 1.
 # 2026-11-22 (slice P1): src/ir/program-consumer.ts +1, the one argument that tells the dispatcher's fill whether the
 # realm holds built-in methods (its abort arm; the arm itself is in closure-method-body.ts), read from the realm
 # requirements at the only place both owners meet; that line takes materializePhysicalProgram from 300 to 301 lines
@@ -5874,6 +5876,301 @@ list of standard globals, and it is not exactly that list:
 - A DOM name the lib does declare now refuses by name instead of answering "undefined" as node does:
   `var out = typeof window + typeof name;` → `identifier "window" is not in scope in <module-init>`. Likewise
   `print`, `console`.
+
+## Slice H2 plan (2026-11-22, branch `claude/7354-h2` from `origin/main` 8485f48d6b)
+
+Refusal: `function declaration 'F' read as a value is written` (`src/ir/function-declaration-values.ts:136`, the
+`bindingHoldsItsDeclaration` proof). Measured on main 8485f48d6b, the 411-row ES5 sample through the real runner
+(`TEST262_COMPILER_PATH=ir`, standalone, QuickJS eval engine; tally 46 / 8 / 357 as after T): **73 rows**
+`formatIdentityFreeValue` + **1** with a parse error (S7.9_A6.3_T2, negative) + **6** `verifyProperty` (same proof).
+
+### (a) Which clause fails (80 rows; classifier on the elided assembled source)
+
+The harness itself (shim + assert.js + sta.js) is clean after F0's dead-binding elision: `thrown.constructor` is an
+observed constructor and `this instanceof Test262Error` is inert. Every failure comes from the test or an include.
+
+| failing clause | rows | test-side construct | examples |
+|---|---:|---|---|
+| unique (an `eval` identifier) + dynamicCode | 34 | `eval(…)` / `(0,eval)(…)` in the test | annexB/eval-code/direct/func-block-decl-eval-func-existing-fn-no-init.js L26 `eval(`; expressions/void/S11.4.2_A1.js L13 `eval("void\u00090")` |
+| unique (`eval` as a property KEY in the kept `$262` shim: `eval: globalThis.eval`) + dynamicCode + escapes (`global: globalThis`) | 14 (+4 verifyProperty) | the test also calls `eval`/`Function`, which keeps `$262` alive | annexB/eval-code/indirect/global-switch-dflt-eval-global-block-scoping.js; built-ins/global/S10.2.3_A2.3_T4.js |
+| unique (`eval` key / `with`) + dynamicCode + reflective + escapes | 6 | `with(myObj)` + `eval`, or `f.constructor` + `new Function` | statements/with/S12.10_A1.12_T2.js L44; built-ins/Function/S15.3.2.1_A3_T4.js L29 |
+| unique (`with`, no eval) + reflective | 3 | `with (scope) {…}` | statements/with/S12.10_A3.3_T4.js L26; compound-assignment/S11.13.2_A5.3_T1.js L26 |
+| dynamicCode only | 3 (+1 vp) | `Function("…")` | function-code/10.4.3-1-14gs.js L12; statements/function/13.2-11-s.js L11 |
+| escapes only | 5 (+1 vp) | a non-inert `this` | function-code/S10.4.3_A1.js L12 `(function(){ return this; })()`; Object/create/15.2.3.5-4-256.js L12 `this.get = …` |
+| reflective only | 8 | `x.constructor` (7), `Reflect.construct` via isConstructor.js (1) | Object/S15.2.1.1_A2_T13.js L14 `obj.constructor`; RegExp/prototype/toString/S15.10.6.4_A6.js |
+| reflective + escapes | 1 | `err.constructor` + asyncHelpers' `call(globalThis, "$DONE")` | harness/asyncHelpers-throwsAsync-null.js |
+
+`bindingIsUniqueAndNeverWritten` fails on 57 rows, always by its eval/with sub-clause (eval in the test 34, `eval`
+property key in the shim 16, `with` 3, both 4); never by a second binding site or an identifier write. Its eval
+sub-clause counts ANY identifier spelled `eval`, a property key included. `globalWrittenNames` (a member write of
+the name on `this`/a global name) fails on 0 rows.
+
+### (b) What each row meets next (refusal disabled locally, uncommitted; same runner)
+
+| group | rows | next |
+|---|---:|---|
+| eval in test | 50 | 18 `eval statement has no eval provider`, 13 `globalThis` not in scope (the kept `$262`), 6 `direct call to "eval" has no exact AST-site plan`, 4 run-time abort in `eval` (fail), 3 `ReferenceError` not in scope, 3 nested var, 1 `Function`, 1 `SyntaxError`, 1 top-level `this` |
+| reflective | 8 | 6 built-in classes (`String` ×3, `Number`, `Object` ×2), 1 `RegExp`, 1 closure return annotation |
+| `Function` in test | 7 | 2 `globalThis`, 2 nested var, 3 `Function` refusals |
+| verifyProperty | 6 | 4 `direct call to "Function"`, 2 `Array` |
+| `this` | 5 | **1 pass** (function-code/S10.4.3_A1.js, strict `this` is `undefined`), 2 top-level `this`, 1 `.apply` on a closure, 1 `ambiguous or unsupported value type` |
+| `with` | 3 | 1 abort (fail), 1 top-level `this`, 1 nested var |
+| parse-error negative | 1 | `Expression expected.` (still compile_error: no owned static SyntaxError verdict) |
+
+Expected gain of the slice alone: **+1 pass**, 5 compile errors become run-time-abort fails. Its value is that it is
+the FIRST wall on 80 rows: behind it sit the eval provider (28), `globalThis` (15), the built-in classes (8),
+`Function` (≥7) and top-level `this` (4). With this refusal in place, none of those slices can turn its rows.
+
+### (c) Design: (ii) one mutable home; the routes refuse at their own site
+
+Spec. A script-level function declaration is a binding of the global environment's OBJECT record (§9.1.1.4,
+§16.1.7 GlobalDeclarationInstantiation step 16: `CreateGlobalFunctionBinding(fn, fo, false)`), i.e. an own data
+property of the global object, `{ [[Writable]]: true, [[Enumerable]]: true, [[Configurable]]: false }`
+(§9.1.1.4.18). `f = v`, `this.f = v` (script `this`), `globalThis.f = v`, `eval("f = v")`, a sloppy
+`Function("f = v")()` and `Object.defineProperty(globalThis, "f", …)` all reach the SAME property. One storage, many
+routes. The path models the storage as the home and lowers the routes it can see (identifier references) as home
+operations. Every other route needs the global object as a value or dynamic code, and on this lane each of those
+already refuses or aborts at its own site (measured on main with probe programs):
+
+| route to the property | Prepared lane today |
+|---|---|
+| top-level `this` | refused: `'this' reference outside an instance method body` |
+| sloppy function `this` (plain call, a callback) | refused (`a direct call of h installs no receiver`) or run-time abort (C2) |
+| `globalThis` / `self` / `window` | refused: `identifier … is not in scope` (T follow-up); `global` is absent |
+| direct / indirect `eval` | refused: `eval statement has no eval provider` / `no exact AST-site plan`; abort inside a function |
+| `Function(…)`, `new Function(…)`, `x.constructor(…)` | refused: `direct call to "Function"`, `only direct constructor names`, `.constructor(...) not in slice 4`; a `.constructor` read aborts |
+| `with (o) { f = v }` | refused: `with target/body outside the closed-object IR slice` |
+| `Object.defineProperty(this/globalThis, …)`, `Reflect.set` | needs the global object as a value (above) |
+
+So the read needs no proof. The existing direct call of a never-read declaration already relies on exactly this: it
+has no whole-program check, and `this.f = 2; f()` is sound today only because `this` refuses. The read-site proof is
+the one place that re-derives the invariant with a source scan, and the scan is both too strict (any `eval` key, any
+`.constructor`, an unrelated strict `this`) and redundant with the site refusals.
+
+Why not (i), narrowing per name: `eval` and an escaping global object can write any name, so 57 rows (eval/with)
+stay refused, and the eval slice could never turn them. It keeps a whole-program scan beside the site refusals.
+
+Built (H2):
+1. **Writes.** `scriptVarWrites` (`module-binding-script-var.ts`, checker identity, `undefined` under `with`/direct
+   `eval`) is generalised from `VariableDeclaration` to the function declaration too; it replaces
+   `bindingHoldsItsDeclaration` in `functionDeclarationValues`. A declaration with any write (or `undefined`) gets
+   a MUTABLE home (`identity.mutable: true`) of plain `irDynamic()` type, with no Function tag, because the binding
+   may hold anything. Identifier writes of every form (`=`, compound, `++`, logical, destructuring, for-in/of head)
+   take the existing module-binding write path. Forms that path does not lower keep their own refusal, at the write.
+2. **Calls.** `program-source-direct-calls.ts` plans no direct call to a declaration whose home is mutable. from-ast
+   then takes F2's call through the home (`lowerBindingCall`): callee first, arguments, IsCallable TypeError. `new F`
+   of a written `F` refuses by name (`function declaration 'F' is constructed after a write`) unless the C2
+   construct path reads the home. Phase 2 checks which.
+3. **Static folds audit.** Every fact derived from the FunctionDeclaration symbol rather than the home must check
+   "not written": `typeof f`, identity, IsCallable, `f.length`/`name`, `instanceof f` (its `prototype`), carrier kind.
+   Each one found gets a program in the test file.
+4. **Leave it better (separate commit, lead's call).** Fa's `staticFunctionValue` is `bindingHoldsItsDeclaration`'s
+   only other user. The same argument applies to it: the binding never written by identifier (checker) means the
+   closure call is sound. Folding it deletes `shared/binding-holds-declaration.ts` and F1b's `globalObjectWriteRoutes` /
+   `globalWrittenNames` / `writesGlobalObject` in `intrinsic-prototype-writes.ts` (about −70 lines). Without the
+   fold, a follow-up issue is filed and linked.
+
+Still refused, and why each refusal is sound:
+- A second declaration of the name (two `function f`, `var f` beside it [H's refusal], an Annex B block function):
+  the last-wins and B.3.3 copy semantics are not modelled. Detected by the symbol's declaration count.
+- `has a typed parameter` / `has a result the dynamic value does not carry` / `is in a script that runs no top-level
+  code`: unchanged.
+- Every route in the table above stays refused at its site. **Obligation on later slices:** a slice that makes the
+  global object a value, or runs dynamic code (the eval provider, `globalThis`, sloppy `this` substitution, `with`
+  over the global object), must read and write script bindings through their homes or refuse. The H2 test file's
+  tripwire programs (below) fail with a wrong value the moment such a slice forgets.
+- `delete f`: sloppy is `false` (non-configurable), strict is an early SyntaxError (§13.5.1.1). Probed in Phase 2;
+  anything else refuses.
+
+### (d) Placement, size, tests, quality
+
+- Files: `src/ir/function-declaration-values.ts` (the proof call becomes the writes query, the home's mutability and
+  type follow it; about +10/−6), `src/ir/module-binding-script-var.ts` (`scriptVarWrites` takes the declaration kind;
+  about +4), `src/ir/program-source-direct-calls.ts` (skip a mutable home; about +6), the `new` site (about +4).
+  Plus the step-4 fold if approved (about −70). from-ast.ts: no growth. Expected net src diff is +25 without the fold
+  and −45 with it.
+- Reuses: `scriptVarWrites`/`identifierWritesOf` (checker-identity writes), the module-binding read/write path,
+  F2's `lowerBindingCall`. Removes: the read-site whole-program proof. With the fold it also removes the F1b
+  global-write scan.
+- Tests: `tests/issue-7354-h2-written-function-declarations.test.ts`, node agreement with a wrong twin
+  (`agreesWithNode`) for:
+  - each write form × position (top level, inside a function, inside the declaration itself, in a closure);
+  - reads after the write: `typeof`, a call, `===` with an alias taken before the write, the alias still calling the
+    old function;
+  - order: the write in a function that runs before the first call;
+  - a write to a non-callable value, then a call: the TypeError is caught by `try`;
+  - strict and sloppy code.
+
+  Tripwires: each route in the table above writes `f` and then reads `f`. Each must refuse or abort, never give a
+  wrong value. Unchanged refusals: a second declaration, `var` beside it, a typed parameter.
+- Runner: the 80 rows again. Every new pass (expected S10.4.3_A1) gets a mutated twin next to the original file
+  (`!== undefined` → `=== undefined`). The twin is run through the same runner, must FAIL, and is then deleted.
+- Gates: ≥150 probes base vs head (0 wrong, 0 invalid Wasm, 0 exceptions); ordinary pipeline 20 test262 files ×
+  default/standalone byte-identical; `check:prepared-bytes` vs base (expected diffs only where a declaration is read
+  as a value AND written); the f1b-*, fa-function-values, F2, C2, U prelude and t2-* files.
+- Quality acceptance: no new whole-program scan or predicate. One checker-identity writes query serves script vars and
+  function declarations. `bindingHoldsItsDeclaration` either is deleted (fold) or has one user and a linked cleanup
+  issue. from-ast.ts does not grow. No defensive branch for a route that cannot reach the home.
+
+## Slice H2 result (2026-11-22, branch `claude/7354-h2`; design (ii) with the Fa fold, approved; `main` c47b7a03fd with O1 merged)
+
+### Built
+
+- **One writes query** (`module-binding-script-var.ts`). The module doc states the invariant in one place: on this
+  path every route to a script binding other than an identifier refuses or aborts at its own site.
+  - `scriptVarWrites` and `preparedBindingRewritten` (named `scriptBindingRewritten` before review round 1) read one
+    cache, `identifierWrites`, keyed by the declaration's name.
+  - `preparedBindingRewritten` = any identifier write other than the declaration's own, by checker identity. It is
+    Prepared-only: `with`/`eval` do not void it, because both refuse at their sites there.
+- **Declaration values** (`function-declaration-values.ts`).
+  - The read-site proof is gone.
+  - A rewritten declaration's home is mutable and untagged.
+  - A second `function f` refuses by name (`has a second declaration`). Only function declarations are counted, because
+    a JS symbol also lists `f.x = 1` (sta.js's `Test262Error` hit this).
+- **Calls.** The call planner already declines a reassigned declaration (`imported-functions.ts`, `reassigned`), so the
+  plan's skip in `program-source-direct-calls.ts` was not needed. A probe with and without it showed this. What was
+  needed:
+  - `sourceFunctionCallee` (`source-dynamic-provenance.ts`) declines a rewritten callee. Without that,
+    `function h(){ return f(); }` kept a number result while `f()` read the home. That was an exception out of
+    `compile()` (`return[0] type externref not assignable`), found by a probe and fixed before commit.
+- **Closure into a dynamic module home.** `f = function(){}` refused (`got closure()->dynamic`) for script vars too.
+  - `storedCarrierValue` (`function-object-lowering.ts`) is the boxing `dynamicStoreOperand` already did; that function
+    now calls it.
+  - from-ast's `boxForDynamicModuleStorage` delegates to it, which shrinks from-ast by 1.
+  - The closure arm is gated on the Prepared lane, so ordinary bytes do not change.
+- **Fa fold.** `staticFunctionValue` asks `!scriptBindingRewritten`. `shared/binding-holds-declaration.ts` and F1b's
+  `globalObjectWriteRoutes` / `globalWrittenNames` / `writesGlobalObject` are deleted, and so is the entry in
+  `scripts/compiler-boundaries.json`.
+- Diff vs main: src +103 / −121 over 9 files. program-source.ts grows by 1 line (the checker argument; dated grant in
+  the frontmatter).
+
+### Tripwires (condition 1)
+
+Before any change: 12 routes × {called declaration, declaration read as a value, script var} × {top level, in a called
+function} = 78 programs on main. **None ran to the end**: each refused or aborted, so no existing wrong value.
+`tests/issue-7354-h2-script-binding-routes.test.ts` keeps 96 such programs, adding the Fa form (a var holding a
+function expression). All 96 refuse or abort on the head.
+
+### Fa fold (condition 2)
+
+20 class programs plus 26 route programs, base and head:
+- The classes the old proof declined (an `eval` key, `.constructor`, strict `this`, a same-name local or parameter,
+  member writes of other names, `eval`/`with`/`Reflect`/`globalThis`/`Function` in uncalled functions, a second
+  `var f`) are RIGHT on both. The old proof only chose the call path; the outcome did not change.
+- `fa-rewritten` and `fa-rewritten-in-fn` go from refused/abort to RIGHT.
+- Annex B and every route keep their refusal or abort.
+
+### Tests (each file alone, one fork)
+
+| file | tests | exit |
+|---|---:|---:|
+| issue-7354-h2-written-function-declarations (new) | 31 | 0 |
+| issue-7354-h2-script-binding-routes (new) | 96 | 0 |
+| fa-function-values (pins moved: 8 route rows now admit, two refusals now run) | 40 | 0 |
+| f1b-declaration-values (5 "is written" rows → the H2 files) | 6 | 0 |
+| f1-function-kind (`g.__proto__ = null` now refuses at the write) | 12 | 0 |
+| c2-this (comment) | 18 | 0 |
+| every other issue-7354-* file (49), 7363, test262-prepared-entry | all | 0 except o-objects |
+
+- `issue-7354-o-objects` "refuses what the later steps build" fails **on main c47b7a03fd too** (O1 made
+  `return { a: 1 }` compile). It is not H2's.
+- Mutations (whole file): no Function tag on a rewritten home is killed (a write in a closure traps). An immutable
+  home is killed (17 rows). Dropping `sourceFunctionCallee`'s decline is killed.
+
+### Proof
+
+- Probes: 207 programs (the plan probes, routes, Fa classes, call order, static folds), base c47b7a03fd vs head:
+  - base: 30 right / 137 refused / 40 abort; head: 62 / 85 / 60;
+  - moves: refused→right 31, refused→abort 21, abort→right 1;
+  - 0 wrong, 0 invalid Wasm, 0 exceptions, nothing right became anything else.
+- Ordinary pipeline: 20 test262 files + 69 probe programs × default/standalone are byte-identical.
+- `check:prepared-bytes`: all 804 rows are identical to the base.
+- Gates exit 0, against the merge base and against `LOC_GATE_BASE` = c47b7a03fd: typecheck, LOC, func budget,
+  coercion sites, oracle ratchet, dead exports, import cycles, compiler-boundaries (`--mode inventory`), issue ids.
+
+### Sample (411 rows, real runner, base = main c47b7a03fd with O1)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| base | 49 | 11 | 351 |
+| H2 | **50** | 16 | 345 |
+
+- Exactly the 79 rows that met this refusal changed; no other row changed.
+- New pass: `language/function-code/S10.4.3_A1.js`. Its twin (`!== undefined` → `===`, written next to the original,
+  run through the same runner, deleted) FAILS.
+- 5 rows went from compile error to fail, each a run-time abort: eval ×4, and `with` in testFunction.
+- What the other 73 rows meet now: no eval provider (18), `globalThis` (15), `direct call to "Function"` (6), nested
+  var (6), `direct call to "eval"` (6), top-level `this` (4), `ReferenceError` (3), built-in classes and the rest
+  (15).
+
+### Known, not done
+
+- Write forms the module-binding path does not lower refuse at the write, each pinned in the test file:
+  - `f += …`, `f++`;
+  - logical assignment, destructuring;
+  - a for-in head.
+- `delete f` refuses (`delete has no IR lowering`); node gives `false`.
+- Two write analyses of a function binding remain:
+  - the call planner's `reassigned` set (`imported-functions.ts`, shared with the ordinary pipeline);
+  - `identifierWrites`.
+
+  Until review round 1 they disagreed on shorthand targets (`({ f } = o)`): only `reassigned` resolved the value
+  symbol. Both resolve it now. Folding them is a follow-up, because it touches the ordinary pipeline's call planning.
+- `new f()` after a write was checked with the runner's options in probes. The H2 test uses plain constructors,
+  because without `skipSemanticDiagnostics` TypeScript calls `function f(){ this.a = 1 }` a class and refuses `f = C`.
+- Node 25 is not installed.
+
+### Review round 1 (PR 7408, NOT MET; fixed on the branch, `main` 88fd45a0c5 merged)
+
+1. **Exception out of `compile()`** (`with ({ a: 1 }) { f = 5; }`). from-ast threw a bare `Error` when a `with` target
+   lowered to no closed object; any top-level `with ({…})` reaches it on main too. It is now `refuseUnselected`:
+   on the Prepared path it is the named refusal `with target not closed`, on the ordinary pipeline it stays an
+   invariant.
+   - `with` is named in the invariant doc. The checker resolves no symbol inside a `with` body, so the query cannot
+     see a write there.
+   - New routes rows: `with ({})` and `with ({ a: 1 })`, at top level and in a function, for a declaration and for a
+     script var.
+   - Other bare `Error`s on the `with`/`eval`/`this` routes: none reachable in from-ast. Those in integration.ts
+     (`dyn.global_object`, `dyn.current_this`) are lane-capability invariants of the ordinary backend, and the 237
+     review probes reached none.
+2. **Shorthand targets.** `identifierWrites` resolves `({ f } = o)` and `({ f = 3 } = o)` through
+   `getShorthandAssignmentValueSymbol`.
+   - Pinned through Fa's contract: such a write declines the static closure. Both rows fail without the fix.
+   - `scriptVarWrites` shares the cache, so the ordinary pipeline's certifiers see these writes too. Ordinary bytes
+     are identical on 20 test262 files and 69 probes, six of them shorthand writes to script vars.
+3. **Parameter initializer** (§10.2.11): named in the invariant doc as a route that must keep refusing; routes rows
+   added. It refuses today (`rest/default/optional param not in Phase 1 IR scope`).
+4. **One module, two answers, both needed.**
+   - `scriptVarWrites` serves the ordinary pipeline's certifiers (string, vec, class-instance homes, via
+     `makeIrModuleBindingResolver` in codegen/index.ts and integration.ts). There a host `eval` runs, so its
+     `with`/`eval` decline is required.
+   - `preparedBindingRewritten` is called only by Prepared code (function-declaration-values, Fa,
+     source-dynamic-provenance), where the invariant holds.
+   - The module doc says this; the name now says it.
+5. **`dynamic-home-open-object.ts` `everyUseIsServed` is not folded.**
+   - Its only user is `select.ts`, the ordinary pipeline's selector, where `eval`, `with` and the global object are
+     lowered and live, so the site-refusal argument does not hold.
+   - It also answers a different question: whether `Object.prototype` stays the realm's (`sourceMayPatchPrototype`,
+     `sourceNamesReflectiveRoute`).
+   - A cleanup would have to move its write half (`bindingIsUniqueAndNeverWritten` + `sourceWritesMemberNamed`) onto
+     a checker-identity query that keeps the ordinary pipeline's dynamic-scope decline. That is a candidate for
+     `scriptVarWrites` plus a global-object member-write scan.
+6. **Nits.**
+   - The `?? true` is gone (the query is keyed by an identifier name).
+   - Renamed to `preparedBindingRewritten(checker, name)`; it serves nested function declarations too.
+   - The second-declaration count is not shared with imported-functions' `functions.length === 1`. That one lives
+     inside `targetForSymbol` beside overload-set admission (TypeScript overloads), which a JS function value has no
+     use for, and extracting it is not cheap.
+
+Proof (round 1):
+- Review probes `.tmp/adv/a1`–`a9` plus the round-1 programs (237), previous head vs this head:
+  - 13 exceptions → named refusals (every `with ({…})` program);
+  - 0 other changes;
+  - right 57 = 57, 0 wrong.
+- Tests: h2 routes 120/120, fa 42/42, f1b 6/6.
+- `check:prepared-bytes`: 804 rows identical. Ordinary bytes are identical, as in item 2.
+- Gates exit 0, against the merge base and against `LOC_GATE_BASE` = main 88fd45a0c5: LOC, func budget, coercion,
+  oracle, dead exports, import cycles, boundaries, typecheck. from-ast.ts shrinks by 2 more lines.
 
 ## Slice P1 plan (2026-11-22, branch `claude/7354-p1` from `claude/7354-o1` 4fc230872a)
 

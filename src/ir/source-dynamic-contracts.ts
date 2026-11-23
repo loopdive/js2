@@ -58,7 +58,7 @@ import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
-import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
+import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
@@ -235,12 +235,13 @@ function sourceDynamicClosureSignature(
 /**
  * (#7354 Fa) A script `var` that holds its function-expression initializer from its declaration on: a top-level
  * statement's declarator of the program's only source, whose binding nothing else writes
- * (`bindingHoldsItsDeclaration`; an Annex B block-level function of the same name is a second binding site, so it
- * declines too). from-ast keeps the closure on the binding's module-init scope entry when it lowers the store, so
- * only module-init code after the declaration, outside every function, sees it: there the slot holds exactly that
- * closure, and a call through the name is the closure's direct call.
+ * (`preparedBindingRewritten`, which sees every write on this path). from-ast keeps the closure on the binding's
+ * module-init scope entry when it lowers the store, so only module-init code after the declaration, outside every
+ * function, sees it: there the slot holds exactly that closure, and a call through the name is the closure's direct
+ * call.
  */
 function staticFunctionValue(
+  checker: ts.TypeChecker,
   policy: SourcePolicy,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.VariableDeclaration,
@@ -255,7 +256,7 @@ function staticFunctionValue(
     !ts.isIdentifier(name)
   )
     return false;
-  return bindingHoldsItsDeclaration(name, declaration);
+  return !preparedBindingRewritten(checker, name);
 }
 
 /** The lane has the native dynamic carrier (wasmgc standalone). */
@@ -389,7 +390,7 @@ export function programDynamicContracts(
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
-            !closuresBindReceivers && staticFunctionValue(policy, sourceFiles, declaration),
+            !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),

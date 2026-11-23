@@ -98,11 +98,11 @@ describe("#7354 F1 — the function kind", () => {
       "function g() {} var k = g.call;",
       "member read 'call' of a function needs Function.prototype's properties",
     ],
-    // `__proto__` names a reflective route to the global object, so the declaration's binding is not proven its own.
+    // (#7354 H2) The write of the inherited accessor refuses at its own site.
     [
       "a member write of Object.prototype's accessor on a function",
       "function g() {} g.__proto__ = null;",
-      "function declaration 'g' read as a value is written",
+      "dynamic operation member write '__proto__' of a function needs Object.prototype's accessor",
     ],
   ])("refuses %s by name", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);
