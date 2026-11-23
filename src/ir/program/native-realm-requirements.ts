@@ -116,9 +116,9 @@ const intrinsicOf = (use: Use): string | undefined =>
     ? NATIVE_VALUE_INTRINSICS[use.selector]
     : undefined;
 const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
-/** The Error constructors' ids and `Error.prototype.toString`'s (Error's own, read only through an error). */
-const ERROR_IDS = NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`);
+/** `Error.prototype.toString`'s id, and the family's: the Error constructors' and it. */
 const ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)!;
+const FAMILY_IDS: readonly string[] = [...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`), ERROR_TO_STRING];
 /** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
 const readsPrototypeMethod = (use: Use): boolean =>
   METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
@@ -135,17 +135,20 @@ function bindsCaughtValue(program: PreparedIrProgram): boolean {
         });
   return binds;
 }
+/** (#7354 G1) The Error family's contracts: each needs the family's objects and literals. */
+const ERROR_FEATURES: ReadonlySet<string> = new Set(["js.object.create-error", "js.object.error-to-string"]);
 /**
- * (#7354 G1) The Error family members the realm holds: the constructors the program names (an intrinsic read of
- * one), and, where a catch binds a thrown value, `TypeError`, the realm's own errors; with any of them `Error` (every
- * other one's [[Prototype]], and its prototype's) and `Error.prototype.toString`. Where none is held no code can read
- * an error: the realm's thrown values reach a program only through a catch binding, and no other error is made.
+ * (#7354 G1) The Error family members the realm holds, derived only from what the program's IR emitted: where it uses
+ * any member (an intrinsic read of one, `create-error`, `error-to-string`) or binds a caught value (the one way a realm
+ * error becomes a program value), `Error`, `TypeError` (the realm's own errors) and `Error.prototype.toString`, with
+ * every other constructor the IR reads. The legalization decides what to emit (`holdsErrors`); this never re-derives
+ * that decision from the source, so the two cannot disagree. Where none is held no code reads an error.
  */
 function heldErrorConstructors(uses: readonly Use[], program: PreparedIrProgram): ReadonlySet<string> {
   const named = new Set(uses.map(intrinsicOf).filter((id): id is string => id !== undefined));
-  const errors = NATIVE_VALUE_INTRINSICS.filter((id) => ERROR_IDS.includes(id) && named.has(id));
-  if (bindsCaughtValue(program)) errors.push("%TypeError%");
-  return errors.length === 0 ? new Set() : new Set(["%Error%", ...errors, ERROR_TO_STRING]);
+  const used = [...named].some((id) => FAMILY_IDS.includes(id)) || uses.some((use) => ERROR_FEATURES.has(use.feature));
+  if (!used && !bindsCaughtValue(program)) return new Set();
+  return new Set(["%Error%", "%TypeError%", ERROR_TO_STRING, ...FAMILY_IDS.filter((id) => named.has(id))]);
 }
 /** (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its constructors bring. */
 export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {

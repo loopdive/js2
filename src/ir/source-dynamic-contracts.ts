@@ -42,7 +42,7 @@ import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import { realmBuiltinOperand } from "./realm-static-call.js";
-import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
+import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -355,7 +355,11 @@ export function programDynamicContracts(
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
-  const objects = programObjects(sourceFiles, functionDeclarationValues.length > 0);
+  const objects = programObjects(
+    sourceFiles,
+    functionDeclarationValues.length > 0,
+    pristineBuiltinGlobal(checker, sourceFiles),
+  );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
     const functionCodeStrict = input.codeStrictness?.(code);
     return functionObjects &&
@@ -562,6 +566,17 @@ function legalizeSourceDynamicValues(
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   if (!nativeDynamicLane(policy)) return functions;
+  // (#7354 G1) The script's top level owns its `var`s: a bare one of a global the realm serves refuses by name.
+  const aliasing = "kind" in declaration ? undefined : scriptVarOfRealmGlobal(sourceFiles);
+  if (aliasing)
+    throw ownRefusal(
+      new IrUnsupportedError(
+        "type-resolution-unsupported",
+        "build",
+        `script var '${aliasing.name.getText()}' binds the global's existing ${aliasing.name.getText()}, which this path does not read through it`,
+      ),
+      aliasing,
+    );
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
   const catches = sourceFiles.some(readsCatchPayload);
