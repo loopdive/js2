@@ -7,7 +7,7 @@
  */
 import ts from "typescript";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
-import { NATIVE_ERROR_CONSTRUCTORS } from "../runtime/contracts/native-realm-catalog.js";
+import { errorConstructorId } from "./program/builtin-prototype-keys.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { FunctionValueLoweringPlans } from "./function-object-lowering.js";
@@ -84,7 +84,6 @@ export function classifyIdentifierRead<Binding>(
     : { kind: "unresolved" };
 }
 
-/** The build-time `typeof` answer for an absent global, from the same classification the read uses. */
 /**
  * (#7354 G1) The catalog id of the built-in function object `expr` reads, on the lane where closures are function
  * objects: an Error constructor named by the unchanged global (`builtin-global-binding.ts`). Its value is the realm's
@@ -94,12 +93,15 @@ export function realmIntrinsicRead(
   expr: ts.Identifier,
   resolver: Pick<IrFromAstResolver, "createsFunctionObjects" | "isPristineBuiltinGlobal"> | undefined,
 ): string | undefined {
-  if (!(NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(expr.text)) return undefined;
-  return resolver?.createsFunctionObjects?.() === true && resolver.isPristineBuiltinGlobal?.(expr) === true
-    ? `%${expr.text}%`
+  const id = errorConstructorId(expr.text);
+  return id !== undefined &&
+    resolver?.createsFunctionObjects?.() === true &&
+    resolver.isPristineBuiltinGlobal?.(expr) === true
+    ? id
     : undefined;
 }
 
+/** The build-time `typeof` answer for an absent global, from the same classification the read uses. */
 export function absentGlobalTypeof<Binding>(
   expr: ts.Identifier,
   cx: IdentifierReadContext<Binding>,

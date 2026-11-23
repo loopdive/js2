@@ -8,13 +8,13 @@
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { realmMethodId } from "../../runtime/contracts/native-realm-catalog.js";
 import {
   BUILTIN_REACHABLE_KEYS,
   FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
+  objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
@@ -169,7 +169,7 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
   /** A primitive's read of a key its wrapper lacks: Object.prototype's method, or else absent. */
   const inherited = (r: IrValueId): IrInstr[] =>
     method !== undefined
-      ? b.realmIntrinsic(realmMethodId("Object.prototype", method), r)
+      ? b.realmIntrinsic(objectPrototypeMethodId(method), r)
       : [b.intrinsic(instr, "js.value.undefined", [], r)];
   const access: Access = {
     operation: `member read '${name}'`,

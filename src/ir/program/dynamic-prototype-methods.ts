@@ -16,8 +16,8 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
-import { realmMethodId, type NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
-import { nativeObjectPrototypeMethod } from "./builtin-prototype-keys.js";
+import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
+import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, carried } from "./dynamic-value-chains.js";
@@ -57,9 +57,7 @@ export function prototypeMethodOfCall(
 
 /** The catalog id of `method`. */
 const methodId = (method: RealmMethod): string =>
-  method === "Error.prototype.toString"
-    ? realmMethodId("Error.prototype", "toString")
-    : realmMethodId("Object.prototype", method);
+  method === "Error.prototype.toString" ? ERROR_TO_STRING_ID : objectPrototypeMethodId(method);
 
 /** `value`, the realm's Boolean of `test`, boxed into the carrier `result`. */
 function boxed(b: ObjectStaticBuilders, instr: Call, test: (value: IrValueId) => IrInstr[], result: IrValueId) {

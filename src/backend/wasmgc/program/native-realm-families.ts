@@ -5,7 +5,6 @@
  * the kernel writes no row of its own.
  */
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
-import { heldCatalogRows, type NativeRealmDescription } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeBuiltinObject, NativeBuiltinProperty } from "../resources/native-builtin-function-requests.js";
 
 const SEEDED_BY_THE_KERNEL = new Set(["length", "name"]);
@@ -34,8 +33,8 @@ export function familyProperties(row: NativeRealmIntrinsic): NativeBuiltinProper
  * The held families' ordinary objects, each after the object it links to (catalog order), as the kernel's requirement
  * field: none where the realm holds no family, so such a realm's requirements are what they were.
  */
-export function familyObjects(description: NativeRealmDescription): { readonly objects?: NativeBuiltinObject[] } {
-  const objects = heldCatalogRows(description)
+export function familyObjects(heldRows: readonly NativeRealmIntrinsic[]): { readonly objects?: NativeBuiltinObject[] } {
+  const objects = heldRows
     .filter((row) => row.heldWith !== undefined && row.callable === undefined)
     .map((row) => ({
       id: row.id,

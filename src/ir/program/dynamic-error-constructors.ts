@@ -20,7 +20,7 @@
  * value on a function's chain a program can hold (`F.prototype = Error; TypeError instanceof F`).
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { NATIVE_ERROR_CONSTRUCTORS } from "../../runtime/contracts/native-realm-catalog.js";
+import { ERROR_ID, errorConstructorName, errorConstructorSelector } from "./builtin-prototype-keys.js";
 import type { IrType } from "../core/types.js";
 import { realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
@@ -43,8 +43,8 @@ export function errorConstructorOf(
     definition?.kind === "call" && definition.target.binding.kind === "runtime"
       ? realmIntrinsicOfHelper(definition.target.binding.symbol)
       : undefined;
-  const index = NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
-  return index < 0 ? undefined : index;
+  const selector = id === undefined ? -1 : errorConstructorSelector(id);
+  return selector < 0 ? undefined : selector;
 }
 
 /** `X(message)` / `new X(message)` of the Error constructor `selector`, into the instruction's result. */
@@ -54,7 +54,7 @@ export function dynamicErrorConstruction(
   selector: number,
   args: readonly IrValueId[],
 ): IrInstr[] {
-  if (args.length > 1) gap(`${NATIVE_ERROR_CONSTRUCTORS[selector]} with a second argument (options.cause)`);
+  if (args.length > 1) gap(`${errorConstructorName(selector)} with a second argument (options.cause)`);
   const message = args[0];
   const create = (value: IrValueId, r: IrValueId) => b.selectorCall("js.object.create-error", [value], selector, r);
   const none = (r: IrValueId): IrInstr[] => {
@@ -95,7 +95,7 @@ export function functionChainAnswer(
   if (!errors) return no(r);
   const [error, same] = [b.fresh(), b.fresh()];
   return [
-    ...b.realmIntrinsic("%Error%", error),
+    ...b.realmIntrinsic(ERROR_ID, error),
     b.intrinsic(instr, "js.value.strict_eq", [prototype, error], same),
     b.branch(same, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no, r, resultType),
   ];

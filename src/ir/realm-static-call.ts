@@ -19,9 +19,9 @@ import {
 } from "./function-object-lowering.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
-import { NATIVE_ERROR_CONSTRUCTORS, type NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
+import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
-import { nativeObjectStatic } from "./program/builtin-prototype-keys.js";
+import { errorConstructorId, nativeObjectStatic } from "./program/builtin-prototype-keys.js";
 
 /**
  * The catalog's native `Object` static `call` names, with its `length`, when the receiver is the unchanged global
@@ -67,7 +67,7 @@ export function realmBuiltinOperand(
     (ts.isCallExpression(call) || ts.isNewExpression(call)) &&
     call.arguments?.includes(operand) === true &&
     ts.isIdentifier(call.expression) &&
-    (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(call.expression.text) &&
+    errorConstructorId(call.expression.text) !== undefined &&
     isPristineGlobal(call.expression)
   )
     return true;

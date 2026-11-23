@@ -15,7 +15,7 @@ import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } fro
 import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import { NATIVE_VALUE_INTRINSICS, realmMethodId } from "../../runtime/contracts/native-realm-catalog.js";
+import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -221,7 +221,7 @@ export function chainBuilders(
   };
   /** (#7354 P1, G1) The realm's built-in function object `id` (`NATIVE_VALUE_INTRINSICS`) into `result`. */
   const realmIntrinsic = (id: string, result: IrValueId): IrInstr[] =>
-    selectorCall("js.object.intrinsic", [], NATIVE_VALUE_INTRINSICS.indexOf(id), result);
+    selectorCall("js.object.intrinsic", [], realmIntrinsicSelector(id), result);
   // A value per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind
   // untested (the chain is total over the kinds), each arm answering into its own value.
   const kindChain = (
@@ -290,7 +290,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     is: (method: IrValueId, r: IrValueId): IrInstr[] => {
       const builtin = fresh();
       return [
-        ...builders.realmIntrinsic(realmMethodId("Error.prototype", "toString"), builtin),
+        ...builders.realmIntrinsic(ERROR_TO_STRING_ID, builtin),
         intrinsic(instr, "js.value.strict_eq", [method, builtin], r),
       ];
     },

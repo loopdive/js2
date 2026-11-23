@@ -6,6 +6,7 @@ import type {
 } from "../../../ir/program/prepared-contracts.js";
 import {
   assertNativeRealmRequirementsIssued,
+  heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
@@ -328,7 +329,7 @@ function beginRealm(
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, ...familyObjects(requirements.description) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(heldCatalogRows(requirements.description)) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,
