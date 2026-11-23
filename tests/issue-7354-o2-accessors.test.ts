@@ -102,6 +102,11 @@ describe("#7354 O2 — reads and writes", () => {
         " + String(o.x) + String(c.hasOwnProperty('x'));",
     ],
     [
+      "strict: a write through a setter, own or inherited, succeeds (the set answers true)",
+      `'use strict'; ${T} var s = ''; var o = {set x(v){ s = s + v; }}; var c = Object.create(o);` +
+        " var out = t(function(){ o.x = 'a'; return 'ok'; }) + t(function(){ c.x = 'b'; return 'ok'; }) + s;",
+    ],
+    [
       "an accessor's valueOf / toString is read through the getter by ToPrimitive",
       "var o = {}; Object.defineProperty(o, 'valueOf', {get: function(){ return function(){ return 41; }; }});" +
         " var s = {get toString(){ return function(){ return 'S'; }; }}; var out = String(o + 1) + ('' + s) + String(s);",

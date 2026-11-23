@@ -56,9 +56,9 @@ import {
 } from "./source-dynamic-provenance.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
+import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
-import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
