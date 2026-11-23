@@ -6654,7 +6654,11 @@ leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7
   getter answers a catchable TypeError instead), the enclosing-declaration lane rule (the #3518 typed program refuses
   `js.number.box`), `programObjects`' accessor (an accessor-only program loses `this`), the kernel's source arm.
   Each killing program is in `issue-7354-o2-accessors` or the #3518 runtime-providers file.
-- Gates: see the merge note below.
+- **`main` adc30d7fbc merged** after the measurements (no conflict; it touched from-ast, function-object-lowering,
+  source-dynamic-contracts elsewhere). Re-checked on the merged state: typecheck, LOC / function budgets (also
+  `LOC_GATE_BASE` = adc30d7fbc), coercion-sites, oracle-ratchet, dead-exports all exit 0; o2-accessors 43 / 43; the
+  seven rows return; prelude + `assert(true);` still e23f5dca…. from-ast, program-source, program-consumer: net 0
+  lines vs that main. No budget grant.
 
 ### Known limits
 
