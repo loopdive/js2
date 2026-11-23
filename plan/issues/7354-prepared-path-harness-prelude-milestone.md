@@ -6055,3 +6055,139 @@ because it sits in a "descriptor literal"); a dead literal is dropped. `o.x += 1
   plus the 411-row sample through the real runner with mutated twins; `check:prepared-bytes` with every difference
   explained; prelude + `assert(true);` hash unchanged; ordinary pipeline 20 files × 2 targets identical; mutations of
   each new arm.
+
+## Slice O2 result (2026-11-23, branch `claude/7354-o2`; P1 and `main` merged at fc6a029b3f)
+
+### Built (as planned; deviations below)
+
+- **One call path.** `buildAccessorCall` (`builtin-function-property-bodies.ts`): a source closure goes to F2's dispatcher
+  of that arity (`__call_fn_method_0(receiver, getter)`, `__call_fn_method_1(receiver, setter, v)`), a built-in to the
+  kernel's own `method0` / `method1` (its `callVector`). The kernel's entry-get (`get`, `getOwn`) answers status 1 with
+  the call's result; the set adapter (`source-object-bodies.ts`) drops it and answers true. Both return right after
+  the call: no entry, table or chain position is used after program code ran.
+- **Removed:** the entry-get's status-3 arm where a source accessor can exist, `getOrAbort` (now `getField`, a plain
+  [[Get]] of a key just found present), the set adapter's setter `unreachable` where a source setter can exist, the
+  `define-accessor` named gap (a realm row binding the descriptor pack's `defineAccessor`, as `define-data` does). The
+  set row takes the kernel's operand record instead of six copied handles.
+- **Requirement** (`native-invocation-requirements.ts`): `realmAccessors` is set when the program calls a contract that
+  can store a function value as an accessor half (`definesAccessors`, one list in `ordinary-object-callables.ts`:
+  `define-accessor`, `descriptor-define`, `descriptors-define`) and has source closures. It adds arities 0 and 1 and
+  selects the **dispatchable** source closures as arms (`dispatchable`, the predicate `dynamicCalleeGaps` now shares).
+  It adds **no gap**: a closure that is not dispatchable is not an arm, and if one ever reaches the realm's call, the
+  dispatcher's last arm aborts for any closure (P1's `builtinRootTypeIdx`, now also set under `realmAccessors`). No new
+  refusal is possible by construction (lead's answer 2). The kernel receives the two dispatchers only then
+  (`nativeInvocationAccessorCalls`, a new optional kernel dependency); otherwise its bodies are the old bytes.
+- **Object literal:** an accessor, and a function expression inside a literal that has one, take the all-dynamic
+  signature on the lane of their enclosing function declaration (`sourceDynamicClosureSignature`); inside an exported
+  function (the typed #3518 programs) they keep the checker's signature, as before. Such an accessor is a function
+  object (`emitFunctionObjectInit`: `length`, name `get k` / `set k`, no `prototype`); a typed one keeps none.
+  `programObjects` counts an accessor as a function value.
+- from-ast 17346 = base (the resolver call lost its `isFunctionExpression` guard in place), program-source 1746 =
+  base, program-consumer 1513 = base (the invocation pack rides on the existing `reserveNativeRealmKernel` call).
+
+### Deviations from the plan
+
+- Lead's answer 2 replaced plan step 3's "every source unit required dispatchable" (a named refusal) by "dispatchable
+  units are the arms, the rest aborts": no program that compiles today can refuse.
+- `get: undefined`: the stored half was already null (it read `undefined` and compared right on the base), so no
+  normalization was added.
+- The plan's "descriptor-literal closures always dynamic" broke the #3518 typed fixtures (TS programs on the same
+  lane, whose literals live in exported functions): the enclosing-declaration rule above keeps them byte-identical.
+
+### Re-entrancy and exceptions (lead's conditions A, B)
+
+- A getter / setter is called from: kernel entry-get (returns its result), the set adapter (returns true),
+  ToPropertyDescriptor's `getField` (each field is `has` then [[Get]] on the descriptor object, read afresh; only the
+  record's own locals survive the call), defineProperties' per-key [[Get]] (the key list is the one snapshot the spec
+  takes; each key's attributes are re-read by `ownDescriptor` after the previous getter ran; nothing is defined until
+  every descriptor is converted). OrdinaryToPrimitive's method reads are `js.object.get` (IR side).
+- Kernel state checked for a set-before / reset-after pattern: none in `get` / `lookup` / entry-get / set adapter /
+  ToPropertyDescriptor / descriptors-define (locals only); the realm `initializer` runs before any lookup; the
+  dispatcher's `__current_this`, `__argc`, `__extra_args` are saved and restored by its `try_table` boundary on return
+  and on throw (F2). No legacy prototype cache or one-shot receiver global exists on this path (those are the legacy
+  `object-get-bodies.ts`, not built here).
+- Tested against node (each with its wrong twin): a getter that redefines its own property as an accessor and as data;
+  grows the object read and an inherited read's receiver by 50 properties; a setter that grows its receiver, redefines
+  the property it was found on, on the object and on a prototype; recursive reads (depth 4) and writes; a key getter
+  that defines the SAME target during defineProperties (configurable: the later define wins; non-configurable:
+  TypeError, the inner value stays); a key getter that hides a later key and adds one; a descriptor-field getter that
+  grows the descriptor; a getter throwing on its 2nd call only; throws through a read, a write, ToPrimitive,
+  defineProperty, create (no object leaks) and defineProperties (nothing defined); `this` restored after a caught
+  getter throw. Not expressible on this path: `delete` inside a getter (`delete has no IR lowering`), changing a
+  prototype (`Object.setPrototypeOf` / `__proto__` refused), so (i) and (iv) are covered by redefinition only.
+
+### ToPropertyDescriptor order (condition C)
+
+A descriptor whose six fields are logging getters reads `enumerable, configurable, value, writable, get, set`; a `get`
+that is no function throws after `enumerable, configurable, get` were read and before `set`; a bad `set` after
+`get, set`; `get` + `value` after `value, get` (all node's order).
+
+### C1 (`native-getter-invocation-requirements.ts`): why it is not folded, what would delete it
+
+It proves a getter by its static allocation (an object-literal `define-accessor` whose half is a `closure.new`, then a
+`js.object.get`), and its use makes that closure an arm of method 0 **with the dispatcher's conversions** (an f64 or
+Boolean result). The realm rule here admits only all-carrier closures. In the typed #3518 programs (accessors in an
+exported function keep the checker's signature, e.g. `get value(): number`) the C1 arm is what lets the realm's call
+of a typed getter answer (tests `issue-3518-ordinary-object-runtime-providers`, `-native-getter-resource-join`: those
+programs are now accepted and run, `run() === 7`). Its other consumer, `native-object-get.ts`, is reached only from test
+fixtures. It can be deleted once (a) a typed accessor gets an arm by the realm rule (the dispatcher's f64 / Boolean
+conversions admitted there, with the undefined-preserving carrier C1's gap asks for f64 parameters) or typed programs
+leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7380).
+
+### Proof
+
+| test file (alone, VITEST_MAX_FORKS=1, heap 2048) | tests | exit |
+|---|---:|---:|
+| issue-7354-o2-accessors (new) | 43 | 0 |
+| issue-7354-o1-define-property / o1-create-and-define-properties (3 O2 abort pins removed) | 30 / 15 | 0 |
+| issue-3518-ordinary-object-runtime-providers (the gap pin now runs the getter: 7) | 271 | 0 |
+| issue-3518-native-getter-invocation (arities [0, 1]; "no Get" has dispatchers, no use) | 37 | 0 |
+| issue-3518-native-getter-resource-join (refusal → acceptance) | 13 + 2 skipped | 1 — the same 2 fail on the base (`string.const runtime is unavailable` in the hand-built fixture) |
+| issue-3518-native-getter-results | 19 of 21 | 1 — the same 2 fail on the base (same fixture error) |
+| issue-7354-o-objects | 12 of 13 | 1 — the same 1 fails on the base fc6a029b3f |
+| issue-7354-fa-function-values (descriptor-literal pin moved to exported fn; script case positive) / p1-method-values (getter-defined method row removed, now an O2 test) | 44 / 19 | 0 |
+| m-refusals 44, r-provider-census 117, 3518-native-realm-requirements 25, 3518 ordinary-descriptor-capture 7, ordinary-getter-source 8, ordinary-object-access-source-plan 27, transitive-getter-captures 23, promise-getter-capture 14, void-closure-results 16, native-object-realm-declarations 21, native-builtin-functions 36, semantic-provider-source-acceptance 86, native-add-default-hint 43, ordinary-object-callable-contracts 55 | | 0 |
+| c2-constructors 20, c2-this 18, f1b-function-objects 9, f2 10, p1-own-property 18, m-prototype-premise 18, o4 16, o3 13, s-script-var-define-target 14, x-dynamic-throw 59, u-prelude 3, test262-prepared-entry 44, perf-string-authentication 27, o2b 15, f1b-declaration-values 11, f1b-function-object-writes 3, f1-function-kind 12 | | 0 |
+
+- **Seven rows** (strict entry, real prelude): all return. **Sample** (411 rows, real runner, base = fc6a029b3f run
+  the same day): base 61 pass / 19 fail / 331 CE, head **68** / 12 / 331; transitions fail→pass 7 (exactly the seven
+  rows), everything else unchanged. Ten mutated twins of the seven (each flips one assertion) all FAIL through the same
+  runner; deleted, directory mtimes restored, `find test262/test -name '*_o2twin*'` empty.
+- **Probes base vs head** (310: P1's 216 regression programs, 74 O2 hazard probes, 20 base probes): OK→OK 132,
+  ABORT→OK 42, REFUSED→OK 35, ABORT→ABORT 74, REFUSED→REFUSED 27; nothing that was right is anything else, 0 wrong,
+  0 invalid, 0 exceptions. The 74 hazard probes with wrong twins: 73 OK, 1 abort (a closure capturing a written
+  parameter, `closure inside mk captures non-local binding`, not accessor-specific).
+- **Sweep** (`.tmp/sweep-gen.mjs`, 13 existing kinds × 216 descriptors): counting-getter column (every present field a
+  getter that counts; the count is part of the answer) 2,808 / 2,808 right; plain column 2,808 / 2,808 right (O1's cases re-run on the head: `getField`). A 12-program
+  batch with wrong expectations: 12 / 12 throw.
+- **`check:prepared-bytes`** (804 rows) base vs head: 803 identical; row 47 (`Object.defineProperty(obj, "foo",
+  {value: 1})`, no closure) differs by `getField` (the dropped status-3 test in the descriptor helper); run on base and
+  head: both return with `obj.foo === 1`.
+- **Plain programs** byte-identical: prelude + `assert(true);` sha256 e23f5dca… and prelude + an object-literal
+  program 8b838a85… at base and head; the 803 rows above.
+- **Ordinary pipeline**: 20 test262 files (the seven rows, six `11.1.5` object-literal accessor rows, O1/P1's
+  defineProperty / create / getOwnPropertyDescriptor / hasOwnProperty rows) × default + standalone: 40 / 40 identical.
+- **Mutations** (each alone, `.tmp/mutate.cjs`, probe run: 7 JS programs, a TS typed-getter program, the #3518
+  exported-getter program), all killed: the dispatcher call's receiver (wrong `this`), the setter's `true` (strict
+  TypeError), the realm's arms (`units: []`: abort in a program that calls no value), `define-accessor` in the
+  accessor-defining list (literal reads abort), the accessor's dynamic signature (refusal), the accessor's
+  function-object init and its `get ` prefix (wrong `name`), the closure-root abort under `realmAccessors` (the typed
+  getter answers a catchable TypeError instead), the enclosing-declaration lane rule (the #3518 typed program refuses
+  `js.number.box`), `programObjects`' accessor (an accessor-only program loses `this`), the kernel's source arm.
+  Each killing program is in `issue-7354-o2-accessors` or the #3518 runtime-providers file.
+- Gates: see the merge note below.
+
+### Known limits
+
+- `o.x += v`, `o.x++` on a member: refused at top level (`compound property write on dynamic not in IR scope`), the
+  function's abort inside one (pinned in o2-accessors; slice L0).
+- `delete` and prototype changes inside an accessor are not expressible on this path (see above).
+- A non-dispatchable closure (typed) as an accessor half of a descriptor static aborts at its call.
+- Requirement precision: `realmAccessors` reserves both dispatchers for any accessor-defining program with closures,
+  even one that defines only a getter or never reads it (one unused function at most).
+
+### Not verified
+
+- Node 25 (not installed).
+- The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
+  h-script-var-dynamic-home and 3518-native-invocation-substrate suites.

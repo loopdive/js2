@@ -8,9 +8,13 @@ import {
   abortBodies,
   abortsAtRunTime,
   agreesWithNode,
+  preparedOptions,
   refusal,
   runnerOptions,
+  yieldToRpc,
 } from "./helpers/prepared-node-agreement.js";
+import { compile } from "../src/test262/test262-prepared-entry.js";
+import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -69,6 +73,11 @@ describe("#7354 O2 — the getter's receiver", () => {
 
 describe("#7354 O2 — reads and writes", () => {
   it.each([
+    [
+      "a read in a program that calls no value itself: the realm's dispatcher holds the getter's arm",
+      "var fv = function(){ return 1; }; fv(); var o = {}; Object.defineProperty(o, 'x', {get: function(){ return 5; }});" +
+        " var x = o.x; var out = 'n'; if (x === 5) out = 'y';",
+    ],
     [
       "one getter call per read, in a loop, inside a function and under typeof",
       "var n = 0; var o = {get x(){ n = n + 1; return n; }}; var s = 0; for (var i = 0; i < 4; i = i + 1) s = s + o.x;" +
@@ -279,6 +288,26 @@ describe("#7354 O2 — definitions", () => {
 });
 
 describe("#7354 O2 — what stays an abort or a refusal", () => {
+  it(
+    "a typed closure (not dispatchable) as a descriptor's getter: its call is the abort, not a catchable TypeError",
+    async () => {
+      // node answers 5; the dispatcher has no arm for an f64-returning closure, so the read must not throw.
+      const source =
+        "var o: any = {}; Object.defineProperty(o, 'x', {get: function(): number { return 5; }});" +
+        " var y: any = 0; try { y = o.x; } catch (e) { y = 'caught'; }";
+      await yieldToRpc();
+      const result = await compile(source, { ...preparedOptions(), fileName: "test.ts" });
+      expect(result.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+      let trap: unknown;
+      try {
+        (instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined)?.();
+      } catch (error) {
+        trap = error;
+      }
+      expect((trap as Error | undefined)?.constructor.name).toBe("RuntimeError");
+    },
+    SLOW,
+  );
   it(
     "a built-in function as a getter: the realm runs its algorithm, the Object.prototype method's abort",
     async () =>
