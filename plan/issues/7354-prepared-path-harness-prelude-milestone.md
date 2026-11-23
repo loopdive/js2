@@ -6680,3 +6680,44 @@ present): throwing a ReferenceError there would answer wrong. It needs a list of
 
 - Node 25 (not installed); no adversarial review agent was run (the lead holds the PR).
 - The full 3526/3518 pin suites beyond the files listed; the ordinary pipeline beyond the 20 files.
+
+### Review r1 (PR 7411): fixes
+
+1. **B1, one predicate.** The IR's "names an Error constructor" (`source-plain-objects.ts` `namesErrors`) and the
+   realm's "holds the family" were two spellings of one question and disagreed: a parameter, local, label, function
+   expression name or shorthand spelled `TypeError` made the IR admit the family while the realm held none, and
+   `compile()` threw `missing literal "Error"`. Now `namesErrors` asks the same pristine test the read asks
+   (`pristineBuiltinGlobal`), and the realm derives the family only from what the IR emitted
+   (`heldErrorConstructors`: a family `js.object.intrinsic`, `create-error` / `error-to-string`, or a bound catch
+   payload) — it no longer reads the IR's answer at all. Tests: `g1-spelled-names` pairs each shape (parameter, local
+   var, label, function-expression name, shorthand, catch binding `Error`, object key, a catch in a function the path
+   cannot lower) with every family consumer (`String()`, `+` both sides, `instanceof`, a caught value), node + twin.
+2. **S1.** A script-level `var X;` without an initializer, X a global the realm serves (`REALM_GLOBAL_NAMES`: the
+   catalog's plain-name aliases), reads the built-in in JS (the var binds the existing global property) but the IR's
+   undefined slot here: a wrong value. It refuses by name (`scriptVarOfRealmGlobal`, checked once in the legalization's
+   module-init group). With an initializer the var replaces the built-in where it runs, which the path lowers right, so
+   it stays admitted. Known limit, pre-existing: a read of such an initialized var before its initializer runs.
+3. **import-cycles.** The IR reads the catalog only through `builtin-prototype-keys.ts` (`errorConstructorId`,
+   `errorConstructorSelector`, `realmIntrinsicSelector`, `objectPrototypeMethodId`, …); `native-realm-families.ts`
+   takes the held rows instead of importing the IR. No `import-cycles-allow`.
+4. Nits: the stale `prototypeMethodSelector` comment is gone with the function; `kernelGetInto`
+   (`source-object-bodies.ts`) is the one [[Get]]-and-status-check, used by `buildSourceObjectGetDefinition` (same
+   bytes) and by Error.prototype.toString's `part`.
+
+Verified after r1 (main 9dfb1252a7 merged, H2 included):
+
+- Reviewer probes `.tmp/rvg1/b*.json` (443), pre-r1 head 1ab908ba02 → head: OK→OK 177, REFUSED→REFUSED 150,
+  ABORT→ABORT 69, WRONG→REFUSED 16 and EXC→REFUSED 3 (bare script vars, by name), EXC→OK 11 (every B1 program now
+  node's answer), EXC→ABORT 2 (`finally-order`: the base aborts too), REFUSED→OK 1 / REFUSED→ABORT 1 (`sub-proto-create`
+  / `sub-call`: H2 admits the written function declaration; `Error.call(this, m)` is the designed `.call` abort).
+  Nothing right changed; no WRONG, INVALID or EXC left.
+- The 433 G1 probes: the same transitions against base 111b28ceaa as before r1, except
+  `r:read.fn.constructor` ABORT → a refusal by name (main's H2). The one WRONG is still Condition B's message text.
+- Tests (each alone): the four g1 files (5/14/14/17), every moved pin and every 7354 c2/f1/f1b/fa/h2/m/o1/o2/p1/t2/ty
+  file, 3518 realm-requirements / object-realm-declarations / callable-contracts / builtin-functions /
+  compiler-boundaries: all exit 0.
+- `check:prepared-bytes` vs main 9dfb1252a7: 801/804 identical; the same 3 catch-payload rows as before (445, 532,
+  533), byte-identical to the pre-r1 head. Prelude + `assert(true);` and + `assert.throws`: same sha at pre-r1 and head.
+  Ordinary pipeline, 20 files × 2 targets: identical to main.
+- Sample not re-run: r1 changes only programs with an Error-spelled non-global name or a bare script var of a realm
+  global; none of the 411 rows has either (grep), and the prelude compiles to the same bytes.
