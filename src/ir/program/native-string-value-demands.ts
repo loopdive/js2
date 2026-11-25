@@ -17,8 +17,7 @@ import { irValueTypes } from "../analysis/value-types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
-import { isIssuedTypedIrProgram } from "../program-prepare-ir.js";
-import { settledChecks } from "./settled-verdict.js";
+import { isIssuedTypedIrProgram, settledChecks } from "./settled-verdict.js";
 
 export type NativeStringValuePresence<T> = { readonly present: false } | { readonly present: true; readonly value: T };
 

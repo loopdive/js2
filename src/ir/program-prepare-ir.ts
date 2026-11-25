@@ -13,6 +13,7 @@ import { assertPreparedIrProgram } from "./program-validation.js";
 import { assertIrRuntimeSupport, irNumberFormatDemandOwners } from "./program/runtime-support.js";
 import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
+import { recordIssuedTypedIrProgram } from "./program/settled-verdict.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import { validatePreparedStage } from "./program/prepared-validator.js";
 import type {
@@ -20,11 +21,6 @@ import type {
   PreparedIrProgram,
   PreparedIrProgramRuntimeProjection,
 } from "./program/prepared-contracts.js";
-
-const issuedPrograms = new WeakSet<PreparedIrProgram>();
-export function isIssuedTypedIrProgram(program: PreparedIrProgram): boolean {
-  return issuedPrograms.has(program);
-}
 
 function assertCounters(counters: GvnCounters): void {
   const keys = ["functions", "merged", "poisoned"];
@@ -149,6 +145,6 @@ export function prepareTypedIrProgram(
   validatePreparedStage("prepared program", () =>
     assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive }),
   );
-  issuedPrograms.add(program);
+  recordIssuedTypedIrProgram(program);
   return { kind: "prepared", program };
 }

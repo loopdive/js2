@@ -5,6 +5,8 @@
 import { preparedIrSettledVerdicts } from "../../shared/contracts/settled-verdict.js";
 import { isDeeplyFrozenPreparedIrValue, preparedIrFrozenCollectionMembers } from "./data.js";
 
+import type { PreparedIrProgram } from "./prepared-contracts.js";
+
 export type { PreparedIrSettlement } from "../../shared/contracts/settled-verdict.js";
 
 export const {
@@ -13,3 +15,14 @@ export const {
   settledAtIssue,
   settledChecks,
 } = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers, isDeeplyFrozenPreparedIrValue);
+
+// Only the typed transaction records its validated result. Descriptive inputs never enter this identity set.
+const issuedPrograms = new WeakSet<PreparedIrProgram>();
+
+export function recordIssuedTypedIrProgram(program: PreparedIrProgram): void {
+  issuedPrograms.add(program);
+}
+
+export function isIssuedTypedIrProgram(program: PreparedIrProgram): boolean {
+  return issuedPrograms.has(program);
+}
