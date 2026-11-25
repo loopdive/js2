@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, it, expect } from "vitest";
+import { freezePreparedIrRuntimeValue } from "../src/ir/program/data.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import {
   asAllocSiteId,
@@ -78,6 +79,47 @@ function firstLiteral(program: PreparedIrProgram) {
   return demand;
 }
 describe("genuine preparation and decoded population", () => {
+  it("reuses the immutable inventory and observes changes to mutable instruction buffers", () => {
+    const program = genuine(true);
+    expect(collect(program)).toBe(collect(program));
+
+    const instructions: IrInstr[] = [literal("first")];
+    const mutable = data([owner(instructions)]);
+    expect(collect(mutable.program).literals).toHaveLength(2);
+    instructions.push(literal("second"));
+    expect(collect(mutable.program).literals).toHaveLength(4);
+  });
+
+  it("rechecks a frozen descriptive owner whose missing async plan is supplied by a proxy", () => {
+    const states: { id: number; body: IrInstr[] }[] = [];
+    const fn = owner([]);
+    Reflect.deleteProperty(fn, "asyncPlan");
+    const proxy = new Proxy(fn, {
+      get(target, key, receiver) {
+        return key === "asyncPlan" ? { states } : Reflect.get(target, key, receiver);
+      },
+    });
+    const program = freezePreparedIrRuntimeValue(data([proxy]).program);
+    const before = collect(program).buffers.length;
+    states.push({ id: 0, body: [] });
+    expect(collect(program).buffers).toHaveLength(before + 2);
+  });
+
+  it("rechecks inherited async states when their descriptor identity is unchanged", () => {
+    const { packet } = sourcePacket({ "./entry.ts": "export function main(x: number) { return Math.sin(x); }" });
+    const program = requireProgram(prepareTypedIrProgram(packet, typedOptions));
+    expect(collect(program)).toBe(collect(program));
+    const states: { id: number; body: IrInstr[] }[] = [];
+    Object.defineProperty(Object.prototype, "asyncPlan", { value: { states }, configurable: true });
+    try {
+      const count = collect(program).buffers.length;
+      states.push({ id: 0, body: [] });
+      expect(collect(program).buffers).toHaveLength(count + 1);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "asyncPlan");
+    }
+  });
+
   for (const fixture of ["scalar", "string", "recursive"] as const)
     for (const decoded of [false, true])
       it("preserves complete source population fixture=" + fixture + " decoded=" + decoded, () => {
