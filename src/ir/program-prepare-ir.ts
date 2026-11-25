@@ -21,6 +21,11 @@ import type {
   PreparedIrProgramRuntimeProjection,
 } from "./program/prepared-contracts.js";
 
+const issuedPrograms = new WeakSet<PreparedIrProgram>();
+export function isIssuedTypedIrProgram(program: PreparedIrProgram): boolean {
+  return issuedPrograms.has(program);
+}
+
 function assertCounters(counters: GvnCounters): void {
   const keys = ["functions", "merged", "poisoned"];
   if (
@@ -144,5 +149,6 @@ export function prepareTypedIrProgram(
   validatePreparedStage("prepared program", () =>
     assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive }),
   );
+  issuedPrograms.add(program);
   return { kind: "prepared", program };
 }

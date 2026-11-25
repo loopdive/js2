@@ -6721,3 +6721,9 @@ Verified after r1 (main 9dfb1252a7 merged, H2 included):
   Ordinary pipeline, 20 files × 2 targets: identical to main.
 - Sample not re-run: r1 changes only programs with an Error-spelled non-global name or a bare script var of a realm
   global; none of the 411 rows has either (grep), and the prelude compiles to the same bytes.
+
+### Share the immutable string/value inventory across planners
+
+Each collector call traverses both prepared views and records every instruction occurrence. Several planners hold these records at the same time. Reuse one inventory per producer-issued immutable program and selected projection through the existing settled-check mechanism. Custom descriptive inputs always take a fresh traversal. A host prototype change also requires a fresh traversal because an inherited getter or mutable value can change what the compiler observes. Mutable inputs must be traversed again and foreign projections must still fail. Keep enumeration order, allocation evidence, and the runtime emission interface intact.
+
+A focused standalone integration comparison on 2026-11-25 exercised ES5 15.2.3.6-4-299-1.js with the original harness. With the nested-declaration candidate, the standard 512 MiB worker exhausted its heap on both attempts. With inventory reuse, the same worker limit produced a verified IR pass. The integration candidate also includes declaration and arguments support, so this result alone does not establish a main-branch test262 score change.
