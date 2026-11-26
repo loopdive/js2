@@ -6,6 +6,7 @@
 import { ts } from "../ts-api.js";
 import type { IrUnitInventory, IrUnitRecord } from "../shared/contracts/ir-unit-inventory.js";
 import type { IrUnsupportedCode } from "../shared/contracts/ir-preparation-failure.js";
+import { restrictedGlobalLexicalName } from "../shared/script-lexical-names.js";
 import { classDefinitionExpressions, type ClassDefinitionExpression } from "./class-definition-expressions.js";
 import { isAmbientDeclaration } from "./ambient-declarations.js";
 import type { IrClassId, IrSourceId } from "./identity.js";
@@ -81,6 +82,19 @@ export function preparedSelectRefusal(
   for (const unit of inventory.terminalUnits)
     if (unit.directFailure) return locatedFailure({ inventory, derivedUnits: [] }, unit.id, unit.directFailure);
   for (const [sourceId, file] of identity.sourceFileBySourceId) {
+    // (#7499) GlobalDeclarationInstantiation precedes every evaluation of the Script, so this refusal comes first.
+    const restricted = restrictedGlobalLexicalName(file);
+    if (restricted)
+      return failureAt(
+        ownerAt(inventory, null, nodeLocation(sourceId, restricted)),
+        {
+          kind: "unsupported",
+          code: "restricted-global-lexical",
+          stage: "select",
+          detail: `\`${restricted.text}\` is lexically declared in a Script: a SyntaxError at instantiation, which the Prepared path does not raise`,
+        },
+        `lexical ${restricted.text}`,
+      );
     const targets = localExportTargets(file, sourceId, identity);
     for (const statement of file.statements) {
       if (ts.isClassDeclaration(statement) && !isAmbientDeclaration(statement)) {

@@ -1,10 +1,11 @@
 ---
 id: 7499
 title: "Prepared path accepts lexical declarations of NaN / Infinity / undefined that must throw"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 feasibility: medium
@@ -120,3 +121,13 @@ and run, default and standalone; the Prepared path standalone, Script goal):
 None. The only test262 file with a top-level restricted lexical in a Script is
 `language/global-code/decl-lex-restricted-global.js` (`let undefined;`, `negative: phase: runtime`), refused on the
 Prepared path both before (`Phase 1 requires an initializer`) and after (`restricted-global-lexical`). Soundness fix.
+
+## Verification (2026-11-26, branch `claude/7499-restricted-global-lexicals`)
+
+- `tests/issue-7499-prepared-restricted-global-lexical.test.ts`: 17 pass; on the base (`9fd3eb18`) 11 fail, the
+  refused cases, which compiled or were refused under another label.
+- Ordinary pipeline byte-identical, base `9fd3eb18` vs this branch: 100 test262 files (70 with a top-level
+  `let`/`const`/`class`, plus `decl-lex-restricted-global.js`) × (default, standalone), 200 of 200 identical.
+- `src/shared/script-lexical-names.ts` is classified in `scripts/compiler-boundaries.json` next to its sibling
+  `always-undefined-binding.ts`.
+

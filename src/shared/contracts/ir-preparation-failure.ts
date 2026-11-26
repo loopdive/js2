@@ -106,6 +106,7 @@ export type IrUnsupportedCode =
   | "class-definition-evaluation"
   | "class-export-unsupported"
   | "export-target-unsupported"
+  | "restricted-global-lexical"
   | "void-call-expression"
   | "array-representation-unsupported"
   | "nullish-value-unsupported"
