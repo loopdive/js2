@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import type { ts } from "../../ts-api.js";
+import type { IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { IrUnitInventory, IrUnitRecord } from "../../shared/contracts/ir-unit-inventory.js";
 import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
@@ -45,18 +46,48 @@ export function locatedFailure(
   unitId: IrUnitId,
   failure: IrPreparationFailure,
 ): PreparedIrProgramFailure {
-  const owner = preparedIrProgramOwner(input, unitId);
+  return failureAt(preparedIrProgramOwner(input, unitId), failure, unitId);
+}
+
+/** The owner of a failure: a unit, or (`unitId: null`) source text no unit owns. */
+type FailureOwner = Omit<PreparedIrProgramOwner, "unitId"> & { readonly unitId: IrUnitId | null };
+
+/** `node` of source `sourceId` as the owner of a refusal of source text that no unit owns. */
+export function sourceOwner(
+  inventory: IrUnitInventory,
+  sourceId: IrSourceId | undefined,
+  node: ts.Node,
+): FailureOwner | undefined {
+  const sourceRecord = inventory.sources.find((record) => record.id === sourceId);
+  if (!sourceRecord) return undefined;
+  const file = node.getSourceFile();
+  const start = node.getStart(file);
+  const { line, character } = file.getLineAndCharacterOfPosition(start);
+  return Object.freeze({
+    unitId: null,
+    sourceFile: sourceRecord.sourceKey,
+    location: Object.freeze({
+      sourceId: sourceRecord.id,
+      line: line + 1,
+      column: character + 1,
+      declarationStart: start,
+      declarationEnd: node.end,
+    }),
+  });
+}
+
+/** `failure` as a refusal owned by `owner`; `subject` names what was being located when the owner is missing. */
+export function failureAt(
+  owner: FailureOwner | undefined,
+  failure: IrPreparationFailure,
+  subject: string,
+): PreparedIrProgramFailure {
   if (!owner) {
     throw new PreparedIrProgramInvariantError(
       "invalid-prepared-data",
-      `prepared producer cannot locate ${unitId}: ${failure.detail}`,
+      `prepared producer cannot locate ${subject}: ${failure.detail}`,
     );
   }
-  return failureAt(owner, failure);
-}
-
-/** `failure` as a refusal owned by `owner`. */
-export function failureAt(owner: PreparedIrProgramOwner, failure: IrPreparationFailure): PreparedIrProgramFailure {
   // Error instances/callbacks must not escape into the serializable diagnostic contract.
   const { cause: _cause, ...diagnostic } = failure;
   return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });

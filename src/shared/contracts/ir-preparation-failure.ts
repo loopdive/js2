@@ -104,6 +104,8 @@ export type IrUnsupportedCode =
   | "anonymous-class"
   | "static-class-initialization"
   | "class-definition-evaluation"
+  | "class-export-unsupported"
+  | "export-target-unsupported"
   | "void-call-expression"
   | "array-representation-unsupported"
   | "nullish-value-unsupported"

@@ -191,6 +191,45 @@ function pushExportIntent(
   exports.push(frozen(intent));
 }
 
+/**
+ * The planned local target of each name a local `export { … }` clause may name: a top-level `var`/`let`/`const`
+ * identifier (its module global) or a function declaration (its callable). Export clauses are order-independent
+ * (`export { value }` may precede `value`), so the targets are resolved up front. Any other local is unresolved.
+ */
+export function localExportTargets(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  identityContext: BuildIrModuleInitPlanInput["identityContext"],
+): Map<string, IrBindingId> {
+  const targets = new Map<string, IrBindingId>();
+  let declarationOrdinal = 0;
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name))
+          targets.set(declaration.name.text, irModuleGlobalBindingId(sourceId, declarationOrdinal));
+        declarationOrdinal++;
+      }
+    } else if (ts.isFunctionDeclaration(statement) && statement.name) {
+      const unitId = identityContext.unitIdByDeclaration.get(statement);
+      if (unitId) targets.set(statement.name.text, irUnitCallableBindingId(unitId));
+    }
+  }
+  return targets;
+}
+
+/** The specifiers of a local `export { … }` clause (no module specifier) with their local names; else undefined. */
+export function localExportSpecifiers(
+  statement: ts.Statement,
+): readonly { readonly element: ts.ExportSpecifier; readonly localName: string }[] | undefined {
+  if (!ts.isExportDeclaration(statement) || statement.moduleSpecifier || !statement.exportClause) return undefined;
+  if (!ts.isNamedExports(statement.exportClause)) return [];
+  return statement.exportClause.elements.map((element) => ({
+    element,
+    localName: (element.propertyName ?? element.name).text,
+  }));
+}
+
 /** Build the semantic plan directly from source and structural R1 identities. */
 export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModuleInitPlan {
   const { sourceFile, checker, identityContext } = input;
@@ -207,29 +246,12 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
   const evaluations: IrModuleInitEvaluationEntry[] = [];
   const exports: IrModuleInitExportIntent[] = [];
   const gaps: IrModuleInitPlanGap[] = [];
-  const targetBindingByName = new Map<string, IrBindingId>();
+  const targetBindingByName = localExportTargets(sourceFile, sourceId, identityContext);
   const exported = new Set<string>();
   let declarationOrdinal = 0;
   let sourceOrdinal = 0;
   const declarationOrder = moduleBindingDeclarationOrder(sourceFile);
   const redeclared = redeclaredScriptVarOrdinals(checker, declarationOrder);
-
-  // Export declarations are order-independent (`export { value }` may appear
-  // before `value`), so resolve their canonical local targets up front.
-  let targetDeclarationOrdinal = 0;
-  for (const statement of sourceFile.statements) {
-    if (ts.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name)) {
-          targetBindingByName.set(declaration.name.text, irModuleGlobalBindingId(sourceId, targetDeclarationOrdinal));
-        }
-        targetDeclarationOrdinal++;
-      }
-    } else if (ts.isFunctionDeclaration(statement) && statement.name) {
-      const unitId = identityContext.unitIdByDeclaration.get(statement);
-      if (unitId) targetBindingByName.set(statement.name.text, irUnitCallableBindingId(unitId));
-    }
-  }
 
   for (let statementOrdinal = 0; statementOrdinal < sourceFile.statements.length; statementOrdinal++) {
     const statement = sourceFile.statements[statementOrdinal]!;
@@ -363,29 +385,27 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
       continue;
     }
 
-    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier && statement.exportClause) {
-      if (ts.isNamedExports(statement.exportClause)) {
-        for (const element of statement.exportClause.elements) {
-          const localName = (element.propertyName ?? element.name).text;
-          const targetBindingId = targetBindingByName.get(localName) ?? null;
-          if (!targetBindingId) {
-            const { start, end } = sourceRange(element, sourceFile);
-            gaps.push(
-              frozen({
-                code: "unresolved-export-target" as const,
-                detail: `export ${element.name.text} has no planned local binding target`,
-                start,
-                end,
-              }),
-            );
-          }
-          pushExportIntent(exports, exported, {
-            externalName: element.name.text,
-            localName,
-            targetBindingId,
-            ...sourceRange(element, sourceFile),
-          });
+    const specifiers = localExportSpecifiers(statement);
+    if (specifiers) {
+      for (const { element, localName } of specifiers) {
+        const targetBindingId = targetBindingByName.get(localName) ?? null;
+        if (!targetBindingId) {
+          const { start, end } = sourceRange(element, sourceFile);
+          gaps.push(
+            frozen({
+              code: "unresolved-export-target" as const,
+              detail: `export ${element.name.text} has no planned local binding target`,
+              start,
+              end,
+            }),
+          );
         }
+        pushExportIntent(exports, exported, {
+          externalName: element.name.text,
+          localName,
+          targetBindingId,
+          ...sourceRange(element, sourceFile),
+        });
       }
       continue;
     }

@@ -1,10 +1,11 @@
 ---
 id: 7500
 title: "Prepared path crashes on `export class C {}`: alias targets unplanned binding"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
+completed: 2026-11-26
 priority: high
 horizon: s
 feasibility: medium

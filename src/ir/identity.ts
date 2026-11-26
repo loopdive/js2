@@ -25,6 +25,7 @@ export type {
 } from "../shared/contracts/ir-identity.js";
 
 import { ts } from "../ts-api.js";
+import { isAmbientDeclaration } from "./ambient-declarations.js";
 import {
   createDerivedIrUnitId,
   createIrBindingId,
@@ -468,14 +469,6 @@ function orderSourceKeys<T extends { sourceFile: ts.SourceFile; sourceKey: strin
 
 function hasStaticModifier(node: ts.Node): boolean {
   return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Static) !== 0;
-}
-
-export function hasDeclareModifier(node: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node; current; current = current.parent) {
-    const modifiers = (current as { modifiers?: readonly ts.Node[] }).modifiers;
-    if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
-  }
-  return node.getSourceFile().isDeclarationFile;
 }
 
 /**
@@ -1226,7 +1219,7 @@ class SourceInventoryBuilder {
       if (fieldCallInventoryCandidate && explicitConstructor.terminal) {
         fieldCallTerminalMembers.push({ declaration: node, record: explicitConstructor });
       }
-    } else if (!hasExecutableConstructor && !hasDeclareModifier(node)) {
+    } else if (!hasExecutableConstructor && !isAmbientDeclaration(node)) {
       explicitConstructor = this.addSupportUnit(
         "class-implicit-constructor",
         classRecord.id,

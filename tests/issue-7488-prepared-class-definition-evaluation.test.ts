@@ -30,6 +30,8 @@ describe("#7488 — Prepared path refuses a top-level class definition that runs
     ["a static field's computed key", "var n = 0; class C { static [(n = 1, 'x')]; } if (n !== 1) throw 0;"],
     ["an instance field's computed key", "var n = 0; class C { [(n = 1, 'x')]; } if (n !== 1) throw 0;"],
     ["a method's computed key", "var n = 0; class C { [(n = 1, 'x')]() {} } if (n !== 1) throw 0;"],
+    // Syntactic literal-key exemption: `[-1]` evaluates nothing but is not a literal key, so it is refused.
+    ["a negated numeric key", "class C { static [-1]; }"],
     ["a decorator", "var n = 0; function d() { n = 1; return () => {}; } @d() class C {} if (n !== 1) throw 0;"],
     ["a default-exported class with extends", "export default class extends (0, Object) {}"],
     // Crashes on main (#7500): the refusal runs before the export alias is planned.
