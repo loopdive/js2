@@ -5,26 +5,32 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
 
+/** A function or class: labels outside it are not in scope inside it. */
+function isLabelScopeBoundary(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node)
+  );
+}
+
 /**
  * Check for duplicate label names in a block (for class static block bodies).
  * ES spec: ContainsDuplicateLabels must be false.
- * Does not cross function boundaries.
+ * A function or class inside it is checked with its own labels.
  */
 export function checkDuplicateLabelsInBlock(ctx: EarlyErrorContext, block: ts.Block): void {
   const labels = new Set<string>();
   function walkForLabels(node: ts.Node): void {
-    // Don't cross function/class boundaries
-    if (
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node) ||
-      ts.isConstructorDeclaration(node) ||
-      ts.isGetAccessorDeclaration(node) ||
-      ts.isSetAccessorDeclaration(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isClassExpression(node)
-    ) {
+    // The block's labels end at a function or class boundary; the body behind it has its own.
+    if (isLabelScopeBoundary(node)) {
+      checkDuplicateLabels(ctx, node, new Set());
       return;
     }
     if (ts.isLabeledStatement(node)) {
@@ -48,18 +54,12 @@ export function checkDuplicateLabelsInBlock(ctx: EarlyErrorContext, block: ts.Bl
  * ES spec: ContainsDuplicateLabels of StatementList must be false.
  */
 export function checkDuplicateLabels(ctx: EarlyErrorContext, node: ts.Node, activeLabels: Set<string>): void {
-  // Don't cross function/class boundaries
-  if (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isClassDeclaration(node) ||
-    ts.isClassExpression(node)
-  ) {
+  // A class static block is checkDuplicateLabelsInBlock's (its own message).
+  if (ts.isClassStaticBlockDeclaration(node)) return;
+  // A label's scope ends at a function or class boundary, but the body behind it is a StatementList of its own
+  // that ContainsDuplicateLabels covers too (`var g = function () { l: l: ; };`), so it restarts with no label.
+  if (isLabelScopeBoundary(node)) {
+    forEachChild(node, (child) => checkDuplicateLabels(ctx, child, new Set()));
     return;
   }
   if (ts.isLabeledStatement(node)) {

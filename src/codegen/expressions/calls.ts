@@ -48,7 +48,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
 import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
-import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
+import { expectedArgumentCountOfParams } from "../../shared/function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
 import { mappedFunctionIsForeign } from "./apply-dynamic-arglist.js"; // (#4526)
@@ -1239,7 +1239,7 @@ function tryEmitNativeProtoReflectiveCall(
   } catch {
     return undefined;
   }
-  let member = sym === undefined ? undefined : memberKeyForProperty(ctx.checker, sym);
+  let member = sym === undefined ? undefined : memberKeyForProperty(ctx.oracle, sym);
   const decl = sym?.declarations?.[0];
   let ifaceName: string | undefined;
   if (member && decl && ts.isMethodSignature(decl) && decl.parent && ts.isInterfaceDeclaration(decl.parent)) {
@@ -4121,11 +4121,11 @@ export function tryEmitInlineDynamicCall(
   )
     return null;
 
-  // Compile callee (externref) → anyref → temp local.
   const calleeType = compileExpression(ctx, fctx, expr.expression);
   if (calleeType === null) return null;
-  // If already a ref type, skip the extern→any convert; otherwise expect externref.
-  if (calleeType.kind === "externref") {
+  // Callee → anyref → temp local. A ref skips extern→any; a primitive (#7396, `g = 3; g()`) is boxed for IsCallable.
+  if (calleeType.kind === "externref" || calleeType.kind === "f64" || calleeType.kind === "i32") {
+    coerceType(ctx, fctx, calleeType, { kind: "externref" });
     fctx.body.push({ op: "any.convert_extern" });
   } else if (calleeType.kind !== "ref" && calleeType.kind !== "ref_null") {
     // Unexpected stack type — bail, the existing fallback will run.

@@ -49,7 +49,7 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
-import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis } from "../../shared/body-references-own-this.js";
 
 /**
  * Oracle fact kinds that PROVE a receiver is neither `null` nor `undefined`.

@@ -8,7 +8,9 @@
  * reify hands it.
  */
 
+import type { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
+import type { DescriptorDefinition } from "./descriptor-literal.js";
 import type { OpenCarrierHome } from "./empty-object-literal.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
@@ -40,6 +42,17 @@ export interface DescriptorFieldValue {
 export interface ObjectStaticDefinitionValues {
   readonly key: IrValueId | string;
   readonly fields: readonly DescriptorFieldValue[];
+}
+
+/** A define's key (a literal stays static) and field values, each lowered as a carrier by `lower` (#7338, #7276). */
+export function descriptorDefinitionValues(
+  { key, fields }: DescriptorDefinition,
+  lower: (operand: ts.Expression) => IrValueId,
+): ObjectStaticDefinitionValues {
+  return {
+    key: typeof key === "string" ? key : lower(key),
+    fields: fields.map(({ name, initializer }) => ({ name, value: lower(initializer) })),
+  };
 }
 
 /**

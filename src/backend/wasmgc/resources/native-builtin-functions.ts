@@ -6,6 +6,7 @@ import type {
   GlobalReservation,
   TypeReservation,
   TagReservation,
+  TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -69,7 +70,12 @@ import {
   type NativeObjectDescriptorReservations,
   type NativeObjectDescriptorDependencies,
 } from "./native-object-descriptors.js";
-import { requireNativeStringLiteral } from "./native-string-literals.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import {
+  buildErrorCreateDefinition,
+  type ErrorCreateOperands,
+} from "../../../runtime/wasmgc/values/realm-family-bodies.js";
+import { NATIVE_ERROR_CONSTRUCTORS } from "../../../runtime/contracts/native-realm-catalog.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -78,6 +84,10 @@ export interface NativeBuiltinFunctionDependencies {
   readonly closurePlan: NativeClosureDeclarationPlan;
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
+  /** The program's one exception tag: a kernel failure is a source-catchable throw. */
+  readonly exception: TagReservation | TagImportReservation;
+  /** (#7354 G1) Where the realm holds the Error family: its error creation, reserved by the realm, filled here. */
+  readonly errorCreate?: FunctionReservation;
 }
 const functionRoles = [
   "initialize",
@@ -134,8 +144,11 @@ export interface NativeBuiltinFunctionReservations {
     readonly state: GlobalReservation;
     readonly realmReady: GlobalReservation;
   };
+  /** (#7354 G1) The held families' ordinary objects, by catalog id. */
+  readonly objects: readonly { readonly id: string; readonly global: GlobalReservation }[];
+  readonly errorCreate?: FunctionReservation;
   readonly realmType: TypeReservation;
-  readonly exception: TagReservation;
+  readonly exception: TagReservation | TagImportReservation;
   readonly completionScope: "synchronous-builtin-object-kernel";
 }
 interface Owner {
@@ -160,13 +173,13 @@ function same(a: unknown, b: unknown, detail: string): void {
 }
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
+  const required = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
-    Object.keys(d).length !== 5 ||
-    Object.keys(d).some(
-      (key) => !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies"].includes(key),
-    )
+    required.some((key) => !Object.hasOwn(d, key)) ||
+    Object.keys(d).some((key) => ![...required, "errorCreate"].includes(key))
   )
     fail("unexpected dependency input");
+  if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
   requireNativeBuiltinFunctionRequests(tx, d.requests);
   const input = nativeBuiltinFunctionRequestDependencies(tx, d.requests),
     dd = d.descriptorDependencies;
@@ -230,12 +243,12 @@ function resourceKeys(requests: NativeBuiltinFunctionRequests): readonly string[
   const key = requests.requirements.key;
   return [
     key + ":realm-type",
-    key + ":exception",
     ...["realm", "object-prototype", "state", "realm-ready"].map((role) => key + ":global:" + role),
     ...functionRoles.map((role) => key + ":function:" + role),
     ...requests.requirements.intrinsics.flatMap((row) =>
       ["type", "singleton", "algorithm", "lifted", "getter"].map((role) => key + ":" + row.id + ":" + role),
     ),
+    ...(requests.requirements.objects ?? []).map((row) => key + ":object:" + row.id),
   ];
 }
 export function reserveNativeBuiltinFunctionResources(
@@ -331,19 +344,21 @@ export function reserveNativeBuiltinFunctionResources(
       ]),
     ),
   ) as Readonly<Record<FunctionRole, FunctionReservation>>;
-  const exception = tx.reserveTag(
-    key + ":exception",
-    { params: [ext], results: [] },
-    { kind: "defined", name: key + ":exception" },
-  ) as TagReservation;
   const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
+  const objects = Object.freeze(
+    (d.requests.requirements.objects ?? []).map(({ id }) =>
+      Object.freeze({ id, global: tx.reserveGlobal(key + ":object:" + id, key + ":" + id, ext, true) }),
+    ),
+  );
   const pack = Object.freeze({
     requests: d.requests,
     entries: Object.freeze(entries),
     functions,
     globals,
+    objects,
+    ...(d.errorCreate ? { errorCreate: d.errorCreate } : {}),
     realmType,
-    exception,
+    exception: d.exception,
     completionScope: "synchronous-builtin-object-kernel" as const,
   });
   owners.set(pack, {
@@ -354,8 +369,13 @@ export function reserveNativeBuiltinFunctionResources(
     functions: Object.freeze([
       ...Object.values(functions),
       ...entries.flatMap((row) => [row.algorithm, row.lifted, row.getter]),
+      ...(d.errorCreate ? [d.errorCreate] : []),
     ]),
-    globals: Object.freeze([...Object.values(globals), ...entries.map((row) => row.singleton)]),
+    globals: Object.freeze([
+      ...Object.values(globals),
+      ...entries.map((row) => row.singleton),
+      ...objects.map((row) => row.global),
+    ]),
     descriptorInventory: inventory,
     filled: false,
   });
@@ -437,15 +457,10 @@ function operands(
     dd = owner.dependencies.descriptorDependencies;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
-  const literal = (text: string, external = true): Instr[] => {
-    const token = requireNativeStringLiteral(tx, input.strings, text);
-    return [
-      token.kind === "global"
-        ? { op: "global.get", index: tx.physicalIndex(token.global) }
-        : { op: "call", funcIdx: token.function.handle },
-      ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
-    ];
-  };
+  const literal = (text: string, external = true): Instr[] => [
+    ...nativeStringLiteralInstrs(tx, input.strings, text),
+    ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
+  ];
   return {
     rootTypeIdx: owner.dependencies.closures.root.typeIndex,
     realmTypeIdx: pack.realmType.typeIndex,
@@ -467,13 +482,21 @@ function operands(
     defineDataBody: owner.descriptorInventory.functions[0]!.handle,
     defineAttributes: owner.dependencies.descriptors.defineAttributes.handle,
     typeError: dd.errors.newTypeError.handle,
+    createWithPrototype: dd.storage.createWithPrototype.handle,
+    text: (text) => literal(text),
+    objects: (pack.requests.requirements.objects ?? []).map((row, index) => ({
+      ...row,
+      global: tx.physicalIndex(pack.objects[index]!.global),
+    })),
     exceptionTag: tx.physicalIndex(pack.exception),
     lengthKey: literal("length"),
     nameKey: literal("name"),
     errors: NATIVE_BUILTIN_FUNCTION_LITERALS.slice(3).map((text) => literal(text)),
     entries: pack.entries.map((entry, index) => ({
       ...pack.requests.requirements.intrinsics[index]!,
+      properties: pack.requests.requirements.intrinsics[index]!.properties ?? [],
       typeIdx: entry.type.typeIndex,
+      metadataTypeIdx: entry.metadata.type.typeIndex,
       metadataId: entry.metadata.metadata.id,
       liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
       singleton: tx.physicalIndex(entry.singleton),
@@ -495,6 +518,26 @@ function operands(
     sameValue: dd.sameValue.sameValue.handle,
   };
 }
+/**
+ * (#7354 C) The kernel's own operand record, for a body that a realm owner builds over the kernel (the source-callable
+ * adapters), so it calls the kernel's functions and types instead of deriving its own. Physical, so fill phase only.
+ */
+export function nativeBuiltinFunctionOperands(
+  tx: PhysicalModuleReservations,
+  pack: NativeBuiltinFunctionReservations,
+): BuiltinFunctionPrototypeOperands {
+  return operands(tx, pack, current(tx, pack));
+}
+/** (#7354 G1) Error creation's operands: each held constructor's prototype object, by its selector. */
+function errorCreateOperands(d: BuiltinFunctionPrototypeOperands): ErrorCreateOperands {
+  return {
+    ...d,
+    prototypes: d.objects.flatMap(({ id, global }) => {
+      const selector = NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => id === `%${name}.prototype%`);
+      return selector < 0 ? [] : [{ selector, global }];
+    }),
+  };
+}
 export function fillNativeBuiltinFunctionResources(
   tx: PhysicalModuleReservations,
   pack: NativeBuiltinFunctionReservations,
@@ -508,6 +551,8 @@ export function fillNativeBuiltinFunctionResources(
   tx.fillGlobal(pack.globals.objectPrototype, [{ op: "ref.null.extern" }]);
   tx.fillGlobal(pack.globals.state, [{ op: "i32.const", value: 0 }]);
   tx.fillGlobal(pack.globals.realmReady, [{ op: "i32.const", value: 0 }]);
+  for (const { global } of pack.objects) tx.fillGlobal(global, [{ op: "ref.null.extern" }]);
+  if (pack.errorCreate) tx.fillFunction(pack.errorCreate, buildErrorCreateDefinition(errorCreateOperands(d)));
   pack.entries.forEach((entry, index) => {
     tx.fillGlobal(entry.singleton, [{ op: "ref.null", typeIdx: entry.type.typeIndex }]);
     tx.fillFunction(entry.algorithm, buildBuiltinFunctionAlgorithmDefinition(d, d.entries[index]!.behavior));

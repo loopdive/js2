@@ -4,6 +4,20 @@
  * every certifier of one (#7252's class instance, #7292's string vec, #7274's
  * native buffers, #7354's IR-owned typed home): where the binding is written,
  * and whether a use reads a slot that has been written.
+ *
+ * (#7354 H2) On the Prepared path a script binding (a top-level `var` or function declaration) is written only by
+ * the identifier writes {@link preparedBindingRewritten} sees. The binding is a property of the global object
+ * (§9.1.1.4, §16.1.7), so other routes reach it too, and on this path each refuses or aborts at its own site:
+ *   - the global object as a value: script or sloppy-function `this`, `globalThis`, `Object.defineProperty(this, …)`;
+ *   - dynamic code: `eval`, `Function`, `x.constructor(…)`;
+ *   - `with`: the checker resolves no symbol for a name in its body, so a write there is invisible to the query;
+ *   - an Annex B block function (§B.3.3.2) and `delete`;
+ *   - a parameter initializer (`function w(a = (f = v)) { var f; }`): the checker resolves `f` to the body's `var`,
+ *     but the write hits the outer binding (§10.2.11).
+ * A slice that admits one of these routes writes the binding's home or refuses;
+ * tests/issue-7354-h2-script-binding-routes.test.ts holds a program for each. The ordinary pipeline has no such
+ * invariant (a host `eval` runs there), so {@link scriptVarWrites}, which its certifiers share, still declines under
+ * `with` / direct `eval`.
  */
 import { ts } from "../ts-api.js";
 import {
@@ -17,42 +31,53 @@ import {
   sourceMayWriteGlobalObject,
   sourceRunsDynamicCode,
 } from "../shared/intrinsic-prototype-writes.js";
-import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var-declaration-lists.js";
 
-const scriptVarWritesCache = new WeakMap<ts.VariableDeclaration, readonly IdentifierWrite[] | null>();
+const identifierWritesCache = new WeakMap<ts.Identifier, readonly IdentifierWrite[]>();
 
 /**
- * Every write of the script var `declaration` anywhere in its source (the
- * declaration's own included), or `undefined` when a `with` / direct `eval`
- * could write it outside checker identity.
+ * Every write of the script var `declaration` anywhere in its source (its own initializer included), or `undefined`
+ * when its name is a pattern or a `with` / direct `eval` could write it outside checker identity.
  */
 export function scriptVarWrites(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration,
 ): readonly IdentifierWrite[] | undefined {
-  let cached = scriptVarWritesCache.get(declaration);
-  if (cached === undefined) {
-    cached = collectScriptVarWrites(checker, declaration) ?? null;
-    scriptVarWritesCache.set(declaration, cached);
-  }
-  return cached ?? undefined;
+  const { name } = declaration;
+  if (!ts.isIdentifier(name) || hasDynamicScope(declaration.getSourceFile())) return undefined;
+  return identifierWrites(checker, name);
 }
 
-function collectScriptVarWrites(
-  checker: ts.TypeChecker,
-  declaration: ts.VariableDeclaration,
-): IdentifierWrite[] | undefined {
-  const sourceFile = declaration.getSourceFile();
-  if (!ts.isIdentifier(declaration.name) || hasDynamicScope(sourceFile)) return undefined;
-  const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
-  const writes: IdentifierWrite[] = [];
-  const visit = (node: ts.Node): void => {
-    for (const write of identifierWritesOf(node)) {
-      if (checker.getSymbolAtLocation(write.target) === bindingSymbol) writes.push(write);
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
+/**
+ * (#7354 H2) Whether anything but its own declaration stores into the binding `name` declares (a `var`'s or a
+ * function declaration's name), on the Prepared path (module doc).
+ */
+export function preparedBindingRewritten(checker: ts.TypeChecker, name: ts.Identifier): boolean {
+  return identifierWrites(checker, name).some((write) => write.target !== name);
+}
+
+/**
+ * The identifier writes of the binding `name` declares, by checker identity. A shorthand target (`({ f } = o)`)
+ * resolves to its property, so its binding is the shorthand's value symbol.
+ */
+function identifierWrites(checker: ts.TypeChecker, name: ts.Identifier): readonly IdentifierWrite[] {
+  let writes = identifierWritesCache.get(name);
+  if (writes === undefined) {
+    const binding = checker.getSymbolAtLocation(name);
+    const found: IdentifierWrite[] = [];
+    const visit = (node: ts.Node): void => {
+      for (const write of identifierWritesOf(node)) {
+        const { parent } = write.target;
+        const symbol = ts.isShorthandPropertyAssignment(parent)
+          ? checker.getShorthandAssignmentValueSymbol(parent)
+          : checker.getSymbolAtLocation(write.target);
+        if (symbol === binding) found.push(write);
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(name.getSourceFile(), visit);
+    identifierWritesCache.set(name, (writes = found));
+  }
   return writes;
 }
 
@@ -92,8 +117,9 @@ export type NamedVariableDeclaration = ts.VariableDeclaration & { readonly name:
 /**
  * (#7354 V) True when no read of the script var `declaration` can run before its initializer: a typed slot has
  * no `undefined`, so a read of the hoisted binding would answer the slot's zero. The declaration is a top-level
- * statement's, initialized, and every read either is placed after the statement outside every hoisted function,
- * or sits in a hoisted function nothing before the statement can call (`callableBefore`). Name-based, like
+ * statement's or (#7372) a top-level `for (;;)` head's, initialized, and every read either is placed after its
+ * list outside every hoisted function, or sits in a hoisted function nothing before the list can call
+ * (`callableBefore`). Name-based, like
  * `isAlwaysUndefinedVar`: every reference spelled with the name is a read unless the checker binds it to another
  * symbol, a plain `=` target only writes, and code the walk cannot see (`eval`, `Function`) declines. Only the
  * declaration's own file is walked: the caller answers for the program's other scripts, which share its global.
@@ -103,10 +129,10 @@ export function scriptVarReadsFollowInitializer(
   declaration: NamedVariableDeclaration,
 ): boolean {
   const { name, initializer } = declaration;
-  if (!initializer || !isTopLevelStatementDeclaration(declaration)) return false;
+  if (!initializer || !runsBeforeLaterTopLevelCode(declaration)) return false;
   const sourceFile = declaration.getSourceFile();
   if (sourceRunsDynamicCode(sourceFile)) return false;
-  const statementEnd = declaration.parent.parent.end;
+  const statementEnd = declaration.parent.end;
   const binding = checker.getSymbolAtLocation(name);
   const isRead = (node: ts.Identifier): boolean => {
     if (!isValueReference(node)) return false;
@@ -124,6 +150,16 @@ export function scriptVarReadsFollowInitializer(
     const fn = ts.findAncestor(node.parent, isHoistedFunction);
     return fn ? !callableBefore(fn, statementEnd) : node.pos >= statementEnd;
   });
+}
+
+/**
+ * (#7372) Whether the declarator's list is a top-level statement's or a top-level `for (;;)` head's: either runs
+ * once, before every later top-level statement and, for a head, before the loop's test, body and update.
+ */
+function runsBeforeLaterTopLevelCode(declaration: ts.VariableDeclaration): boolean {
+  if (isTopLevelStatementDeclaration(declaration)) return true;
+  const list = declaration.parent;
+  return ts.isVariableDeclarationList(list) && ts.isForStatement(list.parent) && isTopLevelVarList(list);
 }
 
 /**
