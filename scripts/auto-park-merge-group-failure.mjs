@@ -39,6 +39,7 @@
 
 import { execFileSync } from "node:child_process";
 import { enforceQueueHold } from "./enforce-pr-queue-hold.mjs";
+import { REGRESSION_ANNOTATION_TITLE } from "./lib/regression-annotation.mjs";
 
 const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
@@ -156,6 +157,9 @@ export const INFRA_STEP_PATTERNS = [
   // the noun FIRST, which an artifact-then-download-only pattern missed (caught
   // by the real-step-name cases in tests/issue-3597-auto-park-step-aware.test.ts).
   /\bartifacts?\b[^\n]*\b(download|upload)\b/i,
+  // (#7551) A step that exists only to fail a job whose tool CRASHED (no
+  // verdict was reached) marks itself with a trailing "[infra]".
+  /\[infra\]$/i,
 ];
 
 // Is this step name a setup/infra step (as opposed to a verdict step)?
@@ -317,9 +321,7 @@ function fetchJobs(runId) {
 // `shutdownAnnotated` unset (conservative -> judged as a real failure).
 const SHUTDOWN_ANNOTATION = /runner has received a shutdown signal/i;
 // (#7551) The IR current-edition gate names its regressed tests in one error
-// annotation with this title (scripts/test262-edition-scope.ts
-// REGRESSION_ANNOTATION_TITLE); the park comment repeats it.
-const REGRESSION_ANNOTATION_TITLE = "test262 regressions (#7551)";
+// annotation titled REGRESSION_ANNOTATION_TITLE; the park comment repeats it.
 
 // What a failed job's annotations add to the classification: the runner-kill
 // marker, and the regressed-test list.
@@ -863,30 +865,34 @@ function selfCheck() {
     },
     "#7551: an IR edition regression parks (the forwarding gate step adds no verdict)",
   );
-  eq(
-    pick(
-      classifyRun([
-        {
-          name: "merge complete IR standalone measurement",
-          conclusion: "failure",
-          steps: [{ name: "Download the nearest earlier IR measurement (#7551)", conclusion: "failure" }],
-        },
-        {
-          name: "merge shard reports",
-          conclusion: "failure",
-          steps: [{ name: "IR current-edition gate (#7551)", conclusion: "failure" }],
-        },
-      ]),
-    ),
-    {
-      realFailure: true,
-      failedJobs: ["merge complete IR standalone measurement", "merge shard reports"],
-      infraOnly: true,
-      unclassifiable: false,
-      shouldPark: false,
-    },
-    "#7551: a failed baseline download is infra, even though the gate forwards it",
-  );
+  for (const step of [
+    "Download the nearest earlier IR measurement (#7551)",
+    "Edition report did not complete (#7551) [infra]",
+  ])
+    eq(
+      pick(
+        classifyRun([
+          {
+            name: "merge complete IR standalone measurement",
+            conclusion: "failure",
+            steps: [{ name: step, conclusion: "failure" }],
+          },
+          {
+            name: "merge shard reports",
+            conclusion: "failure",
+            steps: [{ name: "IR current-edition gate (#7551)", conclusion: "failure" }],
+          },
+        ]),
+      ),
+      {
+        realFailure: true,
+        failedJobs: ["merge complete IR standalone measurement", "merge shard reports"],
+        infraOnly: true,
+        unclassifiable: false,
+        shouldPark: false,
+      },
+      `#7551: "${step}" is infra (no verdict), even though the gate forwards it`,
+    );
   eq(
     renderFailureLines([
       {

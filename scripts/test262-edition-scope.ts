@@ -16,16 +16,23 @@
  *   report  --results <jsonl> --meta <scope.json> --test262 <root>
  *           [--baseline-dir <dir>] --summary <md> --json <out>
  *
- * Exit codes: 0 ok (including "no baseline") · 1 regression · 2 usage / bad input.
+ * Exit codes: 0 ok (including "no baseline") · 2 usage · 3 REGRESSION FOUND
+ * (the JSON report is written first) · anything else (1 = an uncaught throw)
+ * is a crash: the workflow treats it as infrastructure, never as a regression.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { findCategoryTestFiles, TEST_CATEGORIES } from "../tests/test262-categories.ts";
 import { classifyTest262File, editionStringToYear } from "./generate-editions.ts";
 import { ghWithRetry } from "./lib/gh-api-retry.mjs";
+import { REGRESSION_ANNOTATION_TITLE } from "./lib/regression-annotation.mjs";
+
+/** `report` exit code for "a test of the edition regressed" — distinct from a crash (1). */
+export const REGRESSION_EXIT_CODE = 3;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CURRENT_EDITION_CONFIG = join(ROOT, "scripts", "test262-current-edition.json");
@@ -52,25 +59,21 @@ export function readCurrentEdition(path = CURRENT_EDITION_CONFIG): CurrentEditio
 }
 
 /**
- * Every test file of `year`, as `test/...` paths: the key the runner's
- * TEST262_PATH_FILTER_FILE matches and every result row carries. The walk uses
- * the runner's discovery rule (tests/test262-runner.ts `findTestFiles`).
+ * Every test file of `year` the runner discovers, as `test/...` paths: the key
+ * TEST262_PATH_FILTER_FILE matches and every result row carries. It walks the
+ * runner's own categories with the runner's own file rule
+ * (tests/test262-categories.ts), so the list is exactly the set a complete
+ * edition run registers — the merge step validates against it.
  */
 export function editionPaths(test262Root: string, year: number): string[] {
-  const out: string[] = [];
-  const walk = (rel: string) => {
-    for (const entry of readdirSync(join(test262Root, rel), { withFileTypes: true })) {
-      const child = `${rel}/${entry.name}`;
-      if (entry.isDirectory()) walk(child);
-      else if (isTestFile(entry.name) && classifyTest262File(test262Root, child) === year) out.push(child);
+  const out = new Set<string>();
+  for (const category of TEST_CATEGORIES) {
+    for (const file of findCategoryTestFiles(category, test262Root)) {
+      const rel = relative(test262Root, file).split("\\").join("/");
+      if (classifyTest262File(test262Root, rel) === year) out.add(rel);
     }
-  };
-  walk("test");
-  return out.sort();
-}
-
-function isTestFile(name: string): boolean {
-  return name.endsWith(".js") && !name.includes("_FIXTURE") && !name.endsWith(".imports.js");
+  }
+  return [...out].sort();
 }
 
 /** What a measurement artifact says about itself (`scope.json`). */
@@ -111,14 +114,19 @@ export interface Counts {
   total: number;
 }
 
+/** What a baseline-passing test that has no row in this run is reported as. */
+export const MISSING_STATUS = "missing";
+
 export interface EditionDiff {
-  /** pass -> not-pass, the gated set. */
+  /** pass -> not-pass, the gated set; `now` is MISSING_STATUS for a test this run did not report. */
   regressions: { file: string; now: string }[];
   /** pass -> compile_timeout: runner-load flake (#1192), listed but not gated. */
   timeouts: string[];
   improvements: string[];
   /** In the edition now, absent from the baseline (new test262 files, or a baseline that never ran them). */
   unbaselined: number;
+  /** Passed in the baseline, absent now, and the test262 revision changed: not comparable, not gated. */
+  notComparable: string[];
 }
 
 function countStatuses(run: StatusMap, paths: ReadonlySet<string>): Counts {
@@ -132,13 +140,27 @@ function countStatuses(run: StatusMap, paths: ReadonlySet<string>): Counts {
   return c;
 }
 
-/** Per-test diff restricted to the edition, so a full-corpus baseline serves as well as an edition one. */
-export function compareEditionRuns(run: StatusMap, baseline: StatusMap, paths: ReadonlySet<string>): EditionDiff {
-  const diff: EditionDiff = { regressions: [], timeouts: [], improvements: [], unbaselined: 0 };
-  for (const [file, now] of run) {
-    if (!paths.has(file)) continue;
+/**
+ * Per-test diff restricted to the edition, so a full-corpus baseline serves as
+ * well as an edition one. On the same test262 revision a baseline-passing test
+ * with no row now is a regression: a run that silently drops tests must not
+ * read as clean.
+ */
+export function compareEditionRuns(
+  run: StatusMap,
+  baseline: StatusMap,
+  paths: ReadonlySet<string>,
+  sameTest262Revision: boolean,
+): EditionDiff {
+  const diff: EditionDiff = { regressions: [], timeouts: [], improvements: [], unbaselined: 0, notComparable: [] };
+  for (const file of paths) {
+    const now = run.get(file);
     const was = baseline.get(file);
-    if (was === undefined) diff.unbaselined++;
+    if (now === undefined) {
+      if (was !== "pass") continue;
+      if (sameTest262Revision) diff.regressions.push({ file, now: MISSING_STATUS });
+      else diff.notComparable.push(file);
+    } else if (was === undefined) diff.unbaselined++;
     else if (was === "pass" && now === "compile_timeout") diff.timeouts.push(file);
     else if (was === "pass" && now !== "pass") diff.regressions.push({ file, now });
     else if (was !== "pass" && now === "pass") diff.improvements.push(file);
@@ -173,7 +195,13 @@ export interface Report {
   edition: string;
   sourceSha: string;
   counts: Counts;
-  baseline: { sha: string; runId?: number; distance?: number; test262Sha: string } | null;
+  baseline: {
+    sha: string;
+    runId?: number;
+    distance?: number;
+    /** Present only when the baseline ran a different test262 revision. */
+    test262Changed?: { from: string; to: string };
+  } | null;
   /** Set exactly when `baseline` is null: why nothing was compared. */
   noBaselineReason?: string;
   diff?: EditionDiff;
@@ -201,7 +229,8 @@ export function renderSummary(r: Report): string {
   const b = r.baseline;
   const distance = b.distance === undefined ? "" : `, ${b.distance} first-parent commit(s) back`;
   lines.push(`Compared with the IR measurement of \`${b.sha}\`${b.runId ? ` (run ${b.runId})` : ""}${distance}.`);
-  if (b.test262Sha !== "" && b.test262Sha !== "unknown") lines.push(`Baseline test262 revision: \`${b.test262Sha}\`.`);
+  if (b.test262Changed)
+    lines.push(`test262 revision changed: \`${b.test262Changed.from}\` → \`${b.test262Changed.to}\`.`);
   lines.push("");
   const d = r.diff;
   const list = (title: string, items: string[]) => {
@@ -217,6 +246,8 @@ export function renderSummary(r: Report): string {
   );
   list("Improvements (not pass → pass)", d.improvements.map(code));
   if (d.timeouts.length > 0) list("Not gated: pass → compile_timeout (runner-load flake)", d.timeouts.map(code));
+  if (d.notComparable.length > 0)
+    list("Not comparable (test262 revision changed): passed before, no row now", d.notComparable.map(code));
   if (d.unbaselined > 0) lines.push(`${d.unbaselined} test(s) of the edition have no row in the baseline.`, "");
   return lines.join("\n") + "\n";
 }
@@ -247,15 +278,17 @@ export function buildReport(opts: {
   const mismatch = baselineMismatch(opts.baseline.meta, opts.meta);
   if (mismatch)
     return { ...base, noBaselineReason: `The nearest earlier IR measurement is not comparable: ${mismatch}.` };
+  const from = opts.baseline.meta.test262Sha;
+  const to = opts.meta.test262Sha;
   return {
     ...base,
     baseline: {
       sha: opts.baseline.meta.sourceSha,
       runId: opts.baseline.runId,
       distance: opts.baseline.distance,
-      test262Sha: opts.baseline.meta.test262Sha === opts.meta.test262Sha ? "" : opts.baseline.meta.test262Sha,
+      ...(from === to ? {} : { test262Changed: { from, to } }),
     },
-    diff: compareEditionRuns(opts.run, opts.baseline.statuses, opts.paths),
+    diff: compareEditionRuns(opts.run, opts.baseline.statuses, opts.paths, from === to),
   };
 }
 
@@ -285,14 +318,19 @@ function cmdPaths(args: string[]): void {
 
 const gh = (...args: string[]): string => ghWithRetry(args);
 
-/** Both scopes' artifacts, newest first; expired ones cannot be downloaded. */
+/** Both scopes' unexpired artifacts, every page (an expired one cannot be downloaded). */
 function listArtifacts(repo: string): ArtifactRef[] {
   const out: ArtifactRef[] = [];
   for (const name of [EDITION_ARTIFACT, FULL_ARTIFACT]) {
-    const page = JSON.parse(gh("api", `repos/${repo}/actions/artifacts?name=${name}&per_page=100`));
-    for (const a of page.artifacts ?? []) {
-      if (a.expired || !a.workflow_run?.head_sha) continue;
-      out.push({ id: a.id, name, runId: a.workflow_run.id, sha: a.workflow_run.head_sha, createdAt: a.created_at });
+    for (let page = 1; ; page++) {
+      const { artifacts = [] } = JSON.parse(
+        gh("api", `repos/${repo}/actions/artifacts?name=${name}&per_page=100&page=${page}`),
+      );
+      for (const a of artifacts) {
+        if (a.expired || !a.workflow_run?.head_sha) continue;
+        out.push({ id: a.id, name, runId: a.workflow_run.id, sha: a.workflow_run.head_sha, createdAt: a.created_at });
+      }
+      if (artifacts.length < 100) break;
     }
   }
   return out;
@@ -356,12 +394,10 @@ function cmdReport(args: string[]): void {
   console.log(summary);
   if ((report.diff?.regressions.length ?? 0) > 0) {
     console.log(regressionAnnotation(report));
-    process.exit(1);
+    process.exit(REGRESSION_EXIT_CODE);
   }
 }
 
-/** Title of the annotation auto-park copies into its park comment (scripts/auto-park-merge-group-failure.mjs). */
-export const REGRESSION_ANNOTATION_TITLE = "test262 regressions (#7551)";
 const ANNOTATION_LIST_LIMIT = 50;
 
 /**

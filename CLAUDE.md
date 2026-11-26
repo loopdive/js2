@@ -75,7 +75,7 @@ How it is enforced:
 **The goal is measured on the Prepared whole-program path (decision of
 2026-11-16).** "IR-only" means a test passes under `TEST262_COMPILER_PATH=ir`
 (front door `wholeProgram: { kind: "prepared-program-required" }`), the figure
-the figure the merge queue gates on for the current edition
+the merge queue gates on for the current edition
 (`scripts/test262-current-edition.json`, ES5: a pass → not-pass of that
 edition parks the PR, #7551) and CI measures daily for the whole corpus, which
 is what the site publishes. On 2026-11-16 that

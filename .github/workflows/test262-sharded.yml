@@ -64,6 +64,7 @@ on:
       - "scripts/test262-worker.mjs"
       - "tests/test262-chunk*.test.ts"
       - "tests/test262-runner.ts"
+      - "tests/test262-categories.ts"
       - "tests/test262-scope-classification.test.ts"
       - "tests/test262-shared.ts"
       # Weight maps change shard ASSIGNMENT (which tests share a fork/chunk),
@@ -2153,8 +2154,16 @@ jobs:
           for manifest in ir-shards/*.complete.json; do
             manifests+=(--manifest "$manifest")
           done
+          # Edition scope: the registered set must be EXACTLY the edition's
+          # file list, so a narrowed discovery cannot shrink the run unnoticed.
+          expected=()
+          if [ "$SCOPE" = edition ]; then
+            node --experimental-strip-types scripts/test262-edition-scope.ts paths \
+              --test262 test262 --out "$RUNNER_TEMP/edition-paths.txt"
+            expected+=(--expected-paths-file "$RUNNER_TEMP/edition-paths.txt")
+          fi
           node scripts/validate-test262-completeness.mjs --input ir-measurement/results.jsonl \
-            "${manifests[@]}" --expected-shards "$EXPECTED_SHARDS"
+            "${manifests[@]}" --expected-shards "$EXPECTED_SHARDS" "${expected[@]}"
       - name: Record the measurement's scope (#7551)
         # Read back by a later edition run that picks this one as its baseline.
         env:
@@ -2187,7 +2196,14 @@ jobs:
           node --experimental-strip-types scripts/test262-edition-scope.ts report \
             --results ir-measurement/results.jsonl --meta ir-measurement/scope.json --test262 test262 \
             --baseline-dir ir-baseline --summary ir-measurement/edition-report.md --json ir-measurement/edition-report.json
-          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          code=$?
+          # 3 = regression found (the script writes its JSON report first); any
+          # other non-zero is a crash and must never read as a regression.
+          verdict=ok
+          if [ "$code" = 3 ] && [ -s ir-measurement/edition-report.json ]; then verdict=regression
+          elif [ "$code" != 0 ]; then verdict=crashed; fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
           cat ir-measurement/edition-report.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Build requested IR report including compiler failures
         if: env.SCOPE == 'full'
@@ -2273,14 +2289,24 @@ jobs:
           if-no-files-found: error
           # The daily full run carries the 90-day history; per-merge edition runs only serve as baselines.
           retention-days: ${{ env.SCOPE == 'edition' && 14 || 90 }}
+          # A re-run of failed jobs re-uploads under the same name.
+          overwrite: true
       - name: Fail on an edition regression (#7551)
         # After the upload, so a regressed main commit is still the next run's baseline.
-        if: env.SCOPE == 'edition' && steps.edition_report.outputs.exit != '0'
+        if: env.SCOPE == 'edition' && steps.edition_report.outputs.verdict == 'regression'
         env:
           EDITION: ${{ needs.compiler-path-measurement-plan.outputs.edition }}
+        run: |
+          echo "::error::$EDITION tests went pass -> not pass on the IR path — the job summary lists them"
+          exit 1
+      # The "[infra]" suffix is what auto-park keys on: a crashed report is no
+      # verdict, so the queue retries instead of parking the PR.
+      - name: Edition report did not complete (#7551) [infra]
+        if: env.SCOPE == 'edition' && steps.edition_report.outputs.verdict == 'crashed'
+        env:
           REPORT_EXIT: ${{ steps.edition_report.outputs.exit }}
         run: |
-          echo "::error::the $EDITION IR measurement report exited $REPORT_EXIT — the job summary lists the regressed tests"
+          echo "::error::the edition report crashed (exit $REPORT_EXIT) — infrastructure, not a regression; see its step log"
           exit 1
 
   test262-shard:
