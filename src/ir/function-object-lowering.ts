@@ -16,6 +16,9 @@ import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { describeIrType } from "./describe-ir-type.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
+import { realmIntrinsicRead } from "./identifier-read.js";
+import type { IrFromAstResolver } from "./from-ast.js";
+import { realmIntrinsicHelper } from "./program/dynamic-realm-calls.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -110,9 +113,9 @@ export function lowerTopLevelFunctionValue(
  * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor (a function declaration or expression),
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
- * dynamic value, and no function value reaches the kernel without one. An accessor gets none: it is a value only
- * through a property descriptor, which no Prepared program can obtain (`__lookupGetter__` is an Object.prototype key,
- * refused); a getter in an object literal reaches this (tests/issue-3518-ordinary-object-runtime-providers.test.ts).
+ * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
+ * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
+ * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
  * A function whose name is a computed key the compiler cannot evaluate refuses by name.
  */
 export function emitFunctionObjectInit(
@@ -120,17 +123,19 @@ export function emitFunctionObjectInit(
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
 ): void {
-  if (ts.isAccessor(fn)) return;
-  const name = ts.isMethodDeclaration(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
-  if (name === undefined)
+  const type = builder.typeOf(closure);
+  // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
+  if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
+  if (ts.isAccessor(fn) && type.signature.returnType?.kind !== "dynamic") return;
+  const key =
+    ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
+  if (key === undefined)
     throw new IrUnsupportedError(
       "type-resolution-unsupported",
       "build",
       "the name of a function under a computed key needs the key's value",
     );
-  const type = builder.typeOf(closure);
-  // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
-  if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
+  const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
@@ -336,16 +341,38 @@ export function lowerDynamicMemberCall(
  */
 export function lowerPreparedValueCallee(
   expr: ts.CallExpression,
-  lane: { createsFunctionObjects?(): boolean } | undefined,
+  lane: Parameters<typeof realmIntrinsicRead>[1],
   host: () => FunctionObjectLoweringHost,
 ): IrValueId | undefined {
   if (!createsFunctionObjects(lane)) return undefined;
   const callee = skipOuterExpressions(expr.expression);
   if (ts.isElementAccessExpression(expr.expression))
     return lowerFunctionObjectMemberCall(expr, expr.expression, host());
+  // (#7354 G1) A built-in the realm holds as a value (`TypeError(m)`) is called through it.
+  if (ts.isIdentifier(callee) && realmIntrinsicRead(callee, lane) !== undefined)
+    return lowerBindingCall(expr, undefined, host());
   if (ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
     return undefined;
   return lowerBindingCall(expr, undefined, host());
+}
+
+/**
+ * (#7354 C2, G1) On the Prepared lane, whether an identifier no scope binds reads the dynamic value: a dynamic module
+ * home, or a built-in function object the realm holds (`realmIntrinsicRead`).
+ */
+export function readsDynamicGlobal(node: ts.Identifier, resolver: IrFromAstResolver | undefined): boolean {
+  if (!createsFunctionObjects(resolver)) return false;
+  return (
+    resolver?.resolveModuleBinding?.(node)?.type.kind === "dynamic" || realmIntrinsicRead(node, resolver) !== undefined
+  );
+}
+
+/**
+ * (#7354 G1) A read of the realm's built-in function object `id` (`identifier-read.ts`): one front-end helper, which the
+ * dynamic-value legalization writes as `js.object.intrinsic`. The value is a function.
+ */
+export function lowerRealmIntrinsicRead(id: string, builder: IrFunctionBuilder): IrValueId {
+  return builder.emitCall(irRuntimeFuncRef(realmIntrinsicHelper(id)), [], irDynamic(JS_TAG_IDS.Function))!;
 }
 
 /**

@@ -10,6 +10,7 @@
  */
 import { ts } from "../ts-api.js";
 import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
+import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
 const GLOBAL_ALIASES = new Set(["globalThis", "global", "window", "self"]);
@@ -82,4 +83,32 @@ export function pristineBuiltinGlobal(
   const predicate = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
   predicates.set(sourceFiles, predicate);
   return predicate;
+}
+
+/**
+ * (#7354 G1) The first script-level `var` without an initializer declaring a global the realm serves a built-in for
+ * (`REALM_GLOBAL_NAMES`): such a `var` binds the global object's existing property (§16.1.7
+ * GlobalDeclarationInstantiation), so the name keeps reading the built-in, while this path gives a script `var` its
+ * own home starting at `undefined`. The name is no pristine global either (`boundOrWrittenNames`); the Prepared path
+ * refuses the program by this declaration rather than read either value. A `var` with an initializer replaces the
+ * built-in where it runs (a read before it still sees the home's `undefined`: not handled here, as before G1); a `var`
+ * inside a function binds a local.
+ */
+export function scriptVarOfRealmGlobal(sourceFiles: readonly ts.SourceFile[]): ts.VariableDeclaration | undefined {
+  let found: ts.VariableDeclaration | undefined;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      node.initializer === undefined &&
+      REALM_GLOBAL_NAMES.has(node.name.text)
+    )
+      found = node;
+    ts.forEachChild(node, visit);
+  };
+  sourceFiles.forEach(visit);
+  return found;
 }

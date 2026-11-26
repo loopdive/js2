@@ -71,6 +71,11 @@ import {
   type NativeObjectDescriptorDependencies,
 } from "./native-object-descriptors.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import {
+  buildErrorCreateDefinition,
+  type ErrorCreateOperands,
+} from "../../../runtime/wasmgc/values/realm-family-bodies.js";
+import { NATIVE_ERROR_CONSTRUCTORS } from "../../../runtime/contracts/native-realm-catalog.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -81,6 +86,10 @@ export interface NativeBuiltinFunctionDependencies {
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
   /** The program's one exception tag: a kernel failure is a source-catchable throw. */
   readonly exception: TagReservation | TagImportReservation;
+  /** (#7354 G1) Where the realm holds the Error family: its error creation, reserved by the realm, filled here. */
+  readonly errorCreate?: FunctionReservation;
+  /** (#7354 O2) The program's dispatchers a source getter / setter is called through (`nativeInvocationAccessorCalls`). */
+  readonly accessorCalls?: { readonly get: FunctionReservation; readonly set: FunctionReservation };
 }
 const functionRoles = [
   "initialize",
@@ -137,6 +146,9 @@ export interface NativeBuiltinFunctionReservations {
     readonly state: GlobalReservation;
     readonly realmReady: GlobalReservation;
   };
+  /** (#7354 G1) The held families' ordinary objects, by catalog id. */
+  readonly objects: readonly { readonly id: string; readonly global: GlobalReservation }[];
+  readonly errorCreate?: FunctionReservation;
   readonly realmType: TypeReservation;
   readonly exception: TagReservation | TagImportReservation;
   readonly completionScope: "synchronous-builtin-object-kernel";
@@ -163,12 +175,10 @@ function same(a: unknown, b: unknown, detail: string): void {
 }
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
+  const required = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
-    Object.keys(d).length !== 6 ||
-    Object.keys(d).some(
-      (key) =>
-        !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"].includes(key),
-    )
+    required.some((key) => !Object.hasOwn(d, key)) ||
+    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls"].includes(key))
   )
     fail("unexpected dependency input");
   if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
@@ -240,6 +250,7 @@ function resourceKeys(requests: NativeBuiltinFunctionRequests): readonly string[
     ...requests.requirements.intrinsics.flatMap((row) =>
       ["type", "singleton", "algorithm", "lifted", "getter"].map((role) => key + ":" + row.id + ":" + role),
     ),
+    ...(requests.requirements.objects ?? []).map((row) => key + ":object:" + row.id),
   ];
 }
 export function reserveNativeBuiltinFunctionResources(
@@ -336,11 +347,18 @@ export function reserveNativeBuiltinFunctionResources(
     ),
   ) as Readonly<Record<FunctionRole, FunctionReservation>>;
   const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
+  const objects = Object.freeze(
+    (d.requests.requirements.objects ?? []).map(({ id }) =>
+      Object.freeze({ id, global: tx.reserveGlobal(key + ":object:" + id, key + ":" + id, ext, true) }),
+    ),
+  );
   const pack = Object.freeze({
     requests: d.requests,
     entries: Object.freeze(entries),
     functions,
     globals,
+    objects,
+    ...(d.errorCreate ? { errorCreate: d.errorCreate } : {}),
     realmType,
     exception: d.exception,
     completionScope: "synchronous-builtin-object-kernel" as const,
@@ -353,8 +371,13 @@ export function reserveNativeBuiltinFunctionResources(
     functions: Object.freeze([
       ...Object.values(functions),
       ...entries.flatMap((row) => [row.algorithm, row.lifted, row.getter]),
+      ...(d.errorCreate ? [d.errorCreate] : []),
     ]),
-    globals: Object.freeze([...Object.values(globals), ...entries.map((row) => row.singleton)]),
+    globals: Object.freeze([
+      ...Object.values(globals),
+      ...entries.map((row) => row.singleton),
+      ...objects.map((row) => row.global),
+    ]),
     descriptorInventory: inventory,
     filled: false,
   });
@@ -433,7 +456,8 @@ function operands(
   owner: Owner,
 ): BuiltinFunctionPrototypeOperands {
   const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests),
-    dd = owner.dependencies.descriptorDependencies;
+    dd = owner.dependencies.descriptorDependencies,
+    calls = owner.dependencies.accessorCalls;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
   const literal = (text: string, external = true): Instr[] => [
@@ -461,12 +485,19 @@ function operands(
     defineDataBody: owner.descriptorInventory.functions[0]!.handle,
     defineAttributes: owner.dependencies.descriptors.defineAttributes.handle,
     typeError: dd.errors.newTypeError.handle,
+    createWithPrototype: dd.storage.createWithPrototype.handle,
+    text: (text) => literal(text),
+    objects: (pack.requests.requirements.objects ?? []).map((row, index) => ({
+      ...row,
+      global: tx.physicalIndex(pack.objects[index]!.global),
+    })),
     exceptionTag: tx.physicalIndex(pack.exception),
     lengthKey: literal("length"),
     nameKey: literal("name"),
     errors: NATIVE_BUILTIN_FUNCTION_LITERALS.slice(3).map((text) => literal(text)),
     entries: pack.entries.map((entry, index) => ({
       ...pack.requests.requirements.intrinsics[index]!,
+      properties: pack.requests.requirements.intrinsics[index]!.properties ?? [],
       typeIdx: entry.type.typeIndex,
       metadataTypeIdx: entry.metadata.type.typeIndex,
       metadataId: entry.metadata.metadata.id,
@@ -488,6 +519,12 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(calls && {
+      accessorCalls: {
+        source: [calls.get.handle, calls.set.handle],
+        builtin: [pack.functions.method0.handle, pack.functions.method1.handle],
+      },
+    }),
   };
 }
 /**
@@ -499,6 +536,16 @@ export function nativeBuiltinFunctionOperands(
   pack: NativeBuiltinFunctionReservations,
 ): BuiltinFunctionPrototypeOperands {
   return operands(tx, pack, current(tx, pack));
+}
+/** (#7354 G1) Error creation's operands: each held constructor's prototype object, by its selector. */
+function errorCreateOperands(d: BuiltinFunctionPrototypeOperands): ErrorCreateOperands {
+  return {
+    ...d,
+    prototypes: d.objects.flatMap(({ id, global }) => {
+      const selector = NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => id === `%${name}.prototype%`);
+      return selector < 0 ? [] : [{ selector, global }];
+    }),
+  };
 }
 export function fillNativeBuiltinFunctionResources(
   tx: PhysicalModuleReservations,
@@ -513,6 +560,8 @@ export function fillNativeBuiltinFunctionResources(
   tx.fillGlobal(pack.globals.objectPrototype, [{ op: "ref.null.extern" }]);
   tx.fillGlobal(pack.globals.state, [{ op: "i32.const", value: 0 }]);
   tx.fillGlobal(pack.globals.realmReady, [{ op: "i32.const", value: 0 }]);
+  for (const { global } of pack.objects) tx.fillGlobal(global, [{ op: "ref.null.extern" }]);
+  if (pack.errorCreate) tx.fillFunction(pack.errorCreate, buildErrorCreateDefinition(errorCreateOperands(d)));
   pack.entries.forEach((entry, index) => {
     tx.fillGlobal(entry.singleton, [{ op: "ref.null", typeIdx: entry.type.typeIndex }]);
     tx.fillFunction(entry.algorithm, buildBuiltinFunctionAlgorithmDefinition(d, d.entries[index]!.behavior));

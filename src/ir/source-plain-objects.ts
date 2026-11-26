@@ -13,6 +13,7 @@
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
+import { errorConstructorId } from "./program/builtin-prototype-keys.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -24,19 +25,31 @@ const isMemberName = (node: ts.Identifier): boolean =>
  * Such a function, like a function expression, is a constructor whose `prototype` is an ordinary object the source
  * spells nowhere, so either one admits the object kind too.
  */
-export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDeclarationValue: boolean): ProgramObjects {
+export function programObjects(
+  sourceFiles: readonly ts.SourceFile[],
+  readsDeclarationValue: boolean,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): ProgramObjects {
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
+  let namesErrors = false;
   const visit = (node: ts.Node): void => {
+    // (#7354 G1) A read of the unchanged global Error constructor (`identifier-read.ts` reads it the same way, through
+    // `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such read.
+    namesErrors ||=
+      ts.isIdentifier(node) &&
+      errorConstructorId(node.text) !== undefined &&
+      !isMemberName(node) &&
+      isPristineGlobal(node);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
-    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node);
+    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present, functions, namesSymbol };
+  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
 }

@@ -49,6 +49,8 @@ import {
   RE_FIELD_NGROUPS,
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import {
   ensureRuntimeToStringIdx,
   hasStandaloneRegExpEngine,
   loadStandaloneRegExpStruct,
@@ -59,6 +61,7 @@ import { type OpaqueReplacer, buildOpaqueReplacerCallInstrs, stageOpaqueReplacer
 import { compileArrowAsClosure, compileExpression } from "./shared.js";
 import { isCallableReplacement } from "./string-proto-replace.js";
 import { coercionInstrs } from "./type-coercion.js";
+import { requireHelper } from "./helpers/required-helper.js";
 
 /** The native-string helpers the emitted walk is built from. */
 interface ReplaceKernel {
@@ -217,13 +220,8 @@ function buildCallArgInstrs(
   }
 
   // arg nGroups — `position`, boxed as a Number.
-  const boxIdx = ctx.funcMap.get("__box_number");
   out.push({ op: "local.get", index: locals.mstart }, { op: "f64.convert_i32_s" });
-  if (boxIdx !== undefined) {
-    out.push({ op: "call", funcIdx: boxIdx });
-  } else {
-    out.push({ op: "drop" }, { op: "ref.null.extern" });
-  }
+  out.push({ op: "call", funcIdx: requireHelper(ctx, "__box_number") });
   out.push({ op: "local.set", index: argLocals[nGroups]! });
 
   // arg nGroups+1 — `string`, the whole subject.
@@ -578,9 +576,7 @@ export function tryCompileStandaloneStringSearchFunctionReplace(
     { op: "local.set", index: lastEnd },
   );
 
-  const boxIdx = ctx.funcMap.get("__box_number");
-  const boxPosition: Instr[] =
-    boxIdx !== undefined ? [{ op: "call", funcIdx: boxIdx }] : [{ op: "drop" }, { op: "ref.null.extern" }];
+  const boxPosition: Instr[] = [{ op: "call", funcIdx: requireHelper(ctx, "__box_number") }];
   const loopBody: Instr[] = [
     { op: "local.get", index: pos },
     { op: "local.get", index: slen },

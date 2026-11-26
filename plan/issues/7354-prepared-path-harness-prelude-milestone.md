@@ -6413,6 +6413,583 @@ regression probes give the same transitions as before r1 (nothing right became a
 main 42f2df53e2). Sample not re-measured: r1 changes only calls whose receiver is not the [[Get]]'s (detached calls),
 and none of the 12 new passes has one (each was read); `check:prepared-bytes` not re-run.
 
+## Slice G1 plan (2026-11-22, branch `claude/7354-g1` from `claude/7354-p1` eb98b057ec)
+
+`Error`, the six NativeErrors and `Error.prototype.toString` as realm values on the Prepared path.
+
+### What exists (read, plus probes on the base)
+
+- Base probes (runner options, strict entry): `typeof TypeError` → `identifier "TypeError" is not in scope`;
+  `new TypeError('m')` and `throw new TypeError('m')` → `unknown class "TypeError"`; `typeof undeclaredX` →
+  "undefined" (node's answer); a read of `undeclaredX` → the not-in-scope refusal.
+- Catalog: Object/Function rows only. Kernel entries: two bootstrap functions plus P1's methods, each a closure-root
+  carrier with a bag (`createNull`, a null-proto `$Object`) and a separate `prototype` field; the realm's [[Get]] on a
+  function already walks that field (`buildBuiltinFunctionLookup` / `ParentStep`), so a function whose [[Prototype]] is
+  another entry is read correctly. Entry algorithms: undefined / ThrowTypeError / `unreachable`.
+- Every realm TypeError (kernel, descriptor defines, the dispatcher's "Value is not callable", the legalization's
+  `js.object.create-type-error`, promise resolution) is ONE function, `__new_TypeError` (`native-errors.ts`), which
+  builds `$Error_struct` (tag −11, message, name, stack, brand). That struct type is `createErrorStructType`, shared
+  with the legacy codegen (`registry/types.ts`), so it cannot change without moving ordinary-pipeline bytes.
+- The `error` kind exists only where the program reads a catch binding (`readsCatchPayload`), answered by
+  `js.object.is-error` (`ref.test $Error_struct`), `js.object.error-field` (name/message), and a row in every kind
+  table (`TO_STRING_ARM` "error", `ADD_ROLE`, `TO_NUMBER_ARM` "nan", `MEMBER_ACCESS_ARM` "error", `ERROR_OWN_KEYS`,
+  `ERROR_PROTOTYPE_KEYS`, aborts in the statics and P1's own-property arm, refused writes).
+- Realm literals (`native-realm-literals.ts`) are taken from the WHOLE catalog: adding rows naively adds strings to
+  every realm program. They must come from the families the realm holds.
+
+### Design
+
+1. **An error is an ordinary realm object** (`$Object`): [[Prototype]] `%XError.prototype%`, an own non-enumerable
+   `message` only when one was given, and an `[[ErrorData]]` bit in `$Object.flags` (0x800 is free in both the realm's
+   and the legacy encodings). Every realm operation (get, set, has, has-own, inherits, define, create-with-prototype)
+   is already total over `$Object`; a bag on `$Error_struct` would be a second object layout every one of them must
+   branch on, and would change the legacy struct. The bit is what `Object.prototype.toString` reads (`[object
+   Error]`); prototypes do not carry it (ES2015+).
+2. **When.** The realm holds the error family, and builds its own TypeErrors as such objects, iff the program can
+   observe an error: it reads a pristine error global (a `js.object.intrinsic` use naming a family id) or binds a catch
+   payload (an IR `try` with `payloadSlot >= 0`; a rethrow-only catch is included, harmlessly). Otherwise
+   `__new_TypeError` keeps the struct: no code of such a program reads a thrown value, and the Prepared artifact
+   exports no tag, so the payload is unobservable. Granularity: Error + TypeError + `Error.prototype.toString` for a
+   catching program; each other NativeError (with Error) when named. Literals per held family.
+3. **One getter** `js.object.intrinsic(selector) -> externref` replaces P1's `js.object.prototype-method`: the selector
+   indexes one catalog list of realm function values (the three Object.prototype methods, the seven constructors,
+   `Error.prototype.toString`). Same `js.object` family on purpose: a `js.realm.*` family needs its own manifest
+   feature/provider lists for one row. The realm populates from the constant selectors it is called with.
+4. **Kernel.** New entry behaviors `error-constructor` (constructible; own `prototype` {!w,!e,!c} → its prototype
+   object; [[Prototype]] `%Function.prototype%` for Error, `%Error%` for a NativeError; algorithm `unreachable`, so the
+   value form aborts as in P1) and the toString method entry. The initializer creates each held prototype
+   (`%Error.prototype%` → Object.prototype; a NativeError's → `%Error.prototype%`) with `constructor`, `name`,
+   `message` "" and (Error only) `toString`. One kernel function `createError(selector, message)` (create + bit +
+   `message` defined only if not undefined) serves the contract `js.object.create-error` and, in the error-objects
+   mode, is what `__new_TypeError` calls: one creation path for realm and program errors.
+5. **Construction at the site** (`src/ir/program/dynamic-error-constructors.ts`, sibling of
+   `dynamic-prototype-methods.ts`): `X(m)` / `new X(m)` lower as F2's call / C2's `dyn.construct` through the
+   identifier's value; the legalization recognises a call or construct whose callee is defined by
+   `js.object.intrinsic(<ctor>)` (the identifier read proved the pristine global) and expands §20.5.1.1: arguments
+   already evaluated left to right (front end); `undefined` → `create-error(sel, undefined)`; else `stringOf` once (a
+   message object's `toString` runs once, a throw is catchable), then `create-error(sel, s)`. Creating the object
+   before ToString is unobservable. Any other callee (`var E = TypeError; new E()` through a script var) is the
+   dispatcher's built-in abort.
+6. **`Error.prototype.toString`** (§20.5.3.4) is one realm contract `js.object.error-to-string(o)`: name (undefined →
+   "Error"), message (undefined → ""), the empty-string rules; a name/message that is neither a string nor undefined
+   is the realm's abort (a program wrote a non-string; never a wrong text). Called where the IR proves the method is
+   the intrinsic: (a) OrdinaryToPrimitive's `toString` step — `method === intrinsic(toString)` ? contract :
+   dispatcher (so an override `Error.prototype.toString = …` and `TypeError.prototype.name = "X"` are seen); (b) the
+   method call `e.toString()`, a fourth row of P1's call expansion. When P2 lets the dispatcher call built-ins, the
+   same function becomes the entry's `(this, vector)` algorithm and both identity rows go.
+7. **IR kinds.** The `error` kind is deleted from every table; a caught value is the object kind (admitted where the
+   program builds objects or reads a catch binding); `carrierKindOf` answers object for `create-error`. ToString /
+   ToNumber / `+` of an error take the object's ToPrimitive. `dyn.object_tag`'s object arm tests `is-error` (now the
+   bit) where the family is held. P1's error abort arms, the statics' error abort, the refused error writes and
+   `ERROR_OWN_KEYS` / `ERROR_PROTOTYPE_KEYS` / `js.object.error-field` go.
+8. **Identifier read.** `identifier-read.ts` gains `realm-intrinsic` (pristine global, catalog marks the constructor
+   native, function-object lane), lowered to the getter; `typeof TypeError` folds through the function kind. `new X`'s
+   dynamic-callee gate and the flow rule (arguments as carriers) accept it. `source-plain-objects` counts such a read
+   as creating a function value and objects.
+9. **Premise change, `instanceof` / `isPrototypeOf`.** With `%Error%` a value, a NativeError constructor's chain holds
+   an obtainable object, so "a function's chain holds no program value" (C2, P1) is false there. Where the family is
+   held: a function-kind left operand / argument answers `false` unless the prototype / receiver is `%Error%`, which is
+   the run-time abort (only `F.prototype = Error` or `Error.isPrototypeOf(TypeError)` reach it). The exact answer (the
+   kernel's heterogeneous `ParentStep` inside `inherits`) is left to the slice that needs it.
+
+### Stays refused / aborts (each sound)
+
+- A second argument (`cause`, ES2022 options) refuses by name: InstallErrorCause would read a property of it.
+- The value form (`E(m)`, `new E()` through a variable, `.call` / `.apply`): dispatcher abort, as P1.
+- Shadowed or assigned names (`function TypeError(){}`, `TypeError = …`, `globalThis.TypeError = …`): not pristine,
+  existing rules (refusal by name).
+- V8-only keys: in a program holding the family, a constant-key read of `stack`, `captureStackTrace`,
+  `stackTraceLimit`, `prepareStackTrace` refuses by name (specification: absent; V8: present).
+- **Not in G1: ReferenceError at GetValue.** An "unresolved" identifier on this path is often a lib global the path
+  does not implement (`Array`, `Math`), and the lib is not the exact list of globals (`Iterator` missing, DOM names
+  present): a ReferenceError there would be a wrong answer. Sound only with a list of standard globals; own slice.
+- Runtime negatives (`negative: phase: runtime`) stay unread on this lane (no exported tag; PR 7401's renderer).
+
+### Placement, removals, size
+
+- Catalog rows + one native list (`native-realm-catalog.ts`); kernel behaviors and prototype seeding in a new
+  `error-intrinsic-bodies.ts` beside `builtin-function-bodies.ts`; contracts in `native-source-objects.ts` (+3, −2);
+  requirements (`native-realm-requirements.ts`: families, payload binding); literals per held family.
+- IR: `dynamic-error-constructors.ts` (new); `dynamic-prototype-methods.ts` generalised to the realm's methods (one
+  more row); kinds / chains / member access lose the error kind (net negative); identifier-read +1 arm.
+- from-ast: +3 lines (one `case`, the `new` gate), offset by moving code out; ends ≤ base.
+- Estimate: src +600 / −250, tests ~700.
+
+### Test plan (node agreement + wrong twin each; A = abort, R = refusal)
+
+The brief's hazards, one test each: `e.constructor === TypeError` for realm-thrown (`o.x` on a null parameter) and
+program-made errors; `instanceof Error` across the family, `instanceof RangeError` false for a TypeError;
+`hasOwnProperty('message')` for none / `undefined` / `""`; a counting and a throwing message `toString`;
+`TypeError.prototype.name = "X"` then `String(e)`; an `Error.prototype.toString` override used by `"" + e`; `typeof`,
+`.length`, `.name`, `X.prototype.constructor`, `isPrototypeOf` between prototypes; `typeof undeclared`;
+`f(a(), undeclared)` (stays the refusal: pinned as such); `throw new TypeError("m")` caught and inspected;
+`Object.prototype.toString.call(e)`; `assert.throws(TypeError, …)` through the real harness, passing and failing
+(wrong constructor). R: `cause`, shadowed / assigned names, `e.stack`. A: value form,
+`F.prototype = Error; TypeError instanceof F`. Pins that move: M2 rows of m-refusals, x-dynamic-throw, o3, P1's error
+receiver, C2's caught-error rows.
+
+## Slice G1 result (2026-11-22, branch `claude/7354-g1`; P1 incl. its main merge pulled in at 71dbeb5d21)
+
+### Built (the plan; deviations below)
+
+- **Catalog** (`native-realm-catalog.ts`): rows for `%Error%`, the six NativeErrors, their prototypes and
+  `%Error.prototype.toString%`, each `heldWith` its constructor; `NATIVE_ERROR_CONSTRUCTORS`; one ordered list
+  `NATIVE_VALUE_INTRINSICS` (P1's three methods, the seven constructors, toString), whose index is the selector.
+- **What a realm holds** (`native-realm-requirements.ts`): `description.intrinsics` replaces P1's `prototypeMethods`;
+  the Error family is held where a `js.object.intrinsic` use names a member or any IR `try` binds its payload
+  (`heldErrorConstructors`); `heldCatalogRows` is the one answer to "which catalog rows does this realm hold", read by
+  the realm's literals (`native-realm-literals.ts`: the general rule, every family) and the public catalog issuer.
+- **Kernel**: family members are entries of behavior `native` (algorithm `unreachable`; constructors constructible;
+  a NativeError's [[Prototype]] field is `%Error%`'s singleton); the requirements carry their own properties and the
+  family's prototype objects (`native-realm-families.ts` reads them from the catalog; both fields absent for a realm
+  without a family, so such a realm's requirements are unchanged); `realm-family-bodies.ts` creates the prototypes in
+  the initializer, seeds the catalog properties, and builds `createError(message | null, selector)` (OrdinaryCreate,
+  the [[ErrorData]] bit 0x800, own `message` only when given).
+- **One error representation per program**: `createError` is reserved before the invocation substrate where the
+  family is held, and `__new_TypeError` (`native-errors.ts`) then delegates to it; elsewhere it keeps `$Error_struct`.
+- **Contracts**: `js.object.intrinsic` (replaces `js.object.prototype-method`, which is gone), `js.object.create-error`
+  (binds the kernel's), `js.object.error-to-string` (§20.5.3.4 over the kernel's [[Get]]; a cons of the parts),
+  `js.object.is-error` (now the bit); `js.object.error-field` is gone.
+- **IR**: the `error` kind and every row and arm of it are gone (`ERROR_FIELD`, `ERROR_OWN_KEYS`,
+  `ERROR_PROTOTYPE_KEYS`, the "error" ToString/ToNumber/`+`/member-access rows, the statics' and P1's error aborts, the
+  refused error writes); a caught value is the object kind. `identifier-read.ts` `realm-intrinsic`
+  (`realmIntrinsicRead`) → a front-end helper the legalization writes as `js.object.intrinsic`;
+  `dynamic-error-constructors.ts` (construction at the call / construct site, and `functionChainAnswer`, the premise
+  guard); `ordinary-to-primitive.ts` recognises Error.prototype.toString by identity; P1's call expansion has a fourth
+  row (`e.toString()`); `dyn.object_tag` tests the bit; V8's own keys refuse by name (`V8_ERROR_KEYS`).
+- **Front end**: from-ast 17346 → 17343 (base P1 tip): the identifier `case` (+2) is paid for by moving
+  `bindingHoldsDynamic`'s global test into `function-object-lowering.ts` (`readsDynamicGlobal`, which also answers the
+  realm intrinsic, so `new X`, `instanceof X` and conditional arms need no line of their own). `TypeError(m)` goes
+  through `lowerPreparedValueCallee`. The flow rule's exemption is `realmBuiltinOperand` (O1's, extended).
+
+### Deviations from the plan
+
+- **A program whose only function values are built-ins** (it names `TypeError` but creates no function expression):
+  the function kind is admitted (`holdsErrors`), but no dispatcher exists. ToPrimitive's call of a non-identity method
+  and `new` through a value are the run-time abort there (`builtinOnly`, `dynamicConstruct`'s `builtin` arm); any other
+  call through a value refuses by name as before. The function test uses the realm's own closure root
+  (`program-consumer.ts` reads it off the realm's inventory, which equals the source closures' where they exist), and
+  is constant false where the program has no closure root at all (a catch binding without a realm).
+- `js.object.intrinsic` stays in the `js.object` family (lead-approved).
+- The instanceof / isPrototypeOf guard is the `%Error%` abort (lead decision), stated in `dynamic-error-constructors.ts`.
+
+### Condition A — every producer of a thrown error, and its treatment where the family is held
+
+| producer | where | treatment |
+|---|---|---|
+| `__new_TypeError` (substrate) | kernel failures, descriptor defines (DefinePropertyOrThrow), the dispatcher's "Value is not callable", the legalization's `js.object.create-type-error` (nullish member access, strict PutValue, ToPrimitive, `new`/`instanceof` TypeErrors) | converted: delegates to `createError` |
+| program `new X(m)` / `X(m)` | source | `js.object.create-error` |
+| IR-level runtime `__new_TypeError` / `__new_ReferenceError` (from-ast TDZ guard, `throw-type-error.ts`, function-object-lowering's legacy call path) | source lowering | a program that reads a catch binding refuses any throw of a non-carrier value (`refuseUnadmittedThrows`); probes: TDZ, destructuring null, `in` on a number end at a refusal / abort body, never at a caught struct |
+| `vector-grow-store` null guard | argument vectors | throws a null payload, not an error (pre-existing; a null vector is an invariant failure) |
+| promise resolution's TypeError (`native-promises.ts`) | self-resolution | unreachable on this lane: no promise is a dynamic value and `Promise` is not held (C2 known limit); a program that could reach it needs a promise value first |
+| user `throw v` | source | the value itself |
+
+Where the family is **not** held no code reads an error: the trigger is any bound catch payload or any named family
+member, and a thrown value reaches a program only through a catch binding (promise reactions are not admitted).
+
+### Condition B — realm messages
+
+`e.message` of a realm TypeError was readable before G1 (the error kind's field) and reads the same text now. Texts
+that differ from V8's: "Value is not callable" (V8: "x is not a function"), "Value is not a constructor", "Cannot
+assign to read only property 'k' of object" (V8 adds the object). `Cannot read properties of null (reading 'x')`
+matches. A program comparing such a text disagrees with node on the base and on the head alike (probe
+`not-callable-msg`, both trees); test262 never compares a message text.
+
+### Not in G1: ReferenceError at GetValue
+
+An "unresolved" identifier on this path is often a standard global the path does not implement (`Array`, `Math`),
+and the TypeScript lib, which stands in for the list of globals, is not that list (`Iterator` is missing, DOM names are
+present): throwing a ReferenceError there would answer wrong. It needs a list of the standard globals; its own slice.
+
+### Found by the suites and the sample, fixed here
+
+- The three narrow fixes of the deviations above (no dispatcher: `builtinOnly` and `dynamicConstruct`'s built-in arm;
+  the function test without a closure root; the kernel's optional family fields).
+
+- **Strict `F.caller = 1` silently wrote an own property** (F1b's function write; JS throws: Function.prototype's
+  `caller` / `arguments` setter is %ThrowTypeError%). Unobservable while `assert.throws(TypeError, …)` could not run;
+  the sample's `13.2-19-b-3gs` turned it into a wrong-answer fail. Now a member write of either key on a value that may
+  be a function refuses by name (`FUNCTION_PROTOTYPE_ACCESSOR_KEYS`, from the catalog, beside Object.prototype's).
+  Base: the probe answered `none` where node throws; head: the named refusal (test in g1-refusals-and-aborts).
+
+### Found, not fixed (pre-existing on the base, measured there)
+
+- `const c = 1; c = 2;` throws out of `compile()` (`assignment to non-slot binding "c" — mutation pre-pass should have
+  detected it`), base and head.
+- A closure that writes a script `var` (`n++`, `s += 'a'` inside a function a value calls) ends at the run-time abort,
+  base and head (the G1 tests count through an object property instead).
+- `"" + new X()` (a `new` expression as a `+` operand) refuses (`'+' operands not provably … string/unprovable`): the
+  carrier analysis has no `new` leaf (C2's constructs too); through a variable it runs.
+- `tests/issue-7354-o-objects` "refuses what the later steps build" fails on the base too.
+
+### Proof (local node 22; base = main 111b28ceaa, P1 included, `git archive` copy)
+
+| test file (each alone, VITEST_MAX_FORKS=1, heap 2048) | tests | exit |
+|---|---:|---:|
+| issue-7354-g1-error-values (new) | 14 | 0 |
+| issue-7354-g1-refusals-and-aborts (new) | 14 | 0 |
+| issue-7354-g1-assert-throws (new, the real harness) | 5 | 0 |
+| m-refusals (M2 constructor/toString/write → node agreement; `stack` → by name; G45 `new TypeError` runs) | 43 | 0 |
+| c2-constructors (a built-in constructor runs), c2-this (a method on a caught error) | 19 / 18 | 0 |
+| p1-method-values (a caught error's own `message`), o1-create-and-define-properties, o2-object-values (`namesErrors`) | 20 / 17 / 13 | 0 |
+| t2-typeof-standard-globals, ty-typeof-comparisons (the Error names leave the refused list) | 20 / 61 | 0 |
+| m-prototype-premise (+4 routes from the family, each aborts) | 22 | 0 |
+| 3518 ordinary-object-callable-contracts (the new contracts), native-realm-requirements (count pin deleted, #7380), native-object-realm-declarations (held rows), native-builtin-functions | 61 / 25 / 21 / 36 | 0 |
+| every other issue-7354 file (51), 3518 object-realm-algorithm-bodies, 7363, 7331, prepared entry / runtime, 7188 (run before the three narrow fixes below; o3, f1b writes / objects, f1 function-kind and the G1 files re-run after them) | all | 0 |
+| 3518 native-invocation-substrate | 41 of 45 | 1 — the same 4 fail on the base |
+| 7354 o-objects | 12 of 13 | 1 — the same 1 fails on the base |
+
+- **Probes** (433 programs, each against node in a fresh realm, wrong twin for every OK; 160 generated G1 programs
+  — 7 constructors × 8 messages × new/call, the constructors as values, the realm's TypeError in 8 contexts,
+  Error.prototype.toString over 9 name/message pairs, rethrows, writes — P1's 216 regression probes, 57 hand ones),
+  base → head: REFUSED→OK 186, OK→OK 123, ABORT→ABORT 68, REFUSED→REFUSED 44, REFUSED→ABORT 6, ABORT→OK 4,
+  EXC→EXC 1, REFUSED→WRONG 1. Nothing right became anything else; 0 invalid Wasm; 0 twin failures. The one WRONG is
+  `e.message` of the dispatcher's "Value is not callable" (Condition B: the same text on the base); the EXC is the
+  pre-existing const assignment. REFUSED→ABORT: the three designed aborts, a closure writing a script var, and two
+  functions whose refusal is their abort body (destructuring, `in`).
+- **`check:prepared-bytes`** (804 rows) base vs head: **801 identical**. 3 differ, each a program that binds a catch
+  payload (so the realm holds Error + TypeError + toString); run on both trees with the same outcome: row 445
+  (`f(3)` = 6 both; 23,295 → 27,593 B), 532 (returns both; 23,684 → 26,099 B), 533 (returns both; 23,412 → 25,827 B).
+  Every program naming no family member and binding no catch payload is byte-identical (the realm literals follow
+  the held rows; the kernel requirements carry no family field).
+- **Ordinary pipeline**: 20 test262 files (Error.prototype.toString, NativeErrors, Error, instanceof, try) × default
+  and standalone: 40/40 identical.
+- **Prelude** (strict entry, runner options, 3 compiles each, load ~2.5): prelude + `assert(true);` base 77,429 B
+  (sha e23f5dca…, as P1 recorded) 5.2–7.7 s → head 81,397 B (+3,968 B, +5.1 %: the harness binds `thrown`) 5.0–6.4 s;
+  prelude + one `assert.throws(TypeError, …)` row: base refused (`TypeError` not in scope) → head 81,986 B, 4.8–5.2 s.
+
+### Sample (411 rows, the real runner, default settings; both trees run here)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| base (main 111b28ceaa) | 61 | 19 | 331 |
+| G1 | **71** | 27 | 313 |
+
+- New passes (10): Object/create 15.2.3.5-1-1, -4-43; Object/defineProperty 15.2.3.6-1-3, -3-199, -4-17, -4-20,
+  -4-379, -4-436, -4-493, -4-508 — every one stopped at `TypeError` / `SyntaxError` not in scope. 16 mutated twins next
+  to the originals (`assert.throws(TypeError` → `RangeError` where present; the last `assert.sameValue`'s expected
+  value flipped) all FAIL in the same run, the 10 originals pass; twins deleted, directory mtimes restored,
+  `find test262 -newer marker` empty, no `*g1twin*` left.
+- New fails (8), all run-time aborts in a function the path cannot lower (Function.prototype's `caller` read and,
+  after the fix above, write; `JSON`; `arguments`; a compound member write; a nested statement) or a getter call (O2,
+  11.13.1-2-s). No row that passed or failed on the base changed.
+- Top compile errors now: `formatIdentityFreeValue … is written` 73, `Array` 46, module-init nested var 22, `String`
+  14 + 13, RegExp 14, `Object` 8; no Error-family name is left among them.
+
+### Not verified
+
+- Node 25 (not installed); no adversarial review agent was run (the lead holds the PR).
+- The full 3526/3518 pin suites beyond the files listed; the ordinary pipeline beyond the 20 files.
+
+### Review r1 (PR 7411): fixes
+
+1. **B1, one predicate.** The IR's "names an Error constructor" (`source-plain-objects.ts` `namesErrors`) and the
+   realm's "holds the family" were two spellings of one question and disagreed: a parameter, local, label, function
+   expression name or shorthand spelled `TypeError` made the IR admit the family while the realm held none, and
+   `compile()` threw `missing literal "Error"`. Now `namesErrors` asks the same pristine test the read asks
+   (`pristineBuiltinGlobal`), and the realm derives the family only from what the IR emitted
+   (`heldErrorConstructors`: a family `js.object.intrinsic`, `create-error` / `error-to-string`, or a bound catch
+   payload) — it no longer reads the IR's answer at all. Tests: `g1-spelled-names` pairs each shape (parameter, local
+   var, label, function-expression name, shorthand, catch binding `Error`, object key, a catch in a function the path
+   cannot lower) with every family consumer (`String()`, `+` both sides, `instanceof`, a caught value), node + twin.
+2. **S1.** A script-level `var X;` without an initializer, X a global the realm serves (`REALM_GLOBAL_NAMES`: the
+   catalog's plain-name aliases), reads the built-in in JS (the var binds the existing global property) but the IR's
+   undefined slot here: a wrong value. It refuses by name (`scriptVarOfRealmGlobal`, checked once in the legalization's
+   module-init group). With an initializer the var replaces the built-in where it runs, which the path lowers right, so
+   it stays admitted. Known limit, pre-existing: a read of such an initialized var before its initializer runs.
+3. **import-cycles.** The IR reads the catalog only through `builtin-prototype-keys.ts` (`errorConstructorId`,
+   `errorConstructorSelector`, `realmIntrinsicSelector`, `objectPrototypeMethodId`, …); `native-realm-families.ts`
+   takes the held rows instead of importing the IR. No `import-cycles-allow`.
+4. Nits: the stale `prototypeMethodSelector` comment is gone with the function; `kernelGetInto`
+   (`source-object-bodies.ts`) is the one [[Get]]-and-status-check, used by `buildSourceObjectGetDefinition` (same
+   bytes) and by Error.prototype.toString's `part`.
+
+Verified after r1 (main 9dfb1252a7 merged, H2 included):
+
+- Reviewer probes `.tmp/rvg1/b*.json` (443), pre-r1 head 1ab908ba02 → head: OK→OK 177, REFUSED→REFUSED 150,
+  ABORT→ABORT 69, WRONG→REFUSED 16 and EXC→REFUSED 3 (bare script vars, by name), EXC→OK 11 (every B1 program now
+  node's answer), EXC→ABORT 2 (`finally-order`: the base aborts too), REFUSED→OK 1 / REFUSED→ABORT 1 (`sub-proto-create`
+  / `sub-call`: H2 admits the written function declaration; `Error.call(this, m)` is the designed `.call` abort).
+  Nothing right changed; no WRONG, INVALID or EXC left.
+- The 433 G1 probes: the same transitions against base 111b28ceaa as before r1, except
+  `r:read.fn.constructor` ABORT → a refusal by name (main's H2). The one WRONG is still Condition B's message text.
+- Tests (each alone): the four g1 files (5/14/14/17), every moved pin and every 7354 c2/f1/f1b/fa/h2/m/o1/o2/p1/t2/ty
+  file, 3518 realm-requirements / object-realm-declarations / callable-contracts / builtin-functions /
+  compiler-boundaries: all exit 0.
+- `check:prepared-bytes` vs main 9dfb1252a7: 801/804 identical; the same 3 catch-payload rows as before (445, 532,
+  533), byte-identical to the pre-r1 head. Prelude + `assert(true);` and + `assert.throws`: same sha at pre-r1 and head.
+  Ordinary pipeline, 20 files × 2 targets: identical to main.
+- Sample not re-run: r1 changes only programs with an Error-spelled non-global name or a bare script var of a realm
+  global; none of the 411 rows has either (grep), and the prelude compiles to the same bytes.
+
+### Share the immutable string/value inventory across planners
+
+Each collector call traverses both prepared views and records every instruction occurrence. Several planners hold these records at the same time. Reuse one inventory per producer-issued immutable program and selected projection through the existing settled-check mechanism. Custom descriptive inputs always take a fresh traversal. A host prototype change also requires a fresh traversal because an inherited getter or mutable value can change what the compiler observes. Mutable inputs must be traversed again and foreign projections must still fail. Keep enumeration order, allocation evidence, and the runtime emission interface intact.
+
+A focused standalone integration comparison on 2026-11-25 exercised ES5 15.2.3.6-4-299-1.js with the original harness. With the nested-declaration candidate, the standard 512 MiB worker exhausted its heap on both attempts. With inventory reuse, the same worker limit produced a verified IR pass. The integration candidate also includes declaration and arguments support, so this result alone does not establish a main-branch test262 score change.
+
+## Slice O2 plan (2026-11-22, branch `claude/7354-o2` from `claude/7354-p1` eb98b057ec)
+
+Accessor properties on the Prepared path: the realm calls a source getter / setter.
+
+### Reproduced (strict entry, runner options, real prelude, base eb98b057ec)
+
+| row | stops at |
+|---|---|
+| `Object/create/15.2.3.5-4-161.js`, `-186.js` | `unreachable` in the ToPropertyDescriptor helper (`getOrAbort`: the descriptor object's own `value` / `writable` is an accessor) |
+| `Object/create/15.2.3.5-4-19.js` | `unreachable` in `js.object.descriptors-define` (`getOrAbort` on `props.prop`, an accessor) |
+| `Object/create/15.2.3.5-4-233.js`, `defineProperty/15.2.3.6-4-568.js` | `unreachable` in the `js.object.get` adapter (kernel status 3: a source getter) |
+| `defineProperty/15.2.3.6-4-468.js`, `defineProperties/15.2.3.7-5-b-239.js` | `unreachable` in the `js.object.set` adapter (a setter) |
+
+Probes (base): a defineProperty getter read, an inherited getter, a setter write, a descriptor whose field is a
+getter all abort; `get: undefined` reads `undefined` and its descriptor is right. An object-literal accessor refuses
+(`callable … object-getter … is not dispatchable`: its closure takes the checker's typed signature, `number` → f64,
+because it sits in a "descriptor literal"); a dead literal is dropped. `o.x += 1`, `o.x++` refuse at top level
+(`'+=' is capability-deferred`, `PostfixUnaryExpression`) and abort inside a function, accessor or not.
+
+### What exists
+
+- **The one "a getter is a source closure" point** is the kernel's `buildBuiltinFunctionEntryGet`
+  (`builtin-function-property-bodies.ts`): null getter → `undefined`; a built-in function → `callVector` (the kernel's
+  own [[Call]], receiver = the original object); a source closure → status 3 ("needs a mixed callable owner:
+  `callVector` has no source arm yet"). The kernel `get` (`builtin-function-prototype-bodies.ts`) and `getOwn` share
+  it, with the walk's original receiver. Every realm read goes through it: the `js.object.get` adapter (traps on
+  status > 2), `getOrAbort` (traps on 3; ToPropertyDescriptor's six field reads, defineProperties' per-key read),
+  OrdinaryToPrimitive's method reads.
+- **set**: the `js.object.set` adapter (`source-object-bodies.ts`) finds the entry (own, else the kernel `lookup`);
+  an accessor without a setter answers false (strict TypeError at the site, O1), one with a setter is `unreachable`.
+- **ToPropertyDescriptor** reads each field by `has` (status 1) then the kernel `get` on the descriptor object, with
+  the descriptor as receiver: inherited and accessor fields are already in the right order; only the getter call
+  traps. defineProperties snapshots the keys, re-reads each key's `ownDescriptor`, converts every descriptor into a
+  vector, then defines (no partial define on a throw). GOPD (`ownDescriptor`) and `has-own` never read a value.
+- **define**: `js.object.descriptor-define` / `descriptors-define` define accessors through the descriptor pack's
+  `defineAccessor` (ValidateAndApplyPropertyDescriptor, O1's 2,808-case sweep). The object literal lowers each
+  `get x` / `set x` to `js.object.define-accessor(o, key, get|null, null|set, 310|566)` (from-ast
+  `lowerOrdinaryObjectLiteral`; the pack merges the halves), but **the realm has no row for that contract**
+  (pinned as a named gap in `issue-3518-ordinary-object-runtime-providers`).
+- **F2's dispatcher**: `__call_fn_method_N(receiver, callee, …args)` (`native-invocation.ts`, body
+  `closure-method-body.ts`): installs `__current_this`, pads / drops by arity, restores on return and throw, its last
+  arm the "not callable" TypeError (P1: abort for a built-in). Reserved per arity the program's `js.closure.call:N`
+  occurrences name (`native-invocation-requirements.ts` `methodArities`); a dynamic callee selects every source unit
+  (`native-source-closure-callables.ts`) and requires each to be dispatchable (`dynamicCalleeGaps`).
+- **Binding order**: program-consumer reserves the invocation pack (line ~1335) **before** `reserveNativeRealmKernel`
+  (~1349) and fills both after the index freeze, so the kernel can name the dispatcher's handles; no cycle.
+- `native-getter-invocation-requirements.ts` (C1, #3518): a getter proven by its static allocation (a
+  `define-accessor` whose half is a `closure.new`, with a later `js.object.get`) adds method 0 and selects that unit.
+  Its consumer `native-object-get.ts` is reached only from test fixtures; on this lane the C1 uses only add arity 0
+  and unit selection, which the realm use below subsumes. Not reused, not removed (its #3518 fixtures pin it).
+
+### Design
+
+1. **The realm's call of a source accessor is F2's dispatcher, arity 0 for a getter and 1 for a setter.**
+   The kernel gets one builder, `buildAccessorCall(callee, receiver, args)`: `match(callee) == sourceClosureOrdinal ?
+   method:N(receiver, callee, …args) : callVector(callee, receiver, vector(args))`. The entry-get's status-3 arm
+   becomes the arity-0 call (status 1); the set adapter's `unreachable` becomes the arity-1 call, result dropped,
+   answering true. One path in both; the realm holds no entry reference across the call (entry-get returns the
+   call's result; set returns true after it), so a getter that deletes, redefines or grows the object is safe.
+   A stored half is null, a built-in or a source closure (ToPropertyDescriptor's IsCallable; to be confirmed for
+   `get: undefined`, which reads `undefined` today, before relying on it), so the two arms are total.
+2. **`getOrAbort` is removed**: with a source getter now status 1, the kernel `get` on a served object answers
+   1 or 0/2 (absent), never 3 (`lookup` returns 3 only for a carrier that is neither an ordinary nor a function
+   object, and both callers pass a served object). It becomes a plain [[Get]] (`getField`). The `js.object.get`
+   adapter keeps its `> 2` test for that unknown-carrier state only (doc corrected).
+3. **Requirement** (`native-invocation-requirements.ts`): a program that calls an accessor-defining contract
+   (`js.object.define-accessor`, `descriptor-define`, `descriptors-define`; one list beside the declarations in
+   `ordinary-object-callables.ts`) and has source closures sets `realmAccessors`: method arities 0 and 1, every
+   source unit selected and required dispatchable (the same rule as a dynamic callee, one predicate
+   `callsDynamicValues(requirements)` read by the gaps and by `native-source-closure-callables.ts`). It is not a
+   `use` (uses are call-site ABI bindings). No source closure → no getter can exist → nothing reserved.
+4. **Kernel dependency**: `reserveNativeRealmKernel` takes the invocation pack; when `realmAccessors`, the kernel
+   dependencies carry `accessorCalls: { get: method:0, set: method:1 }` (authenticated with the others) and the
+   kernel operands carry the two handles. Absent → the kernel and set bodies are today's bytes.
+5. **Object literal**: (a) a realm row `js.object.define-accessor` binding the descriptor pack's `defineAccessor`, as
+   `define-data` binds `defineData`; (b) on the native dynamic lane an accessor declaration (and a function
+   expression or method inside a literal that has one) takes P's all-dynamic signature
+   (`sourceDynamicClosureSignature` in `source-dynamic-contracts.ts`; its `ownedByDescriptorLiteral` exclusion stays
+   only off this lane); from-ast's guard `ts.isFunctionExpression(expr) ?` widens in place (0 lines); (c)
+   `emitFunctionObjectInit` gives an accessor its function object (`length` 0/1, `name` `get x` / `set x`, not a
+   constructor); its "an accessor is never a value" premise is false since O1's GOPD.
+6. Programs whose closures are not dispatchable (a typed TS signature) now refuse by name when they also call an
+   accessor-defining static: the realm could reach them. Measured on the probe set before building.
+
+### What stays refused / aborts (each sound: no wrong value)
+
+- `o.x += v`, `o.x++` on any member: pre-existing refusal / abort (compound member assignment), not accessor-specific.
+- A built-in function as a getter/setter: `callVector` runs the kernel's algorithm (Function.prototype → undefined,
+  %ThrowTypeError% → TypeError, an Object.prototype method → its `unreachable`, P1).
+- Accessors on the realm's error object and on primitives' wrappers: no own storage (unchanged aborts).
+- `__defineGetter__` / `__lookupGetter__`: Object.prototype keys the realm lacks (unchanged C2-D1 abort/refusal).
+- A closure that is not dispatchable in a program with an accessor-defining static: named refusal.
+- Non-extensible targets: not expressible yet (O3).
+
+### Placement, reuse, removals, size
+
+- New code: `buildAccessorCall` beside `buildBuiltinFunctionEntryGet` (the realm's one [[Call]] dispatch by callee
+  kind); the requirement flag in `native-invocation-requirements.ts`; the accessor-defining list in
+  `ordinary-object-callables.ts`; the kernel dependency in `native-builtin-functions.ts` / `native-realm.ts`;
+  program-consumer passes the pack on an existing line. G1's files are not touched except
+  `native-source-objects.ts` (one row + the set row's operands).
+- Removed: the entry-get status-3 arm (where the dispatcher exists), `getOrAbort` and its two call sites' trap, the
+  set adapter's setter `unreachable`, the define-accessor named gap.
+- Expected: ~+110 / −30 in src; from-ast 0; program-source 0; program-consumer 0. Tests: one new file
+  `issue-7354-o2-accessors.test.ts`; the 3518 runtime-providers gap pin moves.
+
+### Test plan
+
+- Behaviour tests against node, each with a wrong twin, for every hazard in the brief: receiver of an inherited
+  getter; one getter call per read (counter); `o.x = v` value; getter-only write strict TypeError / sloppy silent;
+  throwing getter caught through `get`, defineProperty, create, defineProperties (no partial define); getter that
+  deletes / redefines / grows the object read or defined; hasOwnProperty / propertyIsEnumerable / GOPD never call
+  it; GOPD shape and identity; accessor returning a function called as a method; accessors on functions and on a
+  constructor's prototype with `new`; prototype setter intercepting `child.x = v`; child data shadowing; every
+  accessor↔data redefinition (configurable / non-configurable); `get: undefined`; non-callable `get` TypeError;
+  descriptor fields as accessors / inherited (order counted); object-literal get/set merge, enumerable,
+  configurable, `length` / `name` / no `prototype`. Compound forms pinned as their refusal / abort.
+- O1's 2,808-case sweep regenerated with a counting-getter column; ≥150 probe programs base vs head; the seven rows
+  plus the 411-row sample through the real runner with mutated twins; `check:prepared-bytes` with every difference
+  explained; prelude + `assert(true);` hash unchanged; ordinary pipeline 20 files × 2 targets identical; mutations of
+  each new arm.
+
+## Slice O2 result (2026-11-23, branch `claude/7354-o2`; P1 and `main` merged at fc6a029b3f)
+
+### Built (as planned; deviations below)
+
+- **One call path.** `buildAccessorCall` (`builtin-function-property-bodies.ts`): a source closure goes to F2's dispatcher
+  of that arity (`__call_fn_method_0(receiver, getter)`, `__call_fn_method_1(receiver, setter, v)`), a built-in to the
+  kernel's own `method0` / `method1` (its `callVector`). The kernel's entry-get (`get`, `getOwn`) answers status 1 with
+  the call's result; the set adapter (`source-object-bodies.ts`) drops it and answers true. Both return right after
+  the call: no entry, table or chain position is used after program code ran.
+- **Removed:** the entry-get's status-3 arm where a source accessor can exist, `getOrAbort` (now `getField`, a plain
+  [[Get]] of a key just found present), the set adapter's setter `unreachable` where a source setter can exist, the
+  `define-accessor` named gap (a realm row binding the descriptor pack's `defineAccessor`, as `define-data` does). The
+  set row takes the kernel's operand record instead of six copied handles.
+- **Requirement** (`native-invocation-requirements.ts`): `realmAccessors` is set when the program calls a contract that
+  can store a function value as an accessor half (`definesAccessors`, one list in `ordinary-object-callables.ts`:
+  `define-accessor`, `descriptor-define`, `descriptors-define`) and has source closures. It adds arities 0 and 1 and
+  selects the **dispatchable** source closures as arms (`dispatchable`, the predicate `dynamicCalleeGaps` now shares).
+  It adds **no gap**: a closure that is not dispatchable is not an arm, and if one ever reaches the realm's call, the
+  dispatcher's last arm aborts for any closure (P1's `builtinRootTypeIdx`, now also set under `realmAccessors`). No new
+  refusal is possible by construction (lead's answer 2). The kernel receives the two dispatchers only then
+  (`nativeInvocationAccessorCalls`, a new optional kernel dependency); otherwise its bodies are the old bytes.
+- **Object literal:** an accessor, and a function expression inside a literal that has one, take the all-dynamic
+  signature on the lane of their enclosing function declaration (`sourceDynamicClosureSignature`); inside an exported
+  function (the typed #3518 programs) they keep the checker's signature, as before. Such an accessor is a function
+  object (`emitFunctionObjectInit`: `length`, name `get k` / `set k`, no `prototype`); a typed one keeps none.
+  `programObjects` counts an accessor as a function value.
+- from-ast 17346 = base (the resolver call lost its `isFunctionExpression` guard in place), program-source 1746 =
+  base, program-consumer 1513 = base (the invocation pack rides on the existing `reserveNativeRealmKernel` call).
+
+### Deviations from the plan
+
+- Lead's answer 2 replaced plan step 3's "every source unit required dispatchable" (a named refusal) by "dispatchable
+  units are the arms, the rest aborts": no program that compiles today can refuse.
+- `get: undefined`: the stored half was already null (it read `undefined` and compared right on the base), so no
+  normalization was added.
+- The plan's "descriptor-literal closures always dynamic" broke the #3518 typed fixtures (TS programs on the same
+  lane, whose literals live in exported functions): the enclosing-declaration rule above keeps them byte-identical.
+
+### Re-entrancy and exceptions (lead's conditions A, B)
+
+- A getter / setter is called from: kernel entry-get (returns its result), the set adapter (returns true),
+  ToPropertyDescriptor's `getField` (each field is `has` then [[Get]] on the descriptor object, read afresh; only the
+  record's own locals survive the call), defineProperties' per-key [[Get]] (the key list is the one snapshot the spec
+  takes; each key's attributes are re-read by `ownDescriptor` after the previous getter ran; nothing is defined until
+  every descriptor is converted). OrdinaryToPrimitive's method reads are `js.object.get` (IR side).
+- Kernel state checked for a set-before / reset-after pattern: none in `get` / `lookup` / entry-get / set adapter /
+  ToPropertyDescriptor / descriptors-define (locals only); the realm `initializer` runs before any lookup; the
+  dispatcher's `__current_this`, `__argc`, `__extra_args` are saved and restored by its `try_table` boundary on return
+  and on throw (F2). No legacy prototype cache or one-shot receiver global exists on this path (those are the legacy
+  `object-get-bodies.ts`, not built here).
+- Tested against node (each with its wrong twin): a getter that redefines its own property as an accessor and as data;
+  grows the object read and an inherited read's receiver by 50 properties; a setter that grows its receiver, redefines
+  the property it was found on, on the object and on a prototype; recursive reads (depth 4) and writes; a key getter
+  that defines the SAME target during defineProperties (configurable: the later define wins; non-configurable:
+  TypeError, the inner value stays); a key getter that hides a later key and adds one; a descriptor-field getter that
+  grows the descriptor; a getter throwing on its 2nd call only; throws through a read, a write, ToPrimitive,
+  defineProperty, create (no object leaks) and defineProperties (nothing defined); `this` restored after a caught
+  getter throw. Not expressible on this path: `delete` inside a getter (`delete has no IR lowering`), changing a
+  prototype (`Object.setPrototypeOf` / `__proto__` refused), so (i) and (iv) are covered by redefinition only.
+
+### ToPropertyDescriptor order (condition C)
+
+A descriptor whose six fields are logging getters reads `enumerable, configurable, value, writable, get, set`; a `get`
+that is no function throws after `enumerable, configurable, get` were read and before `set`; a bad `set` after
+`get, set`; `get` + `value` after `value, get` (all node's order).
+
+### C1 (`native-getter-invocation-requirements.ts`): why it is not folded, what would delete it
+
+It proves a getter by its static allocation (an object-literal `define-accessor` whose half is a `closure.new`, then a
+`js.object.get`), and its use makes that closure an arm of method 0 **with the dispatcher's conversions** (an f64 or
+Boolean result). The realm rule here admits only all-carrier closures. In the typed #3518 programs (accessors in an
+exported function keep the checker's signature, e.g. `get value(): number`) the C1 arm is what lets the realm's call
+of a typed getter answer (tests `issue-3518-ordinary-object-runtime-providers`, `-native-getter-resource-join`: those
+programs are now accepted and run, `run() === 7`). Its other consumer, `native-object-get.ts`, is reached only from test
+fixtures. It can be deleted once (a) a typed accessor gets an arm by the realm rule (the dispatcher's f64 / Boolean
+conversions admitted there, with the undefined-preserving carrier C1's gap asks for f64 parameters) or typed programs
+leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7380).
+
+### Proof
+
+| test file (alone, VITEST_MAX_FORKS=1, heap 2048) | tests | exit |
+|---|---:|---:|
+| issue-7354-o2-accessors (new) | 43 | 0 |
+| issue-7354-o1-define-property / o1-create-and-define-properties (3 O2 abort pins removed) | 30 / 15 | 0 |
+| issue-3518-ordinary-object-runtime-providers (the gap pin now runs the getter: 7) | 271 | 0 |
+| issue-3518-native-getter-invocation (arities [0, 1]; "no Get" has dispatchers, no use) | 37 | 0 |
+| issue-3518-native-getter-resource-join (refusal → acceptance) | 13 + 2 skipped | 1 — the same 2 fail on the base (`string.const runtime is unavailable` in the hand-built fixture) |
+| issue-3518-native-getter-results | 19 of 21 | 1 — the same 2 fail on the base (same fixture error) |
+| issue-7354-o-objects | 12 of 13 | 1 — the same 1 fails on the base fc6a029b3f |
+| issue-7354-fa-function-values (descriptor-literal pin moved to exported fn; script case positive) / p1-method-values (getter-defined method row removed, now an O2 test) | 44 / 19 | 0 |
+| m-refusals 44, r-provider-census 117, 3518-native-realm-requirements 25, 3518 ordinary-descriptor-capture 7, ordinary-getter-source 8, ordinary-object-access-source-plan 27, transitive-getter-captures 23, promise-getter-capture 14, void-closure-results 16, native-object-realm-declarations 21, native-builtin-functions 36, semantic-provider-source-acceptance 86, native-add-default-hint 43, ordinary-object-callable-contracts 55 | | 0 |
+| c2-constructors 20, c2-this 18, f1b-function-objects 9, f2 10, p1-own-property 18, m-prototype-premise 18, o4 16, o3 13, s-script-var-define-target 14, x-dynamic-throw 59, u-prelude 3, test262-prepared-entry 44, perf-string-authentication 27, o2b 15, f1b-declaration-values 11, f1b-function-object-writes 3, f1-function-kind 12 | | 0 |
+
+- **Seven rows** (strict entry, real prelude): all return. **Sample** (411 rows, real runner, base = fc6a029b3f run
+  the same day): base 61 pass / 19 fail / 331 CE, head **68** / 12 / 331; transitions fail→pass 7 (exactly the seven
+  rows), everything else unchanged. Ten mutated twins of the seven (each flips one assertion) all FAIL through the same
+  runner; deleted, directory mtimes restored, `find test262/test -name '*_o2twin*'` empty.
+- **Probes base vs head** (310: P1's 216 regression programs, 74 O2 hazard probes, 20 base probes): OK→OK 132,
+  ABORT→OK 42, REFUSED→OK 35, ABORT→ABORT 74, REFUSED→REFUSED 27; nothing that was right is anything else, 0 wrong,
+  0 invalid, 0 exceptions. The 74 hazard probes with wrong twins: 73 OK, 1 abort (a closure capturing a written
+  parameter, `closure inside mk captures non-local binding`, not accessor-specific).
+- **Sweep** (`.tmp/sweep-gen.mjs`, 13 existing kinds × 216 descriptors): counting-getter column (every present field a
+  getter that counts; the count is part of the answer) 2,808 / 2,808 right; plain column 2,808 / 2,808 right (O1's cases re-run on the head: `getField`). A 12-program
+  batch with wrong expectations: 12 / 12 throw.
+- **`check:prepared-bytes`** (804 rows) base vs head: 803 identical; row 47 (`Object.defineProperty(obj, "foo",
+  {value: 1})`, no closure) differs by `getField` (the dropped status-3 test in the descriptor helper); run on base and
+  head: both return with `obj.foo === 1`.
+- **Plain programs** byte-identical: prelude + `assert(true);` sha256 e23f5dca… and prelude + an object-literal
+  program 8b838a85… at base and head; the 803 rows above.
+- **Ordinary pipeline**: 20 test262 files (the seven rows, six `11.1.5` object-literal accessor rows, O1/P1's
+  defineProperty / create / getOwnPropertyDescriptor / hasOwnProperty rows) × default + standalone: 40 / 40 identical.
+- **Mutations** (each alone, `.tmp/mutate.cjs`, probe run: 7 JS programs, a TS typed-getter program, the #3518
+  exported-getter program), all killed: the dispatcher call's receiver (wrong `this`), the setter's `true` (strict
+  TypeError), the realm's arms (`units: []`: abort in a program that calls no value), `define-accessor` in the
+  accessor-defining list (literal reads abort), the accessor's dynamic signature (refusal), the accessor's
+  function-object init and its `get ` prefix (wrong `name`), the closure-root abort under `realmAccessors` (the typed
+  getter answers a catchable TypeError instead), the enclosing-declaration lane rule (the #3518 typed program refuses
+  `js.number.box`), `programObjects`' accessor (an accessor-only program loses `this`), the kernel's source arm.
+  Each killing program is in `issue-7354-o2-accessors` or the #3518 runtime-providers file.
+- **`main` adc30d7fbc merged** after the measurements (no conflict; it touched from-ast, function-object-lowering,
+  source-dynamic-contracts elsewhere). Re-checked on the merged state: typecheck, LOC / function budgets (also
+  `LOC_GATE_BASE` = adc30d7fbc), coercion-sites, oracle-ratchet, dead-exports all exit 0; o2-accessors 43 / 43; the
+  seven rows return; prelude + `assert(true);` still e23f5dca…. from-ast, program-source, program-consumer: net 0
+  lines vs that main. No budget grant.
+
+### Known limits
+
+- `o.x += v`, `o.x++` on a member: refused at top level (`compound property write on dynamic not in IR scope`), the
+  function's abort inside one (pinned in o2-accessors; slice L0).
+- `delete` and prototype changes inside an accessor are not expressible on this path (see above).
+- A non-dispatchable closure (typed) as an accessor half of a descriptor static aborts at its call.
+- Requirement precision: `realmAccessors` reserves both dispatchers for any accessor-defining program with closures,
+  even one that defines only a getter or never reads it (one unused function at most).
+
+### Not verified
+
+- Node 25 (not installed).
+- The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
+  h-script-var-dynamic-home and 3518-native-invocation-substrate suites.
+
 ## Slice L0 plan (2026-11-23, branch `claude/7354-l0` from `origin/main` adc30d7fbc; Phase 1, not started)
 
 Language-core constructs that refuse or abort whatever the built-ins do. Measured on main adc30d7fbc (H2 merged, G1 and

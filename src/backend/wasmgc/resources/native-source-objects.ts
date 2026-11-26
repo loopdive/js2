@@ -7,7 +7,8 @@
  *     (#7354 C2) `create-with-prototype`, `inherits`):
  *     a function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`,
  *     `source-function-object-bodies.ts`) over the realm's storage, kernel and descriptor packs; or
- *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
+ *   - binds a realm function as it is (`define-data`, (#7354 O2) `define-accessor`: the descriptor pack's public
+ *     defines; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor; (#7354 O1) `create-null`: the storage's
  *     OrdinaryObjectCreate(null)).
  * A contract without a row here has no native source provider yet. (#7354 O1) An adapter that reads descriptors calls
@@ -23,9 +24,7 @@ import {
   buildSourceObjectGetDefinition,
   buildSourceObjectSetDefinition,
   buildSourceObjectHasDefinition,
-  buildSourceObjectIsErrorDefinition,
-  buildSourceObjectErrorFieldDefinition,
-  buildSourceObjectPrototypeMethodDefinition,
+  buildSourceObjectIntrinsicDefinition,
   buildSourceObjectHasOwnDefinition,
   sourceObjectCreate,
   type SourceObjectCreateOperands,
@@ -49,7 +48,11 @@ import {
   nativeBuiltinFunctionSingletonBinding,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
-import { NATIVE_OBJECT_PROTOTYPE_METHODS, realmMethodId } from "../../../runtime/contracts/native-realm-catalog.js";
+import { NATIVE_VALUE_INTRINSICS } from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  buildErrorToStringDefinition,
+  buildIsErrorDefinition,
+} from "../../../runtime/wasmgc/values/realm-family-bodies.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
@@ -170,6 +173,7 @@ const ROWS = {
   },
   "js.object.create-null": { binds: ({ storage }) => storage.createNull },
   "js.object.define-data": { binds: ({ descriptors }) => descriptors.defineData },
+  "js.object.define-accessor": { binds: ({ descriptors }) => descriptors.defineAccessor },
   "js.object.create-type-error": { binds: ({ errors }) => errors.newTypeError },
   "js.object.get": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
@@ -177,15 +181,7 @@ const ROWS = {
   },
   "js.object.set": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF, EXTERNREF], results: [I32] },
-    body: ({ layouts, kernel, descriptors }, tx) =>
-      buildSourceObjectSetDefinition({
-        entryTypeIdx: layouts.propEntry.typeIndex,
-        objectTypeIdx: layouts.object.typeIndex,
-        findOwn: nativeBuiltinFunctionOperands(tx, kernel).findOrdinary,
-        lookup: kernel.functions.lookup.handle,
-        defineData: descriptors.defineData.handle,
-        bag: kernel.functions.bag.handle,
-      }),
+    body: ({ kernel }, tx) => buildSourceObjectSetDefinition(nativeBuiltinFunctionOperands(tx, kernel)),
   },
   "js.object.has": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
@@ -193,11 +189,25 @@ const ROWS = {
   },
   "js.object.is-error": {
     signature: { params: [EXTERNREF], results: [I32] },
-    body: ({ errors }) => buildSourceObjectIsErrorDefinition({ errorTypeIdx: errors.type.typeIndex }),
+    body: ({ layouts }) => buildIsErrorDefinition({ objectTypeIdx: layouts.object.typeIndex }),
   },
-  "js.object.error-field": {
-    signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
-    body: ({ errors }) => buildSourceObjectErrorFieldDefinition({ errorTypeIdx: errors.type.typeIndex }),
+  // (#7354 G1) Only a realm that holds the Error family has its error creation, and only it serves the contract.
+  "js.object.create-error": { binds: ({ kernel }) => kernel.errorCreate! },
+  "js.object.error-to-string": {
+    signature: { params: [EXTERNREF], results: [EXTERNREF] },
+    literals: [": "],
+    body: (dependencies, tx) => {
+      const d = nativeBuiltinFunctionOperands(tx, dependencies.kernel);
+      const strings = nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).strings.layout;
+      return buildErrorToStringDefinition({
+        get: dependencies.kernel.functions.get.handle,
+        undefinedGlobal: d.undefinedGlobal,
+        anyValueTypeIdx: dependencies.values.types.anyValue.typeIndex,
+        anyStrTypeIdx: strings.anyStrTypeIdx,
+        consStrTypeIdx: strings.consStrTypeIdx,
+        text: literalKey(tx, dependencies),
+      });
+    },
   },
   "js.object.init-function": {
     signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
@@ -243,13 +253,14 @@ const ROWS = {
         dependencies.descriptors.defineData.handle,
       ),
   },
-  "js.object.prototype-method": {
+  "js.object.intrinsic": {
     signature: { params: [I32], results: [EXTERNREF] },
     body: ({ kernel }, tx) =>
-      buildSourceObjectPrototypeMethodDefinition({
-        getters: NATIVE_OBJECT_PROTOTYPE_METHODS.map(
-          (name) =>
-            nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId("Object.prototype", name)).getter.handle,
+      buildSourceObjectIntrinsicDefinition({
+        getters: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) =>
+          kernel.entries.some((entry) => entry.id === id)
+            ? [{ selector, getter: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }]
+            : [],
         ),
       }),
   },

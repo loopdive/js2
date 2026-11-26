@@ -40,6 +40,8 @@ import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.j
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
+import { dynamicErrorConstruction, errorConstructorOf } from "./dynamic-error-constructors.js";
+import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -49,6 +51,7 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
+  holdsErrors,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -95,18 +98,20 @@ export function legalizeDynamicValues(
   const admitted = admittedKinds(program);
   const kinds = knownKinds(fn, types, definitions, admitted);
   const builders = chainBuilders(fn, allocations, kinds, admitted);
-  const { intrinsic, fresh, kindTest, anyKind, text, errorField, kindChain } = builders;
+  const { intrinsic, fresh, kindTest, anyKind, text, kindChain } = builders;
+  const errors = holdsErrors(program);
   const conversions = conversionBuilders(builders, program);
   const { stringOf, toNumber } = conversions;
   const addition = additionBuilder(builders, conversions);
   const comparisons = comparisonBuilders(builders, conversions);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
-  const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
+  const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
-  // (#7354 O1, P1) What a recognised `Object` static (`dynamic-object-statics.ts`) or a call of an Object.prototype
-  // method the realm holds (`dynamic-prototype-methods.ts`) is written with.
-  const objectStatics = { ...builders, stringOf };
+  // (#7354 O1, P1, G1) What a recognised `Object` static (`dynamic-object-statics.ts`), a call of a prototype method the
+  // realm holds (`dynamic-prototype-methods.ts`) or of an Error constructor (`dynamic-error-constructors.ts`) is
+  // written with.
+  const objectStatics = { ...builders, stringOf, errors };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -204,7 +209,18 @@ export function legalizeDynamicValues(
           (kind, result) => {
             if (kind === "object" && program.objects.namesSymbol)
               gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-            return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
+            if (kind !== "object" || !errors) return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
+            // (#7354 G1) An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9).
+            const isError = fresh();
+            return [
+              realmCall("js.object.is-error", [instr.value], isError),
+              builders.branch(
+                isError,
+                (r) => [text("[object Error]", r)],
+                (r) => [text("[object Object]", r)],
+                result,
+              ),
+            ];
           },
           kinds.kindsOf(instr.value),
         );
@@ -224,8 +240,12 @@ export function legalizeDynamicValues(
         return dynamicMemberWrite(memberAccess, instr);
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
-      case "dyn.construct":
-        return dynamicConstruct(functionOperations, instr);
+      case "dyn.construct": {
+        const error = errorConstructorOf(instr.callee, definitions);
+        return error === undefined
+          ? dynamicConstruct(functionOperations, instr)
+          : dynamicErrorConstruction(objectStatics, instr, error, instr.args);
+      }
       case "dyn.instanceof":
         return dynamicInstanceOf(functionOperations, instr);
       case "dyn.eq":
@@ -240,16 +260,21 @@ export function legalizeDynamicValues(
       case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
-        const relational =
-          instr.target.binding.kind === "runtime" ? relationalOfHelper(instr.target.binding.symbol) : undefined;
+        const symbol = instr.target.binding.kind === "runtime" ? instr.target.binding.symbol : undefined;
+        const relational = symbol === undefined ? undefined : relationalOfHelper(symbol);
         if (relational !== undefined) return comparisons.relational(instr, relational, instr.args, instr.result!);
-        const objectStatic =
-          instr.target.binding.kind === "runtime" ? objectStaticOfHelper(instr.target.binding.symbol) : undefined;
+        const objectStatic = symbol === undefined ? undefined : objectStaticOfHelper(symbol);
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
-        // (#7354 F2) Without a function value no callee is callable: every call through a value would be the TypeError.
-        if (closureMethodArity(instr.target.name) !== undefined && !admitted.includes("function"))
+        const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
+        if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
+        const dispatched = closureMethodArity(instr.target.name) !== undefined;
+        const error = dispatched ? errorConstructorOf(instr.args[1]!, definitions) : undefined;
+        if (error !== undefined) return dynamicErrorConstruction(objectStatics, instr, error, instr.args.slice(2));
+        // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
+        // (G1) a built-in's run-time abort.
+        if (dispatched && !program.objects.functions)
           return gap(`${instr.target.name} in a program that creates no function value`);
-        const method = prototypeMethodOfCall(instr, definitions);
+        const method = prototypeMethodOfCall(instr, definitions, errors);
         if (method !== undefined) return dynamicPrototypeMethodCall(objectStatics, instr, method);
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));

@@ -73,7 +73,7 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
     expect(invocation).toBeDefined();
     expect(invocation.objectAccess).toBe(f.access);
     expect(invocation.uses).toEqual([]);
-    expect(invocation.methodArities).toEqual([0]);
+    expect(invocation.methodArities).toEqual([0, 1]); // (#7354 O2) 1: the realm may call a setter
     expect(invocation.getterUses).toHaveLength(1);
     expect(invocation.gaps).toEqual([]);
     expect(f.access.gaps.some((gap) => gap.detail.includes("implicit-prototype companion"))).toBe(true);
@@ -115,13 +115,16 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
     expect(f.invocation!.getterUses).toHaveLength(2);
     expect(new Set(f.invocation!.getterUses.map((row) => row.liftedUnitId)).size).toBe(2);
     expect(new Set(f.access.getters.map((row) => row.allocationId)).size).toBe(2);
-    expect(f.invocation!.methodArities).toEqual([0]);
+    expect(f.invocation!.methodArities).toEqual([0, 1]);
   });
-  it("does not turn a descriptor with no actual Get into invocation demand", () => {
+  it("does not turn a descriptor with no actual Get into a getter use", () => {
     const f = getterRequirements(prepareGetterProgram(GETTER_SOURCE.replace("return object.value;", "return 7;")));
     expect(f.source.units).toHaveLength(1);
     expect(f.access.getters).toEqual([]);
-    expect(f.invocation).toBeUndefined();
+    // (#7354 O2) The define still lets the realm reach an accessor half: its dispatchers, no use.
+    expect(f.invocation!.getterUses).toEqual([]);
+    expect(f.invocation!.uses).toEqual([]);
+    expect(f.invocation!.realmAccessors).toBeDefined();
   });
   it("keeps actual source-call ABI uses independent of an empty C1 getter population", () => {
     const f = getterRequirements(prepareGetterProgram(CALL_SOURCE));

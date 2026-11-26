@@ -865,10 +865,10 @@ export interface FunctionContext {
    */
   nativeGeneratorYieldValueLocals?: Map<ts.YieldExpression, number>;
   /**
-   * (#680) One-time pre-yield operand values for original expression AST nodes
-   * while a native generator continuation state recompiles that expression.
+   * Locals `compileExpressionInner` reads instead of evaluating these AST nodes, each scoped to one emission:
+   * native generator pre-yield operands (#680), Array-subclass receivers (#2917), optional-call receivers (#7374).
    */
-  nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
+  preEvaluatedExpressionLocals?: Map<ts.Expression, number>;
   /**
    * (#6504 round 31) The async twin of the field above: one-time PRE-AWAIT
    * operand values for original expression AST nodes, consulted while an async

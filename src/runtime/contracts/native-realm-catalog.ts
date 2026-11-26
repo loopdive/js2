@@ -23,6 +23,11 @@ export type NativeRealmProperty = {
 );
 export interface NativeRealmIntrinsic {
   readonly id: string;
+  /**
+   * (#7354 G1) The constructor whose presence in a realm brings this row (its prototype, a method of that prototype):
+   * a row without one belongs to every realm. What a realm holds, and so the literals it carries, follows this field.
+   */
+  readonly heldWith?: string;
   readonly aliases: readonly string[];
   readonly prototype: string | null;
   readonly extensible: boolean;
@@ -36,8 +41,8 @@ export interface NativeRealmIntrinsic {
     readonly length: number;
     readonly algorithm: string;
     /**
-     * (#7354 O1) `native`: the Prepared path lowers the built-in's call form (`src/ir/realm-static-call.ts`); (P1) for
-     * an Object.prototype method, the realm also holds it as a function object.
+     * (#7354 O1) `native`: the Prepared path lowers the built-in's call form (`src/ir/realm-static-call.ts`); (P1, G1)
+     * for a member of {@link NATIVE_VALUE_INTRINSICS}, the realm also holds it as a function object.
      */
     readonly implementation: "function-prototype" | "throw-type-error" | "native" | "unavailable";
     readonly requires: readonly string[];
@@ -138,10 +143,22 @@ export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
   "propertyIsEnumerable",
 ] as const);
 export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
-/** The one answer to "is `parent.name` native": the two lists above. */
+/** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
+export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+] as const);
+export type NativeErrorConstructor = (typeof NATIVE_ERROR_CONSTRUCTORS)[number];
+/** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
   "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
+  "Error.prototype": ["toString"],
 };
 const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
 const objectMethods: readonly Method[] = [
@@ -187,6 +204,56 @@ function members(parent: string, rows: readonly Method[], legacy = false): Nativ
 }
 const methodProperties = (parent: string, rows: readonly Method[]) =>
   rows.map(([name]) => reference(name, realmMethodId(parent, name)));
+const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
+/**
+ * (#7354 G1) The function values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)`
+ * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`.
+ */
+export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
+  ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
+  ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
+  realmMethodId("Error.prototype", errorToString[0]),
+]);
+/**
+ * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a constructor (length 1, own `prototype` read only; a NativeError's
+ * [[Prototype]] is %Error%) and its prototype object (`constructor`, `name`, `message` "", and Error.prototype's
+ * `toString`; [[Prototype]] %Object.prototype% for Error.prototype, %Error.prototype% for the others).
+ */
+function errorRows(name: NativeErrorConstructor): NativeRealmIntrinsic[] {
+  const id = `%${name}%`,
+    prototype = `%${name}.prototype%`,
+    base = name === "Error";
+  const ctor = callable(
+    id,
+    name,
+    1,
+    name,
+    ["OrdinaryCreateFromConstructor", "ToString", "CreateNonEnumerableDataPropertyOrThrow", "InstallErrorCause"],
+    [reference("prototype", prototype, false, false)],
+    true,
+    "native",
+  );
+  return [
+    { ...ctor, aliases: [id, name], ...(base ? {} : { prototype: "%Error%" }) },
+    {
+      id: prototype,
+      aliases: [prototype],
+      prototype: base ? objectPrototype : "%Error.prototype%",
+      extensible: true,
+      immutablePrototype: false,
+      constructible: false,
+      normativeOptional: false,
+      legacy: false,
+      properties: [
+        reference("constructor", id),
+        data("message", { kind: "string", value: "" }),
+        data("name", { kind: "string", value: name }),
+        ...(base ? methodProperties("Error.prototype", [errorToString]) : []),
+      ],
+    },
+    ...(base ? members("Error.prototype", [errorToString]) : []),
+  ].map((row) => ({ ...row, heldWith: id }));
+}
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);
@@ -292,6 +359,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     callable("%Function.prototype[@@hasInstance]%", "[Symbol.hasInstance]", 1, "OrdinaryHasInstance", [
       "OrdinaryHasInstance",
     ]),
+    ...NATIVE_ERROR_CONSTRUCTORS.flatMap(errorRows),
   ];
   return rows.map((row) => ({
     ...row,
@@ -317,9 +385,9 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ],
   }));
 }
-/** Complete retained Object/Function population, including Normative Optional legacy members. */
+/** Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error family. */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function:v1" as const,
+  version: "ecma262-2026:Object+Function+Error:v2" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [

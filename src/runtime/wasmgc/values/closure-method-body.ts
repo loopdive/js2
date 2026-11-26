@@ -37,7 +37,8 @@ export interface ClosureInvocationFailure {
   /**
    * (#7354 P1) The closure root, where the realm holds built-in methods as function objects. Every source closure has
    * its dispatch arm, so a closure-root callee that reaches the failure is a built-in, which the dispatcher cannot run:
-   * the run-time abort, never the TypeError a value that is not callable gets.
+   * the run-time abort, never the TypeError a value that is not callable gets. (#7354 O2) Likewise where the realm
+   * calls accessor halves: there the arms are the dispatchable source closures, and any other closure aborts.
    */
   readonly builtinRootTypeIdx?: number;
 }

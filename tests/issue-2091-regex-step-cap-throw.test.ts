@@ -23,7 +23,8 @@
 import { describe, expect, it } from "vitest";
 import { compilePattern } from "../src/codegen/regex/compile.js";
 import { parseFlags } from "../src/codegen/regex/bytecode.js";
-import { search, REGEX_STEP_CAP } from "../src/codegen/regex/vm.js";
+import { search } from "../src/codegen/regex/vm.js";
+import { REGEX_STEP_CAP } from "../src/runtime/contracts/regexp-bytecode.js";
 import { compile } from "../src/index.js";
 
 describe("#2091 reference VM throws on step-cap exhaustion", () => {

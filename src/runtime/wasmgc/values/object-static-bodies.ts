@@ -10,7 +10,7 @@ import {
   definePropertyOrThrow,
   descriptorRecordLocals,
   fromPropertyDescriptor,
-  getOrAbort,
+  getField,
   storeDescriptorRecord,
   type DescriptorRecordOperands,
 } from "./descriptor-record-bodies.js";
@@ -122,7 +122,7 @@ export function buildDescriptorsDefineDefinition(
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        ...getOrAbort(d, 1, [get(key)], field),
+        ...getField(d, 1, [get(key)], field),
         get(field),
         call(toPropertyDescriptor),
         ...storeDescriptorRecord(record.slots),

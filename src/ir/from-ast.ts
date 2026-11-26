@@ -1009,10 +1009,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   dynamicCarrierIsExternref?(): boolean;
   /**
-   * (#7354 Fa) The all-dynamic signature the Prepared native lane gives an unannotated function expression, if any
+   * (#7354 Fa) The all-dynamic signature the Prepared native lane gives an unannotated closure literal, if any
    * (`source-dynamic-contracts.ts`). A lane without it keeps the annotated-closure rule.
    */
-  dynamicClosureSignature?(expression: ts.FunctionExpression): IrClosureSignature | undefined;
+  dynamicClosureSignature?(expression: ts.FunctionLikeDeclaration): IrClosureSignature | undefined;
   /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
@@ -5249,6 +5249,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
         return functionObjects.lowerTopLevelFunctionValue(read.plan, functionObjectLoweringHost(cx));
       case "module-binding":
         return lowerResolvedModuleBindingRead(expr.text, read.binding, cx);
+      case "realm-intrinsic":
+        return functionObjects.lowerRealmIntrinsicRead(read.id, cx.builder);
       case "global-undefined":
       case "absent-global":
         return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
@@ -6945,18 +6947,13 @@ function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: Lower
 
 /**
  * A read of `node` lowers to the dynamic value: a dynamic local, slot or module global in scope, (#7106 Stage 4) a
- * `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic module home out of scope.
+ * `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic global out of scope.
  */
 function bindingHoldsDynamic(node: ts.Identifier | ts.ThisExpression, cx: LowerCtx): boolean {
   const binding = cx.scope.get(ts.isIdentifier(node) ? node.text : "this");
   if (binding?.kind === "local" || binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
   if (binding?.kind === "slot") return (binding.asType ?? binding.type).kind === "dynamic";
-  return (
-    binding === undefined &&
-    ts.isIdentifier(node) &&
-    functionObjects.createsFunctionObjects(cx.resolver) &&
-    cx.resolver?.resolveModuleBinding?.(node)?.type.kind === "dynamic"
-  );
+  return binding === undefined && ts.isIdentifier(node) && functionObjects.readsDynamicGlobal(node, cx.resolver);
 }
 
 /**
@@ -16319,7 +16316,7 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       ambientThisStrict: memberPlan.thisStrict,
     });
   }
-  const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
+  const dynamicSignature = cx.resolver?.dynamicClosureSignature?.(expr);
   if (dynamicSignature)
     return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, {
       writtenParameterSlots: true,

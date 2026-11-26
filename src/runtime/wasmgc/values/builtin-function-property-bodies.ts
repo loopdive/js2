@@ -72,6 +72,34 @@ export function buildBuiltinFunctionGetOwn(d: BuiltinFunctionPropertyOperands): 
     ],
   };
 }
+/**
+ * (#7354 O2) Call(`callee`, `receiver`, the locals `args`) of an accessor half, which ToPropertyDescriptor's IsCallable left a
+ * built-in or a source closure: a source closure through the program's dispatcher of that arity, a built-in through
+ * the kernel's own call. Leaves the result. The callee is program code: a caller must not use anything it computed
+ * about an object before the call.
+ */
+export function buildAccessorCall(
+  d: Pick<BuiltinFunctionPropertyOperands, "match" | "entries">,
+  calls: NonNullable<BuiltinFunctionPropertyOperands["accessorCalls"]>,
+  callee: number,
+  receiver: number,
+  args: readonly number[],
+): Instr[] {
+  const arity = args.length;
+  const values = args.map(get);
+  return [
+    get(callee),
+    call(d.match),
+    n(sourceClosureOrdinal(d)),
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [get(receiver), get(callee), ...values, call(calls.source[arity]!)],
+      else: [get(callee), get(receiver), ...values, call(calls.builtin[arity]!)],
+    },
+  ];
+}
 /** A live entry stops the search, even for undefined data or a getter-less accessor. */
 export function buildBuiltinFunctionEntryGet(
   d: BuiltinFunctionPropertyOperands,
@@ -92,30 +120,39 @@ export function buildBuiltinFunctionEntryGet(
         { op: "local.tee", index: getter },
         { op: "ref.is_null" },
         { op: "if", blockType: empty, then: [n(1), ...builtinUndefined(d), { op: "return" }] },
-        // A getter that is no builtin function, (#7354 C) a source closure included, needs a mixed callable owner:
-        // `callVector` has no source arm yet.
-        get(getter),
-        call(d.match),
-        { op: "i32.eqz" },
-        get(getter),
-        call(d.match),
-        n(sourceClosureOrdinal(d)),
-        { op: "i32.eq" },
-        { op: "i32.or" },
-        { op: "if", blockType: empty, then: [n(3), ...builtinUndefined(d), { op: "return" }] },
-        n(1),
-        get(getter),
-        get(receiver),
-        call(d.newVector),
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-        call(d.callVector),
-        { op: "return" },
+        ...(d.accessorCalls
+          ? [n(1), ...buildAccessorCall(d, d.accessorCalls, getter, receiver, []), { op: "return" } as Instr]
+          : builtinGetterCall(d, getter, receiver)),
       ],
     },
     n(1),
     ...entryField(d, entry, 1),
     { op: "extern.convert_any" },
+  ];
+}
+/**
+ * Without `accessorCalls` the program holds no source closure that can be an accessor half: a getter is a built-in,
+ * called by the kernel; anything else is status 3.
+ */
+function builtinGetterCall(d: BuiltinFunctionPropertyOperands, getter: number, receiver: number): Instr[] {
+  return [
+    get(getter),
+    call(d.match),
+    { op: "i32.eqz" },
+    get(getter),
+    call(d.match),
+    n(sourceClosureOrdinal(d)),
+    { op: "i32.eq" },
+    { op: "i32.or" },
+    { op: "if", blockType: empty, then: [n(3), ...builtinUndefined(d), { op: "return" }] },
+    n(1),
+    get(getter),
+    get(receiver),
+    call(d.newVector),
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.vectorTypeIdx },
+    call(d.callVector),
+    { op: "return" },
   ];
 }
 /** Presence is returned independently from data undefined/null and absent accessor halves. */

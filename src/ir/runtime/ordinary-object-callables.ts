@@ -62,10 +62,12 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
   // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
   "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
-  // (#7354 M2) Whether a value is the realm's error, the TypeError `create-type-error` builds: the error kind's test.
+  // (#7354 G1) Whether an object has [[ErrorData]] (`Object.prototype.toString`'s "Error" tag).
   "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
-  // (#7354 M2) An error's `name` (selector 1) or `message` (selector 0) field, each a native string.
-  "js.object.error-field": declaration("js.object.error-field", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  // (#7354 G1) A new error of the Error constructor `selector` (its index in `NATIVE_ERROR_CONSTRUCTORS`), with the
+  // already converted `message`, or none for null; and Error.prototype.toString of an object (§20.5.3.4).
+  "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.error-to-string": declaration("js.object.error-to-string", [EXTERNAL], [EXTERNAL]),
   // (#7354 F1b) A source function object's own properties, once, right after its closure is created: `length`,
   // `name` (a native string) and, for a constructor (the Boolean), `prototype` (`source-function-object-bodies.ts`).
   "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN], []),
@@ -79,12 +81,23 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.descriptor-define": declaration("js.object.descriptor-define", [EXTERNAL, EXTERNAL, EXTERNAL], []),
   "js.object.descriptors-define": declaration("js.object.descriptors-define", [EXTERNAL, EXTERNAL], []),
   "js.object.own-descriptor": declaration("js.object.own-descriptor", [EXTERNAL, EXTERNAL], [EXTERNAL]),
-  // (#7354 P1) The built-in function object the realm's Object.prototype holds for the native method `selector` (its
-  // index in `NATIVE_OBJECT_PROTOTYPE_METHODS`), and HasOwnProperty of a canonical key on an ordinary or function
-  // object, also requiring the enumerable attribute when `selector` is 1.
-  "js.object.prototype-method": declaration("js.object.prototype-method", [SELECTOR], [EXTERNAL]),
+  // (#7354 P1, G1) The built-in function object the realm holds for `selector` (its index in
+  // `NATIVE_VALUE_INTRINSICS`), and HasOwnProperty of a canonical key on an ordinary or function object, also
+  // requiring the enumerable attribute when `selector` is 1.
+  "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
 });
+
+/**
+ * (#7354 O2) The contracts that can store a function value as an accessor half: the object literal's `get` / `set`
+ * and the descriptor statics. The realm calls such a half on a later [[Get]] / [[Set]].
+ */
+const ACCESSOR_DEFINING: ReadonlySet<string> = new Set<OrdinaryObjectRuntimeFeature>([
+  "js.object.define-accessor",
+  "js.object.descriptor-define",
+  "js.object.descriptors-define",
+]);
+export const definesAccessors = (symbol: string): boolean => ACCESSOR_DEFINING.has(symbol);
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
 export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {

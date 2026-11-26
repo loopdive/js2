@@ -58,7 +58,8 @@ describe("authentic full-catalog request issuer", () => {
   it("retains every catalog entry and all unavailable roles without casting them to bootstrap behaviors", () => {
     const f = publicRealmFoundation();
     expect(f.realm.description.catalog).toEqual(NATIVE_REALM_CATALOG);
-    expect(f.realm.description.catalog.intrinsics).toHaveLength(45);
+    // (#7354 G1) The issuer declares the rows the realm holds: a family it does not hold (Error) is absent.
+    expect(f.requests.intrinsics.some((row) => row.intrinsic.heldWith !== undefined)).toBe(false);
     expect(f.requests.intrinsics).toHaveLength(44);
     expect(f.requests.requests).toHaveLength(88);
     expect(requireNativeBuiltinFunctionRequestIssuer(f.tx, f.requests)).toBe(f.requests);

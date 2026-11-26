@@ -41,8 +41,8 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
-import { objectStaticOperand } from "./realm-static-call.js";
-import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
+import { realmBuiltinOperand } from "./realm-static-call.js";
+import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -206,19 +206,25 @@ function sourceBooleanResult(
  * with P's all-dynamic signature on the native lane: every parameter and the result are the dynamic value. Its
  * callers include calls through values (`js.closure.call:N` passes and returns the carrier), so, as for an
  * unannotated declaration's parameters, no call site types it. A parameter list with a default, a rest element or
- * a pattern, and a generator or async literal, have no such contract; neither has a literal inside a descriptor
- * literal, whose signature is the checker's ({@link ownedByDescriptorLiteral}).
+ * a pattern, and a generator or async literal, have no such contract. (#7354 O2) An object literal's `get` / `set`
+ * accessor is such a value too (the realm calls it through the dispatcher, a program reads it through
+ * `Object.getOwnPropertyDescriptor`), and so is a function expression inside such a literal, both on the lane of
+ * their enclosing function declaration: in an exported one (a typed #3518 program) they keep the checker's
+ * signature ({@link ownedByDescriptorLiteral}).
  */
 function sourceDynamicClosureSignature(
   policy: SourcePolicy,
-  expression: ts.FunctionExpression,
+  expression: ts.FunctionLikeDeclaration,
 ): { readonly params: readonly IrType[]; readonly returnType: IrType } | undefined {
+  const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
+    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression)) ||
+    (descriptorLiteral &&
+      dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||
     expression.asteriskToken !== undefined ||
     expression.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    ownedByDescriptorLiteral(expression) ||
     expression.parameters.some(
       (parameter) =>
         parameter.type !== undefined ||
@@ -296,7 +302,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicCarrierIsExternref?: () => boolean;
     readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
     /** (#7354 Fa) The all-dynamic signature of an unannotated function expression, if the lane admits one. */
-    readonly dynamicClosureSignature?: (expression: ts.FunctionExpression) => Signature | undefined;
+    readonly dynamicClosureSignature?: (expression: ts.FunctionLikeDeclaration) => Signature | undefined;
     /** (#7354 Fa) {@link staticFunctionValue}. */
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
@@ -356,7 +362,11 @@ export function programDynamicContracts(
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
-  const objects = programObjects(sourceFiles, functionDeclarationValues.length > 0);
+  const objects = programObjects(
+    sourceFiles,
+    functionDeclarationValues.length > 0,
+    pristineBuiltinGlobal(checker, sourceFiles),
+  );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
     const functionCodeStrict = input.codeStrictness?.(code);
     return functionObjects &&
@@ -468,7 +478,7 @@ function refuseImplicitDynamicFlows(
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
-    const exempt = (e: ts.Expression) => passedOn(e) || converted || objectStaticOperand(e, isPristineGlobal);
+    const exempt = (e: ts.Expression) => passedOn(e) || converted || realmBuiltinOperand(e, isPristineGlobal);
     if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
@@ -563,6 +573,17 @@ function legalizeSourceDynamicValues(
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   if (!nativeDynamicLane(policy)) return functions;
+  // (#7354 G1) The script's top level owns its `var`s: a bare one of a global the realm serves refuses by name.
+  const aliasing = "kind" in declaration ? undefined : scriptVarOfRealmGlobal(sourceFiles);
+  if (aliasing)
+    throw ownRefusal(
+      new IrUnsupportedError(
+        "type-resolution-unsupported",
+        "build",
+        `script var '${aliasing.name.getText()}' binds the global's existing ${aliasing.name.getText()}, which this path does not read through it`,
+      ),
+      aliasing,
+    );
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
   const catches = sourceFiles.some(readsCatchPayload);

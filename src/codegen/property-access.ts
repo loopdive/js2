@@ -235,7 +235,6 @@ import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
   ensureStandaloneBuiltinStaticMethodClosure,
-  getWellKnownSymbolId,
   hasNativeBuiltinConstantHandler,
   reportUnsupportedStandaloneBuiltinValueRead,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
@@ -446,6 +445,7 @@ import {
   trySuperAndImportMetaRead,
 } from "./property-access-dispatch.js"; // (#3276) Wave B — extracted guard bands
 import { readEnv } from "../env.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * (#3037 CS1b) True when `expr` is a direct operand of a standalone
@@ -719,7 +719,7 @@ export function isLogicalAssignNamedEvalNameRead(ctx: CodegenContext, node: ts.E
  * vec computed-get to route `vec[Symbol.iterator]` to %Array.prototype.values%
  * instead of coercing the Symbol key to a numeric index (which ToNumber-throws
  * "Cannot convert a Symbol value to a number"). Matches the same syntactic gate
- * `getWellKnownSymbolId` uses (`Symbol.iterator` as a bare identifier member),
+ * `wellKnownSymbolId` uses (`Symbol.iterator` as a bare identifier member),
  * so a locally-shadowed `Symbol` is not special-cased here either.
  */
 function isSymbolIteratorKey(expr: ts.Expression): boolean {
@@ -2461,8 +2461,9 @@ export function compileOptionalPropertyAccess(
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
   let elseResultType: ValType | null = null;
-  if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
-    compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName);
+  // (#7401) An extern class with no host getter import (native `Map`/`Set` `.size`, RegExp, Error, …) → the dynamic
+  // member read below, not the receiver.
+  if (compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName)) {
     elseResultType = { kind: "externref" };
   } else if (isStringType(tsObjType) && propName === "length") {
     if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
@@ -2602,29 +2603,21 @@ export function compileOptionalPropertyAccess(
   return resultType;
 }
 
-/** Helper: compile extern property get when receiver is already on stack */
+/** Helper: extern-class property get with the receiver on the stack; false (nothing emitted) without a getter import. */
 export function compileExternPropertyGetFromStack(
   ctx: CodegenContext,
   fctx: FunctionContext,
   objType: ts.Type,
   propName: string,
-): void {
-  const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
-  if (!className) return;
-  // Walk inheritance chain to find the property
-  let current: string | undefined = className;
-  while (current) {
-    const info = ctx.externClasses.get(current);
-    if (info?.properties.has(propName)) {
-      const importName = `${info.importPrefix}_get_${propName}`;
-      const funcIdx = ctx.funcMap.get(importName);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-      }
-      return;
-    }
-    current = (ctx as any).externClassParent?.get(current);
-  }
+): boolean {
+  const className =
+    hostMapCarrierClassName(ctx, objType) ??
+    (isExternalDeclaredClass(objType, ctx.checker) ? objType.getSymbol()?.name : undefined);
+  const info = className ? findExternInfoForMember(ctx, className, propName, "property") : null;
+  const funcIdx = info ? ctx.funcMap.get(`${info.importPrefix}_get_${propName}`) : undefined;
+  if (funcIdx === undefined) return false;
+  fctx.body.push({ op: "call", funcIdx });
+  return true;
 }
 
 // ── Property access ──────────────────────────────────────────────────

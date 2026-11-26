@@ -269,6 +269,12 @@ describe("#7354 Fa — the closure contracts", () => {
     expect(
       contractsOf(["var f = function (a) {};"], { backend: "wasmgc", target: "host" }).resolver.dynamicClosureSignature,
     ).toBeUndefined();
+    // (#7354 O2) A script's descriptor literal: its accessor and the closures inside it are function values too.
+    const nested = contractsOf(["var o = { get x() { var f = function (a) {}; return f; } };"]);
+    expect(nested.resolver.dynamicClosureSignature!(nested.f.initializer as ts.FunctionExpression)).toEqual({
+      params: [dynamic],
+      returnType: dynamic,
+    });
   });
 
   it.each([
@@ -277,8 +283,12 @@ describe("#7354 Fa — the closure contracts", () => {
     ["a pattern parameter", "var f = function ({ a }) {};"],
     ["a generator", "var f = function* () {};"],
     ["an async function", "var f = async function () {};"],
-    // The checker types a descriptor literal's closures, nested ones included (`ownedByDescriptorLiteral`).
-    ["a literal inside a descriptor literal", "var o = { get x() { var f = function (a) {}; return f; } };"],
+    // (#7354 O2) Inside an exported function (a typed program) the checker types a descriptor literal's closures,
+    // nested ones included (`ownedByDescriptorLiteral`).
+    [
+      "a literal inside a descriptor literal of an exported function",
+      "export function g() { var o = { get x() { var f = function (a) {}; return f; } }; }",
+    ],
   ])("gives %s no all-dynamic signature", (_, source) => {
     const { resolver, f } = contractsOf([source]);
     expect(resolver.dynamicClosureSignature!(f.initializer as ts.FunctionExpression)).toBeUndefined();

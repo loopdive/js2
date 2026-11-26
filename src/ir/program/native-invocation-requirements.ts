@@ -26,6 +26,7 @@ import {
   reconcileNativeGetterInvocationRequirements,
   type NativeGetterInvocationUse,
 } from "./native-getter-invocation-requirements.js";
+import { definesAccessors } from "../runtime/ordinary-object-callables.js";
 
 export interface NativeInvocationUse {
   readonly occurrence: number;
@@ -57,6 +58,13 @@ export interface NativeInvocationRequirements {
   readonly applyVector: boolean;
   /** (#7354 C2) Some unit reads the installed receiver (`js.closure.receiver`). */
   readonly receiver: boolean;
+  /**
+   * (#7354 O2) The realm may call a source closure stored as an accessor half (`definesAccessors`): through method 0
+   * (a getter) and method 1 (a setter), whose arms are the dispatchable source closures. A closure that is not
+   * dispatchable reaches the dispatcher's last arm, the run-time abort for a closure (`ClosureInvocationFailure`).
+   * Not a `use`: no call site of the program binds it.
+   */
+  readonly realmAccessors?: { readonly units: readonly IrUnitId[] };
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
@@ -91,21 +99,31 @@ function packedCallable(
 }
 
 /**
- * (#7354 F2) A dynamic callee may be any source closure, so each one must be dispatchable: the fixed-parameter
- * contract the dispatcher reads its arity from, and carrier (externref) parameters and result.
+ * (#7354 F2, O2) The source closures the dispatcher can call, and a gap for each one it cannot, in one pass. A dynamic
+ * callee may be any source closure, so each one must be dispatchable: the fixed-parameter contract the dispatcher
+ * reads its arity from, and carrier (externref) parameters and result. The realm's accessor calls take the
+ * dispatchable ones.
  */
-function dynamicCalleeGaps(source: NativeSourceClosureRequirements): NativeInvocationRequirements["gaps"][number][] {
-  return source.units.flatMap(({ unitId }) => {
-    const closure = source.demands.owners.find((owner) => owner.unitId === unitId)?.projectedFunction.closureSubtype;
-    const { signature, parameters } = closure ?? {};
-    const dispatchable =
-      signature &&
-      parameters?.kind === "fixed" &&
-      parameters.count === signature.params.length &&
-      signature.params.every(external) &&
-      (signature.returnType === null || external(signature.returnType));
-    return dispatchable ? [] : [{ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` }];
-  });
+function dispatchPartition(source: NativeSourceClosureRequirements): {
+  readonly dispatchable: readonly IrUnitId[];
+  readonly gaps: NativeInvocationRequirements["gaps"][number][];
+} {
+  const result = { dispatchable: [] as IrUnitId[], gaps: [] as NativeInvocationRequirements["gaps"][number][] };
+  for (const { unitId } of source.units)
+    if (dispatchable(source, unitId)) result.dispatchable.push(unitId);
+    else result.gaps.push({ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` });
+  return result;
+}
+function dispatchable(source: NativeSourceClosureRequirements, unitId: IrUnitId): boolean {
+  const closure = source.demands.owners.find((owner) => owner.unitId === unitId)?.projectedFunction.closureSubtype;
+  const { signature, parameters } = closure ?? {};
+  return (
+    !!signature &&
+    parameters?.kind === "fixed" &&
+    parameters.count === signature.params.length &&
+    signature.params.every(external) &&
+    (signature.returnType === null || external(signature.returnType))
+  );
 }
 
 /** Reconcile the actual pack graph with this projection's current allocation site. */
@@ -201,12 +219,14 @@ function calculate(
   const { demands } = source;
   const typeMaps = new Map<IrUnitId, ReturnType<typeof nativeAsyncCallableValueTypes>>();
   const definitions = new Map<IrUnitId, Map<IrValueId, IrInstr>>();
+  let realmAccessors = false;
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const buffer = demands.buffers[row.bufferIndex]!;
     if (buffer.view !== "projection" || row.instruction.kind !== "call") continue;
     const call: IrInstrCall = row.instruction,
       binding = call.target.binding;
     if (binding.kind !== "intrinsic") continue;
+    realmAccessors ||= definesAccessors(binding.symbol);
     const kind = closureInvocationKind(binding.symbol);
     if (!kind) continue;
     const arity = closureMethodArity(binding.symbol);
@@ -302,7 +322,8 @@ function calculate(
       callbacks,
     });
   }
-  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dynamicCalleeGaps(source));
+  const dispatch = dispatchPartition(source);
+  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dispatch.gaps);
   const getters = objectAccess
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
@@ -314,10 +335,12 @@ function calculate(
       ...new Set([
         ...uses.flatMap((use) => (use.arity === undefined ? [] : [use.arity])),
         ...(getters.getterUses.length ? [0] : []),
+        ...(realmAccessors ? [0, 1] : []),
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
     receiver: uses.some((use) => use.kind === "receiver"),
+    ...(realmAccessors ? { realmAccessors: { units: dispatch.dispatchable } } : {}),
     gaps,
   };
 }
@@ -333,7 +356,8 @@ export function planNativeInvocationRequirements(
       : undefined);
   const objectResults = objectAccess ? deriveNativeObjectResultRequirements(source, objectAccess) : undefined;
   const data = calculate(source, objectAccess, objectResults);
-  if (!data.uses.length && !data.getterUses.length && !objectResults?.gaps.length) return undefined;
+  if (!data.uses.length && !data.getterUses.length && !data.realmAccessors && !objectResults?.gaps.length)
+    return undefined;
   const { program, projection } = source.demands;
   const runtimeCreated = collectNativePromiseSourceCensus(program, projection, {
     backend: projection.backend,

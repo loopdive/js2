@@ -25,6 +25,16 @@ export function realmCall(
   };
 }
 
+const INTRINSIC_HELPER_PREFIX = "__ir_realm_intrinsic:";
+/**
+ * (#7354 G1) The front end's helper symbol for a read of the realm's built-in function object `id` (an identifier
+ * naming the pristine global, `identifier-read.ts`); the legalization writes it as `js.object.intrinsic`.
+ */
+export const realmIntrinsicHelper = (id: string): string => INTRINSIC_HELPER_PREFIX + id;
+/** The intrinsic id a helper symbol reads, if it is one. */
+export const realmIntrinsicOfHelper = (symbol: string): string | undefined =>
+  symbol.startsWith(INTRINSIC_HELPER_PREFIX) ? symbol.slice(INTRINSIC_HELPER_PREFIX.length) : undefined;
+
 /** The builders a synthesized TypeError is written with. */
 export interface TypeErrorBuilders {
   readonly carrier: IrType;

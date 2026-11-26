@@ -22,13 +22,6 @@ const UNPROVIDED = [
   "Date",
   "JSON",
   "Function",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "EvalError",
-  "URIError",
   "encodeURIComponent",
   "globalThis",
 ];
@@ -44,6 +37,14 @@ describe("#7354 T — typeof of a standard global", () => {
     expect(await abortBodies('function f() { return typeof Math === "undefined"; }\nvar out = f();')).toEqual([
       'f: ir/from-ast: identifier "Math" is not in scope in f',
     ]);
+  });
+
+  // (#7354 G1) The Error constructors are the realm's function objects now.
+  it("answers typeof of an Error constructor as node does", async () => {
+    await agreesWithNode(
+      "var out = typeof Error + typeof TypeError + typeof RangeError + typeof SyntaxError + typeof ReferenceError" +
+        ' + typeof EvalError + typeof URIError + (typeof TypeError === "function");',
+    );
   });
 
   it("answers the global values and a name nothing declares as node does", async () => {

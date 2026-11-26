@@ -4,7 +4,7 @@
 // (src/ir/program/dynamic-function-operations.ts). Each accepted program runs twice against node: its answer returns,
 // a wrong one throws. Run-time aborts and refusals are asserted by their exact outcome.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { abortBodies, abortsAtRunTime, agreesWithNode, gapText, refusal } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, agreesWithNode, gapText, refusal } from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -66,17 +66,20 @@ describe("#7354 C2 — new", () => {
       "resolver cannot register vec for array literal",
     ],
     ["a member callee", "var a = {b: function(){}}; new a.b();", "only direct constructor names supported in slice 4"],
-    ["a built-in constructor", "var e = new TypeError('m');", 'unknown class "TypeError" in <module-init>'],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });
 
-  // (#7354 U) Inside a function the refusal is the function's, which gets the abort body.
-  it("names a built-in constructor inside a function", async () => {
-    const source = "function f(){ return new TypeError('m'); } f();";
-    expect(await abortBodies(source)).toEqual(['f: ir/from-ast: unknown class "TypeError" in f']);
-    await abortsAtRunTime(source);
-  });
+  // (#7354 G1) A built-in constructor the realm holds runs (tests/issue-7354-g1-*); inside a function too.
+  it(
+    "runs a built-in constructor inside a function",
+    () =>
+      agreesWithNode(
+        "function f(){ return new TypeError('m'); } var g = function(){ return f(); }; var e = g();" +
+          " var out = String(e instanceof TypeError) + e.message;",
+      ),
+    SLOW,
+  );
 });
 
 describe("#7354 C2 — instanceof", () => {
