@@ -300,6 +300,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   readonly resolver: {
     readonly resolveDynamic?: () => ValType;
     readonly dynamicCarrierIsExternref?: () => boolean;
+    readonly localNeedsDynamicCarrier?: (declaration: ts.VariableDeclaration) => boolean;
     readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
     /** (#7354 Fa) The all-dynamic signature of an unannotated function expression, if the lane admits one. */
     readonly dynamicClosureSignature?: (expression: ts.FunctionLikeDeclaration) => Signature | undefined;
@@ -397,6 +398,7 @@ export function programDynamicContracts(
       ? {
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
+          localNeedsDynamicCarrier: provenance.localNeedsDynamicCarrier,
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
