@@ -12,15 +12,10 @@ import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { asVal, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { storedCarrierValue, type FunctionObjectLoweringHost } from "./function-object-lowering.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
+import { isEqualityOperator } from "./analysis/operand-admissibility.js";
 import { RELATIONAL_OPERATORS, type RelationalOperator } from "../shared/contracts/dynamic-operator-helpers.js";
 
 const I32 = irVal({ kind: "i32" });
-const EQUALITY: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.EqualsEqualsToken,
-  ts.SyntaxKind.ExclamationEqualsToken,
-  ts.SyntaxKind.EqualsEqualsEqualsToken,
-  ts.SyntaxKind.ExclamationEqualsEqualsToken,
-]);
 
 /** The relational operator `op` is, if it is one. */
 function relationalOperator(op: ts.SyntaxKind): RelationalOperator | undefined {
@@ -43,7 +38,7 @@ export function comparisonTakesCarrier(
   rt: IrType,
   host: FunctionObjectLoweringHost,
 ): boolean {
-  if (!host.createsFunctionObjects() || (relationalOperator(op) === undefined && !EQUALITY.has(op))) return false;
+  if (!host.createsFunctionObjects() || (relationalOperator(op) === undefined && !isEqualityOperator(op))) return false;
   if ((lt.kind === "dynamic" && rt.kind === "dynamic") || (lt.kind === "string" && rt.kind === "string")) return false;
   const [lv, rv] = [asVal(lt), asVal(rt)];
   return lv === null || rv === null || lv.kind !== rv.kind || lv.kind === "externref";

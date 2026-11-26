@@ -263,7 +263,8 @@ export function legalizeDynamicValues(
           return addition(instr, instr.args, instr.result!);
         const symbol = instr.target.binding.kind === "runtime" ? instr.target.binding.symbol : undefined;
         const relational = symbol === undefined ? undefined : relationalOfHelper(symbol);
-        if (relational !== undefined) return comparisons.relational(instr, relational, instr.args, instr.result!);
+        if (relational !== undefined)
+          return comparisons.relational(instr, relational, [instr.args[0]!, instr.args[1]!], instr.result!);
         const objectStatic = symbol === undefined ? undefined : objectStaticOfHelper(symbol);
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);

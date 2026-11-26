@@ -162,6 +162,14 @@ export interface NativeDynamicValueStrings {
   readonly flatten: FunctionReservation;
   readonly equals: FunctionReservation | undefined;
 }
+/** Strict equality's string arm: the strings' type, flatten and `equals`, where `equals` was issued. */
+const stringEquality = (strings: NativeDynamicValueStrings, equals: FunctionReservation) => ({
+  anyStrTypeIdx: strings.layout.anyStrTypeIdx,
+  strFlattenIdx: strings.flatten.handle,
+  strEqualsIdx: equals.handle,
+});
+/** No string arm: no native string reaches the carrier. */
+const NO_STRING_EQUALITY = { anyStrTypeIdx: -1, strFlattenIdx: undefined, strEqualsIdx: undefined } as const;
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly values: NativeValueReservations;
@@ -242,20 +250,13 @@ export function fillNativeDynamicValueResources(
         unboxNumIdx: values.functions.unboxNumber.handle,
         unboxBoolIdx: booleans!.unboxBoolean.handle,
         numberEquality: "number-equal",
-        ...(strings?.equals
-          ? {
-              anyStrTypeIdx: strings.layout.anyStrTypeIdx,
-              strFlattenIdx: strings.flatten.handle,
-              strEqualsIdx: strings.equals.handle,
-            }
-          : { anyStrTypeIdx: -1, strFlattenIdx: undefined, strEqualsIdx: undefined }),
+        ...(strings?.equals ? stringEquality(strings, strings.equals) : NO_STRING_EQUALITY),
       }),
     });
   }
-  if (pack.stringCompare) {
-    if (!strings) fail("the string compare needs the native string flatten");
-    tx.fillFunction(pack.stringCompare, buildStringCompareDefinition(strings.layout, strings.flatten.handle));
-  }
+  // The reservation passes `strings` whenever the string compare is selected (native-string-values.ts).
+  if (pack.stringCompare)
+    tx.fillFunction(pack.stringCompare, buildStringCompareDefinition(strings!.layout, strings!.flatten.handle));
   // The admitted carriers are the number and Boolean boxes, the `undefined` singleton, the null reference and
   // (#7354 Str) a native string, falsy when empty; no BigInt reaches a Prepared dynamic value, so that arm is absent.
   const carrierStrings = owner.dependencies.strings;

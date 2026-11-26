@@ -15086,15 +15086,15 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     irOperandFamily(lt, expr.left),
     irOperandFamily(rt, expr.right),
   );
+  const host = functionObjectLoweringHost(cx);
   if (
     ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) ||
-    comparisonTakesCarrier(op, lt, rt, functionObjectLoweringHost(cx))
+    comparisonTakesCarrier(op, lt, rt, host)
   ) {
     const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, cx);
     if (dynEq !== null) return dynEq;
     if (op === ts.SyntaxKind.PlusToken) {
-      const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
-      const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
+      const [dynL, dynR] = [carrierOperand(lhs, expr.left, host), carrierOperand(rhs, expr.right, host)];
       if (dynL !== null && dynR !== null) {
         return emitDynamicAdd(dynL, dynR, cx);
       }
@@ -15108,7 +15108,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // byte-inertness as the eq arm — reachable only once the S5.P scan admits
     // dynamic-relational bodies (restricted to a numeric-literal counter-
     // operand, where ARC never takes the both-strings branch).
-    const dynRel = tryLowerDynamicRelational(expr, op, lhs, rhs, lt, rt, functionObjectLoweringHost(cx));
+    const dynRel = tryLowerDynamicRelational(expr, op, lhs, rhs, lt, rt, host);
     if (dynRel !== null) return dynRel;
     // #2949 S5.5 — dynamic numeric arithmetic: `-`/`*`/`/`/`%` where either
     // operand is a boxed-any carrier. Each dynamic operand is ToNumber'd to

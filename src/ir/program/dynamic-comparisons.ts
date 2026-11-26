@@ -21,6 +21,10 @@ import { IS_OBJECT, type CarrierKind } from "./dynamic-value-kinds.js";
 export const relationalOfHelper = (symbol: string): RelationalOperator | undefined =>
   Object.values(RELATIONAL_OPERATORS).find((operator) => operator.helper === symbol);
 
+/** A comparison's two once-evaluated operands, left first. */
+type Pair = readonly [IrValueId, IrValueId];
+const pair = (values: readonly IrValueId[]): Pair => [values[0]!, values[1]!];
+
 const NULLISH: readonly CarrierKind[] = ["undefined", "null"];
 const STRING: readonly CarrierKind[] = ["string"];
 
@@ -30,26 +34,36 @@ export function comparisonBuilders(
 ) {
   const { admitted, intrinsic, fresh, holds, branch } = builders;
   /**
-   * Whether every operand (`i32.and`) or some operand (`i32.or`) holds one of `of`, into `cond`, with `known` where
-   * the proven kinds decide it: one operand decides an `every` false and a `some` true on its own. (The chains'
-   * `disjunction` or-s tests it is handed; this decides from the operands' kinds first.)
+   * Whether both operands (`every`, `i32.and`) or either (`some`, `i32.or`) hold one of `of`, into a fresh `cond`, with
+   * `known` where the proven kinds decide it. (The chains' `disjunction` or-s the tests it is handed; this decides from
+   * the operands' kinds first.)
    */
   const operandsHold = (
     instr: IrInstr,
     quantifier: "every" | "some",
-    operands: readonly IrValueId[],
+    [left, right]: Pair,
     of: readonly CarrierKind[],
-    cond: IrValueId = fresh(),
-    resultType: IrType = I32,
   ) => {
-    const tests = operands.map((value) => holds(instr, value, of));
-    const decisive = quantifier === "some";
-    const decided = tests.map((test) => test.known);
-    const known = decided.includes(decisive) ? decisive : decided.every((d) => d === !decisive) ? !decisive : undefined;
-    const op = decisive ? "i32.or" : "i32.and";
+    const [l, r] = [holds(instr, left, of), holds(instr, right, of)];
+    // One operand that does not hold decides `every` (false); one that holds decides `some` (true).
+    const known =
+      quantifier === "every"
+        ? l.known === false || r.known === false
+          ? false
+          : l.known && r.known
+            ? true
+            : undefined
+        : l.known === true || r.known === true
+          ? true
+          : l.known === false && r.known === false
+            ? false
+            : undefined;
+    const cond = fresh();
+    const op = quantifier === "every" ? "i32.and" : "i32.or";
     const instrs: IrInstr[] = [
-      ...tests.flatMap((test) => test.instrs),
-      { kind: "binary", op, lhs: tests[0]!.cond, rhs: tests[1]!.cond, result: cond, resultType },
+      ...l.instrs,
+      ...r.instrs,
+      { kind: "binary", op, lhs: l.cond, rhs: r.cond, result: cond, resultType: I32 },
     ];
     return { instrs, cond, known };
   };
@@ -69,7 +83,7 @@ export function comparisonBuilders(
   /** Two primitives compared as strings when both are (`textual`), else as numbers (`numeric`, over their ToNumbers). */
   const textOrNumber = (
     instr: IrInstr,
-    operands: readonly IrValueId[],
+    operands: Pair,
     textual: (r: IrValueId) => IrInstr[],
     numeric: (numbers: readonly IrValueId[], r: IrValueId) => IrInstr[],
     result: IrValueId,
@@ -87,19 +101,15 @@ export function comparisonBuilders(
     );
 
   /** `l <op> r` of two once-evaluated carrier operands into `result` (IsLessThan with the operator's fold). */
-  const relational = (
-    instr: IrInstr,
-    operator: RelationalOperator,
-    operands: readonly IrValueId[],
-    result: IrValueId,
-  ) => {
+  const relational = (instr: IrInstr, operator: RelationalOperator, operands: Pair, result: IrValueId) => {
     const type = instr.resultType!;
-    const { instrs, values } = primitivesOf(instr, operands);
+    const { instrs, values: primitives } = primitivesOf(instr, operands);
+    const values = pair(primitives);
     const compare = (r: IrValueId): IrInstr[] => {
       const [left, right, sign, zero] = [fresh(), fresh(), fresh(), fresh()];
       return [
-        intrinsic(instr, "js.value.as_string", [values[0]!], left),
-        intrinsic(instr, "js.value.as_string", [values[1]!], right),
+        intrinsic(instr, "js.value.as_string", [values[0]], left),
+        intrinsic(instr, "js.value.as_string", [values[1]], right),
         intrinsic(instr, "js.value.string_compare", [left, right], sign),
         { kind: "const", value: { kind: "i32", value: 0 }, result: zero, resultType: I32 },
         { kind: "binary", op: operator.sign, lhs: sign, rhs: zero, result: r, resultType: type },
@@ -119,16 +129,16 @@ export function comparisonBuilders(
    * other pair as numbers (a Boolean's ToNumber first, steps 9-10, and a string's against a number, steps 5-6, are one
    * rule).
    */
-  const looseEquality = (instr: IrInstr, operands: readonly IrValueId[], result: IrValueId): IrInstr[] => {
+  const looseEquality = (instr: IrInstr, operands: Pair, result: IrValueId): IrInstr[] => {
     const type = instr.resultType!;
-    const bothNullish = (r: IrValueId): IrInstr[] => {
-      const test = operandsHold(instr, "every", operands, NULLISH, r, type);
-      return test.known === undefined ? test.instrs : [boolean(test.known, r)];
-    };
+    const answer = (value: boolean) => (r: IrValueId) => [boolean(value, r)];
+    const bothNullish = (r: IrValueId): IrInstr[] =>
+      choose(operandsHold(instr, "every", operands, NULLISH), answer(true), answer(false), r, type);
     const objects = admitted.filter((kind) => IS_OBJECT[kind]);
     const identity = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", operands, r)];
     const converted = (r: IrValueId): IrInstr[] => {
-      const { instrs, values } = primitivesOf(instr, operands);
+      const { instrs, values: primitives } = primitivesOf(instr, operands);
+      const values = pair(primitives);
       const equalStrings = (s: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", values, s)];
       const equalNumbers = (numbers: readonly IrValueId[], s: IrValueId): IrInstr[] => [
         { kind: "binary", op: "f64.eq", lhs: numbers[0]!, rhs: numbers[1]!, result: s, resultType: type },
@@ -137,7 +147,7 @@ export function comparisonBuilders(
         ...instrs,
         ...choose(
           operandsHold(instr, "some", values, NULLISH),
-          (s) => [boolean(false, s)],
+          answer(false),
           (s) => textOrNumber(instr, values, equalStrings, equalNumbers, s, type),
           r,
           type,

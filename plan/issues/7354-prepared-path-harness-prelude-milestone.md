@@ -7398,13 +7398,12 @@ function never ran. Example: `function t() { var o = { t: true, n: 1 }; return o
    - The dynamic string arm reads each operand with `js.value.as_string` and calls the same intrinsic.
    - The ordinary pipeline's `__str_compare` and the Prepared resource are one definition,
      `buildStringCompareDefinition`. Ordinary bytes are identical.
-   - **Obstacle to dropping it for `js.string.compare`.** That seam is a `call` on the `IR_STRING_COMPARE_FN`
-     intrinsic func-ref. Only the ordinary integration (`resolveFunc`) and the linear backend resolve it. The Prepared
-     physical plan reserves a call only for a unit, an import or a native ABI binding row. The native string setup
-     serves its string operations through emitter hooks for instruction kinds (`string.eq`, `string.concat`) and
-     publishes no binding row for a call-shaped seam. Binding it would need a new resource pack plus a call-shaped ABI
-     binding with no precedent. The dynamic-value intrinsic family is the lane's existing route for such operations.
-     So the Prepared lane has one compare, the intrinsic; `js.string.compare` stays the ordinary lanes' seam.
+   - **Why `js.string.compare` is not reused yet.** That seam is a `call` on the `IR_STRING_COMPARE_FN` intrinsic
+     func-ref. The Prepared physical plan reserves such a call through a native call ABI row, and
+     `native-invocation-abi.ts` (`nativeCallAbiBindings`) already builds those rows for two families. Reusing the seam
+     therefore needs a third family in that builder, plus a string-compare resource in the native string setup.
+     **Deferred; follow-up:** bind `js.string.compare` on the Prepared lane through `nativeCallAbiBindings` and the
+     shared `buildStringCompareDefinition`, then drop `js.value.string_compare`.
 2. **`primitivesOf`** lives in the conversion builders. The addition and both comparisons use it.
 3. **`I32`** is exported from the chains and shared.
 4. **One relational table**, `RELATIONAL_OPERATORS` in `src/shared/contracts/dynamic-operator-helpers.ts`. It is keyed
@@ -7440,3 +7439,19 @@ function never ran. Example: `function t() { var o = { t: true, n: 1 }; return o
 - Gates exit 0, against the merge base and against `LOC_GATE_BASE` = a9cdc8857a: typecheck, LOC, function budget,
   coercion sites, oracle ratchet, dead exports, import cycles, compiler boundaries (`--mode inventory`).
 - `from-ast.ts` is 17235 lines (main 17337).
+
+### L0a review round 2 (nits; no behaviour change)
+
+- The obstacle text above is corrected: reusing `js.string.compare` needs a third family in `nativeCallAbiBindings`
+  plus a string-compare resource. It is deferred and listed as a follow-up.
+- `operandsHold` takes the two operands as a pair, and its `known` rule is spelled out. The single-caller defaults are
+  gone (`bothNullish` is a `choose` over it).
+- `comparisonTakesCarrier` uses the shared `isEqualityOperator`.
+- `native-dynamic-values.ts` names strict equality's string arm (`stringEquality` / `NO_STRING_EQUALITY`) and drops
+  the compare's guard, which the reservation already rules out.
+- `+` now boxes through `carrierOperand` like the comparisons. Off the lane it is the same `boxConcreteToDynamic`; on
+  the lane its newly boxable operands (objects, closures) do not reach the arm yet, because `binaryOperandsAdmissible`
+  keeps `dynamic + object-local` out. Six `+` probes give the same outcomes on main and head.
+  - **Follow-up:** admit `dynamic + object/function` on the Prepared lane.
+- Rows 237 and 579 of `check:prepared-bytes` change bytes against round 1 (the `bothNullish` shape) and still return
+  node's answer. The ordinary probes are identical.
