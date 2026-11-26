@@ -8,6 +8,7 @@
 // another.
 
 import { ts } from "../ts-api.js";
+import { bindingWrites, deAliasedSymbol } from "../shared/binding-write-index.js";
 import type { IrSourceId, IrUnitId } from "./identity.js";
 import {
   IrPlanningIdentityInvariantError,
@@ -339,122 +340,6 @@ export function makeIrImportedFunctionResolver(
     }
   }
 
-  const deAlias = (symbol: ts.Symbol | undefined): ts.Symbol | undefined => {
-    if (!symbol) return undefined;
-    let current = symbol;
-    const seen = new Set<ts.Symbol>();
-    for (let depth = 0; depth < 32 && current.flags & ts.SymbolFlags.Alias; depth++) {
-      if (seen.has(current)) return undefined;
-      seen.add(current);
-      try {
-        const next = checker.getAliasedSymbol(current);
-        if (!next || next === current) return undefined;
-        current = next;
-      } catch {
-        return undefined;
-      }
-    }
-    return current.flags & ts.SymbolFlags.Alias ? undefined : current;
-  };
-
-  // Live/reassigned function bindings cannot be represented by a cached ref to
-  // the original funcIdx.  Record canonical symbols, not text, so shadowed
-  // locals and same-named declarations in different modules do not poison one
-  // another.
-  const reassigned = new Set<ts.Symbol>();
-  const noteSymbolWrite = (candidate: ts.Symbol | undefined): void => {
-    const symbol = deAlias(candidate);
-    if (symbol && (symbol.declarations ?? []).some(ts.isFunctionDeclaration)) reassigned.add(symbol);
-  };
-  const noteWrite = (identifier: ts.Identifier): void => {
-    try {
-      noteSymbolWrite(checker.getSymbolAtLocation(identifier));
-    } catch {
-      // An unresolved write has no exact symbol that can safely be recorded.
-    }
-  };
-  const scanAssignmentTargetWrites = (target: ts.Expression): void => {
-    while (
-      ts.isParenthesizedExpression(target) ||
-      ts.isAsExpression(target) ||
-      ts.isTypeAssertionExpression(target) ||
-      ts.isSatisfiesExpression(target) ||
-      ts.isNonNullExpression(target)
-    ) {
-      target = target.expression;
-    }
-
-    if (ts.isIdentifier(target)) {
-      noteWrite(target);
-      return;
-    }
-    if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      // Destructuring defaults write only their left-hand target.  The default
-      // expression is a read/evaluation and must not poison same-named symbols.
-      scanAssignmentTargetWrites(target.left);
-      return;
-    }
-    if (ts.isArrayLiteralExpression(target)) {
-      for (const element of target.elements) {
-        if (ts.isOmittedExpression(element)) continue;
-        scanAssignmentTargetWrites(ts.isSpreadElement(element) ? element.expression : element);
-      }
-      return;
-    }
-    if (ts.isObjectLiteralExpression(target)) {
-      for (const property of target.properties) {
-        if (ts.isShorthandPropertyAssignment(property)) {
-          // getSymbolAtLocation(property.name) is the synthetic object-property
-          // symbol; the checker API below returns the actual assignment target.
-          try {
-            noteSymbolWrite(checker.getShorthandAssignmentValueSymbol(property));
-          } catch {
-            // See noteWrite: an unresolved shorthand cannot certify a target.
-          }
-        } else if (ts.isPropertyAssignment(property)) {
-          scanAssignmentTargetWrites(property.initializer);
-        } else if (ts.isSpreadAssignment(property)) {
-          scanAssignmentTargetWrites(property.expression);
-        }
-      }
-    }
-    // Property/element accesses write a member, not an identifier binding.
-  };
-  const scanBindingNameWrites = (name: ts.BindingName): void => {
-    if (ts.isIdentifier(name)) {
-      noteWrite(name);
-      return;
-    }
-    for (const element of name.elements) {
-      if (!ts.isOmittedExpression(element)) scanBindingNameWrites(element.name);
-    }
-  };
-  const scanWrites = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      scanAssignmentTargetWrites(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      scanAssignmentTargetWrites(node.operand);
-    } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-      if (ts.isVariableDeclarationList(node.initializer)) {
-        // A declaration usually introduces a distinct loop binding, but a
-        // same-scope `var` may merge with and overwrite a function declaration.
-        // Symbol comparison in noteWrite distinguishes those cases.
-        for (const declaration of node.initializer.declarations) scanBindingNameWrites(declaration.name);
-      } else {
-        scanAssignmentTargetWrites(node.initializer);
-      }
-    }
-    ts.forEachChild(node, scanWrites);
-  };
-  for (const sourceFile of sourceFiles) scanWrites(sourceFile);
-
   interface ResolvedTarget {
     readonly targetName: string;
     readonly declaration: ts.FunctionDeclaration;
@@ -462,8 +347,10 @@ export function makeIrImportedFunctionResolver(
   }
 
   const targetForSymbol = (symbol: ts.Symbol | undefined): ResolvedTarget | undefined => {
-    const target = deAlias(symbol);
-    if (!target || reassigned.has(target)) return undefined;
+    const target = deAliasedSymbol(checker, symbol);
+    // A written function binding cannot be represented by a cached ref to the original funcIdx. Writes are matched
+    // by symbol, so shadowed locals and same-named declarations in different modules do not poison one another.
+    if (!target || bindingWrites(checker, sourceFiles, target).length > 0) return undefined;
     const declarations = target.declarations ?? [];
     const functions = declarations.filter(ts.isFunctionDeclaration);
     // Declaration merging is still outside this slice, so a single
