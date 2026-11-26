@@ -480,6 +480,10 @@ Owner decision, 2026-11-26.
 - `refresh-baseline.yml` is dispatch-only. Its 8-hourly cron promoted
   without gates.
 - `baseline-floor-staleness-alert.yml` breaches on floor **age** above 30 h.
+  It **only alerts**: the run fails and names the age and the last green
+  daily run. Its auto-heal, a forced `refresh-baseline.yml` dispatch, was
+  removed (owner decision 2026-11-26), because after a failed daily run it
+  would bank the regression. A forced refresh is a manual dispatch only.
 
 **Full-corpus IR runs** (daily, dispatch) upload
 `test262-ir-standalone-measurement`. That is the only IR artifact the site

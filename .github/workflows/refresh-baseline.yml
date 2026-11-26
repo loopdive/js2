@@ -33,7 +33,8 @@ name: Baseline Refresh (scheduled + emergency)
 # the floor, ratchet and #1897 gates before it promotes — this workflow
 # promotes without them, so running it on a timer between daily audits would
 # bank a regression unexamined. It stays dispatch-only: the manual NORMAL
-# refresh, the EMERGENCY refresh, and the staleness alert's auto-heal target.
+# refresh and the EMERGENCY refresh. Nothing dispatches it automatically: the
+# staleness alert no longer auto-heals (owner decision 2026-11-26).
 on:
   workflow_dispatch:
     inputs:

@@ -17,7 +17,7 @@
 // is the surface-the-deadlock self-check from #2178 acceptance criterion 3.
 //
 // It does NOT promote anything; it only reports. A wrapping workflow decides
-// whether to alert / auto-heal based on the threshold breach (exit code 2).
+// whether to alert based on the threshold breach (exit code 2).
 //
 // (#7551) Since the legacy lane runs daily, the breach is decided by the
 // floor's AGE (`baseline_generated_at`), not by the commit count, which is
@@ -41,7 +41,7 @@
 //   0 — floor is fresh (within threshold) OR staleness undetermined (floor SHA
 //       unreachable / fetch failed) — never blocks on uncertainty
 //   2 — the standalone floor is older than --max-age-hours (the daily
-//       promotion did not land — caller should alert / auto-heal)
+//       promotion did not land — the caller alerts; #7551 removed the auto-heal)
 //   3 — internal/usage error
 
 import { execFileSync } from "node:child_process";

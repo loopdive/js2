@@ -366,8 +366,12 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
     **detected after the fact, not blocked**. The scheduled run fails, and its
     summary names the commits merged since the last green daily run.
   - Landing-page and baseline numbers are as of the last green daily run.
-  - `refresh-baseline.yml` is dispatch-only, kept for emergencies and as the
-    staleness alert's auto-heal.
+  - `refresh-baseline.yml` is dispatch-only. **Nothing forces a baseline
+    refresh automatically.** A floor older than 30 h fails
+    `baseline-floor-staleness-alert.yml` loudly (age plus last green daily
+    run), and that is all it does. Its auto-heal was removed (owner decision
+    2026-11-26), because after a failed daily run it would bank the
+    regression. A forced refresh is a manual dispatch.
 - **Rollback:** revert the #7551 Part B commit.
 
 **The authoritative host oracle is the LINKED harness (#3451 slice 6, oracle

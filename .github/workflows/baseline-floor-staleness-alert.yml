@@ -1,6 +1,6 @@
 name: Baseline floor staleness alert (#2178)
 
-# #2178 — surface (and optionally auto-heal) a STALE standalone/host baseline
+# #2178 — surface (alert only, #7551) a STALE standalone baseline
 # FLOOR before it silently blocks the whole merge queue.
 #
 # The standalone regression guard (#1897) and the host regression gate diff
@@ -19,17 +19,19 @@ name: Baseline floor staleness alert (#2178)
 # The per-SHA push concurrency group added to test262-sharded.yml (#2178) stops
 # push:main runs from cancelling each other, which removes the root cause. This
 # workflow is the BACKSTOP / observability layer required by #2178 acceptance
-# criterion 3: it independently measures how far the floor lags main (counting
-# only test262-RELEVANT commits) and, on a breach, (a) alerts loudly and
-# (b) optionally auto-heals by dispatching the emergency baseline refresh
-# (refresh-baseline.yml — its own non-cancellable group, unconditional promote;
-# the same lever the runbook says to pull by hand).
+# criterion 3: it independently measures the floor's age and, on a breach,
+# alerts loudly: a red run naming the floor's age and the last green daily run.
+#
+# (#7551, owner decision 2026-11-26) It NO LONGER auto-heals. The usual
+# reason for a stale floor is now a daily run whose gates FAILED, and a forced
+# refresh would bank exactly that regression. A forced refresh
+# (refresh-baseline.yml with force_baseline_refresh + confirm_force=YES) is a
+# manual dispatch only.
 #
 # Triggers:
 #   - schedule: hourly (offset) — catches a stale floor even with no activity
-#   - workflow_run: after "Test262 Sharded" completes on a push to main — so a
-#     thrash deadlock is surfaced within ~one sharded-run latency, not an hour
-#   - workflow_dispatch: manual check / forced auto-heal
+#   - workflow_run: after the daily "Test262 Sharded" run completes
+#   - workflow_dispatch: manual check
 
 on:
   schedule:
@@ -44,15 +46,10 @@ on:
         required: false
         default: "30"
         type: string
-      auto_heal:
-        description: "On breach, dispatch refresh-baseline.yml to force-promote a fresh floor"
-        required: false
-        default: true
-        type: boolean
 
 permissions:
   contents: read
-  actions: write # gh workflow run refresh-baseline.yml (auto-heal)
+  actions: read # look up the last green daily run; nothing is dispatched (#7551)
 
 concurrency:
   # Latest-wins: an alert sweep is idempotent, so collapse a burst of triggers
@@ -134,60 +131,38 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Auto-heal — dispatch emergency baseline refresh
-        # On a breach, force-promote a fresh floor via the emergency refresh
-        # workflow. It has its OWN non-cancellable concurrency group and an
-        # unconditional promote (no regression gate), so it always reaches the
-        # baselines-repo push — exactly the manual recovery lever from the
-        # #2178 runbook, automated. Skipped when auto_heal is explicitly false
-        # on a manual dispatch.
-        if: >-
-          steps.staleness.outputs.breach == 'true' &&
-          (github.event_name != 'workflow_dispatch' || inputs.auto_heal)
+      - name: Name the last green daily run (#7551)
+        # Alert only: NOTHING is dispatched. The auto-heal that force-promoted
+        # refresh-baseline.yml here is gone (owner decision 2026-11-26) — after
+        # a failed daily run it would bank the very regression that failed it.
+        if: steps.staleness.outputs.breach == 'true'
+        id: last_green
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # (#3382) DEBOUNCE — do NOT dispatch a new refresh-baseline while one is
-          # already queued or in progress. This alert fires on workflow_run after
-          # EVERY "Test262 Sharded" completion on push:main (plus hourly), and a
-          # refresh-baseline run now spans ~114 shards. Before the #3381 fix
-          # refresh-baseline was HOST-ONLY, so it could never heal the STANDALONE
-          # floor — the breach recurred forever and a fresh emergency refresh was
-          # re-dispatched every ~15 min, perpetually occupying the runner pool and
-          # STARVING the merge queue's own checks (2026-07-17 incident). The #3381
-          # standalone-healing fix is the real loop-breaker (once the standalone
-          # floor is fresh, breach flips false and nothing is dispatched); this
-          # debounce bounds the damage during the heal transition and under
-          # sustained main-advance (floor can read > threshold even right after a
-          # refresh). One in-flight refresh already heals the floor; a second is
-          # pure runner waste. Fail-open (dispatch) if the query errors —
-          # refresh-baseline's own non-cancellable `baseline-refresh` concurrency
-          # group still prevents two refreshes RUNNING at once.
-          ACTIVE=$(gh run list --workflow refresh-baseline.yml -L 50 \
-            --json status --jq '[.[] | select(.status != "completed")] | length' \
-            2>/dev/null || echo 0)
-          if [ "${ACTIVE:-0}" -gt 0 ] 2>/dev/null; then
-            echo "A refresh-baseline run is already in flight (${ACTIVE} not-completed) — skipping re-dispatch (debounce, #3382). The in-flight refresh will heal the floor."
-            exit 0
-          fi
-          echo "::warning::Baseline floor is STALE (#2178) — dispatching emergency baseline refresh to force-promote a fresh floor."
-          gh workflow run refresh-baseline.yml --ref main \
-            -f force_baseline_refresh=true \
-            -f confirm_force=YES \
-            && echo "Dispatched refresh-baseline.yml (emergency floor refresh)." \
-            || echo "::error::Failed to dispatch refresh-baseline.yml — force-promote the floor manually (see #2178 runbook)."
+          RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test262-sharded.yml/runs?event=schedule&status=success&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.html_url) (\(.head_sha[0:10]), \(.created_at))"' 2>/dev/null || true)
+          RUN=${RUN:-none found}
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          {
+            echo ""
+            echo "Last green daily test262 run: $RUN"
+            echo ""
+            echo "Nothing was dispatched. Fix the failing daily run, or force a refresh by hand: refresh-baseline.yml with force_baseline_refresh=true and confirm_force=YES."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Notify on breach (ntfy)
         if: steps.staleness.outputs.breach == 'true'
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
+          LAST_GREEN: ${{ steps.last_green.outputs.run }}
         run: |
           [ -z "${NTFY_URL:-}" ] && exit 0
           MSG=$(node -e "
             const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
             const stale=(j.lanes||[]).filter(l=>l.breach).map(l=>l.lane+' '+l.ageHours+' h old').join(', ');
-            console.log('STALE baseline floor (#2178): '+stale+' — the daily promotion did not land. Auto-heal dispatched.');
-          " 2>/dev/null || echo "STALE baseline floor (#2178) — every PR may be blocked. Auto-heal dispatched.")
+            console.log('STALE baseline floor (#2178): '+stale+' — the daily promotion did not land. Last green daily run: '+process.env.LAST_GREEN+'. Nothing dispatched.');
+          " 2>/dev/null || echo "STALE baseline floor (#2178) — the daily promotion did not land. Nothing dispatched.")
           curl -s --max-time 10 \
             -H "Title: js2wasm CI" \
             -H "Priority: high" \
@@ -197,6 +172,8 @@ jobs:
 
       - name: Fail the run on breach (visible red signal)
         if: steps.staleness.outputs.breach == 'true'
+        env:
+          LAST_GREEN: ${{ steps.last_green.outputs.run }}
         run: |
-          echo "::error::Baseline floor is stale beyond the threshold (#2178). See the job summary. Auto-heal has been dispatched; re-run any standalone-guard-blocked PRs once the floor refreshes."
+          echo "::error::Baseline floor is older than the threshold (#2178, #7551): the daily promotion did not land. Last green daily run: ${LAST_GREEN}. Nothing was dispatched — fix the daily run, or force a refresh by manual dispatch of refresh-baseline.yml."
           exit 1
