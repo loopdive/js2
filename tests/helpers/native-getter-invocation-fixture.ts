@@ -49,6 +49,10 @@ import { WasmGcEmitter } from "../../src/ir/backend/wasmgc-emitter.js";
 import { emitBinary } from "../../src/emit/binary.js";
 import type { IrLowerResolver } from "../../src/ir/backend/lower-contracts.js";
 import {
+  preparedNativeStringResolver,
+  type NativeStringValueReservations,
+} from "../../src/backend/wasmgc/program/native-string-values.js";
+import {
   reserveNativeBooleanBoxResources,
   fillNativeBooleanBoxResources,
 } from "../../src/backend/wasmgc/resources/native-booleans.js";
@@ -216,11 +220,16 @@ export function getterResolver(f: GetterInvocationFixture): IrLowerResolver {
     },
   };
 }
-export function fillActualGetterUnits(f: GetterInvocationFixture): void {
+/**
+ * Lower and fill each source getter unit. A body that holds a string (#7354 F1: a function value's `name`) lowers
+ * through the program's reserved native string values, `strings`, as the program consumer does.
+ */
+export function fillActualGetterUnits(f: GetterInvocationFixture, strings?: NativeStringValueReservations): void {
   const resolver = getterResolver(f);
   for (const [id, slot] of f.slots) {
     const fn = f.projection.prepared.functions.find((row) => row.unitId === id)!;
-    fillPreparedPrimaryUnit(f.tx, fn, slot, f.signatures.get(id)!, resolver, "wasmgc", f.sourceOwner);
+    const unitResolver = strings ? { ...resolver, ...preparedNativeStringResolver(f.tx, strings, id) } : resolver;
+    fillPreparedPrimaryUnit(f.tx, fn, slot, f.signatures.get(id)!, unitResolver, "wasmgc", f.sourceOwner);
   }
   requireCompletedNativeSourceClosures(f.tx, f.sourceOwner);
 }
