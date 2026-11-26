@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { compileAndInstantiate } from "../src/runtime.ts";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function run(body: string): Promise<unknown> {
   const src = `export function test(): any {\n${body}\n}`;
-  const ex = (await compileAndInstantiate(src)) as { test?: () => unknown };
+  const ex = (await compileToWasm(src)) as { test?: () => unknown };
   return ex.test!();
 }
 
