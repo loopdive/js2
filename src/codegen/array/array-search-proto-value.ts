@@ -24,6 +24,7 @@
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { requireHelper } from "../helpers/required-helper.js";
 import { allocLocal } from "../context/locals.js";
 import {
   canonicalUndefinedExternInstrs,
@@ -87,11 +88,6 @@ export function emitArraySearchProtoMemberBody(
     fctx.body = realBody;
   }
   flushLateImportShifts(ctx, fctx);
-  const fn = (name: string): number => {
-    const idx = ctx.funcMap.get(name);
-    if (idx === undefined) throw new Error(`Array.prototype.${member} value body lacks ${name}`);
-    return idx;
-  };
   const cmpName = isIncludes ? "__extern_same_value_zero" : "__extern_strict_eq";
   const undef = canonicalUndefinedExternInstrs(ctx);
 
@@ -107,7 +103,7 @@ export function emitArraySearchProtoMemberBody(
 
   fctx.body.push(
     { op: "local.get", index: 1 },
-    { op: "call", funcIdx: fn("__extern_length") },
+    { op: "call", funcIdx: requireHelper(ctx, "__extern_length") },
     { op: "local.set", index: lenTmp },
     ...argAt(0, undef),
     { op: "local.set", index: searchTmp },
@@ -144,9 +140,9 @@ export function emitArraySearchProtoMemberBody(
       searchTmp,
       iTmp,
       resTmp,
-      getIdx: fn("__extern_get_idx"),
-      hasIdx: fn("__extern_has_idx"),
-      cmp: fn(cmpName),
+      getIdx: requireHelper(ctx, "__extern_get_idx"),
+      hasIdx: requireHelper(ctx, "__extern_has_idx"),
+      cmp: requireHelper(ctx, cmpName),
     }),
     { op: "drop" }, // the loop leaves the result local on the stack; re-read below
   ];
@@ -157,7 +153,7 @@ export function emitArraySearchProtoMemberBody(
     { op: "f64.gt" },
     { op: "if", blockType: { kind: "empty" }, then: scan },
     { op: "local.get", index: resTmp },
-    { op: "call", funcIdx: fn(isIncludes ? "__box_boolean" : "__box_number") },
+    { op: "call", funcIdx: requireHelper(ctx, isIncludes ? "__box_boolean" : "__box_number") },
   );
   return EXT;
 }

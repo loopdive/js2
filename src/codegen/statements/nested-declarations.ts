@@ -140,6 +140,7 @@ import {
 import { collectBlockScopedNames } from "./shared.js";
 import { classifyReferencedSiblingFns } from "./nested-sibling-visibility.js";
 import { parameterMayBeOmitted } from "../../shared/omittable-param.js";
+import { requireHelper } from "../helpers/required-helper.js";
 
 /**
  * Mirror declarations.ts' bindingPatternParamNeedsWiden (#862) for lifted
@@ -3892,15 +3893,9 @@ export function emitSetExtrasArgv(
       fctx.body.push({ op: "ref.null.extern" });
       return;
     }
-    if (t.kind === "f64") {
-      const boxIdx = ctx.funcMap.get("__box_number");
-      if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-      else fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
-    } else if (t.kind === "i32") {
-      fctx.body.push({ op: "f64.convert_i32_s" });
-      const boxIdx = ctx.funcMap.get("__box_number");
-      if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-      else fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+    if (t.kind === "f64" || t.kind === "i32") {
+      if (t.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push({ op: "call", funcIdx: requireHelper(ctx, "__box_number") });
     } else if (t.kind === "ref" || t.kind === "ref_null") {
       fctx.body.push({ op: "extern.convert_any" });
     }
