@@ -64,7 +64,7 @@ environment. When every argument is a literal, that text is known at compile tim
 | literal `new Function(...)` | 31 | 0 | 7 | 7 |
 | both literal forms | 2 | 0 | 0 | 0 |
 | literal + value use | 11 | 0 | 0 | 0 |
-| `fnGlobalObject.js` only | 89 | 0 | 0 | 0 |
+| `fnGlobalObject.js` only (refuse by item 8's name until B2b + C2) | 89 | 0 | 0 | 0 |
 | **total** | 197 | 0 | **32** | **27** |
 
 **The rewrite is a bound, not the mechanism.** It differs from CreateDynamicFunction in four ways:
@@ -118,7 +118,10 @@ The arm needs three things, in this order:
 3. A4's code: the pristine proof as a resolver capability, and `withLiteralEvalSources`' all-or-nothing fallback.
    The arm reuses both.
 
-The arm stacks on `claude/prepared-eval-a7` once S2 reports its head.
+The arm stacks on **A4's implementation PR**, not on a7's current head: on a7 `67e4115a`, A4-narrowed is still plan
+only (`withLiteralEvalSources`' fallback, `ownThisEscapes` / `ambientThisMayBeGlobal` and the `DeleteExpression` row
+are not in `src`). Steps that need none of them (the early-error split, the relation kind, the predicate, the virtual
+source) may start on a7.
 
 **Landed early, separately.** One CreateDynamicFunction text assembler, `functionSourceText(name, params, body)`, in
 the import-free leaf `src/interp/function-source-text.ts`. It is listed in the provider's `INTERP_FILES`, the
@@ -236,12 +239,16 @@ concatenating it.
      (#7487)`.
    - The proof's soundness boundary is A4's and #7503's, and a dynamic-function body is one of its sources, so a body
      that writes `Function` or `eval` falls under the same write check.
+   - **`ambientThisMayBeGlobal` walks the function-kind virtual sources too**, and their `ambientThisStrict` is the
+     body's own directive, never the caller's. A dynamic body is a sloppy-by-default function-like, so
+     `Function("return this;")` (`fnGlobalObject.js`) is exactly an escape: the flag keeps those programs refusing,
+     by this item's name, until #7350 B2b and #7354 C2 give a sloppy direct call the global object.
 
 ### Gaps: each gets a JS answer or a named refusal, and an acceptance row
 
 | gap | answer here |
 | --- | --- |
-| sloppy body's `this` | the global object, once #7350 B2b and #7354 C2's direct-call receiver land; until then C2's named refusal (`a direct call … installs no receiver for its 'this'`) |
+| sloppy body's `this` | the global object, once #7350 B2b and #7354 C2's direct-call receiver land; until then a body whose own `this` escapes makes `ambientThisMayBeGlobal` true, and the site refuses by item 8's name |
 | `toString()` | the exact assembled text with `anonymous` (item 4); a named refusal until `Function.prototype.toString` exists on this path |
 | constructing the result (`new (Function("this.a = 1"))()`) | C2's constructor path: every function value here is a constructor |
 | `length` with default / rest parameters | the §15.1.5 count from `emitFunctionObjectInit` (`Function("a", "b = 1", "...c", "")` → 1) |
@@ -281,7 +288,10 @@ for the named refusal:
     by name (not covered; see the table in item 3);
 - a write in the body to a caller-visible global is seen by the caller (B2);
 - a local `var Function` shadow stays an ordinary call;
-- a reassigned global `Function` (`Function = f`, `var Function`, `globalThis.Function = f`) refuses the site by name;
+- a reassigned global `Function` (`Function = f`, `var Function`, `globalThis.Function = f`) and `delete Function`
+  (A4's shared `DeleteExpression` row) refuse the site by name;
+- a program with `Function("return this")` plus an eval site, or a second `Function` site, refuses by item 8's
+  name (the body's own `this` escapes);
 - a computed argument still refuses by name;
 - sloppy `this` and `toString()`: their named refusals until #7350 and #7354 C2 provide them, then node's answer.
 
