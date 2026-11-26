@@ -5748,6 +5748,44 @@ declaration's position; the name joins the script var homes (`irOwnedScriptVarHo
 block, strict code, or a lexical top-level name of the same name refuses by name. Estimate L; not started unless
 1–3 land with budget left. Lead decision: not in this slice.
 
+### O1c: a read of a native Object.prototype method admits the function kind (plan, 2026-11-26, `claude/7354-o1c` from main 41f0654e8c)
+
+Found by S12, measured again on main 41f0654e8c.
+
+**Cause.** The member read of a native Object.prototype method (`hasOwnProperty`, `propertyIsEnumerable`, `isPrototypeOf`; P1) refuses with "member read '<m>' in a program that creates no function value" (`dynamic-member-access.ts`) unless the program's `ProgramObjects.functions` is true. `programObjects` (`src/ir/source-plain-objects.ts`) sets that flag only for a function expression, an arrow, an accessor, or a function declaration read as a value.
+
+| Program | main 41f0654e8c |
+|---|---|
+| `var o={a:1}; if(!o.hasOwnProperty("a")) throw 1;` | refused (the gap above) |
+| `var __fv=function(){}; var o={a:1}; …hasOwnProperty…` | refused. `__fv` is dead, `deadcode-elide.ts` removes it before the walk, so the walk sees no function |
+| `var __fv=function(){}; __fv(); …` | returns |
+| `function f(){ var o={}; Object.defineProperty(o,"x",{value:1}); return o.hasOwnProperty("x"); } if(!f()) throw 1;` | the U abort body (the same refusal inside `f`), so it traps at run time; node returns true |
+
+**Why the rule is incomplete.** P1 refuses because, without the function kind, `typeof` would fold wrong: the value read *is* a function. But the read itself is what makes the program hold a function value, a built-in one. That is the same reason G1 admits the kind where a program may hold an Error constructor ("or may hold a built-in one", `admittedKinds`).
+
+**Target structure.**
+- One change, in the one walk, `programObjects` (`src/ir/source-plain-objects.ts`): `functions` also becomes true when the source reads a member whose constant key `nativeObjectPrototypeMethod` (`builtin-prototype-keys.ts`) names. "Constant key" means `o.m`, or `o["m"]` with a string literal: the forms `constantKey` reads.
+  - Reuse: the catalog predicate the read arm already asks, so there is no second list of methods.
+  - Comments updated: `ProgramObjects.functions`'s doc and `admittedKinds`'s.
+- Nothing else moves. Admitting the kind turns on what P1 built for programs with closures: the method-call shape, `typeof`, and the dispatcher's built-in fallback (abort).
+  - Verify: a program with no source closure at all, whose only function values are built-in methods, compiles and runs (the dispatcher has no source arm).
+  - If that does not hold, refuse that program by a new named reason instead of admitting the kind there.
+- Not in scope: a string receiver of `hasOwnProperty` / `propertyIsEnumerable` / `Object.getOwnPropertyDescriptor` (it aborts at run time; `getOwnPropertyDescriptor("abc","x")` traps where node gives `undefined`). It needs ToObject of a string (a String wrapper), which is the `String` wall, not trivial. The yield on the 411 sample is 0 (S12). Left with a pin.
+
+**Acceptance.**
+- `tests/issue-7354-o1c-method-reads-admit-functions.test.ts`, using the P1 run harness (the right answer returns, a wrong twin throws, node agrees). Programs:
+  - a script-level `o.hasOwnProperty("a")` with no closure;
+  - S12's function-level `defineProperty` + `hasOwnProperty` (true);
+  - `propertyIsEnumerable` of a non-enumerable property (false);
+  - `typeof o.hasOwnProperty === "function"` with no closure (the `typeof` fold P1 guarded);
+  - the dead `__fv` program.
+- The P1 pin "a program that reads a method but creates no function value" moves: its program now runs. The refusal stays reachable for `js.closure.call` with no function value (M-refusals G45 is unchanged).
+- Pin the string-receiver abort.
+- `check:prepared-bytes`: rows change only where a program reads such a key, and each changed row is explained. Ordinary bytes: `source-plain-objects.ts` is Prepared-only, so the 13 playground examples are confirmed unchanged.
+- The 411 sample: no lost row; before/after reported.
+- Mutation: drop the new clause, and the run tests must fail.
+- **Code quality:** one clause in the one walk; reuse of the catalog predicate; no new module, no grant, no second key list.
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
