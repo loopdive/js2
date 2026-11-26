@@ -76,8 +76,8 @@ import {
   RE_FIELD_LASTINDEX_NONWRITABLE,
   RE_FIELD_LASTINDEX_RAW,
   RE_FIELD_LASTINDEX_RAW_PRESENT,
-  standaloneRegExpStructTypeIdx,
-} from "./regexp-standalone.js";
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import { standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { installRegExpLastIndexReflectionArms } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 import { addFuncType } from "./registry/types.js";

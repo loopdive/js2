@@ -45,15 +45,17 @@ import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 import { emitToBoolean, getExternrefToStringProvider } from "./coercion-engine.js";
 import {
-  ensureDynamicStandaloneRegExpCompiler,
-  ensureStandaloneRegExpStruct,
-  hasStandaloneRegExpEngine,
   RE_FIELD_CLASS_TABLE,
   RE_FIELD_FLAGS,
   RE_FIELD_NGROUPS,
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
   RE_FIELD_SOURCE,
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import {
+  ensureDynamicStandaloneRegExpCompiler,
+  ensureStandaloneRegExpStruct,
+  hasStandaloneRegExpEngine,
 } from "./regexp-standalone.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
