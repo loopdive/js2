@@ -45,131 +45,216 @@ On the 411-row ES5 sample (main bb9123f6a3, 83 pass), 26 rows stop at the nested
   `Object.create`. These are this issue's.
 - 5 are `with` (Session B's).
 
-## Implementation Plan
+## Implementation Plan (revision 2, after PRV-O5's PLAN BLOCKER on ebbfa8680d)
 
-### What exists, and what this reuses
+Reviewer points are cited as R1–R9.
 
-- **The lowering.** The ordinary pipeline already has the right loop shape in `lowerForInStatement`: a key snapshot,
-  its length, the key at an index, and a per-visit liveness check (#2952 / #2964). This plan keeps that one lowering.
-  It does not add a second for-in lowering.
-- **The realm kernel** (#3518):
-  - `ownKeys` returns a realm vector of keys in [[OwnPropertyKeys]] order, Symbols included;
-  - `ownDescriptor` gives the attribute word (enumerable = 2);
-  - `sameValue` compares keys.
-- **The existing own-enumerable walk.** `buildDescriptorsDefineDefinition` (`src/runtime/wasmgc/values/
-  object-static-bodies.ts`, its `collect` step) is ObjectDefineProperties step 3. It walks `ownKeys` and keeps a key
-  when its `ownDescriptor` word has the enumerable bit. That is the "own enumerable keys" walk, inlined in one body.
-- **Liveness.** `js.object.has` (HasProperty, an existing row) is the per-visit check.
-- **Contract calls.** These reuse the O pattern: `irIntrinsicFuncRef(feature)`, plus a row in `ROWS`
-  (`src/backend/wasmgc/resources/native-source-objects.ts`) and a declaration in
-  `src/ir/runtime/ordinary-object-callables.ts` and the manifest.
+### Scope
 
-### Is there an own-enumerable-keys realm row on main?
+- **In scope: script-level for-in.** That covers a `var` head (`for (var k in o)`) and an identifier head
+  (`var k; for (k in o)`), over a dynamic receiver. All 21 sample rows are this shape.
+- **Function-level for-in on the Prepared path stays refused, by name** (R4).
+  - The Prepared path does not hoist function `var`s today. Measured on main: `function f(){ for (var i = 0; i < 2;
+    i++) {} return i; }` and `function f(){ if (true) { var x = 1; } return x; }` both get the U abort body.
+  - So there is no declared binding for a function head to write. A loop-private slot would be a wrong answer without
+    the ordinary selector's gates.
+  - `lowerForInStatement` refuses "for-in head in a function: function `var` hoisting is not modelled on the Prepared
+    path". The function keeps its abort body, as today, but the refusal now has a name. The slice that hoists
+    function vars lifts it.
+- **Not in scope:**
+  - member heads (`for (o.p in x)`) and destructuring heads (refused by name, R3);
+  - `let`/`const` heads;
+  - `with` (Session B's).
 
-No. The rows are `create-*`, `define-*`, `get`, `set`, `has`, `has-own`, `own-descriptor`, `descriptor(s)-define`,
-`inherits`, `intrinsic`, `is-error`, `error-to-string` and `init-function`.
+### Gate: Prepared-only admission, ordinary and legacy output unchanged by construction (R2)
 
-### Why for-in and Object.keys share a walk, not one row
+`isModuleInitVarList` (`src/shared/var-declaration-lists.ts`) keeps its current answers. Its callers today:
 
-for-in is EnumerateObjectProperties (§14.7.5.9). Object.keys and JSON.stringify are EnumerableOwnProperties (§7.3.23).
-They differ in two ways:
+- legacy: `isHoistedScriptVar` → `registerModuleGlobal` / Program ABI observation (`src/codegen/module-global-registration.ts:195`);
+- the ordinary selector: `select.ts`;
+- ordinary integration: `integration.ts`, through `moduleInitBindings`;
+- the shared IR modules.
 
-- for-in walks the prototype chain;
-- for-in skips a key that an earlier object on the chain already had, **even a non-enumerable one** (a
-  non-enumerable own `x` hides an enumerable `x` on the prototype).
+Not one of them changes.
 
-So a row that returns only enumerable own keys cannot build for-in, and a for-in row is not Object.keys.
+- A for-in head becomes a script var only under an explicit **script-var model** argument. It has two values:
+  - `"statement-and-for-heads"`: today's predicate, verbatim;
+  - `"with-for-in-heads"`: adds a script-level for-in head that has one identifier declaration and no initializer.
+- The model is a **required** parameter of `isModuleInitVarList` and `isModuleInitGlobalDeclaration`, and of the IR
+  entry points that reach them (`moduleInitBindings`, the module resolver factory in `module-bindings.ts`,
+  `buildIrModuleInitPlan`). A default could let a caller miss it silently, so there is none.
+- **The gate itself:**
+  - Every legacy, ordinary-selector and ordinary-integration call site passes `"statement-and-for-heads"`, so its
+    answers are today's by construction.
+  - The Prepared producer passes `"with-for-in-heads"`: `program-source.ts`, its module resolver and init plan,
+    `source-dynamic-provenance.ts`. So does the resolver capability the producer installs for from-ast
+    (`scriptVarModel()` on the `nativeDynamicLane` resolver of `source-dynamic-contracts.ts`).
+  - from-ast's `moduleInitContainsNestedVar` and `lowerVarDecl` read the model from `cx.resolver`. An absent
+    capability means the ordinary model.
+- **Proof obligation, as a unit test:** both models answer the same on every declaration list that is not a for-in
+  head, and the ordinary model answers `false` on a for-in head.
+- **Bytes:** `check:prepared-bytes` (804 programs) and the 13 playground examples × default/standalone are compared
+  against main as a confirmation, not as the argument.
 
-The shared unit is one runtime walk: "for each own string key of `object`, in order, with its enumerable bit". It
-lives in one new runtime module, and three bodies use it:
+### Enumeration runtime
 
-1. **`js.object.for-in-keys(object) → keys`** (new row, this issue): the EnumerateObjectProperties snapshot.
-   - A nullish receiver gives an empty list. That is the for-in early exit (§14.7.5.6, step 6.b).
-   - For an object, each object on the chain runs the walk, from the receiver to a null prototype. A key goes into a
-     `seen` list once. It goes into the result only when it was not yet seen and is enumerable.
-   - A primitive receiver gives an empty list for numbers and booleans: ToObject's wrapper and its prototypes hold no
-     enumerable string keys while the prototypes are pristine, the O precondition. A string receiver (index keys)
-     aborts with `unreachable`, under the O2b comment convention, until a string slice owns it. Implementation checks
-     which carriers the kernel serves and pins each choice in a test.
-2. **descriptors-define** (existing): its `collect` step moves onto the same walk. **This is the duplicate the plan
-   removes.**
-3. **Object.keys / JSON.stringify** (later, not built here): their row is the walk over one object, with no chain and
-   no `seen` list. It is named `js.object.own-enumerable-string-keys` when a lane admits one of them. A row with no
-   caller would be a speculative abstraction, so this issue does not add it.
+**Plan type.** `dynamicForInPlan()` (`src/ir/from-ast.ts`) returns four `IrFuncRef`s `{ keys, len, get, has }`.
 
-If the reviewer prefers the literal "one row", the alternative is one row `js.object.enumerable-string-keys(object,
-walkChain)` with an `i32` flag. I recommend against it: today the flag has one value, which is a dead parameter.
+- `integration.ts` returns `irRuntimeFuncRef` of today's four symbols: byte-identical.
+- The Prepared resolver returns `irIntrinsicFuncRef` of three new contracts, plus `js.object.has`.
 
-### Target structure
+**The walk (R1).** A new module `src/runtime/wasmgc/values/own-key-walk-bodies.ts` (native-runtime in
+`scripts/compiler-boundaries.json`) holds one instruction builder: for each own key of an object, in the order of the
+kernel's `ownKeys`, it yields **every** key with its enumerable bit, Symbols included.
 
-| Concern | Module | Change |
-|---|---|---|
-| Own-string-key walk with enumerable bit | `src/runtime/wasmgc/values/enumerable-keys-bodies.ts` (new, native-runtime in `scripts/compiler-boundaries.json`) | the walk, plus `buildForInKeysDefinition`; the key list's length and indexed read, if the vector has no such functions yet |
-| descriptors-define | `object-static-bodies.ts` | `collect` uses the walk |
-| Served rows | `native-source-objects.ts` `ROWS` | `js.object.for-in-keys`, and `js.object.key-list-length` / `js.object.key-list-get` (bindings if the realm vector already has those functions, adapters otherwise) |
-| Contracts | `ordinary-object-callables.ts`, `contracts/manifest.ts` | the three features. The #3518 contract pins (`CONTRACTS`, the "pins all N identifiers" count) move with them |
-| Plan type | `from-ast.ts` `dynamicForInPlan` | returns four `IrFuncRef`s instead of four symbol strings, so each resolver names its own targets |
-| Ordinary resolver | `integration.ts` | returns `irRuntimeFuncRef` of the same four symbols. Byte-identical |
-| Prepared resolver | `source-dynamic-contracts.ts` (the `nativeDynamicLane` resolver block) | `dynamicForInPlan` = the three new contracts, plus `js.object.has` |
-| Script-level head | `var-declaration-lists.ts` `isModuleInitVarList` | admits a for-in head: one declaration, an identifier, no initializer |
-| Head write | `lowerForInStatement` | when the head list is modelled (`cx.moduleBindings` and `isModuleInitVarList`), each visit writes the key to the script var through the same write `lowerVarDecl` uses, instead of a loop-private slot; body reads resolve through ordinary scope. Function-level heads keep today's slot |
-| Nit from RV7415 | `source-object-bodies.ts` | move the `SourceObjectSetOperands` alias above its JSDoc'd function |
+- `ownKeys` is `buildBuiltinFunctionOwnKeys` (`builtin-function-property-bodies.ts`). Its order is the ordinary
+  [[OwnPropertyKeys]]: array indices ascending through the kernel's `keyBefore`, then strings in insertion order,
+  then Symbols (R9).
+- The enumerable bit is `ownDescriptor`'s attribute word `& 2`.
+- `buildDescriptorsDefineDefinition`'s inline `collect` (`object-static-bodies.ts`) moves onto it **unchanged in
+  meaning**: Symbol-keyed descriptors stay included. This is the duplicate removed. A Symbol-keyed
+  `Object.defineProperties` pin is added; it is refused today if `Symbol` cannot be named on the path, and then the
+  pin is the walk's unit test on a kernel fixture.
 
-There is no new legalization arm. The four calls are contract calls on the externref carrier, which the for-in
-lowering already emits.
+**List accessors (R7).** The walk, descriptors-define and the new rows use one accessor set: the realm's argument
+vector (`src/runtime/wasmgc/values/argument-vector-bodies.ts`, which owns `new` and `push`).
 
-The function-level case on the Prepared path (today an abort body) comes with item "Prepared resolver" at no extra
-cost.
+- It gains `argumentVectorLength` and `argumentVectorElement` instruction builders.
+- descriptors-define's local `vector`/`element` closures are deleted in favour of them.
+- No second list accessor exists.
 
-### Risks to check in implementation
+**`js.object.for-in-keys(object) → vector`.** EnumerateObjectProperties as a snapshot, in the same module.
 
-- **The modelled-list predicate is shared with the ordinary pipeline** (`integration.ts` → `module-init-vars.ts`).
-  Admitting for-in heads may let the ordinary IR claim a script-level for-in it refuses today. The acceptance needs
-  identical ordinary bytes. If they move, I report the measurement and the reviewer decides; I do not fork the
-  predicate silently.
-- **The key carrier.** On the Prepared path, the realm's key strings must read as the dynamic value's string kind
-  (`asType: dynamic`, `dynamicCarrierIsExternref`). A run test checks `k === "a"` and `s += k`.
+- **Receiver** (R6, fail-closed):
+  - `undefined`/`null` → the empty vector (§14.7.5.6 step 6.b);
+  - a carrier the kernel's `ownKeys` serves (the realm object struct, `bag`'s cast) → walked;
+  - **every other carrier** → `unreachable`, under the O2b abort comment convention: number, boolean, string, an
+    unknown carrier.
+  - Never an empty list for a primitive. That removes the pristine-prototype argument for `for (k in 5)`, which
+    nothing on the path enforces.
+  - Strings: `string-own-keys-body.ts` / `string-exotic-bodies.ts` serve String **wrapper** objects. A string
+    primitive needs ToObject first, which the path cannot do ("unknown class String" is its own wall), so the
+    abort is needed.
+  - Arrays, functions and `arguments`: walked exactly when they are kernel-served realm objects, aborted otherwise.
+    A test pins which ones the path can produce today, so the decision is made by the carrier, not by a list.
+- **Chain:** from the receiver to a null prototype, through the kernel's prototype field.
+- **Per key:**
+  - Symbols are skipped (§14.7.5.9: string keys only).
+  - A key already in `seen` is skipped. `seen` gets every string key, enumerable or not, so a non-enumerable own key
+    hides an inherited enumerable one.
+  - Comparison uses the kernel's `sameValue`.
+- **Added during iteration** (R9): keys added after the snapshot are not visited. The spec allows either; this is
+  pinned.
+
+**Rows** in `ROWS` (`native-source-objects.ts`):
+
+- `js.object.for-in-keys`;
+- `js.object.key-list-length`, `js.object.key-list-get`: adapters over the two argument-vector builders.
+
+The contracts are declared in `ordinary-object-callables.ts` and the manifest. The #3518 contract pins move by three.
+
+### The lowering (`lowerForInStatement`, one lowering for both pipelines)
+
+**Head shapes, in order, before anything is emitted (R3):**
+
+- **A `var` list:** unchanged.
+- **An identifier expression** (new arm): its binding is resolved like an assignment target.
+- **Any other expression** (`o.p`, a pattern): an `IrUnsupportedError`, "for-in head is not an identifier". It is
+  never the plain `Error` "init shape drift": with a Prepared plan present, that was a compiler crash.
+
+The ordinary selector never admits a non-declaration head, so its output does not move.
+
+**Head write: one mechanism for a resolved binding (R4).** `lowerIdentifierAssignment` splits into:
+
+- resolving the write target: scope slot, module binding (`resolveModuleBinding`), ref cell or object member;
+- a core that stores a lowered value into it.
+
+The assignment's rhs becomes a callback that lowers into the target's type. A for-in head whose name resolves to a
+binding (a script var, or an identifier head) writes the key through that core. Reads after the loop, body writes and
+closures then see the binding itself.
+
+**Which head gets which write:**
+
+- The loop-private slot stays only where the head resolves to no binding. That is the ordinary pipeline, where the
+  selector refuses a head already in scope (`forin-head-shadow`) and every module-init head (`forin-head-module-var`).
+  Its bytes are unchanged.
+- On the Prepared path an unresolved head is the function-level case, refused by name above.
+
+**Order (R5).** The binding write moves inside the live branch, after `has`. A key deleted mid-loop then never
+reaches `k`, and node keeps the previous key. The ordinary slot write stays where it is, to keep its bytes; it is
+unobservable there.
+
+**Dynamic home.** The script-var home classifier (`module-binding-script-var-home.ts`) and the provenance
+(`source-dynamic-provenance.ts`) count a for-in head as a write of a dynamic value (a key string). So the head binding
+gets the dynamic home, and body reads compose as dynamic.
+
+### Legacy (R8)
+
+Legacy standalone's `__object_keys_forin` (`src/codegen/object-runtime-enumeration.ts`) already implements
+EnumerateObjectProperties. It cannot be reused: it reads codegen's own object layout, not the realm kernel's object
+struct and property map.
+
+Retiring it, once the ordinary standalone lane enumerates realm objects, is
+[#7466](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7466-retire-legacy-standalone-forin-helpers), filed in
+this PR.
+
+### Nit carried from RV7415
+
+In `src/runtime/wasmgc/values/source-object-bodies.ts`, the `SourceObjectSetOperands` alias moves above its function's
+JSDoc.
 
 ### Acceptance
 
-**Correctness**, in a new `tests/issue-7354-o5-for-in.test.ts` (the O2 run harness: the right answer returns, a wrong
+**Correctness**, in a new `tests/issue-7354-o5-for-in.test.ts` (the O2 harness: the right answer returns, a wrong
 answer throws, node agrees). Run programs:
 
-- script-level `for (var k in o)`: keys in insertion order, numeric keys first ([[OwnPropertyKeys]]);
-- a script-level `var k; for (k in o)`, and the key read after the loop and by a function;
-- a non-enumerable property from `Object.defineProperty` is skipped;
-- an `Object.create(proto)` chain: an inherited enumerable key is visited, and one hidden by a non-enumerable own key
-  is not;
-- `null` and `undefined` receivers run no iteration;
-- a function-level for-in (the abort body today);
-- `delete` of a later key during the loop skips it, if `delete` compiles on this path. Otherwise this becomes a named
-  pin.
+- **Order.** `for (var k in o)` visits keys in [[OwnPropertyKeys]] order, integer keys ascending first.
+- **Identifier head.** `var k; for (k in o)`. The key is read after the loop and by a function.
+- **Wrong twins (R4).** Read after the loop, a body write to `k`, and a closure over `k`. Each must equal node.
+- **Non-enumerable.** A property from `Object.defineProperty` is skipped.
+- **Prototype chain.** In an `Object.create(proto)` chain, an inherited enumerable key is visited, and one hidden by
+  a non-enumerable own key is not.
+- **Nullish receivers.** `null` and `undefined` run no iteration.
+- **Delete (R5).** `delete` of the last key during the loop, then `k` read after it, equals node. If `delete` is
+  refused on the path, this is a named pin.
+- **Added keys (R9).** A key added during iteration is not visited.
 
 Pins:
 
-- a string receiver: the runtime abort;
-- each refusal the change moves.
+- runtime aborts for number, boolean and string receivers;
+- named refusals for:
+  - a member head;
+  - a destructuring head;
+  - a function-level for-in;
+- a Symbol key is never visited (a kernel-fixture unit test, if `Symbol` cannot be named on the path);
+- the script-var model proof (see the gate);
+- the descriptors-define Symbol pin (R1);
+- every refusal pin the change moves.
 
 Also:
 
-- The O, O1–O4, P1, U and #3518 contract suites pass.
-- `check:prepared-bytes` (804 programs) and the 13 playground examples (default and standalone) are byte-identical
-  against main.
-- The 411 sample has no lost row. Its before/after tally is in the PR. The 21 for-in rows' new first walls are
-  reported (an estimate, not a yield claim, until measured).
+- the O, O1–O4, P1, U and #3518 contract suites pass;
+- the byte confirmation in the gate section;
+- the 411 sample: no lost row, the before/after tally and the 21 rows' new first walls go in the PR.
 
 **Mutations**, run and reported:
 
 - drop the enumerable test;
-- drop the `seen` list (no shadowing);
+- drop `seen` (no shadowing);
 - stop the chain at the receiver;
-- the script-level head writes a private slot.
+- write the head before liveness;
+- the script head writes a private slot;
+- the primitive arm returns the empty vector;
+- the walk skips Symbols (must fail the descriptors-define pin).
 
 **Code quality:**
 
-- one for-in lowering for both pipelines;
-- one own-key walk, shared by descriptors-define and for-in-keys;
-- no new legalization arm and no second key predicate;
+- one for-in lowering;
+- one own-key walk, shared with descriptors-define;
+- one argument-vector accessor set;
+- one identifier-write core, shared by assignment and the for-in head;
+- the script-var model is one required parameter, not a forked predicate;
+- no new legalization arm;
 - no growth grants;
 - import-cycles, ir-layering and the boundaries inventory keep their counts.
 
