@@ -9,7 +9,6 @@ import {
   abortsAtRunTime,
   agreesWithNode,
   preparedOptions,
-  refusal,
   runnerOptions,
   yieldToRpc,
 } from "./helpers/prepared-node-agreement.js";
@@ -317,22 +316,19 @@ describe("#7354 O2 — what stays an abort or a refusal", () => {
       ),
     SLOW,
   );
-  // Compound assignment of a member is slice L0's (one [[Get]], one [[Set]]); pinned here for an accessor member.
+  // (#7354 O7) A compound write of an accessor member: one [[Get]], one [[Set]] (tests/issue-7354-o7-compound-member).
   it(
-    "o.x += v and o.x++ on an accessor: refused at top level",
-    async () => {
-      const setup = "var o = {get x(){ return 1; }, set x(v){}};";
-      expect(await refusal(`${setup} o.x += 1;`, runnerOptions())).toContain(
-        "compound property write on dynamic not in IR scope",
-      );
-      expect(await refusal(`${setup} o.x++;`, runnerOptions())).toContain(
-        "compound property write on dynamic not in IR scope",
-      );
-    },
+    "o.x += v and o.x++ on an accessor: one getter and one setter call each",
+    async () =>
+      agrees(
+        "var c = { s: '' }; var o = {get x(){ c.s += 'g'; return 1; }, set x(v){ c.s += 's' + v; }}; " +
+          "o.x += 1; o.x++; var out = c.s;",
+      ),
     SLOW,
   );
+  // A void function declaration's last statement takes the expression path, which defers a member compound.
   it(
-    "o.x += v on an accessor inside a function: the function's body is the abort",
+    "o.x += v on an accessor as a function declaration's last statement: the function's body is the abort",
     async () => {
       const bodies = await abortBodies("var o = {get x(){ return 1; }, set x(v){}}; function f(q){ q.x += 1; } f(o);");
       expect(bodies.some((row) => row.startsWith("f: "))).toBe(true);

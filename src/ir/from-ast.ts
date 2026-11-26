@@ -86,6 +86,7 @@ import {
   nullishLeftAdmissible,
   nullValueAdmissible,
   numberCompoundBinaryOperator,
+  updateStepOperator,
   slotWriteVerdict,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -1019,6 +1020,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
+  /**
+   * (#7354 O7) A named member of a dynamic value takes a compound write (`o.x += v`, `o.x++`): one `dyn.member_get`,
+   * one `dyn.member_set`, legalized by the realm. The ordinary pipeline keeps its refusal.
+   */
+  dynamicCompoundMemberWrites?(): boolean;
   /** (#7354 U) The function's body is the run-time abort (`abort-bodies.ts`); its statements are not lowered. */
   abortedBody?(fn: ts.FunctionLikeDeclaration): boolean;
   /**
@@ -6933,6 +6939,31 @@ function boxVecToDynamic(recv: IrValueId, cx: LowerCtx): IrValueId {
   return cx.builder.emitBox(recv, irDynamic(JS_TAG_IDS.Object));
 }
 
+/**
+ * The `dyn.member_get` / `dyn.member_set` operands of a named member write (`recv.name = v`, and on the Prepared lane
+ * `recv.name op= v`) whose receiver is a dynamic value, or `undefined`: the receiver, the name boxed as a string key,
+ * and whether a failed `[[Set]]` is ignored (sloppy) rather than a TypeError.
+ * - (#7106 S3c) a dynamic receiver in a function whose code strictness the lowering knows (an ambient-`this`
+ *   subject): PutValue's strict/sloppy failure rule preserved;
+ * - (#7354 O3) a raw externref receiver (a Prepared function-local object), boxed onto the carrier as the read's;
+ * - (#7292) a script-var vec's expando (`a.index = 2`): the boxed vec, through legacy's sloppy `__extern_set`. The
+ *   native strict store keeps no expando for a vec, and `vecUseSupported` keeps the array private.
+ */
+function dynamicNamedMember(
+  lhs: ts.PropertyAccessExpression,
+  recv: IrValueId,
+  cx: LowerCtx,
+): { readonly target: IrValueId; readonly key: IrValueId; readonly sloppy: boolean } | undefined {
+  const recvType = cx.builder.typeOf(recv);
+  const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
+  const externReceiver = isRawExternrefReceiver(recvType, cx);
+  const dynamic = (recvType.kind === "dynamic" || externReceiver) && cx.functionCodeStrict !== undefined;
+  if ((!dynamic && !moduleVec) || !ts.isIdentifier(lhs.name)) return undefined;
+  const target = moduleVec ? boxVecToDynamic(recv, cx) : externReceiver ? cx.builder.emitBox(recv, irDynamic()) : recv;
+  const key = cx.builder.emitBox(cx.builder.emitStringConst(lhs.name.text), irDynamic(JS_TAG_IDS.String));
+  return { target, key, sloppy: moduleVec || !cx.functionCodeStrict };
+}
+
 /** A dynamic member store's key or value, boxed onto the carrier when it lowers concrete. */
 function lowerDynamicStoreOperand(expr: ts.Expression, cx: LowerCtx): IrValueId {
   return boxDynamicStoreOperand(lowerExpr(expr, cx, irDynamic()), expr, cx);
@@ -10643,27 +10674,11 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
     );
   }
 
-  // (#7106 S3c) `<dynamic>.name = v` in a function whose code strictness the
-  // lowering knows (an ambient-`this` subject): `dyn.member_set` with the name
-  // boxed as a string key, PutValue's strict/sloppy failure rule preserved.
-  // (#7292) A script-var vec's expando (`a.index = 2`) is the same write on the
-  // boxed vec, through legacy's sloppy `__extern_set`: the native strict store
-  // keeps no expando for a vec, and `vecUseSupported` keeps the array private.
-  // (#7354 O3) A raw externref receiver (a Prepared function-local object) is boxed onto the carrier, as the read's.
-  const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
-  const externReceiver = isRawExternrefReceiver(recvType, cx);
-  const dynamicNamedWrite =
-    ((recvType.kind === "dynamic" || externReceiver) && cx.functionCodeStrict !== undefined) || moduleVec;
-  if (dynamicNamedWrite && ts.isPropertyAccessExpression(lhs) && ts.isIdentifier(lhs.name)) {
-    const target = moduleVec
-      ? boxVecToDynamic(recv, cx)
-      : externReceiver
-        ? cx.builder.emitBox(recv, irDynamic())
-        : recv;
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
+  const member = ts.isPropertyAccessExpression(lhs) ? dynamicNamedMember(lhs, recv, cx) : undefined;
+  if (member) {
     const result = lowerExpr(expr.right, cx, irDynamic());
     const value = boxDynamicStoreOperand(result, expr.right, cx);
-    cx.builder.emitDynMemberSet(target, key, value, moduleVec || !cx.functionCodeStrict);
+    cx.builder.emitDynMemberSet(member.target, member.key, value, member.sloppy);
     return result;
   }
 
@@ -10792,19 +10807,22 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
  *  - `++`/`--` in statement position is the same lowering with a synthetic
  *    `1` RHS — the discarded result makes prefix and postfix identical.
  *
- * Restricted to plain numeric fields on object / class shapes. Accessor-backed
- * properties and extern receivers turn the read and the write into CALLS whose
- * re-entrancy this desugaring does not model, so they demote TYPED (the
- * function falls back to the legacy body rather than being approximated).
+ * `token` is the compound assignment's operator, or `++` / `--` with no `rhs`.
+ * Typed receivers are restricted to plain numeric fields on object / class
+ * shapes. (#7354 O7) A named member of a dynamic value is
+ * {@link lowerDynamicMemberCompound}'s on the lane whose resolver supplies
+ * `dynamicCompoundMemberWrites` (the Prepared one); elsewhere it demotes TYPED,
+ * as accessor-backed fields do (the function falls back to the legacy body
+ * rather than being approximated).
  */
 function lowerPropertyCompound(
   lhs: ts.PropertyAccessExpression,
-  op: NumberBinaryOperator,
+  token: ts.SyntaxKind,
   rhs: ts.Expression | null,
   cx: LowerCtx,
 ): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
-    withNodeSourceSite(cx, lhs, () => lowerPropertyCompound(lhs, op, rhs, cx));
+    withNodeSourceSite(cx, lhs, () => lowerPropertyCompound(lhs, token, rhs, cx));
     return;
   }
   if (lhs.questionDotToken !== undefined) {
@@ -10817,6 +10835,8 @@ function lowerPropertyCompound(
   const fieldName = irPrivateFieldName(lhs.name);
   // (1) Receiver — ONCE.
   const recv = lowerExpr(lhs.expression, cx, IR_F64);
+  if (cx.resolver?.dynamicCompoundMemberWrites?.() === true && lowerDynamicMemberCompound(lhs, token, rhs, recv, cx))
+    return;
   const recvType = cx.builder.typeOf(recv);
   if (recvType.kind !== "object" && recvType.kind !== "class") {
     throw new IrUnsupportedError(
@@ -10859,6 +10879,7 @@ function lowerPropertyCompound(
     );
   }
   // (4) binop in source Number space — `++`/`--` has no RHS node — then (5) the write tail.
+  const op = numberCompoundBinaryOperator(token) ?? updateStepOperator(token);
   const result = numericFieldUpdate(cx.builder, oldValue, rhsValue, fieldType, (left, right) =>
     emitNumberBinary(op, left, right, lhs, rhs, cx),
   );
@@ -10871,6 +10892,48 @@ function lowerPropertyCompound(
   }
   if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
   else cx.builder.emitObjectSet(recv, fieldName, result);
+}
+
+/**
+ * (#7354 O7) `recv.name op= v` / `recv.name++` on a dynamic value: one `[[Get]]`, the RHS, the step, one `[[Set]]`
+ * with the plain write's target and failure rule ({@link dynamicNamedMember}). A getter or setter runs through the
+ * realm in both. Returns `false` when the receiver is no such member.
+ * - `++` / `--` is ToNumeric(old) ± 1 ({@link dynamicIncrement}), never `+= 1`: `"1"` becomes 2, not "11".
+ * - Every other operator is the dynamic binary producer, whose conversions follow the RHS.
+ * - A script-var vec refuses: its expando store rule is the plain write's, not proven for a read-modify-write.
+ */
+function lowerDynamicMemberCompound(
+  lhs: ts.PropertyAccessExpression,
+  token: ts.SyntaxKind,
+  rhs: ts.Expression | null,
+  recv: IrValueId,
+  cx: LowerCtx,
+): boolean {
+  if (isScriptVarVec(lhs.expression, cx))
+    demoteToLegacy(
+      "property-write-unsupported",
+      `ir/from-ast: compound member write on a script-var array (${cx.funcName})`,
+    );
+  const member = dynamicNamedMember(lhs, recv, cx);
+  if (member === undefined) return false;
+  const old = cx.builder.emitDynMemberGet(member.target, member.key);
+  let result: IrValueId | null;
+  if (rhs === null) result = dynamicIncrement(old, token, cx);
+  else {
+    const rhsValue = lowerExpr(rhs, cx, irDynamic());
+    const rhsType = cx.builder.typeOf(rhsValue);
+    const op = numberCompoundBinaryOperator(token);
+    if (op === undefined || !compoundWriteAdmissible(token, "dynamic", irOperandFamily(rhsType, rhs))) {
+      const detail = `${ts.tokenToString(token)} of ${describeIrType(rhsType)} on a dynamic value (${cx.funcName})`;
+      demoteToLegacy("compound-assign-unsupported", `ir/from-ast: compound member write ${detail}`);
+    }
+    result = lowerDynamicBinaryValues(op, old, rhsValue, lhs, rhs, cx);
+  }
+  // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
+  if (result === null)
+    throw new Error(`ir/from-ast: admitted dynamic member compound has no lowering (${cx.funcName})`);
+  cx.builder.emitDynMemberSet(member.target, member.key, dynamicBinaryOnCarrier(result, cx), member.sloppy);
+  return true;
 }
 
 /**
@@ -10908,7 +10971,7 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
         return true;
       }
       if (ts.isPropertyAccessExpression(expr.left)) {
-        lowerPropertyCompound(expr.left, binaryOp, expr.right, cx);
+        lowerPropertyCompound(expr.left, op, expr.right, cx);
         return true;
       }
       if (ts.isElementAccessExpression(expr.left)) {
@@ -10920,21 +10983,20 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
   }
   // S0/S1/S2 — `x++;` / `--x;` / `o.x++;` / `a[i]--;`. The result is discarded,
   // so prefix and postfix lower identically; a member target routes to the same
-  // compound helper with a synthetic `1`.
+  // compound helper with no RHS.
   if (!ts.isPostfixUnaryExpression(expr) && !ts.isPrefixUnaryExpression(expr)) return false;
   if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return false;
-  const stepOp = expr.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
   const operand = expr.operand;
   if (ts.isIdentifier(operand)) {
     lowerIncrementDecrement(operand, expr.operator, cx);
     return true;
   }
   if (ts.isPropertyAccessExpression(operand)) {
-    lowerPropertyCompound(operand, stepOp, null, cx);
+    lowerPropertyCompound(operand, expr.operator, null, cx);
     return true;
   }
   if (ts.isElementAccessExpression(operand)) {
-    lowerElementCompound(operand, stepOp, null, cx);
+    lowerElementCompound(operand, updateStepOperator(expr.operator), null, cx);
     return true;
   }
   return false;
@@ -13425,15 +13487,16 @@ function lowerCompoundAssignment(
     store(result, proof.resultEncoding);
     return result;
   }
-  // Dynamic += reads the binding before the RHS, then uses the same dynamic
-  // addition producer as binary + (IR_DYN_ADD_FN).
-  if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "dynamic") {
-    if (storage.kind === "local") {
-      demoteToLegacy(
-        "compound-assign-unsupported",
-        `ir/from-ast: dynamic "${id.text} +=" into a captured binding not in slice 6 (${cx.funcName})`,
-      );
-    }
+  const binaryOp = numberCompoundBinaryOperator(compoundOp);
+  // invariant (producer-promise): every caller passes a numeric compound operator (`isNumberCompoundAssignOperator`).
+  if (binaryOp === undefined) throw new Error(`ir/from-ast: compound operator has no binary form in ${cx.funcName}`);
+  // A dynamic slot reads the binding before the RHS, then applies the dynamic binary producer (#7354 O7). A dynamic
+  // captured cell needs a separately proven storage contract.
+  if (
+    slotFamily === "dynamic" &&
+    storage.kind !== "local" &&
+    compoundWriteAdmissible(compoundOp, slotFamily, "number")
+  ) {
     const lhs =
       storage.kind === "moduleGlobal"
         ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
@@ -13443,19 +13506,19 @@ function lowerCompoundAssignment(
     if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
       demoteToLegacy(
         "compound-assign-unsupported",
-        `ir/from-ast: dynamic "${id.text} +=" operand ${describeIrType(rhsType)} has no carrier (${cx.funcName})`,
+        `ir/from-ast: dynamic "${id.text} ${ts.tokenToString(compoundOp)}" operand ${describeIrType(rhsType)} has no carrier (${cx.funcName})`,
       );
     }
-    const dynamicRhs = rhsType.kind === "dynamic" ? rhsValue : boxConcreteToDynamic(rhsValue, rhsType, rhs, cx);
-    // invariant (producer-promise): `compoundWriteAdmissible` admits only boxable operands — #7144.
-    if (dynamicRhs === null) throw new Error(`ir/from-ast: admitted dynamic "+=" operand did not box (${cx.funcName})`);
-    const added = emitDynamicAdd(lhs, dynamicRhs, cx);
-    if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, added);
-    else cx.builder.emitSlotWrite(storage.slotIndex, added);
-    return added;
+    const result = lowerDynamicBinaryValues(binaryOp, lhs, rhsValue, id, rhs, cx);
+    // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
+    if (result === null)
+      throw new Error(`ir/from-ast: admitted dynamic compound operand has no lowering (${cx.funcName})`);
+    const stored = dynamicBinaryOnCarrier(result, cx);
+    if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, stored);
+    else cx.builder.emitSlotWrite(storage.slotIndex, stored);
+    return result;
   }
-  // Dynamic captured cells need a separately proven storage contract.
-  if (capturedCellType?.inner.kind === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
+  if (slotFamily === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
     demoteToLegacy(
       "compound-assign-unsupported",
       `ir/from-ast: compound assign ${ts.tokenToString(compoundOp)} to "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
@@ -13475,30 +13538,19 @@ function lowerCompoundAssignment(
   if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
     // (#3565) DESIGNED demote: an RHS with no numeric carrier (e.g. an
     // externref value yielded by a generator in `s += v`) is a typed refusal,
-    // not a producer contradiction, so legacy compiles it. Dynamic operands use
-    // the binary-arithmetic ToNumber path below.
+    // not a producer contradiction, so legacy compiles it.
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
       `ir/from-ast: compound assign RHS has no numeric carrier (got ${describeIrType(rhsType)}) in ${cx.funcName}`,
     );
   }
-
-  const binaryOp = numberCompoundBinaryOperator(compoundOp);
-  // invariant (producer-promise): `compoundWriteAdmissible` admits exactly the numeric compound operators — #7144.
-  if (binaryOp === undefined)
-    throw new Error(`ir/from-ast: admitted compound operator has no binary form in ${cx.funcName}`);
-  const numericLhs = relOperandToF64(lhs, logicalType, cx);
-  const numericRhs = relOperandToF64(rhsValue, rhsType, cx);
-  if (numericLhs === null || numericRhs === null)
-    throw new Error(`ir/from-ast: admitted numeric compound has no numeric operands in ${cx.funcName}`);
-  const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
-  const result =
-    slotFamily === "dynamic" ? cx.builder.emitBox(numericResult, irDynamic(JS_TAG_IDS.NumberF64)) : numericResult;
+  // An f64 slot and an admitted (number or `void`) RHS are both f64 already.
+  const result = emitNumberBinary(binaryOp, lhs, rhsValue, id, rhs, cx);
   if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
   else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
   else cx.builder.emitRefCellSet(storage.value, result);
-  return numericResult;
+  return result;
 }
 
 /**
@@ -13556,15 +13608,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
         : storage.kind === "slot"
           ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
           : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
-    const numeric = cx.builder.emitDynToNumber(current);
-    const one = cx.builder.emitConst({ kind: "f64", value: 1 }, irVal({ kind: "f64" }));
-    const updated = cx.builder.emitBinary(
-      op === ts.SyntaxKind.PlusPlusToken ? "f64.add" : "f64.sub",
-      numeric,
-      one,
-      irVal({ kind: "f64" }),
-    );
-    const boxed = cx.builder.emitBox(updated, irDynamic(JS_TAG_IDS.NumberF64));
+    const boxed = dynamicIncrement(current, op, cx);
     if (storage.kind === "moduleGlobal") {
       cx.builder.emitGlobalSet(storage.globalRef, boxed);
     } else if (storage.kind === "slot") {
@@ -15108,13 +15152,10 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   if ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) {
     const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx);
     if (dynEq !== null) return dynEq;
-    if (op === ts.SyntaxKind.PlusToken) {
-      const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
-      const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
-      if (dynL !== null && dynR !== null) {
-        return emitDynamicAdd(dynL, dynR, cx);
-      }
-    }
+    // `+` and the ToNumeric operators: the dynamic binary producer, shared with the compound assignments (#7354 O7).
+    // The relational operators are disjoint from both.
+    const dynBinary = lowerDynamicBinaryValues(op, lhs, rhs, expr.left, expr.right, cx);
+    if (dynBinary !== null) return dynBinary;
     // #2949 S5.3 — dynamic relational: `<`/`>`/`<=`/`>=` where either operand
     // is a boxed-any carrier. Each dynamic operand is ToNumber'd to f64 via
     // `dyn.to_number` (routing to the CANONICAL `__any_to_f64` gc /
@@ -15126,23 +15167,6 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // operand, where ARC never takes the both-strings branch).
     const dynRel = tryLowerDynamicRelational(op, lhs, rhs, lt, rt, cx);
     if (dynRel !== null) return dynRel;
-    // #2949 S5.5 — dynamic numeric arithmetic: `-`/`*`/`/`/`%` where either
-    // operand is a boxed-any carrier. Each dynamic operand is ToNumber'd to
-    // f64 via `dyn.to_number` (the S5.3 primitive — canonical `__any_to_f64`
-    // gc / `__unbox_number` host, D4), then the EXISTING f64 lowering runs
-    // (`f64.sub`/`mul`/`div`; `%` via the shared exact-`__fmod` helper,
-    // #2945). This is spec-exact: `-`/`*`/`/`/`%` are pure ToNumber operators
-    // (§13.7 / §13.8.2 — ApplyStringOrNumericBinaryOperation with a
-    // numeric-only opText never takes the string branch) — unlike `+`, which
-    // is ToPrimitive + string-concat-OR-add dispatch and is deliberately
-    // EXCLUDED (the Row-7 `proveAdditiveOperand` gate above already demotes
-    // an unprovable-`any` `+` to the SAFE legacy `emitAnyAdd`). This is the
-    // missing producer for the reduce-style `obj[idx-1]` bodies the #3053 U2
-    // measurement flagged (its follow-up 2). Reachable only once the S5.P
-    // scan admits dynamic-arithmetic bodies; today the move-only gate
-    // rejects them, so this arm is byte-inert.
-    const dynArith = tryLowerDynamicArithmetic(expr, op, lhs, rhs, lt, rt, cx);
-    if (dynArith !== null) return dynArith;
     // invariant (producer-promise): every admitted dynamic operand pair has a producer above — #7144.
     throw new Error(`ir/from-ast: admitted dynamic '${ts.tokenToString(op)}' has no lowering in ${cx.funcName}`);
   }
@@ -16172,30 +16196,56 @@ function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | nul
 }
 
 /**
- * #2949 S5.5 — a numeric operator other than `+` (`- * / %`, the bitwise
- * operators) with a dynamic operand: ToNumber each dynamic operand
- * (`dyn.to_number`, see {@link relOperandToF64}), then the number arithmetic
- * of {@link emitNumberBinary}. Exact for every runtime partition: these are
- * pure ToNumber operators (§13.7, §13.8.2, §13.9, §13.12), unlike `+`
- * (ToPrimitive and concatenation) and the relationals (string×string).
- * Returns `null` for any other operator, or for a concrete operand that is not
- * an f64. BigInt operands are out of scope (the IR claims no BigInt shapes).
+ * (#7354 O7) The dynamic binary step over two lowered operands, one of them on the carrier. The binary operator, a
+ * compound assignment into a dynamic slot and one into a dynamic member share it. Every conversion below follows the
+ * operands' own lowering, the order of ApplyStringOrNumericBinaryOperator: GetValue(lref), the RHS, then the left's
+ * conversion and the right's.
+ * - `+` (#2949 S5.2) boxes a concrete operand and applies the dynamic `+`, which takes both ToPrimitives first.
+ * - (#2949 S5.5) A ToNumeric operator (`- * / %`, the bitwise operators) ToNumbers each dynamic operand in turn, then
+ *   applies the number arithmetic. Exact for every run-time value but a BigInt, which `dyn.to_number` throws for.
+ * `null` = another operator, or an operand the step cannot carry (an unboxable `+` operand, a non-f64 numeric one).
  */
-function tryLowerDynamicArithmetic(
-  expr: ts.BinaryExpression,
+function lowerDynamicBinaryValues(
   op: ts.SyntaxKind,
   lhs: IrValueId,
   rhs: IrValueId,
-  lt: IrType,
-  rt: IrType,
+  left: ts.Expression,
+  right: ts.Expression,
   cx: LowerCtx,
 ): IrValueId | null {
+  const lt = cx.builder.typeOf(lhs);
+  const rt = cx.builder.typeOf(rhs);
+  if (op === ts.SyntaxKind.PlusToken) {
+    const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, left, cx);
+    const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, right, cx);
+    return dynL === null || dynR === null ? null : emitDynamicAdd(dynL, dynR, cx);
+  }
   if (!isToNumericOperator(op)) return null;
   const lf = relOperandToF64(lhs, lt, cx);
   if (lf === null) return null;
   const rf = relOperandToF64(rhs, rt, cx);
   if (rf === null) return null;
-  return emitNumberBinary(op, lf, rf, expr.left, expr.right, cx);
+  return emitNumberBinary(op, lf, rf, left, right, cx);
+}
+
+/** A result of {@link lowerDynamicBinaryValues} on the carrier: a ToNumeric operator's f64 boxed as a number. */
+function dynamicBinaryOnCarrier(result: IrValueId, cx: LowerCtx): IrValueId {
+  return cx.builder.typeOf(result).kind === "dynamic"
+    ? result
+    : cx.builder.emitBox(result, irDynamic(JS_TAG_IDS.NumberF64));
+}
+
+/** (#7354 O7) `++` / `--` of a dynamic value: ToNumeric(old) ± 1 (§13.4.2.1), never the dynamic `+`, boxed. */
+function dynamicIncrement(current: IrValueId, op: ts.SyntaxKind, cx: LowerCtx): IrValueId {
+  const numeric = cx.builder.emitDynToNumber(current);
+  const one = cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64);
+  const updated = cx.builder.emitBinary(
+    op === ts.SyntaxKind.PlusPlusToken ? "f64.add" : "f64.sub",
+    numeric,
+    one,
+    IR_F64,
+  );
+  return cx.builder.emitBox(updated, irDynamic(JS_TAG_IDS.NumberF64));
 }
 
 // ---------------------------------------------------------------------------

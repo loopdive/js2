@@ -59,6 +59,12 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # requirements at the only place both owners meet; that line takes materializePhysicalProgram from 300 to 301 lines
 # (func-budget-allow below). src/ir/from-ast.ts shrinks (the descriptor-definition lowering moved to
 # open-object-carrier.ts).
+# 2026-11-26 (slice O, step O7): src/ir/from-ast.ts +50, the dynamic member compound arm (`lowerDynamicMemberCompound`,
+# 41 lines with its doc) and the docs of the three shared steps it introduces. The extractions it makes pay for the rest:
+# `lowerDynamicBinaryValues` replaces lowerBinary's `+` arm and `tryLowerDynamicArithmetic`, the two dynamic-slot arms
+# of lowerCompoundAssignment become one, `dynamicIncrement` and `dynamicNamedMember` replace inline copies, and the
+# f64 tail loses its dead conversions. The arm needs lowerExpr, the producer and the builder, so it stays beside its
+# typed sibling `lowerPropertyCompound` (no new module, per the plan).
 func-budget-allow:
   - src/ir/program-consumer.ts::materializePhysicalProgram
 loc-budget-allow:

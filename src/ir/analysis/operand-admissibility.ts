@@ -367,7 +367,7 @@ function isI32Carrier(family: OperandFamily): boolean {
  * - a dynamic operand: equality and `+` box the other side (`tryLowerDynamicEq`,
  *   `IR_DYN_ADD_FN`); the numeric readers ToNumber it, so the other side must
  *   be the carrier or an f64 (`tryLowerDynamicRelational`,
- *   `tryLowerDynamicArithmetic`).
+ *   `lowerDynamicBinaryValues`).
  * - a string operand: `+` converts each side as its `+` proof names, so the
  *   `+` rule decides which sides it takes (#7066); the equalities and the
  *   relationals need a string on both sides.
@@ -622,6 +622,11 @@ export function numberCompoundBinaryOperator(op: ts.SyntaxKind): NumberBinaryOpe
 
 export function isNumberCompoundAssignOperator(op: ts.SyntaxKind): boolean {
   return numberCompoundBinaryOperator(op) !== undefined;
+}
+
+/** The binary operator a numeric field's `++` / `--` steps by 1 with. */
+export function updateStepOperator(op: ts.SyntaxKind): NumberBinaryOperator {
+  return op === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
 }
 
 /** `lowerIncrementDecrement`: `++` / `--` lower on an f64 or a dynamic slot. */
