@@ -259,6 +259,7 @@ export function classifyTest262Path(p) {
   if (
     p === "scripts/test262-edition-scope.ts" ||
     p === "scripts/test262-current-edition.json" ||
+    p === "scripts/test262-edition-reclassified.json" ||
     p === "scripts/lib/gh-api-retry.mjs" ||
     p === "scripts/lib/regression-annotation.mjs"
   )

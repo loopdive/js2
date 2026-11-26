@@ -58,6 +58,7 @@ on:
       # The per-merge IR measurement's edition scope (#7551).
       - "scripts/test262-edition-scope.ts"
       - "scripts/test262-current-edition.json"
+      - "scripts/test262-edition-reclassified.json"
       - "scripts/lib/gh-api-retry.mjs"
       - "scripts/lib/regression-annotation.mjs"
       # Part of the merge_group gating logic (it decides which manifest

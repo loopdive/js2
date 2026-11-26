@@ -21,6 +21,7 @@ import {
   candidateRejection,
   REGRESSION_EXIT_CODE,
   readCurrentEdition,
+  readReclassified,
   regressionAnnotation,
   renderSummary,
   type ScopeMeta,
@@ -153,6 +154,21 @@ describe("#7551 per-test comparison", () => {
     expect(report.diff?.regressions).toEqual([{ file: ES5_C, now: MISSING_STATUS }]);
   });
 
+  it("a deliberate reclassification passes only through the reviewed allow-list", () => {
+    const narrowed = new Set([ES5_A, ES5_B]);
+    const run = statuses({ [ES5_A]: "pass", [ES5_B]: "pass" });
+    const baseline = { statuses: statuses({ [ES5_A]: "pass", [ES5_C]: "pass" }), meta: meta({ sourceSha: "base" }) };
+    const report = buildReport({ run, meta: meta(), paths: narrowed, baseline, reclassified: new Set([ES5_C]) });
+    expect(report.diff).toMatchObject({ regressions: [], reclassified: [ES5_C] });
+    expect(renderSummary(report)).toContain("deliberately reclassified out of the edition");
+
+    // The committed file parses; an entry without a reason is refused.
+    expect(readReclassified()).toBeInstanceOf(Set);
+    const bad = join(root, "reclassified-bad.json");
+    writeFileSync(bad, JSON.stringify({ files: [{ file: ES5_C }] }));
+    expect(() => readReclassified(bad)).toThrow(/reason/);
+  });
+
   it("never reports 'no regressions' without a comparable baseline", () => {
     const run = statuses({ [ES5_A]: "fail" });
     const none = buildReport({ run, meta: meta(), paths });
@@ -190,7 +206,24 @@ describe("#7551 per-test comparison", () => {
 });
 
 describe("#7551 baseline resolution", () => {
-  const art = (id: number, sha: string, createdAt: string) => ({ id, name: "a", runId: id, sha, createdAt });
+  const EDITION = "test262-ir-standalone-edition-measurement";
+  const FULL = "test262-ir-standalone-measurement";
+  const art = (id: number, sha: string, createdAt: string, name = EDITION) => ({ id, name, runId: id, sha, createdAt });
+
+  it("ranks edition measurements ahead of full ones, even a newer full one on the same commit", () => {
+    // The weekly full run lands on main tip X after X's own edition measurement.
+    const found = baselineCandidates(
+      ["x", "x-parent"],
+      [
+        art(1, "x", "2026-11-26T10:00:00Z", EDITION),
+        art(2, "x", "2026-11-29T13:00:00Z", FULL),
+        art(3, "x-parent", "2026-11-26T09:00:00Z", EDITION),
+      ],
+    );
+    expect(found.map((c) => c.artifact.id)).toEqual([1, 3, 2]);
+    // A full measurement serves only when the window has no edition one.
+    expect(baselineCandidates(["x"], [art(2, "x", "2026-11-29T13:00:00Z", FULL)])[0]?.artifact.id).toBe(2);
+  });
 
   it("orders candidates nearest first — the predecessor in the normal case", () => {
     const found = baselineCandidates(

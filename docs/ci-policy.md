@@ -467,6 +467,15 @@ Owner decision, 2026-11-26.
   How often ES5 IR rows time out on main is unmeasured: the shard logs do
   not print per-status counts, and artifacts were not readable here. If
   timeouts park innocent PRs, add a small documented cap.
+- Edition baselines rank ahead of full ones in the window: only an edition
+  baseline remembers a passing test that has dropped out of today's edition
+  list (a narrowed classifier or category list), and such a test fails as
+  `missing`.
+- **Deliberately moving a test out of the edition:** list it, with a
+  reason, in `scripts/test262-edition-reclassified.json` in the same PR.
+  Listed tests are reported, not gated. Once that PR's edition
+  measurement is on main, later runs no longer see the test, and the
+  entry can be removed.
 - A baseline-passing test with no row in the run is a regression when the
   test262 revision is unchanged (`missing`), and is listed as not
   comparable when the revision changed. Edition runs are also validated
