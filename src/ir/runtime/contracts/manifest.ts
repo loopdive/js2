@@ -429,13 +429,14 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.create-type-error",
   "js.object.set",
   "js.object.is-error",
-  "js.object.error-field",
+  "js.object.create-error",
+  "js.object.error-to-string",
   "js.object.init-function",
   "js.object.inherits",
   "js.object.descriptor-define",
   "js.object.descriptors-define",
   "js.object.own-descriptor",
-  "js.object.prototype-method",
+  "js.object.intrinsic",
   "js.object.has-own",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
@@ -451,13 +452,14 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.create-type-error",
   "native.js.object.set",
   "native.js.object.is-error",
-  "native.js.object.error-field",
+  "native.js.object.create-error",
+  "native.js.object.error-to-string",
   "native.js.object.init-function",
   "native.js.object.inherits",
   "native.js.object.descriptor-define",
   "native.js.object.descriptors-define",
   "native.js.object.own-descriptor",
-  "native.js.object.prototype-method",
+  "native.js.object.intrinsic",
   "native.js.object.has-own",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];

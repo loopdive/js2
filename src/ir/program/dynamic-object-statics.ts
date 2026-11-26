@@ -3,9 +3,8 @@
  * (#7354 O1) The dynamic-value legalization of the recognised `Object` statics (`src/ir/realm-static-call.ts`): the
  * front end emits one helper call per static over its arguments as carriers, already evaluated in source order and
  * padded with `undefined` to the catalog's length; this module writes the specification's steps that precede the
- * realm's descriptor bodies (`object-static-bodies.ts`): each argument's kind test (a TypeError for a primitive, the
- * run-time abort for the realm's error object, whose properties the kernel does not serve) and ToPropertyKey (the
- * program's own ToString, which can call a key's `toString`), in the specification's order.
+ * realm's descriptor bodies (`object-static-bodies.ts`): each argument's kind test (a TypeError for a primitive) and
+ * ToPropertyKey (the program's own ToString, which can call a key's `toString`), in the specification's order.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-catalog.js";
@@ -25,6 +24,8 @@ export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undef
 /** The legalization's builders, with its ToString (`stringOf`, ToPropertyKey here). */
 export type ObjectStaticBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+  /** (#7354 G1) A value may be an error (`holdsErrors`). */
+  readonly errors: boolean;
 };
 type Call = Extract<IrInstr, { kind: "call" }>;
 type Arm = (result: IrValueId) => IrInstr[];
@@ -40,7 +41,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   const throwing = (message: string, r: IrValueId) =>
     typeErrorThen({ ...b, carrier: CARRIER }, message, undefinedValue(r));
   /**
-   * A chain over the kinds `value` may hold: `object` answers a served object, the realm's error is the abort, and
+   * A chain over the kinds `value` may hold: `object` answers a served object ((#7354 G1) an error is one), and
    * `other` answers each remaining kind (a primitive, `undefined`, `null`).
    */
   const byKind = (value: IrValueId, object: Arm, other: (kind: CarrierKind, r: IrValueId) => IrInstr[], r: IrValueId) =>
@@ -48,7 +49,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
       instr,
       value,
       r,
-      (kind, s) => (served(kind) ? object(s) : kind === "error" ? b.abort(instr, s) : other(kind, s)),
+      (kind, s) => (served(kind) ? object(s) : other(kind, s)),
       b.kinds.kindsOf(value),
       CARRIER,
     );
@@ -98,8 +99,8 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         instr.result!,
       );
     case "create":
-      // The prototype must be an object or null: an ordinary object links (a function's or an error's prototype is
-      // no ordinary object, which the realm's creation takes: the abort), `null` ends the chain.
+      // The prototype must be an object or null: an ordinary object links (a function is no ordinary object, which the
+      // realm's creation takes: the abort), `null` ends the chain.
       return b.kindChain(
         instr,
         first,
@@ -113,9 +114,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
                 ? realmCall("js.object.create-null", [], object)
                 : undefined;
           if (create) return [create, ...defineAll(object, second, r, "none")];
-          return served(kind) || kind === "error"
-            ? b.abort(instr, r)
-            : throwing("Object prototype may only be an Object or null", r);
+          return served(kind) ? b.abort(instr, r) : throwing("Object prototype may only be an Object or null", r);
         },
         b.kinds.kindsOf(first),
         CARRIER,

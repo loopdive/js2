@@ -15,8 +15,7 @@ import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } fro
 import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
-import { prototypeMethodSelector } from "./builtin-prototype-keys.js";
+import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -24,6 +23,7 @@ import {
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   carrierKindOf,
+  holdsErrors,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
@@ -43,8 +43,6 @@ const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
-/** (#7354 M2) `js.object.error-field`'s selectors. */
-export const ERROR_FIELD = { message: 0, name: 1 } as const;
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
@@ -140,10 +138,7 @@ export function chainBuilders(
       of.map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
       result,
     ).instrs;
-  /**
-   * The kind's test into `result`; (#7354 O2) an object is none of the other admitted kinds; (M2) an error is the
-   * realm's test of its layout.
-   */
+  /** The kind's test into `result`; (#7354 O2) an object is none of the other admitted kinds. */
   const kindTest = (
     instr: IrInstr,
     kind: CarrierKind,
@@ -160,7 +155,6 @@ export function chainBuilders(
         { kind: "unary", op: "i32.eqz", rand: other, result, resultType },
       ];
     }
-    if (test === "js.object.is-error") return [realmCall(test, [value], result)];
     return [
       test === "ref.is_null"
         ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType }
@@ -225,12 +219,9 @@ export function chainBuilders(
       realmCall(feature, [...args, value], result),
     ];
   };
-  /** (#7354 M2) The once-evaluated error `value`'s `field`, a native string carrier, into `result`. */
-  const errorField = (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId): IrInstr[] =>
-    selectorCall("js.object.error-field", [value], ERROR_FIELD[field], result);
-  /** (#7354 P1) The realm's Object.prototype method `name` (a built-in function object) into `result`. */
-  const prototypeMethod = (name: NativeObjectPrototypeMethod, result: IrValueId): IrInstr[] =>
-    selectorCall("js.object.prototype-method", [], prototypeMethodSelector(name), result);
+  /** (#7354 P1, G1) The realm's built-in function object `id` (`NATIVE_VALUE_INTRINSICS`) into `result`. */
+  const realmIntrinsic = (id: string, result: IrValueId): IrInstr[] =>
+    selectorCall("js.object.intrinsic", [], realmIntrinsicSelector(id), result);
   // A value per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind
   // untested (the chain is total over the kinds), each arm answering into its own value.
   const kindChain = (
@@ -269,8 +260,7 @@ export function chainBuilders(
     concat,
     abort,
     selectorCall,
-    errorField,
-    prototypeMethod,
+    realmIntrinsic,
     kindChain,
     valueCount: () => valueCount,
   };
@@ -287,13 +277,24 @@ const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "fu
  * finishes in its own way (`ToPrimitiveAnswer`).
  */
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
-  const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, concat, errorField, kindChain } = builders;
+  const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, kindChain } = builders;
   const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
   const nan = (r: IrValueId): IrInstr => ({
     kind: "const",
     value: { kind: "f64", value: NaN },
     result: r,
     resultType: F64,
+  });
+  /** (#7354 G1) The realm's Error.prototype.toString, recognised by identity (`ordinary-to-primitive.ts`). */
+  const errorToString = (instr: IrInstr) => ({
+    is: (method: IrValueId, r: IrValueId): IrInstr[] => {
+      const builtin = fresh();
+      return [
+        ...builders.realmIntrinsic(ERROR_TO_STRING_ID, builtin),
+        intrinsic(instr, "js.value.strict_eq", [method, builtin], r),
+      ];
+    },
+    answer: (object: IrValueId, r: IrValueId): IrInstr[] => [realmCall("js.object.error-to-string", [object], r)],
   });
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
   const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);
@@ -314,6 +315,8 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
+      ...(holdsErrors(program) ? { errorToString: errorToString(instr) } : {}),
+      ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
   };
@@ -343,21 +346,6 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       }
       case "name":
         return [text(kind, result)];
-      // (#7354 M2) Error.prototype.toString (§20.5.3.4) of the realm's TypeError: its name is "TypeError" and its
-      // message a non-empty text the legalization wrote, and no code can write either (a member write of an error
-      // refuses), so the answer is always `name + ": " + message`.
-      case "error": {
-        const [name, nameText, separator, head, message, messageText] = Array.from({ length: 6 }, fresh);
-        return [
-          ...errorField(value, "name", name),
-          intrinsic(instr, "js.value.as_string", [name], nameText),
-          text(": ", separator),
-          concat(nameText, separator, head),
-          ...errorField(value, "message", message),
-          intrinsic(instr, "js.value.as_string", [message], messageText),
-          concat(head, messageText, result),
-        ];
-      }
       // (F1b) A function's absent `toString` is the source text, which the closure does not carry: the run-time abort.
       case "to-primitive":
         return toPrimitive(instr, value, "string", result, kind, {
@@ -374,17 +362,15 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: IrValueId,
     held: readonly CarrierKind[] = kinds.kindsOf(value),
   ): IrInstr[] => kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), held);
-  // ToNumber of the once-evaluated `value`: the primitive unboxer, an object's or a function's ToPrimitive (any text a
-  // built-in method answers reads as NaN), or (M2) NaN for an error.
+  // ToNumber of the once-evaluated `value`: the primitive unboxer, or an object's or a function's ToPrimitive (any text
+  // a built-in method answers is read as a number).
   const toNumber = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] => {
     const held = kinds.kindsOf(value);
     const unbox = (v: IrValueId, r: IrValueId): IrInstr[] => [intrinsic(instr, "js.number.unbox", [v], r)];
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
     if (converted.length === 0) return unbox(value, result);
     const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
-      TO_NUMBER_ARM[kind] === "to-primitive"
-        ? toPrimitive(instr, value, "number", r, kind, { type: F64, text: (_, s) => [nan(s)], primitive: unbox })
-        : [nan(r)];
+      toPrimitive(instr, value, "number", r, kind, { type: F64, text: (_, s) => [nan(s)], primitive: unbox });
     const convert = (r: IrValueId) => kindChain(instr, value, r, arm, converted, F64);
     if (converted.length === held.length) return convert(result);
     const cond = fresh();

@@ -1404,7 +1404,7 @@ function materializePhysicalProgram(
     abi.sealPlan();
   }
   bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
-  if (nativePack) fillNativeStringValueResources(reservations, nativePack, sourceClosures?.types.closures.root);
+  if (nativePack) fillNativeStringValueResources(reservations, nativePack, realmInventory?.closures.root);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (realm) fillNativeRealmResources(reservations, realm);
   if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
@@ -1417,7 +1417,7 @@ function materializePhysicalProgram(
       invocationPack,
       nativeSourceClosureCallableBindings(reservations, sourceClosures, record.nativeInvocation),
       exceptionTag,
-      (record.nativeRealm?.description.prototypeMethods.length ?? 0) > 0,
+      (record.nativeRealm?.description.intrinsics.length ?? 0) > 0,
     );
   }
 

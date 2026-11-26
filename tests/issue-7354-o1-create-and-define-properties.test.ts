@@ -104,10 +104,6 @@ describe("#7354 O1 — what stays a refusal or the run-time abort", () => {
   // (#7354 O2) A getter read, a setter call and a descriptor field read through a getter run now
   // (issue-7354-o2-accessors).
   it.each([
-    [
-      "a target that is the realm's error",
-      "var n = null; try { n.x; } catch (e) { Object.defineProperty(e, 'p', {value: 1}); }",
-    ],
     ["a prototype that is a function", "function F(){} Object.create(F);"],
     ["a string's own properties", "Object.getOwnPropertyDescriptor('ab', 'length');"],
   ])("%s", async (_name, source) => abortsAtRunTime(source, runnerOptions()), SLOW);

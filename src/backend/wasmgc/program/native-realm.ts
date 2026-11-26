@@ -6,6 +6,7 @@ import type {
 } from "../../../ir/program/prepared-contracts.js";
 import {
   assertNativeRealmRequirementsIssued,
+  heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
@@ -39,6 +40,7 @@ import {
   type NativeStringValueReservations,
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
+import { familyObjects, familyProperties } from "./native-realm-families.js";
 import {
   reserveNativeVectorTypes,
   requireNativeVectorTypeReservations,
@@ -194,6 +196,8 @@ export interface NativeRealmReservations {
   readonly strings: NativeStringValueReservations;
   readonly substrate: NativeInvocationSubstrateReservations;
   readonly requests: NativeBuiltinFunctionRequests;
+  /** (#7354 G1) The kernel's error creation, where the realm holds the Error family. */
+  readonly errorCreate?: FunctionReservation;
   readonly completionScope: "native-realm-bootstrap";
 }
 interface Population {
@@ -279,40 +283,58 @@ function beginRealm(
   )!.realmRequirements;
   const key = requirements.description.key,
     shared = { key: key + ":invocation-substrate" };
+  // (#7354 G1) Reserved before the substrate, whose TypeError delegates to it; the kernel fills it.
+  const errorCreate = requirements.description.intrinsics.includes("%Error%")
+    ? tx.reserveFunction(key + ":error-create", key + ":error-create", {
+        params: [{ kind: "externref" }, { kind: "i32" }],
+        results: [{ kind: "externref" }],
+      })
+    : undefined;
   const substrate = reserveNativeInvocationSubstrateResources(
     tx,
     shared,
-    { vectors, vectorPlan, strings: strings.strings },
+    { vectors, vectorPlan, strings: strings.strings, ...(errorCreate ? { errorCreate } : {}) },
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
   const catalog = requirements.description.catalog;
-  // The bootstrap's two functions, then (#7354 P1) the Object.prototype methods the program reads: one entry each.
-  const intrinsics = [...catalog.bootstrap, ...requirements.description.prototypeMethods].map((id, index) => {
+  // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
+  const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
     const row = catalog.intrinsics.find((row) => row.id === id),
       call = row?.callable;
-    const behavior = index < catalog.bootstrap.length ? call?.implementation : "object-prototype-method";
+    const behavior =
+      index < catalog.bootstrap.length
+        ? call?.implementation
+        : row?.heldWith !== undefined
+          ? "native"
+          : "object-prototype-method";
     const supported =
-      behavior === "object-prototype-method"
-        ? call?.implementation === "native"
-        : behavior === "function-prototype" || behavior === "throw-type-error";
-    if (!row || !call || !supported || row.constructible) fail("catalog row lacks its supported canonical behavior");
+      index < catalog.bootstrap.length
+        ? behavior === "function-prototype" || behavior === "throw-type-error"
+        : call?.implementation === "native";
+    if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
     const entry = behavior as NativeBuiltinFunctionBehavior;
     return {
-      id: entry === "object-prototype-method" ? id : entry,
+      id: index < catalog.bootstrap.length ? entry : id,
       behavior: entry,
       signatureId: "realm:signature:" + index,
       metadataId: "realm:metadata:" + index,
       initialName: call.initialName,
       initialLength: call.length,
       userFormalCount: 0,
-      prototype: entry === "function-prototype" ? ("object-prototype" as const) : ("function-prototype" as const),
-      constructible: false as const,
+      prototype:
+        entry === "function-prototype"
+          ? "object-prototype"
+          : row.prototype === catalog.bootstrap[0]
+            ? "function-prototype"
+            : row.prototype!,
+      constructible: row.constructible,
       aliases: row.aliases,
+      ...(entry === "native" ? { properties: familyProperties(row) } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics },
+    { key: key + ":builtins", intrinsics, ...familyObjects(heldCatalogRows(requirements.description)) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,
@@ -342,6 +364,7 @@ function beginRealm(
     strings,
     substrate,
     requests,
+    ...(errorCreate ? { errorCreate } : {}),
     completionScope: "native-realm-bootstrap" as const,
   });
   owners.set(pack, { tx, input, vectors, vectorPlan, requirements, strings, population, phase: "foundation" });
@@ -451,6 +474,7 @@ function reserveKernelResources(
     descriptors,
     descriptorDependencies,
     exception,
+    ...(pack.errorCreate ? { errorCreate: pack.errorCreate } : {}),
     ...(accessorCalls && { accessorCalls }),
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);

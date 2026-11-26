@@ -5246,6 +5246,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
         return functionObjects.lowerTopLevelFunctionValue(read.plan, functionObjectLoweringHost(cx));
       case "module-binding":
         return lowerResolvedModuleBindingRead(expr.text, read.binding, cx);
+      case "realm-intrinsic":
+        return functionObjects.lowerRealmIntrinsicRead(read.id, cx.builder);
       case "global-undefined":
       case "absent-global":
         return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
@@ -6942,18 +6944,13 @@ function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: Lower
 
 /**
  * A read of `node` lowers to the dynamic value: a dynamic local, slot or module global in scope, (#7106 Stage 4) a
- * `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic module home out of scope.
+ * `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic global out of scope.
  */
 function bindingHoldsDynamic(node: ts.Identifier | ts.ThisExpression, cx: LowerCtx): boolean {
   const binding = cx.scope.get(ts.isIdentifier(node) ? node.text : "this");
   if (binding?.kind === "local" || binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
   if (binding?.kind === "slot") return (binding.asType ?? binding.type).kind === "dynamic";
-  return (
-    binding === undefined &&
-    ts.isIdentifier(node) &&
-    functionObjects.createsFunctionObjects(cx.resolver) &&
-    cx.resolver?.resolveModuleBinding?.(node)?.type.kind === "dynamic"
-  );
+  return binding === undefined && ts.isIdentifier(node) && functionObjects.readsDynamicGlobal(node, cx.resolver);
 }
 
 /**

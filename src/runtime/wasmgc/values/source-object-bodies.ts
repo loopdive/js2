@@ -7,6 +7,7 @@ import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/mode
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
 import { buildAccessorCall } from "./builtin-function-property-bodies.js";
+import { kernelGetInto } from "./kernel-get-body.js";
 import type { BuiltinFunctionPrototypeOperands } from "./builtin-function-prototype-bodies.js";
 
 export interface SourceObjectDefinition {
@@ -104,19 +105,10 @@ export function buildSourceObjectInheritsDefinition(d: {
  * or function object of this realm.
  */
 export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
+  const operands: Instr[] = [0, 1, 2].map((index) => ({ op: "local.get", index }));
   return {
     locals: [{ name: "value", type: { kind: "externref" } }],
-    body: [
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "call", funcIdx: d.get },
-      { op: "local.set", index: 3 },
-      { op: "i32.const", value: 2 },
-      { op: "i32.gt_u" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-      { op: "local.get", index: 3 },
-    ],
+    body: [...kernelGetInto(d.get, operands, 3), { op: "local.get", index: 3 }],
   };
 }
 
@@ -259,17 +251,17 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
 }
 
 /**
- * (#7354 P1) `js.object.prototype-method(selector) -> externref`: the built-in function object of the realm's
- * Object.prototype method `selector`, through its entry's getter (which initializes the realm first). `getters` are in
- * selector order; the caller passes only selectors it names.
+ * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the built-in function object `selector` names
+ * (`NATIVE_VALUE_INTRINSICS`), through its entry's getter (which initializes the realm first). `getters` holds the
+ * entries the realm has; the caller passes only selectors whose entry the realm holds (it holds what is named).
  */
-export function buildSourceObjectPrototypeMethodDefinition(d: {
-  readonly getters: readonly FuncHandle[];
+export function buildSourceObjectIntrinsicDefinition(d: {
+  readonly getters: readonly { readonly selector: number; readonly getter: FuncHandle }[];
 }): SourceObjectDefinition {
   return {
     locals: [],
     body: [
-      ...d.getters.flatMap((getter, selector): Instr[] => [
+      ...d.getters.flatMap(({ getter, selector }): Instr[] => [
         { op: "local.get", index: 0 },
         { op: "i32.const", value: selector },
         { op: "i32.eq" },
@@ -314,34 +306,6 @@ export function buildSourceObjectHasOwnDefinition(d: {
         ],
         else: [{ op: "i32.const", value: 1 }],
       },
-    ],
-  };
-}
-
-/** (#7354 M2) `js.object.is-error(value) -> i32`: whether `value` is the realm's error layout (`$Error_struct`). */
-export function buildSourceObjectIsErrorDefinition(d: { readonly errorTypeIdx: number }): SourceObjectDefinition {
-  return {
-    locals: [],
-    body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: d.errorTypeIdx }],
-  };
-}
-
-/**
- * (#7354 M2) `js.object.error-field(error, selector) -> externref`: the error's `name` (selector 1) or `message`
- * (selector 0) field. The caller has tested the error kind, so the cast cannot fail.
- */
-export function buildSourceObjectErrorFieldDefinition(d: { readonly errorTypeIdx: number }): SourceObjectDefinition {
-  const field = (fieldIdx: number): Instr[] => [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: d.errorTypeIdx },
-    { op: "struct.get", typeIdx: d.errorTypeIdx, fieldIdx },
-  ];
-  return {
-    locals: [],
-    body: [
-      { op: "local.get", index: 1 },
-      { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: field(2), else: field(1) },
     ],
   };
 }

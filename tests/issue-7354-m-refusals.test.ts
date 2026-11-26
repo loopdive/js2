@@ -20,15 +20,29 @@ const refused = (operation: string, receiver: string, missing: string) =>
   gapText(`${operation} of ${receiver} needs ${missing}`);
 
 describe("#7354 M1 — the TypeError the legalization raises", () => {
-  // (#7354 C2) Each of these refused at compile time (M2): the receiver may be the caught error, whose arm cannot
-  // answer, but its other kinds can, so only the error arm is the abort.
+  // (#7354 G1) V8 gives an error an own `stack`; the realm answers the specification (none), so the read refuses by
+  // name and its function is the run-time abort rather than answer either.
+  it(
+    "ends M2: an error's stack at the run-time abort",
+    () => abortsAtRunTime("function f(v){ try { return v.a; } catch (e) { return e.stack; } } f(null);"),
+    180_000,
+  );
+
+  // (#7354 G1) These ended at the abort (C2) while the caught error was its own kind: it is an ordinary object now.
   it.each([
-    ["M2: an error's constructor", "function f(v){ try { return v.a; } catch (e) { return e.constructor; } } f(null);"],
-    // V8 gives an error an own `stack`; the realm's error has none, so the read aborts rather than answer undefined.
-    ["M2: an error's stack", "function f(v){ try { return v.a; } catch (e) { return e.stack; } } f(null);"],
-    ["M2: an error's toString", "function f(v){ try { return v.a; } catch (e) { return e.toString; } } f(null);"],
-    ["M2: a write to a caught error", "function f(v){ try { return v.a; } catch (e) { e.k = 1; } } f(null);"],
-  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
+    [
+      "M2: an error's constructor",
+      "function f(v){ try { return v.a; } catch (e) { return e.constructor === TypeError; } } var out = String(f(null));",
+    ],
+    [
+      "M2: an error's toString",
+      "function f(v){ try { return v.a; } catch (e) { return e.toString === Error.prototype.toString; } } var out = String(f(null));",
+    ],
+    [
+      "M2: a write to a caught error",
+      "function f(v){ try { return v.a; } catch (e) { e.k = 1; return e.k; } } var out = String(f(null));",
+    ],
+  ])("answers %s as node does", (_label, body) => agreesWithNode(body), 180_000);
 
   // The kinds that answer still answer where the error arm aborts.
   it(
@@ -156,11 +170,6 @@ describe("#7354 M1 — refusals that stay", () => {
       "G45: an Object static that is not native",
       "var o = {}; Object.freeze(o);",
       'ir/from-ast: identifier "Object" is not in scope in <module-init>',
-    ],
-    [
-      "G45: new TypeError",
-      "function f(){ return new TypeError('m'); } f();",
-      'ir/from-ast: unknown class "TypeError" in f',
     ],
     [
       "F41: a switch over a member",

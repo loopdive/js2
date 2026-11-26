@@ -6413,6 +6413,321 @@ regression probes give the same transitions as before r1 (nothing right became a
 main 42f2df53e2). Sample not re-measured: r1 changes only calls whose receiver is not the [[Get]]'s (detached calls),
 and none of the 12 new passes has one (each was read); `check:prepared-bytes` not re-run.
 
+## Slice G1 plan (2026-11-22, branch `claude/7354-g1` from `claude/7354-p1` eb98b057ec)
+
+`Error`, the six NativeErrors and `Error.prototype.toString` as realm values on the Prepared path.
+
+### What exists (read, plus probes on the base)
+
+- Base probes (runner options, strict entry): `typeof TypeError` → `identifier "TypeError" is not in scope`;
+  `new TypeError('m')` and `throw new TypeError('m')` → `unknown class "TypeError"`; `typeof undeclaredX` →
+  "undefined" (node's answer); a read of `undeclaredX` → the not-in-scope refusal.
+- Catalog: Object/Function rows only. Kernel entries: two bootstrap functions plus P1's methods, each a closure-root
+  carrier with a bag (`createNull`, a null-proto `$Object`) and a separate `prototype` field; the realm's [[Get]] on a
+  function already walks that field (`buildBuiltinFunctionLookup` / `ParentStep`), so a function whose [[Prototype]] is
+  another entry is read correctly. Entry algorithms: undefined / ThrowTypeError / `unreachable`.
+- Every realm TypeError (kernel, descriptor defines, the dispatcher's "Value is not callable", the legalization's
+  `js.object.create-type-error`, promise resolution) is ONE function, `__new_TypeError` (`native-errors.ts`), which
+  builds `$Error_struct` (tag −11, message, name, stack, brand). That struct type is `createErrorStructType`, shared
+  with the legacy codegen (`registry/types.ts`), so it cannot change without moving ordinary-pipeline bytes.
+- The `error` kind exists only where the program reads a catch binding (`readsCatchPayload`), answered by
+  `js.object.is-error` (`ref.test $Error_struct`), `js.object.error-field` (name/message), and a row in every kind
+  table (`TO_STRING_ARM` "error", `ADD_ROLE`, `TO_NUMBER_ARM` "nan", `MEMBER_ACCESS_ARM` "error", `ERROR_OWN_KEYS`,
+  `ERROR_PROTOTYPE_KEYS`, aborts in the statics and P1's own-property arm, refused writes).
+- Realm literals (`native-realm-literals.ts`) are taken from the WHOLE catalog: adding rows naively adds strings to
+  every realm program. They must come from the families the realm holds.
+
+### Design
+
+1. **An error is an ordinary realm object** (`$Object`): [[Prototype]] `%XError.prototype%`, an own non-enumerable
+   `message` only when one was given, and an `[[ErrorData]]` bit in `$Object.flags` (0x800 is free in both the realm's
+   and the legacy encodings). Every realm operation (get, set, has, has-own, inherits, define, create-with-prototype)
+   is already total over `$Object`; a bag on `$Error_struct` would be a second object layout every one of them must
+   branch on, and would change the legacy struct. The bit is what `Object.prototype.toString` reads (`[object
+   Error]`); prototypes do not carry it (ES2015+).
+2. **When.** The realm holds the error family, and builds its own TypeErrors as such objects, iff the program can
+   observe an error: it reads a pristine error global (a `js.object.intrinsic` use naming a family id) or binds a catch
+   payload (an IR `try` with `payloadSlot >= 0`; a rethrow-only catch is included, harmlessly). Otherwise
+   `__new_TypeError` keeps the struct: no code of such a program reads a thrown value, and the Prepared artifact
+   exports no tag, so the payload is unobservable. Granularity: Error + TypeError + `Error.prototype.toString` for a
+   catching program; each other NativeError (with Error) when named. Literals per held family.
+3. **One getter** `js.object.intrinsic(selector) -> externref` replaces P1's `js.object.prototype-method`: the selector
+   indexes one catalog list of realm function values (the three Object.prototype methods, the seven constructors,
+   `Error.prototype.toString`). Same `js.object` family on purpose: a `js.realm.*` family needs its own manifest
+   feature/provider lists for one row. The realm populates from the constant selectors it is called with.
+4. **Kernel.** New entry behaviors `error-constructor` (constructible; own `prototype` {!w,!e,!c} → its prototype
+   object; [[Prototype]] `%Function.prototype%` for Error, `%Error%` for a NativeError; algorithm `unreachable`, so the
+   value form aborts as in P1) and the toString method entry. The initializer creates each held prototype
+   (`%Error.prototype%` → Object.prototype; a NativeError's → `%Error.prototype%`) with `constructor`, `name`,
+   `message` "" and (Error only) `toString`. One kernel function `createError(selector, message)` (create + bit +
+   `message` defined only if not undefined) serves the contract `js.object.create-error` and, in the error-objects
+   mode, is what `__new_TypeError` calls: one creation path for realm and program errors.
+5. **Construction at the site** (`src/ir/program/dynamic-error-constructors.ts`, sibling of
+   `dynamic-prototype-methods.ts`): `X(m)` / `new X(m)` lower as F2's call / C2's `dyn.construct` through the
+   identifier's value; the legalization recognises a call or construct whose callee is defined by
+   `js.object.intrinsic(<ctor>)` (the identifier read proved the pristine global) and expands §20.5.1.1: arguments
+   already evaluated left to right (front end); `undefined` → `create-error(sel, undefined)`; else `stringOf` once (a
+   message object's `toString` runs once, a throw is catchable), then `create-error(sel, s)`. Creating the object
+   before ToString is unobservable. Any other callee (`var E = TypeError; new E()` through a script var) is the
+   dispatcher's built-in abort.
+6. **`Error.prototype.toString`** (§20.5.3.4) is one realm contract `js.object.error-to-string(o)`: name (undefined →
+   "Error"), message (undefined → ""), the empty-string rules; a name/message that is neither a string nor undefined
+   is the realm's abort (a program wrote a non-string; never a wrong text). Called where the IR proves the method is
+   the intrinsic: (a) OrdinaryToPrimitive's `toString` step — `method === intrinsic(toString)` ? contract :
+   dispatcher (so an override `Error.prototype.toString = …` and `TypeError.prototype.name = "X"` are seen); (b) the
+   method call `e.toString()`, a fourth row of P1's call expansion. When P2 lets the dispatcher call built-ins, the
+   same function becomes the entry's `(this, vector)` algorithm and both identity rows go.
+7. **IR kinds.** The `error` kind is deleted from every table; a caught value is the object kind (admitted where the
+   program builds objects or reads a catch binding); `carrierKindOf` answers object for `create-error`. ToString /
+   ToNumber / `+` of an error take the object's ToPrimitive. `dyn.object_tag`'s object arm tests `is-error` (now the
+   bit) where the family is held. P1's error abort arms, the statics' error abort, the refused error writes and
+   `ERROR_OWN_KEYS` / `ERROR_PROTOTYPE_KEYS` / `js.object.error-field` go.
+8. **Identifier read.** `identifier-read.ts` gains `realm-intrinsic` (pristine global, catalog marks the constructor
+   native, function-object lane), lowered to the getter; `typeof TypeError` folds through the function kind. `new X`'s
+   dynamic-callee gate and the flow rule (arguments as carriers) accept it. `source-plain-objects` counts such a read
+   as creating a function value and objects.
+9. **Premise change, `instanceof` / `isPrototypeOf`.** With `%Error%` a value, a NativeError constructor's chain holds
+   an obtainable object, so "a function's chain holds no program value" (C2, P1) is false there. Where the family is
+   held: a function-kind left operand / argument answers `false` unless the prototype / receiver is `%Error%`, which is
+   the run-time abort (only `F.prototype = Error` or `Error.isPrototypeOf(TypeError)` reach it). The exact answer (the
+   kernel's heterogeneous `ParentStep` inside `inherits`) is left to the slice that needs it.
+
+### Stays refused / aborts (each sound)
+
+- A second argument (`cause`, ES2022 options) refuses by name: InstallErrorCause would read a property of it.
+- The value form (`E(m)`, `new E()` through a variable, `.call` / `.apply`): dispatcher abort, as P1.
+- Shadowed or assigned names (`function TypeError(){}`, `TypeError = …`, `globalThis.TypeError = …`): not pristine,
+  existing rules (refusal by name).
+- V8-only keys: in a program holding the family, a constant-key read of `stack`, `captureStackTrace`,
+  `stackTraceLimit`, `prepareStackTrace` refuses by name (specification: absent; V8: present).
+- **Not in G1: ReferenceError at GetValue.** An "unresolved" identifier on this path is often a lib global the path
+  does not implement (`Array`, `Math`), and the lib is not the exact list of globals (`Iterator` missing, DOM names
+  present): a ReferenceError there would be a wrong answer. Sound only with a list of standard globals; own slice.
+- Runtime negatives (`negative: phase: runtime`) stay unread on this lane (no exported tag; PR 7401's renderer).
+
+### Placement, removals, size
+
+- Catalog rows + one native list (`native-realm-catalog.ts`); kernel behaviors and prototype seeding in a new
+  `error-intrinsic-bodies.ts` beside `builtin-function-bodies.ts`; contracts in `native-source-objects.ts` (+3, −2);
+  requirements (`native-realm-requirements.ts`: families, payload binding); literals per held family.
+- IR: `dynamic-error-constructors.ts` (new); `dynamic-prototype-methods.ts` generalised to the realm's methods (one
+  more row); kinds / chains / member access lose the error kind (net negative); identifier-read +1 arm.
+- from-ast: +3 lines (one `case`, the `new` gate), offset by moving code out; ends ≤ base.
+- Estimate: src +600 / −250, tests ~700.
+
+### Test plan (node agreement + wrong twin each; A = abort, R = refusal)
+
+The brief's hazards, one test each: `e.constructor === TypeError` for realm-thrown (`o.x` on a null parameter) and
+program-made errors; `instanceof Error` across the family, `instanceof RangeError` false for a TypeError;
+`hasOwnProperty('message')` for none / `undefined` / `""`; a counting and a throwing message `toString`;
+`TypeError.prototype.name = "X"` then `String(e)`; an `Error.prototype.toString` override used by `"" + e`; `typeof`,
+`.length`, `.name`, `X.prototype.constructor`, `isPrototypeOf` between prototypes; `typeof undeclared`;
+`f(a(), undeclared)` (stays the refusal: pinned as such); `throw new TypeError("m")` caught and inspected;
+`Object.prototype.toString.call(e)`; `assert.throws(TypeError, …)` through the real harness, passing and failing
+(wrong constructor). R: `cause`, shadowed / assigned names, `e.stack`. A: value form,
+`F.prototype = Error; TypeError instanceof F`. Pins that move: M2 rows of m-refusals, x-dynamic-throw, o3, P1's error
+receiver, C2's caught-error rows.
+
+## Slice G1 result (2026-11-22, branch `claude/7354-g1`; P1 incl. its main merge pulled in at 71dbeb5d21)
+
+### Built (the plan; deviations below)
+
+- **Catalog** (`native-realm-catalog.ts`): rows for `%Error%`, the six NativeErrors, their prototypes and
+  `%Error.prototype.toString%`, each `heldWith` its constructor; `NATIVE_ERROR_CONSTRUCTORS`; one ordered list
+  `NATIVE_VALUE_INTRINSICS` (P1's three methods, the seven constructors, toString), whose index is the selector.
+- **What a realm holds** (`native-realm-requirements.ts`): `description.intrinsics` replaces P1's `prototypeMethods`;
+  the Error family is held where a `js.object.intrinsic` use names a member or any IR `try` binds its payload
+  (`heldErrorConstructors`); `heldCatalogRows` is the one answer to "which catalog rows does this realm hold", read by
+  the realm's literals (`native-realm-literals.ts`: the general rule, every family) and the public catalog issuer.
+- **Kernel**: family members are entries of behavior `native` (algorithm `unreachable`; constructors constructible;
+  a NativeError's [[Prototype]] field is `%Error%`'s singleton); the requirements carry their own properties and the
+  family's prototype objects (`native-realm-families.ts` reads them from the catalog; both fields absent for a realm
+  without a family, so such a realm's requirements are unchanged); `realm-family-bodies.ts` creates the prototypes in
+  the initializer, seeds the catalog properties, and builds `createError(message | null, selector)` (OrdinaryCreate,
+  the [[ErrorData]] bit 0x800, own `message` only when given).
+- **One error representation per program**: `createError` is reserved before the invocation substrate where the
+  family is held, and `__new_TypeError` (`native-errors.ts`) then delegates to it; elsewhere it keeps `$Error_struct`.
+- **Contracts**: `js.object.intrinsic` (replaces `js.object.prototype-method`, which is gone), `js.object.create-error`
+  (binds the kernel's), `js.object.error-to-string` (§20.5.3.4 over the kernel's [[Get]]; a cons of the parts),
+  `js.object.is-error` (now the bit); `js.object.error-field` is gone.
+- **IR**: the `error` kind and every row and arm of it are gone (`ERROR_FIELD`, `ERROR_OWN_KEYS`,
+  `ERROR_PROTOTYPE_KEYS`, the "error" ToString/ToNumber/`+`/member-access rows, the statics' and P1's error aborts, the
+  refused error writes); a caught value is the object kind. `identifier-read.ts` `realm-intrinsic`
+  (`realmIntrinsicRead`) → a front-end helper the legalization writes as `js.object.intrinsic`;
+  `dynamic-error-constructors.ts` (construction at the call / construct site, and `functionChainAnswer`, the premise
+  guard); `ordinary-to-primitive.ts` recognises Error.prototype.toString by identity; P1's call expansion has a fourth
+  row (`e.toString()`); `dyn.object_tag` tests the bit; V8's own keys refuse by name (`V8_ERROR_KEYS`).
+- **Front end**: from-ast 17346 → 17343 (base P1 tip): the identifier `case` (+2) is paid for by moving
+  `bindingHoldsDynamic`'s global test into `function-object-lowering.ts` (`readsDynamicGlobal`, which also answers the
+  realm intrinsic, so `new X`, `instanceof X` and conditional arms need no line of their own). `TypeError(m)` goes
+  through `lowerPreparedValueCallee`. The flow rule's exemption is `realmBuiltinOperand` (O1's, extended).
+
+### Deviations from the plan
+
+- **A program whose only function values are built-ins** (it names `TypeError` but creates no function expression):
+  the function kind is admitted (`holdsErrors`), but no dispatcher exists. ToPrimitive's call of a non-identity method
+  and `new` through a value are the run-time abort there (`builtinOnly`, `dynamicConstruct`'s `builtin` arm); any other
+  call through a value refuses by name as before. The function test uses the realm's own closure root
+  (`program-consumer.ts` reads it off the realm's inventory, which equals the source closures' where they exist), and
+  is constant false where the program has no closure root at all (a catch binding without a realm).
+- `js.object.intrinsic` stays in the `js.object` family (lead-approved).
+- The instanceof / isPrototypeOf guard is the `%Error%` abort (lead decision), stated in `dynamic-error-constructors.ts`.
+
+### Condition A — every producer of a thrown error, and its treatment where the family is held
+
+| producer | where | treatment |
+|---|---|---|
+| `__new_TypeError` (substrate) | kernel failures, descriptor defines (DefinePropertyOrThrow), the dispatcher's "Value is not callable", the legalization's `js.object.create-type-error` (nullish member access, strict PutValue, ToPrimitive, `new`/`instanceof` TypeErrors) | converted: delegates to `createError` |
+| program `new X(m)` / `X(m)` | source | `js.object.create-error` |
+| IR-level runtime `__new_TypeError` / `__new_ReferenceError` (from-ast TDZ guard, `throw-type-error.ts`, function-object-lowering's legacy call path) | source lowering | a program that reads a catch binding refuses any throw of a non-carrier value (`refuseUnadmittedThrows`); probes: TDZ, destructuring null, `in` on a number end at a refusal / abort body, never at a caught struct |
+| `vector-grow-store` null guard | argument vectors | throws a null payload, not an error (pre-existing; a null vector is an invariant failure) |
+| promise resolution's TypeError (`native-promises.ts`) | self-resolution | unreachable on this lane: no promise is a dynamic value and `Promise` is not held (C2 known limit); a program that could reach it needs a promise value first |
+| user `throw v` | source | the value itself |
+
+Where the family is **not** held no code reads an error: the trigger is any bound catch payload or any named family
+member, and a thrown value reaches a program only through a catch binding (promise reactions are not admitted).
+
+### Condition B — realm messages
+
+`e.message` of a realm TypeError was readable before G1 (the error kind's field) and reads the same text now. Texts
+that differ from V8's: "Value is not callable" (V8: "x is not a function"), "Value is not a constructor", "Cannot
+assign to read only property 'k' of object" (V8 adds the object). `Cannot read properties of null (reading 'x')`
+matches. A program comparing such a text disagrees with node on the base and on the head alike (probe
+`not-callable-msg`, both trees); test262 never compares a message text.
+
+### Not in G1: ReferenceError at GetValue
+
+An "unresolved" identifier on this path is often a standard global the path does not implement (`Array`, `Math`),
+and the TypeScript lib, which stands in for the list of globals, is not that list (`Iterator` is missing, DOM names are
+present): throwing a ReferenceError there would answer wrong. It needs a list of the standard globals; its own slice.
+
+### Found by the suites and the sample, fixed here
+
+- The three narrow fixes of the deviations above (no dispatcher: `builtinOnly` and `dynamicConstruct`'s built-in arm;
+  the function test without a closure root; the kernel's optional family fields).
+
+- **Strict `F.caller = 1` silently wrote an own property** (F1b's function write; JS throws: Function.prototype's
+  `caller` / `arguments` setter is %ThrowTypeError%). Unobservable while `assert.throws(TypeError, …)` could not run;
+  the sample's `13.2-19-b-3gs` turned it into a wrong-answer fail. Now a member write of either key on a value that may
+  be a function refuses by name (`FUNCTION_PROTOTYPE_ACCESSOR_KEYS`, from the catalog, beside Object.prototype's).
+  Base: the probe answered `none` where node throws; head: the named refusal (test in g1-refusals-and-aborts).
+
+### Found, not fixed (pre-existing on the base, measured there)
+
+- `const c = 1; c = 2;` throws out of `compile()` (`assignment to non-slot binding "c" — mutation pre-pass should have
+  detected it`), base and head.
+- A closure that writes a script `var` (`n++`, `s += 'a'` inside a function a value calls) ends at the run-time abort,
+  base and head (the G1 tests count through an object property instead).
+- `"" + new X()` (a `new` expression as a `+` operand) refuses (`'+' operands not provably … string/unprovable`): the
+  carrier analysis has no `new` leaf (C2's constructs too); through a variable it runs.
+- `tests/issue-7354-o-objects` "refuses what the later steps build" fails on the base too.
+
+### Proof (local node 22; base = main 111b28ceaa, P1 included, `git archive` copy)
+
+| test file (each alone, VITEST_MAX_FORKS=1, heap 2048) | tests | exit |
+|---|---:|---:|
+| issue-7354-g1-error-values (new) | 14 | 0 |
+| issue-7354-g1-refusals-and-aborts (new) | 14 | 0 |
+| issue-7354-g1-assert-throws (new, the real harness) | 5 | 0 |
+| m-refusals (M2 constructor/toString/write → node agreement; `stack` → by name; G45 `new TypeError` runs) | 43 | 0 |
+| c2-constructors (a built-in constructor runs), c2-this (a method on a caught error) | 19 / 18 | 0 |
+| p1-method-values (a caught error's own `message`), o1-create-and-define-properties, o2-object-values (`namesErrors`) | 20 / 17 / 13 | 0 |
+| t2-typeof-standard-globals, ty-typeof-comparisons (the Error names leave the refused list) | 20 / 61 | 0 |
+| m-prototype-premise (+4 routes from the family, each aborts) | 22 | 0 |
+| 3518 ordinary-object-callable-contracts (the new contracts), native-realm-requirements (count pin deleted, #7380), native-object-realm-declarations (held rows), native-builtin-functions | 61 / 25 / 21 / 36 | 0 |
+| every other issue-7354 file (51), 3518 object-realm-algorithm-bodies, 7363, 7331, prepared entry / runtime, 7188 (run before the three narrow fixes below; o3, f1b writes / objects, f1 function-kind and the G1 files re-run after them) | all | 0 |
+| 3518 native-invocation-substrate | 41 of 45 | 1 — the same 4 fail on the base |
+| 7354 o-objects | 12 of 13 | 1 — the same 1 fails on the base |
+
+- **Probes** (433 programs, each against node in a fresh realm, wrong twin for every OK; 160 generated G1 programs
+  — 7 constructors × 8 messages × new/call, the constructors as values, the realm's TypeError in 8 contexts,
+  Error.prototype.toString over 9 name/message pairs, rethrows, writes — P1's 216 regression probes, 57 hand ones),
+  base → head: REFUSED→OK 186, OK→OK 123, ABORT→ABORT 68, REFUSED→REFUSED 44, REFUSED→ABORT 6, ABORT→OK 4,
+  EXC→EXC 1, REFUSED→WRONG 1. Nothing right became anything else; 0 invalid Wasm; 0 twin failures. The one WRONG is
+  `e.message` of the dispatcher's "Value is not callable" (Condition B: the same text on the base); the EXC is the
+  pre-existing const assignment. REFUSED→ABORT: the three designed aborts, a closure writing a script var, and two
+  functions whose refusal is their abort body (destructuring, `in`).
+- **`check:prepared-bytes`** (804 rows) base vs head: **801 identical**. 3 differ, each a program that binds a catch
+  payload (so the realm holds Error + TypeError + toString); run on both trees with the same outcome: row 445
+  (`f(3)` = 6 both; 23,295 → 27,593 B), 532 (returns both; 23,684 → 26,099 B), 533 (returns both; 23,412 → 25,827 B).
+  Every program naming no family member and binding no catch payload is byte-identical (the realm literals follow
+  the held rows; the kernel requirements carry no family field).
+- **Ordinary pipeline**: 20 test262 files (Error.prototype.toString, NativeErrors, Error, instanceof, try) × default
+  and standalone: 40/40 identical.
+- **Prelude** (strict entry, runner options, 3 compiles each, load ~2.5): prelude + `assert(true);` base 77,429 B
+  (sha e23f5dca…, as P1 recorded) 5.2–7.7 s → head 81,397 B (+3,968 B, +5.1 %: the harness binds `thrown`) 5.0–6.4 s;
+  prelude + one `assert.throws(TypeError, …)` row: base refused (`TypeError` not in scope) → head 81,986 B, 4.8–5.2 s.
+
+### Sample (411 rows, the real runner, default settings; both trees run here)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| base (main 111b28ceaa) | 61 | 19 | 331 |
+| G1 | **71** | 27 | 313 |
+
+- New passes (10): Object/create 15.2.3.5-1-1, -4-43; Object/defineProperty 15.2.3.6-1-3, -3-199, -4-17, -4-20,
+  -4-379, -4-436, -4-493, -4-508 — every one stopped at `TypeError` / `SyntaxError` not in scope. 16 mutated twins next
+  to the originals (`assert.throws(TypeError` → `RangeError` where present; the last `assert.sameValue`'s expected
+  value flipped) all FAIL in the same run, the 10 originals pass; twins deleted, directory mtimes restored,
+  `find test262 -newer marker` empty, no `*g1twin*` left.
+- New fails (8), all run-time aborts in a function the path cannot lower (Function.prototype's `caller` read and,
+  after the fix above, write; `JSON`; `arguments`; a compound member write; a nested statement) or a getter call (O2,
+  11.13.1-2-s). No row that passed or failed on the base changed.
+- Top compile errors now: `formatIdentityFreeValue … is written` 73, `Array` 46, module-init nested var 22, `String`
+  14 + 13, RegExp 14, `Object` 8; no Error-family name is left among them.
+
+### Not verified
+
+- Node 25 (not installed); no adversarial review agent was run (the lead holds the PR).
+- The full 3526/3518 pin suites beyond the files listed; the ordinary pipeline beyond the 20 files.
+
+### Review r1 (PR 7411): fixes
+
+1. **B1, one predicate.** The IR's "names an Error constructor" (`source-plain-objects.ts` `namesErrors`) and the
+   realm's "holds the family" were two spellings of one question and disagreed: a parameter, local, label, function
+   expression name or shorthand spelled `TypeError` made the IR admit the family while the realm held none, and
+   `compile()` threw `missing literal "Error"`. Now `namesErrors` asks the same pristine test the read asks
+   (`pristineBuiltinGlobal`), and the realm derives the family only from what the IR emitted
+   (`heldErrorConstructors`: a family `js.object.intrinsic`, `create-error` / `error-to-string`, or a bound catch
+   payload) — it no longer reads the IR's answer at all. Tests: `g1-spelled-names` pairs each shape (parameter, local
+   var, label, function-expression name, shorthand, catch binding `Error`, object key, a catch in a function the path
+   cannot lower) with every family consumer (`String()`, `+` both sides, `instanceof`, a caught value), node + twin.
+2. **S1.** A script-level `var X;` without an initializer, X a global the realm serves (`REALM_GLOBAL_NAMES`: the
+   catalog's plain-name aliases), reads the built-in in JS (the var binds the existing global property) but the IR's
+   undefined slot here: a wrong value. It refuses by name (`scriptVarOfRealmGlobal`, checked once in the legalization's
+   module-init group). With an initializer the var replaces the built-in where it runs, which the path lowers right, so
+   it stays admitted. Known limit, pre-existing: a read of such an initialized var before its initializer runs.
+3. **import-cycles.** The IR reads the catalog only through `builtin-prototype-keys.ts` (`errorConstructorId`,
+   `errorConstructorSelector`, `realmIntrinsicSelector`, `objectPrototypeMethodId`, …); `native-realm-families.ts`
+   takes the held rows instead of importing the IR. No `import-cycles-allow`.
+4. Nits: the stale `prototypeMethodSelector` comment is gone with the function; `kernelGetInto`
+   (`source-object-bodies.ts`) is the one [[Get]]-and-status-check, used by `buildSourceObjectGetDefinition` (same
+   bytes) and by Error.prototype.toString's `part`.
+
+Verified after r1 (main 9dfb1252a7 merged, H2 included):
+
+- Reviewer probes `.tmp/rvg1/b*.json` (443), pre-r1 head 1ab908ba02 → head: OK→OK 177, REFUSED→REFUSED 150,
+  ABORT→ABORT 69, WRONG→REFUSED 16 and EXC→REFUSED 3 (bare script vars, by name), EXC→OK 11 (every B1 program now
+  node's answer), EXC→ABORT 2 (`finally-order`: the base aborts too), REFUSED→OK 1 / REFUSED→ABORT 1 (`sub-proto-create`
+  / `sub-call`: H2 admits the written function declaration; `Error.call(this, m)` is the designed `.call` abort).
+  Nothing right changed; no WRONG, INVALID or EXC left.
+- The 433 G1 probes: the same transitions against base 111b28ceaa as before r1, except
+  `r:read.fn.constructor` ABORT → a refusal by name (main's H2). The one WRONG is still Condition B's message text.
+- Tests (each alone): the four g1 files (5/14/14/17), every moved pin and every 7354 c2/f1/f1b/fa/h2/m/o1/o2/p1/t2/ty
+  file, 3518 realm-requirements / object-realm-declarations / callable-contracts / builtin-functions /
+  compiler-boundaries: all exit 0.
+- `check:prepared-bytes` vs main 9dfb1252a7: 801/804 identical; the same 3 catch-payload rows as before (445, 532,
+  533), byte-identical to the pre-r1 head. Prelude + `assert(true);` and + `assert.throws`: same sha at pre-r1 and head.
+  Ordinary pipeline, 20 files × 2 targets: identical to main.
+- Sample not re-run: r1 changes only programs with an Error-spelled non-global name or a bare script var of a realm
+  global; none of the 411 rows has either (grep), and the prelude compiles to the same bytes.
+
+### Share the immutable string/value inventory across planners
+
+Each collector call traverses both prepared views and records every instruction occurrence. Several planners hold these records at the same time. Reuse one inventory per producer-issued immutable program and selected projection through the existing settled-check mechanism. Custom descriptive inputs always take a fresh traversal. A host prototype change also requires a fresh traversal because an inherited getter or mutable value can change what the compiler observes. Mutable inputs must be traversed again and foreign projections must still fail. Keep enumeration order, allocation evidence, and the runtime emission interface intact.
+
+A focused standalone integration comparison on 2026-11-25 exercised ES5 15.2.3.6-4-299-1.js with the original harness. With the nested-declaration candidate, the standard 512 MiB worker exhausted its heap on both attempts. With inventory reuse, the same worker limit produced a verified IR pass. The integration candidate also includes declaration and arguments support, so this result alone does not establish a main-branch test262 score change.
+
 ## Slice O2 plan (2026-11-22, branch `claude/7354-o2` from `claude/7354-p1` eb98b057ec)
 
 Accessor properties on the Prepared path: the realm calls a source getter / setter.

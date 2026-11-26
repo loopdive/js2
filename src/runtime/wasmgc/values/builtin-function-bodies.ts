@@ -13,8 +13,10 @@ import {
   BUILTIN_FUNCTION_INITIAL_NAME_FIELD,
 } from "./builtin-function-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { realmFamilyAllocation, realmFamilySeed, type RealmFamilyOperands } from "./realm-family-bodies.js";
 
 export interface BuiltinFunctionEntryOperands {
+  readonly id: string;
   readonly typeIdx: number;
   /** The closure metadata type this carrier extends; `match` excludes its subtypes from the source arm. */
   readonly metadataTypeIdx: number;
@@ -26,10 +28,19 @@ export interface BuiltinFunctionEntryOperands {
   readonly initialName: readonly Instr[];
   readonly initialLength: number;
   readonly userFormalCount: number;
-  /** (#7354 P1) An `object-prototype-method` is a data property of the realm's Object.prototype. */
-  readonly behavior: "function-prototype" | "throw-type-error" | "object-prototype-method";
+  /**
+   * (#7354 P1) An `object-prototype-method` is a data property of the realm's Object.prototype; (#7354 G1) a `native`
+   * family member's holder is in its family's property lists.
+   */
+  readonly behavior: "function-prototype" | "throw-type-error" | "object-prototype-method" | "native";
+  /** `object-prototype`, `function-prototype`, or (#7354 G1) an earlier entry's id. */
+  readonly prototype: string;
+  readonly properties: RealmFamilyOperands["entries"][number]["properties"];
 }
-export interface BuiltinFunctionBodyOperands {
+export interface BuiltinFunctionBodyOperands extends Pick<
+  RealmFamilyOperands,
+  "createWithPrototype" | "text" | "objects"
+> {
   readonly rootTypeIdx: number;
   readonly realmTypeIdx: number;
   readonly objectTypeIdx: number;
@@ -188,6 +199,16 @@ export function buildFunctionLengthNameSeed(
     { op: "drop" },
   ];
 }
+/**
+ * An entry's [[Prototype]]: Object.prototype for %Function.prototype%, %Function.prototype% for every other one but
+ * (#7354 G1) a family member linked to an earlier entry (a NativeError constructor to %Error%).
+ */
+function entryPrototype(d: BuiltinFunctionBodyOperands, entry: BuiltinFunctionEntryOperands): Instr[] {
+  if (entry.behavior === "function-prototype") return [global(d.objectPrototype)];
+  const linked =
+    entry.prototype === "function-prototype" ? d.entries[0] : d.entries.find(({ id }) => id === entry.prototype);
+  return [global(linked!.singleton), { op: "extern.convert_any" }];
+}
 export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
   const allocate: Instr[] = [
     { op: "struct.new", typeIdx: d.realmTypeIdx },
@@ -200,15 +221,15 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       call(d.createNull),
       { op: "i32.const", value: 0 },
       { op: "i32.const", value: entry.metadataId },
-      ...(entry.behavior === "function-prototype"
-        ? [global(d.objectPrototype)]
-        : [global(d.entries[0]!.singleton), { op: "extern.convert_any" } as Instr]),
+      ...entryPrototype(d, entry),
       global(d.realm),
       { op: "ref.as_non_null" },
       ...structuredClone(entry.initialName),
       { op: "struct.new", typeIdx: entry.typeIdx },
       { op: "global.set", index: entry.singleton },
     ]),
+    // (#7354 G1) The held families' prototype objects, once every entry they hold exists.
+    ...realmFamilyAllocation(d),
   ];
   const seed: Instr[] = d.entries.flatMap((entry) => {
     const bag = (): Instr[] => [
@@ -267,7 +288,13 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       // A standard try_table, as every guard on this regime: V8 refuses a module that mixes it with a legacy try.
       buildStandardTryTable(
         { kind: "empty" },
-        [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
+        [
+          ...allocate,
+          ...seed,
+          ...realmFamilySeed(d),
+          { op: "i32.const", value: 2 },
+          { op: "global.set", index: d.state },
+        ],
         [
           {
             kind: "catch",
@@ -317,7 +344,8 @@ export function buildBuiltinFunctionLiftedDefinition(
 /**
  * %Function.prototype% answers `undefined`, %ThrowTypeError% throws its TypeError; (#7354 P1) an Object.prototype
  * method called through a value is the run-time abort: its algorithm needs the program's ToPropertyKey, so the
- * Prepared path writes it where a call reads the method (`dynamic-prototype-methods.ts`).
+ * Prepared path writes it where a call reads the method (`dynamic-prototype-methods.ts`); (#7354 G1) so is a family
+ * member (an Error constructor's ToString(message) is the program's, `dynamic-error-constructors.ts`).
  */
 export function buildBuiltinFunctionAlgorithmDefinition(
   d: BuiltinFunctionBodyOperands,

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { AMBIENT_TYPEOF_TAGS } from "../src/ir/ambient-typeof.js";
+import { NATIVE_ERROR_CONSTRUCTORS } from "../src/runtime/contracts/native-realm-catalog.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -343,7 +344,11 @@ describe("#7354 Ty — typeof of an absent global on the Prepared path", () => {
 
   // (#7354 T) A standard global is never absent: whether or not this path provides it yet, `typeof` refuses it by
   // name rather than answer "undefined" (node answers its real type).
-  it.each(Object.keys(AMBIENT_TYPEOF_TAGS))("refuses typeof of the standard global %s by name", async (name) => {
+  // (#7354 G1) but an Error constructor, which the realm holds as a value (tests/issue-7354-t2-typeof-standard-globals).
+  const unprovided = Object.keys(AMBIENT_TYPEOF_TAGS).filter(
+    (name) => !(NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name),
+  );
+  it.each(unprovided)("refuses typeof of the standard global %s by name", async (name) => {
     expect(await refusal(`if (typeof ${name} !== "undefined") throw 1;`)).toContain(
       `identifier "${name}" is not in scope`,
     );

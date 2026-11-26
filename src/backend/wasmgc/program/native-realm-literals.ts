@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
   assertNativeRealmRequirementsIssued,
+  heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { IrStringEncoding } from "../../../ir/core/string-types.js";
@@ -30,7 +31,6 @@ export function planNativeRealmLiterals(
   if (typeof utf8Storage !== "boolean") fail("invalid encoding selection");
   const prior = cache.get(requirements)?.get(utf8Storage);
   if (prior) return prior;
-  const catalog = requirements.description.catalog;
   const texts = [
     ...new Set([
       "TypeError",
@@ -38,7 +38,8 @@ export function planNativeRealmLiterals(
       ...NATIVE_BUILTIN_FUNCTION_LITERALS,
       ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
       ...nativeSourceObjectLiterals(requirements.description.objectUses.map((use) => use.feature)),
-      ...catalog.intrinsics.flatMap((row) => [
+      // (#7354 G1) Only the rows the realm holds: a family the program never reaches adds no string to it.
+      ...heldCatalogRows(requirements.description).flatMap((row) => [
         ...(row.callable ? [row.callable.initialName] : []),
         ...row.properties.flatMap((property) => [
           ...(property.key.kind === "string" ? [property.key.value] : []),

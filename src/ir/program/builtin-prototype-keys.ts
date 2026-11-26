@@ -11,8 +11,9 @@
  * are listed here from the specification.
  */
 import {
-  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_REALM_CATALOG,
+  NATIVE_VALUE_INTRINSICS,
   realmMethodId,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
@@ -52,9 +53,38 @@ export function nativeObjectStatic(
 export const nativeObjectPrototypeMethod = (name: string): NativeObjectPrototypeMethod | undefined =>
   nativeLength("Object.prototype", name) === undefined ? undefined : (name as NativeObjectPrototypeMethod);
 
-/** (#7354 P1) The realm's selector of a native Object.prototype method (`js.object.prototype-method`). */
-export const prototypeMethodSelector = (name: NativeObjectPrototypeMethod): number =>
-  NATIVE_OBJECT_PROTOTYPE_METHODS.indexOf(name);
+/** (#7354 P1) The catalog id of the native Object.prototype method `name`. */
+export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): string =>
+  realmMethodId("Object.prototype", name);
+
+/** (#7354 G1) The catalog ids of `%Error%` and of `Error.prototype.toString`. */
+export const ERROR_ID = "%Error%";
+export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
+
+/**
+ * (#7354 G1) The catalog id of the Error constructor `name` names (`NATIVE_ERROR_CONSTRUCTORS`), if it names one: the
+ * IR's one read of which global names are the realm's Error constructors.
+ */
+export const errorConstructorId = (name: string): string | undefined =>
+  (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined;
+
+/** (#7354 G1) The Error constructor `id`'s selector (`js.object.create-error`), or -1. */
+export const errorConstructorSelector = (id: string): number =>
+  NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
+
+/** (#7354 G1) The Error constructor's name a `js.object.create-error` selector stands for. */
+export const errorConstructorName = (selector: number): string => NATIVE_ERROR_CONSTRUCTORS[selector]!;
+
+/**
+ * (#7354 G1) The global names the realm serves a built-in for (`Object`, `Function`, the Error constructors): the
+ * catalog's plain-name aliases.
+ */
+export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),
+);
+
+/** (#7354 P1, G1) The realm's selector of the built-in function object `id` (`js.object.intrinsic`). */
+export const realmIntrinsicSelector = (id: string): number => NATIVE_VALUE_INTRINSICS.indexOf(id);
 
 /** The string keys the catalog gives the named intrinsics (Annex B members included). */
 export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet<string> {
@@ -64,10 +94,17 @@ export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet
 /** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
 export const OBJECT_PROTOTYPE_KEYS = realmStringKeys("%Object.prototype%");
 
+const accessorKeys = (...intrinsicIds: readonly string[]): ReadonlySet<string> =>
+  stringKeys(propertiesOf(intrinsicIds).filter((property) => property.kind === "accessor"));
+
 /** (#7354 M1, C6) The string keys `Object.prototype` holds as accessor properties (Annex B.2.2.1 `__proto__`). */
-export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = stringKeys(
-  propertiesOf(["%Object.prototype%"]).filter((property) => property.kind === "accessor"),
-);
+export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%");
+
+/**
+ * (#7354 G1) The accessor keys `Function.prototype` adds on a function's chain: `caller` and `arguments`, whose
+ * setter is %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties).
+ */
+export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [

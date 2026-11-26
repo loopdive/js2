@@ -4,6 +4,7 @@
 // sub-checks (the realm costs ~20 s per compile, so sub-checks are batched); node evaluates the same source for the
 // answer, and the Prepared program asserts it: once with node's answer (must return) and once with a wrong one (must
 // throw), so a check that cannot fail is caught.
+import { runInNewContext } from "node:vm";
 import { expect, vi } from "vitest";
 import * as gc from "../../src/codegen/index.js";
 import * as linear from "../../src/codegen-linear/index.js";
@@ -106,13 +107,20 @@ export async function abortsAtRunTime(
 /** node's `out` for `body` (a script that assigns the string `out`). */
 export const nodeOut = (body: string): string => String(new Function(`${body}\nreturn out;`)());
 
-/** `body`'s `out` equals node's, and a program asserting a wrong `out` throws. */
+/**
+ * (#7354 G1) node's `out` for `body` in a fresh realm: for a program that writes a built-in (`TypeError.prototype.name
+ * = …`), which must reach neither this worker nor a later program.
+ */
+export const freshRealmOut = (body: string): string => String(runInNewContext(`${body}\n;String(out);`, {}));
+
+/** `body`'s `out` equals node's (`node`), and a program asserting a wrong `out` throws. */
 export async function agreesWithNode(
   body: string,
   withWrong = true,
   options: Test262CompileOptions = preparedOptions(),
+  node: (body: string) => string = nodeOut,
 ): Promise<void> {
-  const expected = nodeOut(body);
+  const expected = node(body);
   const asserting = (answer: string) => `${body}\nif (out !== ${JSON.stringify(answer)}) throw 1;`;
   expect(await runPrepared(asserting(expected), options)).toBe("returned");
   if (withWrong) expect(await runPrepared(asserting(`${expected}!`), options)).toBe("threw");
