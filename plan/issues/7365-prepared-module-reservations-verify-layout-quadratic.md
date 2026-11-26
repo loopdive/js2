@@ -1,10 +1,10 @@
 ---
 id: 7365
 title: "Prepared: PhysicalModuleReservations re-audits every reservation on each query and fill (quadratic compile time)"
-status: in-progress
+status: wont-fix
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
 priority: high
 horizon: m
 feasibility: medium
@@ -353,3 +353,13 @@ the reproduction notes:
 - **Open review threads:** RV7365Bb blocker (above), and its two nits: the
   read-parity test in `issue-7365-filling-query-private-state`, and the
   double phase check in `physicalIndices`.
+
+## Superseded (2026-11-26)
+
+Closed as superseded by #7354 Perf3–Perf6, merged to main on 2026-11-21/22. On
+main 6694a8b839, the full-prelude program (source sha1 c70fb78b, S1's `t3.mts`)
+compiles in 3.6–4.2 s, peak RSS about 580 MB, and the output runs. On
+2026-11-20 it took 1,002 s (base) and 475 s with #7436. Perf6 checks a native
+string plan as issued instead of re-planning it for each literal, which removes
+the per-literal re-derivation measured above. No PR was opened from this
+branch.
