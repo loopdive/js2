@@ -12411,6 +12411,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/ambient-declarations.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "AST-only test for an ambient (declare / .d.ts) declaration, shared by the unit inventory and the Prepared select refusals (#7500); moves with the AST inventory to frontend/ts."
+    },
+    {
       "path": "src/ir/ambient-global-function-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
