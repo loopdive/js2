@@ -3,7 +3,8 @@
 // #7364 — constructs the Prepared path has no provider for refuse by name at the build stage instead of throwing
 // an invariant out of `compile()`. The Prepared producer has no selector, so the builder meets the selector's own
 // rule where the value is built: a RegExp literal on a lane with neither the host constructor nor its in-module
-// engine, and an `Object.defineProperty` the `Object` statics table did not admit.
+// engine. (#7354 O1) The second case was an `Object.defineProperty` the `Object` statics table did not admit; O1
+// (PR #7397, ff383bdf5e) gives the Prepared path that static, so the program now compiles.
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { analyzeSource } from "../src/checker/index.js";
@@ -43,16 +44,13 @@ describe("#7364 — Prepared-path refusals instead of invariant crashes", () => 
     ]);
   });
 
-  it("refuses an unadmitted Object.defineProperty by the selector's code", async () => {
+  // (#7354 O1) Object.defineProperty is now an admitted Object static on the Prepared path; its behaviour is pinned
+  // by tests/issue-7354-o1-define-property.test.ts. What stays here is that the program no longer refuses.
+  it("compiles an Object.defineProperty the Object statics table now admits", async () => {
     const source = 'function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); }\nf();';
     const result = await compile(source, options(), undefined, "refuse");
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => [error.code, error.message])).toEqual([
-      [
-        "call-resolution-unsupported",
-        expect.stringContaining("Object.defineProperty is not an admitted Object static"),
-      ],
-    ]);
+    expect(result.errors).toEqual([]);
+    expect(result.success).toBe(true);
   });
 });
 

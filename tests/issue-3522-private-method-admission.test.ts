@@ -210,7 +210,7 @@ const NEGATIVE_PRIVATE_ACCESSOR = `class Animal {
 }
 export function run(): number { return new Animal().reveal(); }
 `;
-const NEGATIVE_STATIC_PRIVATE = `class Animal {
+const STATIC_PRIVATE = `class Animal {
   #a: number = 1;
   static #make(): number { return 7; }
   reveal(): number { return this.#a; }
@@ -361,11 +361,6 @@ describe("#3522 W1-A negative controls keep their pre-slice verdict", () => {
   const negatives: readonly (readonly [string, string, string, string])[] = [
     // [label, source, refused display name, refusal code]
     ["private accessor", NEGATIVE_PRIVATE_ACCESSOR, "Animal_get___priv_hidden", "class-method"],
-    // The VERDICT is unchanged (refused, direct body). The reason code moves
-    // from `class-method` to `class-member-unsupported` because the name is now
-    // representable and the missing STATIC descriptor is the true reason — the
-    // static defer in `buildIrClassShapes` is what still refuses it.
-    ["static private method", NEGATIVE_STATIC_PRIVATE, "Animal___priv_make", "class-member-unsupported"],
     ["generator method", NEGATIVE_GENERATOR, "Animal_gen", "class-member-unsupported"],
     ["computed-name method", NEGATIVE_COMPUTED, "Animal_<computed>", "class-method"],
   ];
@@ -379,6 +374,17 @@ describe("#3522 W1-A negative controls keep their pre-slice verdict", () => {
       expectDirectOwned(result, [displayName]);
     },
   );
+
+  // The static private method was a negative control here: refused by the
+  // static defer in `buildIrClassShapes`. (#7227, PR #7054, bc2fb7f8ca)
+  // admitted private static methods into the IR class-member family, so it is
+  // now emitted, and the program still runs.
+  it.each(TARGETS)("emits the static private method #7227 admitted on %s", async (target) => {
+    const result = await compilePlain(STATIC_PRIVATE, `w1a-static-private-${target}.ts`, target);
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(outcomeCode(result, "Animal___priv_make")).toBe("emitted");
+    expect((await instantiate(result)).run!()).toBe(1);
+  });
 
   it.each(TARGETS)("leaves object-literal members untouched on %s", async (target) => {
     // `memberBaseName` is shared with `objectMemberDisplayName`. An object
@@ -428,38 +434,39 @@ describe("#3522 W1-A negative controls keep their pre-slice verdict", () => {
   });
 });
 
-describe("#3522 W1-A the A1 (`any` class position) arm must not move", () => {
+describe("#3522 W1-A the private method of an `any`-typed class stays refused", () => {
   // `tests/dogfood/corpus/classes.js` is the census entry that carries the
-  // private method. Its two classes take `any`-typed constructor parameters, so
-  // they never enter the class-shape sidecar — the A1 arm, which this slice
-  // deliberately does NOT touch (it is the `any`-carrier lane's, #5289/#3523).
+  // private method. Its two classes take `any`-typed constructor parameters.
+  // When W1-A landed they never entered the class-shape sidecar (the A1 arm),
+  // so every member sat on `class-projection-unsupported` /
+  // `class-member-unsupported`, and the private method reached the same arm.
   //
-  // Consequence, stated so it cannot be mistaken for a regression: on THIS file
-  // the private method does not reach `emitted`. Admitting the name moves the
-  // row from `class-method` to `class-member-unsupported` — the same
-  // missing-descriptor arm its six siblings already sit on — because A2 was
-  // merely the FIRST stamp on a member that is A1-blocked underneath. The six
-  // A1 rows and the module-init row are unchanged, and the emitted binary is
-  // byte-identical to base on both lanes.
+  // (#7223, PR #7049, da938d078a) The class-shape builder now projects
+  // `any`-typed members as dynamic, so these classes DO enter the sidecar, as
+  // that issue planned (its census: `class-projection-unsupported` falls,
+  // `param-type-not-resolvable` rises). Each member is now refused one step
+  // later, by its unresolvable `any` parameter or return type. What W1-A pins
+  // still holds: the private method is named, it is still refused (by A1's
+  // `any` typing, not by A2's name), and the class-member population is 7.
   const CENSUS_FILE = "tests/dogfood/corpus/classes.js";
 
-  it.each(TARGETS)("keeps every classes.js row on its pre-slice arm on %s", async (target) => {
+  it.each(TARGETS)("keeps every classes.js row refused on %s", async (target) => {
     const source = readFileSync(CENSUS_FILE, "utf-8");
     const result = await compilePlain(source, CENSUS_FILE, target);
     expect(result.success).toBe(true);
 
-    expect(outcomeCode(result, "Animal_new")).toBe("class-projection-unsupported");
-    expect(outcomeCode(result, "Dog_new")).toBe("class-projection-unsupported");
-    expect(outcomeCode(result, "Animal_get_label")).toBe("class-member-unsupported");
-    expect(outcomeCode(result, "Animal_set_label")).toBe("class-member-unsupported");
-    expect(outcomeCode(result, "Animal_make")).toBe("class-member-unsupported");
-    expect(outcomeCode(result, "Dog_speak")).toBe("class-member-unsupported");
+    expect(outcomeCode(result, "Animal_new")).toBe("param-type-not-resolvable");
+    expect(outcomeCode(result, "Dog_new")).toBe("param-type-not-resolvable");
+    expect(outcomeCode(result, "Animal_get_label")).toBe("return-type-not-resolvable");
+    expect(outcomeCode(result, "Animal_set_label")).toBe("param-type-not-resolvable");
+    expect(outcomeCode(result, "Animal_make")).toBe("return-type-not-resolvable");
+    expect(outcomeCode(result, "Dog_speak")).toBe("return-type-not-resolvable");
     expect(outcomeCode(result, "<module-init>")).toBe("static-class-initialization");
 
-    // The one row this slice moves: it is named, and it is still refused —
-    // by A1, not by A2.
+    // The row this slice moved: it is named, and it is still refused — by
+    // the `any` typing, not by its private name.
     expect(displayNames(result)).not.toContain("Animal_<computed>");
-    expect(outcomeCode(result, "Animal___priv_privateMethod")).toBe("class-member-unsupported");
+    expect(outcomeCode(result, "Animal___priv_privateMethod")).toBe("return-type-not-resolvable");
     expect((result.irOutcomes ?? []).filter((row) => row.unitKind === "class-member")).toHaveLength(7);
   });
 });

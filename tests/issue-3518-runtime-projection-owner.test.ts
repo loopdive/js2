@@ -110,6 +110,19 @@ function changeClock(change: (body: readonly IrInstr[]) => readonly IrInstr[]): 
   };
 }
 
+/** A mutable rebuild of prepared data: the same values under new identities, for `freezePreparedIrValue` to copy. */
+function thaw(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(thaw);
+  const tag = Object.prototype.toString.call(value);
+  if (value instanceof Map || tag === "[object FrozenMap]")
+    return new Map([...(value as Iterable<[unknown, unknown]>)].map(([key, item]) => [thaw(key), thaw(item)]));
+  if (value instanceof Set || tag === "[object FrozenSet]") return new Set([...(value as Iterable<unknown>)].map(thaw));
+  const copy = Object.create(Object.getPrototypeOf(value)) as Record<PropertyKey, unknown>;
+  for (const key of Reflect.ownKeys(value)) copy[key] = thaw((value as Record<PropertyKey, unknown>)[key]);
+  return copy;
+}
+
 describe("canonical whole-program runtime projection owners", () => {
   it("forwards manifest producer and projection validators by identity", () => {
     expect(oldManifest.prepareWholeProgramRuntimeManifest).toBe(manifest.prepareWholeProgramRuntimeManifest);
@@ -223,7 +236,10 @@ describe("canonical whole-program runtime projection owners", () => {
   it("authenticates async attachment identity after exact data reconstruction", () => {
     const runtime = asyncProgram.runtime[0]!;
     expect(() => projection.assertPreparedIrRuntimeProjection(asyncProgram, runtime)).not.toThrow();
-    const copied = freezePreparedIrValue(runtime) as typeof runtime;
+    // (#7354 Perf6, effbcccab7) freezePreparedIrValue returns its own frozen copies unchanged, so the reconstruction
+    // starts from a thawed rebuild: equal data, new identities.
+    const copied = freezePreparedIrValue(thaw(runtime)) as typeof runtime;
+    expect(copied).not.toBe(runtime);
     expect(copied).toEqual(runtime);
     expect(() => projection.assertPreparedIrRuntimeProjection(asyncProgram, copied)).toThrowError(
       new Error("IR async runtime attachment for main does not retain its exact semantic plan owner"),
