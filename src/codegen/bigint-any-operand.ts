@@ -152,8 +152,9 @@ export function emitMaybeBigIntComparison(
   ];
   const wideConstant = wideBigIntConstantOf(ctx, fctx, bigintOnLeft ? expr.left : expr.right);
   let anyLocal: number;
-  let bigLocal: number | undefined;
   let side: BigIntSide;
+  /** Temps to release besides `anyLocal`. */
+  const temps: number[] = [];
   if (wideConstant !== undefined) {
     // A constant has no effects: only the other operand is evaluated.
     anyLocal = allocTempLocal(fctx, EXTERNREF);
@@ -168,7 +169,9 @@ export function emitMaybeBigIntComparison(
   } else {
     const operands = compileOperandLocals(ctx, fctx, expr, bigintOnLeft);
     if (operands === null) return null;
-    ({ anyLocal, bigLocal } = operands);
+    const { bigLocal } = operands;
+    anyLocal = operands.anyLocal;
+    temps.push(bigLocal);
     side = {
       asNumber: [{ op: "local.get", index: bigLocal }, { op: "f64.convert_i64_s" }],
       againstBigInt: () => [
@@ -217,8 +220,7 @@ export function emitMaybeBigIntComparison(
     { op: "call", funcIdx: ctx.funcMap.get("__typeof_bigint")! },
     { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: side.againstBigInt(), else: notBigInt },
   );
-  if (bigLocal !== undefined) releaseTempLocal(fctx, bigLocal);
-  releaseTempLocal(fctx, anyLocal);
+  for (const temp of [...temps, anyLocal]) releaseTempLocal(fctx, temp);
   return { kind: "i32" };
 }
 
