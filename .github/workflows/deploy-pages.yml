@@ -139,9 +139,10 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           // IR_MEASUREMENT_FETCH_START
-          import { execFileSync } from 'node:child_process';
+          // One transient 5xx must not fail the deploy (run 45822055293, #7551).
+          import { ghWithRetry } from './scripts/lib/gh-api-retry.mjs';
           import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-          const api = path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8' }));
+          const api = path => JSON.parse(ghWithRetry(['api', path]));
           const repository = process.env.GITHUB_REPOSITORY;
           const artifacts = [];
           for (let page = 1; ; page++) {
@@ -175,7 +176,7 @@ jobs:
             if (producers.length !== 1 || producers[0].status !== 'completed' || producers[0].conclusion !== 'success') continue;
             const directory = `.ir-measurement-download/${artifact.id}`;
             mkdirSync(directory, { recursive: true });
-            execFileSync('gh', ['run', 'download', String(execution.id), '--repo', repository,
+            ghWithRetry(['run', 'download', String(execution.id), '--repo', repository,
               '--name', 'test262-ir-standalone-measurement', '--dir', directory]);
             const report = JSON.parse(readFileSync(`${directory}/test262-standalone-ir-report.json`, 'utf8'));
             if (report.compilerPath !== 'ir' || report.requestedCompilerPath !== 'ir' ||

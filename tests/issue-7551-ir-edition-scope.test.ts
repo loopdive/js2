@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { GH_RETRY_DELAYS_SECONDS, ghWithRetry } from "../scripts/lib/gh-api-retry.mjs";
 import {
   buildReport,
   compareEditionRuns,
@@ -157,6 +158,42 @@ describe("#7551 baseline resolution", () => {
 
   it("returns null when nothing on the lineage was measured", () => {
     expect(nearestBaseline(["a", "b"], [art(1, "elsewhere", "2026-11-26T00:00:00Z")])).toBeNull();
+  });
+});
+
+describe("#7551 gh calls survive one transient GitHub error", () => {
+  const failure = (stderr: string) => Object.assign(new Error("Command failed: gh api x"), { stderr });
+  const scripted = (outcomes: (string | Error)[]) => {
+    const calls: string[][] = [];
+    const exec = (_: string, args: string[]) => {
+      calls.push(args);
+      const next = outcomes.shift();
+      if (next instanceof Error) throw next;
+      return next!;
+    };
+    return { calls, exec };
+  };
+
+  it("retries an HTTP 5xx or a network failure with backoff, then returns the success", () => {
+    const { calls, exec } = scripted([
+      failure("HTTP 502: Bad Gateway"),
+      failure("read: connection reset by peer"),
+      "ok",
+    ]);
+    const slept: number[] = [];
+    expect(ghWithRetry(["api", "x"], { exec, sleep: (s: number) => slept.push(s), log: () => {} })).toBe("ok");
+    expect(calls).toHaveLength(3);
+    expect(slept).toEqual(GH_RETRY_DELAYS_SECONDS.slice(0, 2));
+  });
+
+  it("fails at once on an HTTP 4xx, and after the last retry on a persistent 5xx", () => {
+    const notFound = scripted([failure("HTTP 404: Not Found"), "never"]);
+    expect(() => ghWithRetry(["api", "x"], { exec: notFound.exec, sleep: () => {}, log: () => {} })).toThrow(/gh api/);
+    expect(notFound.calls).toHaveLength(1);
+
+    const down = scripted(Array.from({ length: 10 }, () => failure("HTTP 503")));
+    expect(() => ghWithRetry(["api", "x"], { exec: down.exec, sleep: () => {}, log: () => {} })).toThrow();
+    expect(down.calls).toHaveLength(GH_RETRY_DELAYS_SECONDS.length + 1);
   });
 });
 

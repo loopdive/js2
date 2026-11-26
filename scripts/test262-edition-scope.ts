@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { classifyTest262File, editionStringToYear } from "./generate-editions.ts";
+import { ghWithRetry } from "./lib/gh-api-retry.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CURRENT_EDITION_CONFIG = join(ROOT, "scripts", "test262-current-edition.json");
@@ -282,7 +283,7 @@ function cmdPaths(args: string[]): void {
   console.log(`${edition}: ${paths.length} test files`);
 }
 
-const gh = (...args: string[]) => execFileSync("gh", args, { encoding: "utf-8" });
+const gh = (...args: string[]): string => ghWithRetry(args);
 
 /** Both scopes' artifacts, newest first; expired ones cannot be downloaded. */
 function listArtifacts(repo: string): ArtifactRef[] {

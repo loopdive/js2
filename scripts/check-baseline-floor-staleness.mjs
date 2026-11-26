@@ -223,7 +223,12 @@ export function classifyTest262Path(p) {
   if (p === "scripts/runtime-eval-provider.mjs") return "standalone";
   if (p === "scripts/compiler-inputs-hash.mjs") return "standalone";
   if (p.startsWith("scripts/quickjs-artifact/")) return "standalone";
-  if (p === "scripts/test262-edition-scope.ts" || p === "scripts/test262-current-edition.json") return "standalone";
+  if (
+    p === "scripts/test262-edition-scope.ts" ||
+    p === "scripts/test262-current-edition.json" ||
+    p === "scripts/lib/gh-api-retry.mjs"
+  )
+    return "standalone";
   if (EXACT_TEST262_PATHS.has(p)) return "both";
   if (p.startsWith("src/")) return "both";
   if (/^tests\/test262-chunk.*\.test\.ts$/.test(p)) return "both";

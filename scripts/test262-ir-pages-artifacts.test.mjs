@@ -576,7 +576,10 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
     return "";
   };
   const snippet = program(pagesWorkflow, "IR_MEASUREMENT_FETCH")
-    .replace("import { execFileSync } from 'node:child_process';", "const { execFileSync } = commands;")
+    .replace(
+      "import { ghWithRetry } from './scripts/lib/gh-api-retry.mjs';",
+      "const ghWithRetry = (args) => commands.execFileSync('gh', args);",
+    )
     .replace(
       "import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';",
       "const { readFileSync, writeFileSync, mkdirSync, rmSync } = fs;",
