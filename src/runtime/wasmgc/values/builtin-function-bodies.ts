@@ -68,12 +68,9 @@ export interface BuiltinFunctionBodyOperands extends Pick<
   readonly entries: readonly BuiltinFunctionEntryOperands[];
   /**
    * (#7354 O2) Where a source closure can be an accessor half: per arity (0 a getter, 1 a setter) the program's
-   * dispatcher `(receiver, callee, …args)` and the kernel's own call of a built-in `(callee, receiver, …args)`.
+   * dispatcher `(receiver, callee, …args)`.
    */
-  readonly accessorCalls?: {
-    readonly source: readonly [FuncHandle, FuncHandle];
-    readonly builtin: readonly [FuncHandle, FuncHandle];
-  };
+  readonly accessorCalls?: readonly [FuncHandle, FuncHandle];
 }
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 /** (#7354 P1) A writable, non-enumerable, configurable data property's descriptor word, every field present. */
@@ -414,24 +411,49 @@ export function buildBuiltinFunctionArgument(
     },
   ];
 }
+/**
+ * Call(callee, receiver, args) of a built-in through the kernel's `callVector`, leaving the result. With arguments the
+ * vector is built in the externref local `vector`; without, it is passed as made.
+ */
+export function buildBuiltinVectorCall(
+  d: Pick<BuiltinFunctionBodyOperands, "newVector" | "push" | "vectorTypeIdx" | "callVector">,
+  callee: readonly Instr[],
+  receiver: readonly Instr[],
+  args: readonly (readonly Instr[])[],
+  vector?: number,
+): Instr[] {
+  const tail: Instr[] = [
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.vectorTypeIdx },
+    call(d.callVector),
+  ];
+  if (vector === undefined) {
+    if (args.length) throw new Error("builtin vector call: arguments need a vector local");
+    return [...callee, ...receiver, call(d.newVector), ...tail];
+  }
+  return [
+    call(d.newVector),
+    { op: "local.set", index: vector },
+    ...args.flatMap((arg): Instr[] => [get(vector), ...arg, call(d.push)]),
+    ...callee,
+    ...receiver,
+    get(vector),
+    ...tail,
+  ];
+}
 export function buildBuiltinFunctionMethodDefinition(
   d: BuiltinFunctionBodyOperands,
   arity: number,
 ): BuiltinFunctionDefinition {
-  const vector = arity + 2;
   return {
     locals: [{ name: "arguments", type: { kind: "externref" } }],
-    body: [
-      call(d.newVector),
-      { op: "local.set", index: vector },
-      ...Array.from({ length: arity }, (_, index): Instr[] => [get(vector), get(index + 2), call(d.push)]).flat(),
-      get(0),
-      get(1),
-      get(vector),
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-      call(d.callVector),
-    ],
+    body: buildBuiltinVectorCall(
+      d,
+      [get(0)],
+      [get(1)],
+      Array.from({ length: arity }, (_, index) => [get(index + 2)]),
+      arity + 2,
+    ),
   };
 }
 export function buildBuiltinFunctionSlotDefinition(

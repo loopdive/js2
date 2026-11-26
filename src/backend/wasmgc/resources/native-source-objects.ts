@@ -30,7 +30,10 @@ import {
   type SourceObjectCreateOperands,
   type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
-import { buildSourceFunctionInitDefinition } from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
+import {
+  buildSourceFunctionInitDefinition,
+  buildSourceFunctionIsConstructorDefinition,
+} from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
 import { buildToBooleanBody, buildToBooleanLocals } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import {
   buildToPropertyDescriptorDefinition,
@@ -95,6 +98,8 @@ type Body = (
   dependencies: NativeSourceObjectDependencies,
   tx: PhysicalModuleReservations,
   helpers: Helpers,
+  /** (#7354 O2) Every contract the program calls. */
+  served: ReadonlySet<OrdinaryObjectRuntimeFeature>,
 ) => SourceObjectDefinition;
 /** (#7354 O1) The operands of the `Object` statics' bodies: the kernel's roles and the realm's layouts. */
 function objectStaticOperands(
@@ -211,15 +216,20 @@ const ROWS = {
   },
   "js.object.init-function": {
     signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
-    body: (dependencies, tx) => {
+    body: (dependencies, tx, _helpers, served) => {
       const key = literalKey(tx, dependencies);
       return buildSourceFunctionInitDefinition({
         kernel: nativeBuiltinFunctionOperands(tx, dependencies.kernel),
         create: createOperands(dependencies),
         prototypeKey: key("prototype"),
         constructorKey: key("constructor"),
+        marksNonConstructors: served.has("js.object.is-constructor"),
       });
     },
+  },
+  "js.object.is-constructor": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: ({ kernel }, tx) => buildSourceFunctionIsConstructorDefinition(nativeBuiltinFunctionOperands(tx, kernel)),
   },
   "js.object.inherits": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
@@ -390,9 +400,10 @@ export function fillNativeSourceObjectResources(
       buildToPropertyDescriptorDefinition(objectStaticOperands(owner.dependencies, tx), handles!.toBoolean),
     );
   }
+  const served = new Set(pack.served.map((row) => row.feature));
   for (const { feature, token } of pack.served) {
     const adapter = adapterOf(feature);
-    if (adapter) tx.fillFunction(token, adapter.body(owner.dependencies, tx, handles));
+    if (adapter) tx.fillFunction(token, adapter.body(owner.dependencies, tx, handles, served));
   }
   owner.filled = true;
 }

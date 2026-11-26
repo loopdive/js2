@@ -106,10 +106,10 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
  * Object.prototype; the body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`)
  * replaces the new object.
  *
- * IsConstructor is the function-kind test: every function value on this lane is a constructor (a declaration or a
- * function expression). Arrows, methods, accessors, generators and async functions carry no all-dynamic signature, so
- * F2's dispatchability rule refuses any program that could call one through a value. The slice that admits the first
- * non-constructor function value adds the test, with a program that reaches it.
+ * IsConstructor is the function-kind test, and (#7354 O2) where the source creates a function value without
+ * [[Construct]] (`ProgramObjects.nonConstructors`: an accessor) also the function object's own answer
+ * (`js.object.is-constructor`). Declarations and function expressions are constructors; arrows, methods, generators
+ * and async functions carry no all-dynamic signature, so no program calls one through a value yet.
  */
 export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
@@ -120,7 +120,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   );
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
-  const isConstructor = holds(b, instr, callee, ["function"]);
+  const isFunction = holds(b, instr, callee, ["function"]);
   // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
   // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
   const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
@@ -153,9 +153,17 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
+  const ifConstructor = (r: IrValueId): IrInstr[] => {
+    const test = b.fresh();
+    return [
+      realmCall("js.object.is-constructor", [callee], test),
+      b.branch(test, construct, notConstructor, r, CARRIER),
+    ];
+  };
+  const source = b.program.objects.nonConstructors ? ifConstructor : construct;
   return [
-    ...isConstructor.instrs,
-    b.branch(isConstructor.cond, b.program.objects.functions ? construct : builtin, notConstructor, result, CARRIER),
+    ...isFunction.instrs,
+    b.branch(isFunction.cond, b.program.objects.functions ? source : builtin, notConstructor, result, CARRIER),
   ];
 }
 

@@ -32,6 +32,7 @@ export function programObjects(
 ): ProgramObjects {
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
+  let nonConstructors = false;
   let namesSymbol = false;
   let namesErrors = false;
   const visit = (node: ts.Node): void => {
@@ -47,9 +48,10 @@ export function programObjects(
       ts.isFunctionExpression(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
+    nonConstructors ||= ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
+  return { present: present || namesErrors, functions, nonConstructors, namesSymbol, namesErrors };
 }

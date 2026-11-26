@@ -114,9 +114,8 @@ export function lowerTopLevelFunctionValue(
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
- * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
- * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
- * A function whose name is a computed key the compiler cannot evaluate refuses by name.
+ * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor
+ * ({@link isFunctionObject} says which closures). A function whose name is a computed key the compiler cannot evaluate refuses by name.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
@@ -126,7 +125,6 @@ export function emitFunctionObjectInit(
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
   if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
-  if (ts.isAccessor(fn) && type.signature.returnType?.kind !== "dynamic") return;
   const key =
     ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
   if (key === undefined)
@@ -156,6 +154,22 @@ export function emitFunctionObjectInit(
  */
 export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
   return resolver?.createsFunctionObjects?.() === true;
+}
+
+/**
+ * (#7354 O2) Whether the closure literal `fn` is created as a function object: where closures are, every one except an
+ * accessor that keeps the checker's typed signature (`sourceDynamicClosureSignature`: in an exported, typed #3518
+ * function), as before O2.
+ */
+export function isFunctionObject(
+  resolver:
+    | { createsFunctionObjects?(): boolean; dynamicClosureSignature?(fn: ts.FunctionLikeDeclaration): unknown }
+    | undefined,
+  fn: ts.FunctionLikeDeclaration,
+): boolean {
+  return (
+    createsFunctionObjects(resolver) && (!ts.isAccessor(fn) || resolver?.dynamicClosureSignature?.(fn) !== undefined)
+  );
 }
 
 export function functionObjectDynamicValue(

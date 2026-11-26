@@ -165,6 +165,8 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
+  /** (#7354 O2) The source creates a function value without [[Construct]] (an accessor). */
+  readonly nonConstructors: boolean;
   readonly namesSymbol: boolean;
   readonly namesErrors: boolean;
 }
@@ -181,6 +183,7 @@ export interface LegalizationProgram {
 export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
+  nonConstructors: false,
   namesSymbol: false,
   namesErrors: false,
 });
