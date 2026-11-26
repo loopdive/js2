@@ -70,6 +70,14 @@ const ROWS: readonly (readonly [string, string])[] = [
      class C { a: number | undefined; static s: number | undefined; }
      export function main(): number { return (String(Number(g)) === "NaN" ? 1 : 0) + (String(Number(new C().a)) === "NaN" ? 10 : 0) + (String(Number(C.s)) === "NaN" ? 100 : 0); }`,
   ],
+  [
+    "a template span and a concat of a numeric array hole read undefined",
+    `export function main(): number {
+       let t = ""; let c = "";
+       for (const x of [1, , 3] as number[]) { t += \`\${x},\`; c += x + ","; }
+       return (t === "1,undefined,3," ? 1 : 0) + (c === "1,undefined,3," ? 10 : 0);
+     }`,
+  ],
 ];
 
 /** Rows whose function `f` the IR path compiles, so its `typeof`, ToString and ToNumber of a branded f64 run. */

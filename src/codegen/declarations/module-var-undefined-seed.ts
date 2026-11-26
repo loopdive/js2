@@ -42,13 +42,11 @@
  *   entirely by `computeElidableTopLevelTdzNames`, which only elides when no
  *   read can observe the pre-init value). Seeding them `undefined` would be
  *   dead at best and a wrong answer at worst.
- * - **Only externref slots.** A slot the type inference narrowed to a primitive
- *   (`var n = 42` ⇒ `(mut f64)`, `var s = "a"` ⇒ a native-string ref) cannot
- *   physically hold the singleton and keeps its wasm zero-init. That is the
- *   module-scope twin of #684 (which the function-local hoister answers by
- *   seeding `f64.const NaN`) and of #4264 point 2 (which answers it by WIDENING
- *   the slot to externref for `with`-body vars). Both remedies are slot-type
- *   changes with their own blast radius; recorded as this issue's residual.
+ * - **Only externref slots here.** A slot the type inference narrowed to a
+ *   primitive (`var s = "a"` ⇒ a native-string ref) cannot physically hold the
+ *   singleton and keeps its wasm zero-init. An f64 slot that can hold
+ *   `undefined` is seeded with the f64 sentinel by
+ *   {@link emitModuleF64UndefinedSeeds} below (#7366/#7464).
  *
  * This SUBSUMES the #4264 `with`-body seed rather than sitting beside it:
  * `scriptVarBindingNames` walks the same region (top-level code, never a
@@ -171,17 +169,8 @@ export function emitClassStaticF64UndefinedSeeds(
  * - the static fields recorded by {@link noteStaticF64UndefinedSeed}.
  */
 export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): Set<number> {
-  const declarations: ts.VariableDeclaration[] = [];
-  const scriptRecordOwnsVars = ctx.standaloneScriptVarBindings && !ctx.sourceIsModule;
-  for (const source of ctx.callableSourceFiles ?? [sourceFile]) {
-    if (source.isDeclarationFile) continue;
-    if (!scriptRecordOwnsVars) forEachScriptVarDeclaration(source, (declaration) => declarations.push(declaration));
-    for (const statement of source.statements)
-      if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Let) !== 0)
-        declarations.push(...statement.declarationList.declarations.filter((declaration) => !declaration.initializer));
-  }
   const globals = new Set<number>();
-  for (const { name } of declarations) {
+  for (const { name } of seedCandidateDeclarations(ctx, sourceFile)) {
     if (!ts.isIdentifier(name)) continue;
     const globalIdx = ctx.moduleGlobals.get(name.text);
     const type = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
@@ -192,6 +181,25 @@ export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: t
     if (globalIdx !== undefined) globals.add(globalIdx);
   }
   return globals;
+}
+
+/** The declarations {@link moduleF64UndefinedSeedGlobals} considers. Walked once per compile: its three callers ask
+ * at different stages, but the source text they walk does not change between them. */
+const seedCandidates = new WeakMap<CodegenContext, readonly ts.VariableDeclaration[]>();
+function seedCandidateDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile): readonly ts.VariableDeclaration[] {
+  const cached = seedCandidates.get(ctx);
+  if (cached) return cached;
+  const declarations: ts.VariableDeclaration[] = [];
+  const scriptRecordOwnsVars = ctx.standaloneScriptVarBindings && !ctx.sourceIsModule;
+  for (const source of ctx.callableSourceFiles ?? [sourceFile]) {
+    if (source.isDeclarationFile) continue;
+    if (!scriptRecordOwnsVars) forEachScriptVarDeclaration(source, (declaration) => declarations.push(declaration));
+    for (const statement of source.statements)
+      if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Let) !== 0)
+        declarations.push(...statement.declarationList.declarations.filter((declaration) => !declaration.initializer));
+  }
+  seedCandidates.set(ctx, declarations);
+  return declarations;
 }
 
 /**

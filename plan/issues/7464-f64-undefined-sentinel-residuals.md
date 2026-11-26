@@ -52,15 +52,25 @@ with the same lowering) to an f64 that carries the `undefined` sentinel (`UNDEF_
 
 ## Acceptance criteria
 
-- Each row above answers like node on gc and standalone.
-- Every row is pinned by a test, and the pins fail on `origin/main` 313281866f.
-- No test262 byte change outside the affected shapes.
-- The reviewer's nits from the same round are folded in, or answered:
+- Each row above answers like node on gc and standalone. **Met for cases 1–3, except two case-3 rows moved to
+  [#7529](./7529-f64-undefined-leftovers-json-param-props-ctor-closures.md):** `JSON.stringify` of an `undefined`
+  property (a native codec defect) and the `number | undefined` parameter property (blocked on that defect). Case 4
+  moved to #7470.
+- Every row is pinned by a test, and the pins fail on `origin/main` 313281866f. **Met** for every fixed row (the two
+  `Number()` rows guard the brand drop and pass on main by construction).
+- No test262 byte change outside the affected shapes. **Met** on 240 test262 files × gc/standalone. Two typed shapes
+  outside the listed rows do change bytes, both towards node: `String`/`+`/template of a `for-of` element over a
+  numeric array (holes now read `undefined`, pinned), and a dead sentinel test on `g ?? 0` where TypeScript has
+  already narrowed a branded binding to `number` (code size only).
+- The reviewer's nits from the same round are folded in, or answered. **All three folded:**
   - `moduleF64UndefinedSeedGlobals` walks the program three times per compile (declarations.ts, the prologue gate,
-    the emit). One walk is enough.
+    the emit). One walk is enough. *Folded: the walk is cached per compile.*
   - `class-bodies.ts` and `class-constructor-wrapper.ts` still write the sentinel inline. They should call
-    `pushUndefF64`, as the seed and the loops do.
+    `pushUndefF64`, as the seed and the loops do. *Folded.*
   - The header of `module-var-undefined-seed.ts` (lines 46–51) still lists the f64 slot as an open residual.
+    *Updated.*
+- Code quality (from the plan: no budget grants): one +1-line `loc-budget-allow` on `declarations.ts`, the import
+  that replaced a one-line pass-through the first review asked to remove (see the frontmatter).
 
 ## Implementation Plan
 
