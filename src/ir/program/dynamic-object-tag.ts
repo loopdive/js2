@@ -18,29 +18,21 @@ import { CARRIER, carried } from "./dynamic-value-types.js";
 
 type ObjectTag = Extract<IrInstr, { kind: "dyn.object_tag" }>;
 
-/** What the tag depends on in the program: errors may exist, wrappers may, a prototype is obtainable. */
-export interface ObjectTagProgram {
-  readonly program: LegalizationProgram;
-  readonly errors: boolean;
-  readonly wrappers: boolean;
-  readonly prototypes: boolean;
-}
-
 /** The legalized `dyn.object_tag` into its result. */
-export function dynamicObjectTag(b: ChainBuilders, p: ObjectTagProgram, instr: ObjectTag): IrInstr[] {
+export function dynamicObjectTag(b: ChainBuilders, program: LegalizationProgram, instr: ObjectTag): IrInstr[] {
   const tag = (r: IrValueId) =>
     b.kindChain(
       instr,
       instr.value,
       r,
       (kind, result) => {
-        if (kind === "object" && p.program.objects.namesSymbol)
+        if (kind === "object" && program.objects.namesSymbol)
           gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-        return kind === "object" ? objectTag(b, p, instr, result) : [b.text(`[object ${OBJECT_TAG[kind]}]`, result)];
+        return kind === "object" ? objectTag(b, instr, result) : [b.text(`[object ${OBJECT_TAG[kind]}]`, result)];
       },
       b.kinds.kindsOf(instr.value),
     );
-  if (!p.prototypes) return tag(instr.result!);
+  if (!b.families.prototypes) return tag(instr.result!);
   const [prototype, name, key, replaced] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
   return [
     ...b.realmIntrinsic("%Object.prototype%", prototype),
@@ -52,10 +44,10 @@ export function dynamicObjectTag(b: ChainBuilders, p: ObjectTagProgram, instr: O
 }
 
 /** An object's tag: a wrapper's kind by its slot (`undefined` for no wrapper), "Error", else "Object". */
-function objectTag(b: ChainBuilders, p: ObjectTagProgram, instr: ObjectTag, result: IrValueId): IrInstr[] {
+function objectTag(b: ChainBuilders, instr: ObjectTag, result: IrValueId): IrInstr[] {
   const object = instr.value;
   const plain = (r: IrValueId): IrInstr[] => {
-    if (!p.errors) return [b.text("[object Object]", r)];
+    if (!b.families.errors) return [b.text("[object Object]", r)];
     const isError = b.fresh();
     return [
       realmCall("js.object.is-error", [object], isError),
@@ -67,7 +59,7 @@ function objectTag(b: ChainBuilders, p: ObjectTagProgram, instr: ObjectTag, resu
       ),
     ];
   };
-  if (!p.wrappers) return plain(result);
+  if (b.families.wrappers.size === 0) return plain(result);
   const [absent, data] = [b.fresh(), b.fresh()];
   const slots = b.admitted.filter((kind) => kind === "undefined" || kind in WRAPPER_OF_PRIMITIVE);
   return [

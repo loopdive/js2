@@ -42,17 +42,13 @@ import {
   wrapperConstructorSelector,
 } from "./builtin-prototype-keys.js";
 import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
-import type { ChainBuilders } from "./dynamic-value-chains.js";
+import type { ChainBuilders, ConvertingBuilders } from "./dynamic-value-chains.js";
 import { BOOLEAN, CARRIER, F64, carried } from "./dynamic-value-types.js";
 import { gap } from "./dynamic-value-gap.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
-export type RealmConstructorBuilders = ChainBuilders & {
-  readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-  readonly toNumber: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-};
 type Arm = (result: IrValueId) => IrInstr[];
 
 /** The realm constructor `callee` is (its catalog id), when its definition is the front end's read of one. */
@@ -74,7 +70,7 @@ const isRealmConstructor = (id: string): boolean =>
 
 /** `X(…args)` (`construct` false) or `new X(…args)` of the realm constructor `id`, into the instruction's result. */
 export function dynamicRealmConstruction(
-  b: RealmConstructorBuilders,
+  b: ConvertingBuilders,
   instr: Call | Construct,
   id: string,
   args: readonly IrValueId[],
@@ -93,7 +89,7 @@ export function dynamicRealmConstruction(
 }
 
 /** `create` of the message `undefined` (none, a null reference) or of ToString(message), per the message's kind. */
-function errorConstruction(b: RealmConstructorBuilders, instr: IrInstr, selector: number, args: readonly IrValueId[]) {
+function errorConstruction(b: ConvertingBuilders, instr: IrInstr, selector: number, args: readonly IrValueId[]) {
   if (args.length > 1) gap(`${errorConstructorName(selector)} with a second argument (options.cause)`);
   const message = args[0];
   const create = (value: IrValueId, r: IrValueId) => b.selectorCall("js.object.create-error", [value], selector, r);
@@ -136,8 +132,8 @@ const CONVERSION: Readonly<
   Record<
     NativeWrapperConstructor,
     {
-      readonly convert: (b: RealmConstructorBuilders, instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-      readonly absent: (b: RealmConstructorBuilders, instr: IrInstr, result: IrValueId) => IrInstr[];
+      readonly convert: (b: ConvertingBuilders, instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+      readonly absent: (b: ConvertingBuilders, instr: IrInstr, result: IrValueId) => IrInstr[];
     }
   >
 > = {
@@ -183,7 +179,7 @@ const CONVERSION: Readonly<
 };
 
 /** `Object(value)`: a new object for nothing, `undefined` or `null`; an object itself; a primitive's wrapper. */
-function objectConstruction(b: RealmConstructorBuilders, instr: IrInstr, value: IrValueId | undefined): IrInstr[] {
+function objectConstruction(b: ConvertingBuilders, instr: IrInstr, value: IrValueId | undefined): IrInstr[] {
   const create: Arm = (r) => [realmCall("js.object.create-default", [], r)];
   if (value === undefined) return create(instr.result!);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
@@ -198,14 +194,13 @@ function objectConstruction(b: RealmConstructorBuilders, instr: IrInstr, value: 
 
 /**
  * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
- * isPrototypeOf's step 3): `no` (false), but where `errors` and `prototype` is `%Error%` the run-time abort, which ends
- * the program before the arm's own (unread) answer, and (W2) where `objects` (the program holds `Object`) `yes` for
+ * isPrototypeOf's step 3): `no` (false), but where `families.errors` and `prototype` is `%Error%` the run-time abort,
+ * which ends the program before the arm's own (unread) answer, and (W2) where `families.prototypes` `yes` for
  * %Object.prototype% (module doc).
  */
 export function functionChainAnswer(
   b: ChainBuilders,
   instr: IrInstr,
-  held: { readonly errors: boolean; readonly objects: boolean },
   prototype: IrValueId,
   no: Arm,
   yes: Arm,
@@ -222,6 +217,6 @@ export function functionChainAnswer(
         b.branch(same, then, otherwise, s, resultType),
       ];
     };
-  const errors: Arm = held.errors ? test(ERROR_ID, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no) : no;
-  return (held.objects ? test("%Object.prototype%", yes, errors) : errors)(r);
+  const errors: Arm = b.families.errors ? test(ERROR_ID, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no) : no;
+  return (b.families.prototypes ? test("%Object.prototype%", yes, errors) : errors)(r);
 }

@@ -11,7 +11,7 @@
 // (#7354 G1) The Error family is a value now, and no route from it reaches one of these prototypes (the rows below).
 // (#7354 W2) `Object` and the wrapper constructors are values, so Object.prototype and the wrapper prototypes are: a
 // program that reads one of those constructors reads a primitive's members through the realm's prototype objects
-// (`obtainsPrototypes`; tests/issue-7354-w2-wrappers.test.ts writes String.prototype and reads it through a string).
+// (`programFamilies`; tests/issue-7354-w2-wrappers.test.ts writes String.prototype and reads it through a string).
 // `Object.getPrototypeOf` is a static the realm does not hold: its call is the run-time abort (below).
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";

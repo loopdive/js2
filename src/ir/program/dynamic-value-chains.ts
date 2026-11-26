@@ -25,10 +25,9 @@ import {
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   carrierKindOf,
-  heldWrappers,
-  holdsErrors,
   type CarrierKind,
   type LegalizationProgram,
+  type ProgramFamilies,
 } from "./dynamic-value-kinds.js";
 
 export { CARRIER, carried } from "./dynamic-value-types.js";
@@ -79,6 +78,7 @@ export function chainBuilders(
   allocations: AllocSiteRegistry,
   kinds: KnownKinds,
   admitted: readonly CarrierKind[],
+  families: ProgramFamilies,
 ) {
   let valueCount = fn.valueCount;
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
@@ -240,6 +240,7 @@ export function chainBuilders(
   return {
     kinds,
     admitted,
+    families,
     allocations,
     intrinsic,
     fresh,
@@ -258,6 +259,15 @@ export function chainBuilders(
 }
 export type ChainBuilders = ReturnType<typeof chainBuilders>;
 
+/** A conversion of a carrier value into `result`: `conversionBuilders`' ToString (`stringOf`) and ToNumber. */
+export type ValueConversion = (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+
+/** The legalization's builders with its conversions, as the realm's call and construct arms take them. */
+export type ConvertingBuilders = ChainBuilders & {
+  readonly stringOf: ValueConversion;
+  readonly toNumber: ValueConversion;
+};
+
 /** Which of OrdinaryToPrimitive's two receivers a `to-primitive` kind is. */
 const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "function" ? "function" : "object");
 
@@ -268,7 +278,7 @@ const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "fu
  * finishes in its own way (`ToPrimitiveAnswer`).
  */
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
-  const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, kindChain } = builders;
+  const { kinds, admitted, families, intrinsic, fresh, anyKind, text, branch, kindChain } = builders;
   const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
   const nan = (r: IrValueId): IrInstr => ({
     kind: "const",
@@ -281,7 +291,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
    * error, a held wrapper's method of that name.
    */
   const builtins = (instr: IrInstr) => (name: WrapperMethodName, method: IrValueId, object: IrValueId) => [
-    ...(name === "toString" && holdsErrors(program)
+    ...(name === "toString" && families.errors
       ? [
           () =>
             identityTest(builtinMethodBuilders, instr, ERROR_TO_STRING_ID, method, (r) => [
@@ -289,7 +299,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
             ]),
         ]
       : []),
-    ...(heldWrappers(program).size > 0
+    ...(families.wrappers.size > 0
       ? [() => wrapperMethodTest(builtinMethodBuilders, instr, name, method, object)]
       : []),
   ];

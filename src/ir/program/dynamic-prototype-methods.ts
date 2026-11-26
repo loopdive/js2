@@ -25,8 +25,8 @@ import {
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
-import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
-import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
+import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind, type ProgramFamilies } from "./dynamic-value-kinds.js";
+import type { ConvertingBuilders } from "./dynamic-value-chains.js";
 import { functionChainAnswer } from "./dynamic-realm-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
@@ -34,13 +34,13 @@ const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind
 
 /**
  * The realm methods `call` may call, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a populated name on its
- * receiver: an Object.prototype method or Error.prototype.toString (only where `held.errors`, the program holds the
+ * receiver: an Object.prototype method or Error.prototype.toString (only where `families.errors`, the program holds the
  * Error family) by catalog id, and (#7354 W2) whether a held wrapper's `valueOf` / `toString` may be it.
  */
 export function prototypeMethodOfCall(
   call: Call,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
-  held: { readonly errors: boolean; readonly wrappers: boolean },
+  families: ProgramFamilies,
 ): RealmMethods | undefined {
   if (closureMethodArity(call.target.name) === undefined) return undefined;
   const uncoerced = (value: IrValueId): IrValueId => {
@@ -54,9 +54,9 @@ export function prototypeMethodOfCall(
   const objectMethod = nativeObjectPrototypeMethod(name);
   const ids = [
     ...(objectMethod ? [objectPrototypeMethodId(objectMethod)] : []),
-    ...(name === "toString" && held.errors ? [ERROR_TO_STRING_ID] : []),
+    ...(name === "toString" && families.errors ? [ERROR_TO_STRING_ID] : []),
   ];
-  const wrapper = held.wrappers && (name === "valueOf" || name === "toString") ? name : undefined;
+  const wrapper = families.wrappers.size > 0 && (name === "valueOf" || name === "toString") ? name : undefined;
   return ids.length === 0 && wrapper === undefined ? undefined : { ids, wrapper };
 }
 
@@ -67,7 +67,7 @@ export interface RealmMethods {
 }
 
 /** `value`, the realm's Boolean of `test`, boxed into the carrier `result`. */
-function boxed(b: ObjectStaticBuilders, instr: Call, test: (value: IrValueId) => IrInstr[], result: IrValueId) {
+function boxed(b: ConvertingBuilders, instr: Call, test: (value: IrValueId) => IrInstr[], result: IrValueId) {
   const value = b.fresh();
   return [...test(value), b.intrinsic(instr, "js.boolean.box", [value], result)];
 }
@@ -83,7 +83,7 @@ const constant =
  * Boolean's wrapper owns none; a string's own `length` and indices need the String exotic the realm lacks: the run-time
  * abort.
  */
-function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, result: IrValueId): IrInstr[] {
+function ownProperty(b: ConvertingBuilders, instr: Call, enumerable: boolean, result: IrValueId): IrInstr[] {
   const [receiver, , argument] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
   const [text, key] = [b.fresh(), b.fresh()];
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
@@ -110,24 +110,14 @@ function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, 
  * function's holds the realm's built-in prototypes alone, which no program obtains (M1), but (#7354 G1) %Error% and
  * (W2) %Object.prototype% (`functionChainAnswer`).
  */
-function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): IrInstr[] {
+function prototypeOf(b: ConvertingBuilders, instr: Call, result: IrValueId): IrInstr[] {
   const [receiver, , argument] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
   if (argument === undefined) return boxed(b, instr, constant(false), result);
   const walk = (kind: CarrierKind) =>
     isOrdinaryObject(kind)
       ? (s: IrValueId) => [realmCall("js.object.inherits", [argument, receiver], s)]
       : kind === "function"
-        ? (s: IrValueId) =>
-            functionChainAnswer(
-              b,
-              instr,
-              { errors: b.errors, objects: b.objects },
-              receiver,
-              constant(false),
-              constant(true),
-              s,
-              BOOLEAN,
-            )
+        ? (s: IrValueId) => functionChainAnswer(b, instr, receiver, constant(false), constant(true), s, BOOLEAN)
         : constant(false);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => boxed(b, instr, walk(kind), r);
   return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
@@ -140,7 +130,7 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
  * (`dynamic-builtin-methods.ts`; Number.prototype.toString with a radix argument is the run-time abort).
  */
 export function dynamicPrototypeMethodCall(
-  b: ObjectStaticBuilders,
+  b: ConvertingBuilders,
   instr: Call,
   methods: RealmMethods,
   dispatches: boolean,

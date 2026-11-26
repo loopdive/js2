@@ -12,7 +12,7 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
-import type { ChainBuilders } from "./dynamic-value-chains.js";
+import type { ConvertingBuilders } from "./dynamic-value-chains.js";
 import type { CarrierKind } from "./dynamic-value-kinds.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 
@@ -25,11 +25,18 @@ export interface BuiltinMethodTest {
 
 /** The legalization's builders the tests are written with. */
 export type BuiltinMethodBuilders = Pick<
-  ChainBuilders,
-  "fresh" | "intrinsic" | "anyKind" | "branch" | "kindChain" | "abort" | "realmIntrinsic" | "selectorCall" | "kinds"
-> & {
-  readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-};
+  ConvertingBuilders,
+  | "fresh"
+  | "intrinsic"
+  | "anyKind"
+  | "branch"
+  | "kindChain"
+  | "abort"
+  | "realmIntrinsic"
+  | "selectorCall"
+  | "kinds"
+  | "stringOf"
+>;
 
 /** Whether `method` is the realm's function object `id` (SameValue), answering `answer`. */
 export function identityTest(

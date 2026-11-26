@@ -191,25 +191,33 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
  * or reads a catch binding, the one way a realm error becomes a value. The realm then holds the Error family
  * (`native-realm-requirements.ts`), whose prototypes the program can read and write.
  */
-export const holdsErrors = (program: LegalizationProgram): boolean =>
+const holdsErrors = (program: LegalizationProgram): boolean =>
   program.catches || [...program.objects.constructors].some((id) => errorConstructorSelector(id) >= 0);
 
 /**
- * (#7354 W2) The wrapper families a value of the program may belong to: those it names, and all three where it names
- * `Object` (`Object(v)` wraps any primitive). The realm then holds them (`native-realm-requirements.ts` reads the
- * IR's uses), and their prototypes are the program's to read and write.
+ * (#7354 G1, W2) The realm families a program's values may come from, derived once per function's legalization from
+ * its `LegalizationProgram` (`programFamilies`) and read by every arm through `ChainBuilders.families`.
  */
-export function heldWrappers(program: LegalizationProgram): ReadonlySet<string> {
-  const named = program.objects.constructors;
-  return new Set(WRAPPER_IDS.filter((id) => named.has(id) || named.has("%Object%")));
+export interface ProgramFamilies {
+  /** (G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
+  readonly errors: boolean;
+  /**
+   * (W2) The wrapper families a value may belong to: those the program names, and all three where it names `Object`
+   * (`Object(v)` wraps any primitive). The realm then holds them (`native-realm-requirements.ts` reads the IR's uses).
+   */
+  readonly wrappers: ReadonlySet<string>;
+  /**
+   * (W2) The program can obtain a built-in prototype (`Object.prototype`, a wrapper's): it names `Object` or a wrapper
+   * constructor, so it can change one; a primitive's member access then reads through the realm's prototype objects.
+   */
+  readonly prototypes: boolean;
 }
 
-/**
- * (#7354 W2) Whether the program can obtain a built-in prototype (`Object.prototype`, a wrapper's): it names `Object`
- * or a wrapper constructor. A primitive's member access then reads through the realm's prototype objects.
- */
-export const obtainsPrototypes = (program: LegalizationProgram): boolean =>
-  program.objects.constructors.has("%Object%") || heldWrappers(program).size > 0;
+export function programFamilies(program: LegalizationProgram): ProgramFamilies {
+  const named = program.objects.constructors;
+  const wrappers = new Set(WRAPPER_IDS.filter((id) => named.has(id) || named.has("%Object%")));
+  return { errors: holdsErrors(program), wrappers, prototypes: named.has("%Object%") || wrappers.size > 0 };
+}
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold

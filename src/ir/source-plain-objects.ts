@@ -6,18 +6,19 @@
  * the source decides whether the object kind is admitted. OrdinaryToPrimitive is decided at run time (`ordinary-to-primitive.ts`) and needs to know only
  * whether `@@toPrimitive` is reachable, i.e. whether the program names `Symbol`.
  *
- * (#7354 M1, C1) No question about the built-in prototypes is asked here: no Prepared program can obtain one as a
- * value (tests/issue-7354-m-prototype-premise.test.ts pins every route), so code cannot change one, and naming
- * `String` as a callee or the intercepted `Object.prototype.toString.call(v)` reaches none. (#7354 G1, W2) Which realm
- * constructors the program names is a fact of the whole program, every group's legalization reads the same one
- * (`readsConstructor`).
+ * (#7354 G1, W2) The walk also records which realm constructors the program names (`readsConstructor`), a fact of the
+ * whole program that every group's legalization reads. A program that names `Object` or a wrapper constructor can
+ * obtain a built-in prototype and change it (`String.prototype.k = 5`); the legalization derives that from these
+ * names (`programFamilies`), and a primitive's member access then reads through the realm's prototype objects. A
+ * program that names none obtains no built-in prototype (tests/issue-7354-m-prototype-premise.test.ts pins the
+ * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
 import { realmConstructorId } from "./program/builtin-prototype-keys.js";
 import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
-import { ambientStringPrototypeBorrow } from "./array-prototype-borrow-call.js";
+import { stringPrototypeBorrowShape } from "./array-prototype-borrow-call.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -73,7 +74,7 @@ function readsConstructor(
   return !(
     (call.expression === identifier && isStringConversionCall(call)) ||
     objectToStringCallRoot(call) === identifier ||
-    ambientStringPrototypeBorrow(call, new Set(), isPristineGlobal)?.root === identifier ||
+    stringPrototypeBorrowShape(call)?.root === identifier ||
     (identifier.parent === call.expression && nativeObjectStaticCall(call, isPristineGlobal) !== undefined)
   );
 }
