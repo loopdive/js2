@@ -1,6 +1,6 @@
 ---
 id: 7525
-title: "Standalone IR: `-t` / `+t` on an `any` narrowed to bigint runs ToNumber (`String(-t)` is \"NaN\")"
+title: "Standalone IR: arithmetic on an `any` narrowed to bigint runs ToNumber (`String(-t)` is \"NaN\")"
 status: in-progress
 sprint: current
 created: 2026-11-26
@@ -12,96 +12,118 @@ reasoning_effort: high
 task_type: bugfix
 area: ir
 goal: core-semantics
-related: [7135, 7497, 6656]
+related: [7135, 7497, 6656, 7526, 7403]
 ---
 
-# #7525 — IR unary `-` / `+` on an `any` narrowed to `bigint` runs ToNumber
+# #7525 — IR arithmetic on an `any` narrowed to `bigint` runs ToNumber
 
 ## Problem
 
 Standalone, `function f(t: any): string { if (typeof t === "bigint") return String(-t); return "o"; } f(5n)` answers
-`"NaN"` (node: `"-5"`). Found by RV7459 (review of #7459). Measured by S18, TypeScript, standalone:
+`"NaN"` (node: `"-5"`). Found by RV7459 (review of #7459); scope widened by PRV-7525 (plan review of ce535aec).
 
-| program (`t: any`, narrowed by `typeof t === "bigint"`, called with `5n`) | node | c75ee1a01f^ | c75ee1a01f | main 1a726b3e64 |
+Measured by S18, TypeScript, `f(t: any, u: any)` with both narrowed by `typeof … === "bigint"` (or as noted), on
+standalone. "IR" means `trackIrOutcomes` shows `f` emitted; otherwise the refusal code.
+
+| shape | node | c75ee1a01f^ | c75ee1a01f | main 1a726b3e64 |
 | --- | --- | --- | --- | --- |
-| `String(-t)` | `"-5"` | right | `"NaN"` | `"NaN"` |
-| `String(-t)` with `-7n` | `"7"` | right | wrong | wrong |
-| `typeof -t` | `"bigint"` | right | `"number"` | `"number"` |
-| `+t` | TypeError | TypeError | TypeError | `NaN`, no throw |
-| controls: `-t === -5n`, `String(t * -1n)`, `const k: any = -t`, un-narrowed `t: bigint` | — | right | right | right |
+| `String(-t)` (`5n`) | `"-5"` | right (legacy) | `"NaN"` (IR) | `"NaN"` (IR) |
+| `+t` | TypeError | right | NaN, no throw | NaN, no throw |
+| `String(t * t)`, `t - u`, `t / u`, `t % u` | BigInt result | right | wrong | wrong |
+| `t * 2` | TypeError | right | no throw | no throw |
+| `k++`, `--k` on a narrowed copy `let k = t` | BigInt result | right | wrong | wrong |
+| `t + u` | `7n` | — | — | wrong (IR) |
+| `t != u` (`5n`, `5n`) | false | — | — | wrong (IR) |
+| `t == 1` (`1n`) | true | — | — | traps (IR) |
+| `-t` on `t` narrowed to `bigint \| number` | `-5n` / `-3` | wrong (legacy) | wrong (IR) | wrong (IR) |
+| already right: `t === u`, `t + ""`, `t < u` / `t > u` (refused, `operand-coercion-unsupported`), `t + 1` (refused), un-narrowed `t: bigint` | | | | right |
 
-gc answers right in every row: there the IR refuses `f` (`call-graph-closure`) and legacy compiles it.
+`—`: not run at those commits. The `+` / `==` / `!=` rows are claimed by the same `f` admission, so they are taken to
+share the cause; they are not bisected.
+
+gc answers right in every row but the `bigint | number` one: there the IR refuses `f` (`call-graph-closure`) and
+legacy compiles it. Legacy is wrong on `bigint | number` too (pre-existing, #7526).
 
 ## Cause
 
-- **Bisect.** `c75ee1a01f` (#7135, "lower native dynamic in …; certify explicit-any caller boundaries") is the first bad
-  commit for the `-` rows: S18 compared it with its parent; RV7459's automated bisect named it. From it on, the IR
-  claims `f` on standalone (`trackIrOutcomes`: `f` emitted, not refused). The `+t` row was still right at
-  `c75ee1a01f` (legacy compiled that shape); a later admission let the IR claim it. Not bisected.
-- **Mechanism.** `lowerPrefixUnary` (`src/ir/from-ast.ts`) lowers `-x` / `+x` on a `dynamic` operand as
-  `dyn.to_number`, then `f64.neg` for `-` (the #2949 S5.5 arms). That is ToNumber; §13.5.4 / §13.5.5 take ToNumeric for
-  `-` (a BigInt is negated as a BigInt) and ToNumber for `+` (a BigInt throws TypeError). The IR has no BigInt value, so
-  a BigInt operand cannot be lowered there. The selector admits both shapes for any dyn-shaped operand
-  (`dynamicUsesAreMoveOnly` → `scanExpr`, `src/ir/select.ts` ~L4072) without asking what the checker knows about it.
-- Legacy is right: `expressions/unary.ts` negates a checker-bigint operand on the i64 lane, or with
-  `__bigint_carrier_neg` on a carrier, and its `+` ToNumber throws on a BigInt.
+- **Bisect.** `c75ee1a01f` (#7135, "… certify explicit-any caller boundaries") is the first bad commit for every
+  bisected row: S18 compared it with its parent; RV7459's automated bisect named it. From it on the IR claims `f` on
+  standalone.
+- **Mechanism.** The IR has no BigInt value. Its dynamic-operand arms run ToNumber (`dyn.to_number`) or a
+  number/string addition or loose equality, where the spec takes ToNumeric (§13.5.4–5, §13.15.3, §13.4) or
+  IsLooselyEqual's BigInt steps (§7.2.15):
+  - selector (`src/ir/select.ts`, `dynamicUsesAreMoveOnly` → `scanExpr`): `+` arm (~L3972), equality arm (~L3995),
+    `- * / %` arm (~L4051, "#2949 S5.P"), prefix `+ -` and `++ --` arms (~L4072–4089);
+  - builder (`src/ir/from-ast.ts`): `lowerPrefixUnary`'s dynamic `-` / `+` arms, `relOperandToF64` (arithmetic),
+    the dynamic `++` / `--` arm (~L13556), the dynamic `+` and loose-equality producers.
+- Legacy is right on a checker-`bigint` operand: `expressions/unary.ts` negates on the i64 lane or with
+  `__bigint_carrier_neg`; `binary-ops.ts` takes its BigInt arms.
 
 ## Implementation Plan
 
 ### Approach
 
-Refuse, at selection, a unary `-` or `+` whose operand the checker types as `bigint`; legacy compiles that unit, as
-it did before #7135. On the Prepared whole-program path, which has no selector, the builder refuses the same shape by
-name, at the point it would lower it (the #7364 pattern). Both ask ONE checker-backed predicate, so the two pipelines
-cannot disagree.
-
-Not chosen: a ToNumeric `dyn.negate` op. It would also fix the un-narrowed `any` case, which is NOT this
-regression: legacy gets it wrong too (it answers NaN). It needs a new dialect op in ~10 exhaustive switches
-(builder, verifier, effects, inline-small, monomorphize, legalization, lower-generic, prepared dependencies,
-async-linear) and a `dynamic` result where the selector and builder now promise `f64`. That is the IR's general
-BigInt foundation, and it belongs in its own issue, not in a regression fix.
+The IR refuses, at selection, every dynamic-operand arithmetic, update, addition or loose-equality arm whose operand
+the checker types with a BigInt member; legacy compiles that unit, as before #7135. The Prepared whole-program path,
+which has no selector, refuses the same shapes at build through `refuseUnselected` (the #7364 / #7354 D1 pattern).
+Both ask ONE checker-backed predicate instance. The refusal is gated to the host-free lanes, so gc output stays
+byte-identical. The real fix — ToNumeric dynamic ops that let the IR claim these units — is #7526.
 
 ### Target structure
 
-1. **`src/ir/module-bindings.ts`** — `makeIrBigIntExpressionPredicate(checker)`, next to its siblings
-   `makeIrArrayExpressionPredicate` / `makeIrRegExpExpressionPredicate`, in the same shape:
-   `checker.getTypeAtLocation(unwrapParens(expr))` is BigInt-like, or a union whose non-nullish members all are;
-   `false` on a throw. It is registered in `makeIrCheckerSelectionOptions` as `isBigIntExpression`, so every planner
-   that uses the shared factory (`codegen/index.ts`, `ir/integration.ts`, the linear backend, the fallback gate)
-   gets it with no per-planner wiring.
-2. **`src/ir/select.ts`** — `IrSelectionOptions.isBigIntExpression?: (expr) => boolean`, documented like
-   `isRegExpExpression` (checker-backed, absent ⇒ unproven ⇒ claim as today). In `dynamicUsesAreMoveOnly`'s
-   prefix-unary arm, `+` / `-` on a dyn-shaped operand returns `false` when
-   `currentSelectionOptions?.isBigIntExpression?.(op) === true`. `!` stays: ToBoolean of a BigInt is exact on the
-   carrier.
-3. **`src/ir/from-ast.ts`** — `lowerPrefixUnary`'s two `dynamic` arms (`-`, `+`) throw
-   `IrUnsupportedError("operand-coercion-unsupported", "build", …)` when the same predicate, built once per lowering
-   from `cx.checker`, answers true. On the ordinary pipeline this branch is unreachable (the selector refused first),
-   and it states the producer contract the Prepared path otherwise lacks. The existing
-   `checkerProvesUnaryCoercionGap` is NOT reused: its `checkerOperandFamily` folds BigInt into `"other"` together
-   with objects, for which ToNumber is right.
+1. **`src/checker/type-mapper.ts`** — split `typeMayBeBigInt` (#7371) into its two halves: a new exported
+   `typeHasBigIntMember(type)` (`isBigIntType`, or a union with a member that is) and `typeMayBeBigInt = any/unknown ||
+   typeHasBigIntMember`. No behaviour change for `typeMayBeBigInt`'s callers. "Some member", not every member: a
+   narrowed `bigint | number` is wrong too.
+2. **`src/ir/module-bindings.ts`** — `makeIrBigIntOperandPredicate(checker)`, a sibling of
+   `makeIrRegExpExpressionPredicate` in the same shape (`getTypeAtLocation(unwrapParens(expr))`, `false` on a throw),
+   answering `typeHasBigIntMember`. Memoised per checker (the `makeIrPrimitiveExpressionClassifier` WeakMap), so the
+   selector and the builder get the same instance. It is NOT added to `makeIrCheckerSelectionOptions`: that factory
+   feeds gc planners too.
+3. **Wiring, host-free only** — `isBigIntOperand` is set where `nativeRegExpCompiles` is set, only when there is no
+   JavaScript embedder, using the condition each site already reads:
+   - selector options: `codegen/index.ts` (~L3317, next to `nativeDynamicInBuildable: … hostFreeEnvironment(ctx)`) and
+     `ir/integration.ts` `compileIrPathFunctions` (~L2603, `ctx.targetProfile.environment !== "javascript"`, the
+     in-place read that file already uses to avoid the import cycle);
+   - builder options: `ir/integration.ts` `makeFromAstResolver` (~L7215), same condition.
+   No new target option: the environment question already exists; this only decides which planners get the predicate.
+4. **`src/ir/select.ts`** — `IrSelectionOptions.isBigIntOperand?: (expr) => boolean`, documented like
+   `isRegExpExpression` (absent ⇒ unproven ⇒ claim as today). One helper next to `dynamicUsesAreMoveOnly`'s other
+   operand predicates:
+   `const refusesNumericOperand = (op) => currentSelectionOptions?.isBigIntOperand?.(op) === true;`
+   asked at each dynamic arm in (Cause) for each dyn-shaped operand, returning `false` (not claimed) when it answers
+   true. `!` and `===` stay: ToBoolean and strict equality are exact on the carrier.
+5. **`src/ir/from-ast.ts`** — `IrFromAstResolver.isBigIntOperand?(expr)`, the same instance. One helper,
+   `refuseBigIntNumericOperand(operand, cx)`, calls
+   `refuseUnselected(cx.unselected, "operand-coercion-unsupported", …)` when the predicate answers true. It is asked at
+   the builder arms in (Cause). On the ordinary pipeline the selector refused first, so `refuseUnselected` is an
+   invariant there, not a withdrawal; on the Prepared path it is the named refusal.
 
 ### What it reuses, what it removes
 
-- Reuses the shared checker-selection factory and the sibling predicate shape; no new resolver wiring.
-- Reuses the existing refusal code `operand-coercion-unsupported`; no new code in the fallback buckets.
-- Removes nothing: there is no duplicate to fold. The predicate is the only BigInt question either pipeline asks.
+- Reuses `isBigIntType` / `typeMayBeBigInt` (#7371), the sibling predicate shape and memo, the `nativeRegExpCompiles`
+  wiring sites, `refuseUnselected`, and the existing refusal code `operand-coercion-unsupported`.
+- Removes the BigInt-member check's would-be duplicate: `typeMayBeBigInt` and the new predicate share
+  `typeHasBigIntMember`.
 
 ### Acceptance criteria
 
-- **Correctness.** Pins in `tests/issue-7525-ir-unary-minus-narrowed-bigint.test.ts`, on gc and standalone, against
-  node's answer: every row in the table above, plus `-t` / `+t` on a narrowed `bigint | undefined` and a non-narrowed
-  number control that the IR keeps claiming (`trackIrOutcomes` shows `f` emitted). The pins fail on main and pass
-  after.
-- **Prepared path.** One pin runs `TEST262_COMPILER_PATH=ir`-equivalent options (`wholeProgram:
-  { kind: "prepared-program-required" }`) and expects the named refusal, not a wrong value.
-- **No regression.** Bytes identical to main on the 160-file test262 sample × {gc, standalone} and on the IR fallback
-  corpus (`pnpm run check:ir-fallbacks` unchanged); only units with a BigInt-typed unary operand move.
-- **Code quality.** One predicate, two askers. The selector arm and the builder arm are one-line conditions in the
-  existing `-`/`+` arms, with no new branches elsewhere. No growth in `select.ts` / `from-ast.ts` past their
-  budgets without a written reason. Reviewed adversarially before release.
+- **Correctness.** `tests/issue-7525-ir-bigint-numeric-operand.test.ts`, on gc and standalone against node's answer:
+  every row of the table (unary, binary `- * / %`, `t * 2`, `++` / `--`, `t + u`, `t != u`, `t == 1`, `bigint | number`),
+  plus the already-right controls and a `typeof t === "number"` control that the IR keeps claiming (`trackIrOutcomes`
+  shows `f` emitted). The rows that are wrong on main fail on main and pass after; `bigint | number` passes on
+  standalone after and stays a documented gc failure (#7526).
+- **Prepared path.** One pin under `wholeProgram: { kind: "prepared-program-required" }` expects the named refusal
+  `operand-coercion-unsupported`, not a wrong value.
+- **Bytes.** gc output identical to main on the 160-file test262 sample and the IR fallback corpus. Standalone
+  identical except units with a BigInt-typed numeric operand; every such unit in the sample is listed in the PR.
+  `pnpm run check:ir-fallbacks` reports no growth in unintended buckets.
+- **Code quality.** One predicate, built on `isBigIntType` through `typeHasBigIntMember`; one selector helper asked at
+  every dynamic numeric arm; the builder asks the same instance through one helper and `refuseUnselected`. No growth
+  in `select.ts` / `from-ast.ts` past their budgets without a written reason. Adversarial review before release.
 
-### Left open (separate issues)
+### Left open
 
-- Un-narrowed `-t` / `+t` on an `any` holding a BigInt answers NaN on both pipelines (pre-existing): needs the IR's
-  ToNumeric `dyn.negate` above, and legacy's `any` negate to call `__bigint_carrier_neg`.
+- **#7526** — a ToNumeric dynamic numeric op family (`neg`, binary `- * / %`, `++` / `--`, BigInt-aware `+` and loose
+  equality), so the IR can claim these units instead of refusing them; it also fixes un-narrowed `any` holding a
+  BigInt and `bigint | number` on both pipelines.
