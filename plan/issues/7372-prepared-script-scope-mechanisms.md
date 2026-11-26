@@ -312,20 +312,45 @@ CaseClause/DefaultClause, or the sole statement of an `if` clause (§B.3.3, its 
   - The block binding is a function local: a ref cell when a closure writes it.
   - The var binding is a function local of the existing function-local var model (`function-local-var.ts`).
   - A parameter skips everything; `arguments` gets the write without a creation [N1].
-- **Eval code (2c, §B.3.2.3), after eval A4 (#7363) runs the literal as a called script source.**
-  - Lead and lane S2 (main `c3b7be66`, real harness): 90 `annexB/language/eval-code/direct/global-*` files, their 90
-    `indirect/global-*` twins and 4 others stop first at the eval refusal. On S2's static splice, the direct ones then
-    stop at `f` not in scope (48), FunctionDeclaration (30) and three smaller Annex B gaps. List:
-    `annexB/language/eval-code/{direct,indirect}/global-<P>-eval-global-<S>.js`, where
-    - P ∈ {block-decl, if-decl-else-decl-a, if-decl-else-decl-b, if-decl-else-stmt, if-decl-no-else,
-      if-stmt-else-decl};
-    - S is one of the 15 suffixes S2 reported.
-  - The same analysis carries it, with two inputs:
-    - **Outer lexical names.** A direct eval's conflict check also walks the caller's enclosing scopes, with the same
-      lifted `hasInterveningLexicalBinder` starting at the eval call. An indirect eval has none.
-    - **Creation point.** An eval's new global exists only once the eval runs. Before that, a read throws
-      ReferenceError (`…-skip-early-err*`), and the binding is configurable. Its home starts in lane S10's absent
-      state (slice 3), and eval instantiation sets it to `undefined`. No third kind of home.
+- **Eval code (2c, §B.3.2.3), after eval A4 (#7363), slice 3 (absent global) and slice 4 (`delete`).** Its own PR
+  sequence; 2a does not wait for it. Review findings C1–C6 answered inline.
+  - **List [C6].** Lane S2 measured it on main `c3b7be66` with the real harness, over all 469 files in
+    `annexB/language/eval-code/{direct,indirect}`. These are the files whose first stop is the eval refusal:
+    - 90 `annexB/language/eval-code/{direct,indirect}/global-<P>-eval-global-<S>.js` in each directory, where
+      - P ∈ {block-decl, if-decl-else-decl-a, if-decl-else-decl-b, if-decl-else-stmt, if-decl-no-else,
+        if-stmt-else-decl};
+      - S ∈ {block-scoping, existing-block-fn-no-init, existing-fn-no-init, existing-fn-update, existing-var-no-init,
+        existing-var-update, no-skip-try, skip-early-err, skip-early-err-block, skip-early-err-for,
+        skip-early-err-for-in, skip-early-err-for-of, skip-early-err-switch, skip-early-err-try, update};
+    - plus `direct/{block-decl,switch-case-decl,switch-dflt-decl}-nostrict.js` and
+      `direct/var-env-lower-lex-catch-non-strict.js`.
+
+    The glob is the list, so the 184 files can be regenerated from this text. The ~183-file yield is S2's estimate,
+    conditional on A4 and slice 3, and is re-measured before 2c starts.
+  - **Var-binding test [C1, C2]** (§B.3.2.3 step 1.b, bindingExists):
+    - *F* must not be bound by **any** declarative environment between the eval and its var environment (HasBinding):
+      `let`/`const`/`class`, a lexical `for` head, an outer block function's block binding
+      (`{ function f(){} eval('{ function f(){} }') }` creates no var), or a function's own name scope. Only a
+      catch-clause parameter is exempt (§B.3.4).
+    - The set is "every name bound in the intervening scopes, minus catch parameters". It comes from the lifted
+      analysis's existing scope walk (B1), extended to count block functions and class names; there is no new walk.
+    - When the var environment is the global one (an indirect eval, or a direct eval at script level),
+      HasLexicalDeclaration(*F*) applies as well: the script's top-level `let`/`const`/`class` *F* blocks the var. An
+      indirect eval's set is not empty: it is that global check alone.
+  - **Creation [C3].** CreateGlobalVarBinding(*F*, true) runs when the eval runs. If *F* already exists — an earlier
+    script `var` or function, or an earlier run of the same eval (a loop) — it is a no-op and the **current value is
+    kept**. Only when the home is in S10's absent state does instantiation set it to `undefined`. The home starts
+    absent only for a name nothing else declares.
+  - **Configurable [C4].** An eval-created global is deletable. `delete F` on it is slice 4's path, so 2c is ordered
+    **after slice 4**. Until then, any 2c draft refuses `delete` of an eval-created name by name.
+  - **H2 invariant change [C5].** Today the H2 header (`module-binding-script-var.ts`) makes a script with a direct
+    `eval` decline. 2c changes it in one stated way:
+    - a literal eval that A4 compiles is a known writer: `preparedBindingRewritten` counts the Annex B evaluation
+      writes inside its text (the `existing-var-*` / `existing-fn-*` eval files), through the same block-function
+      identity as 2a;
+    - a non-literal eval still makes the script decline.
+
+    The header and `tests/issue-7354-h2-script-binding-routes.test.ts` get the new route.
   - The direct `func-*` eval files (144) are function level and also wait for 2b.
 
 Still refused by name in 2a:
@@ -353,7 +378,8 @@ Still refused by name in 2a:
    - Pins include `switch (2) { case 1: function f(){} case 2: f(); }`, `catch (f) { { function f(){} } }` reading
      `f` inside and after, and `block-scoping`'s reassignment.
 3. **2b.** Function level, after #7492.
-4. **2c.** Eval code, after eval A4 (#7363) and slice 3's absent global. Re-measured on S2's list first.
+4. **2c.** Eval code, after eval A4 (#7363), slice 3 (absent global) and slice 4 (`delete`). Re-measured on the C6 list
+   first. If it grows, it moves to its own plan; 2a is released independently.
 
 #### Acceptance
 
