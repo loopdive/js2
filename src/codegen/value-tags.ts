@@ -123,7 +123,7 @@ export function f64MayHoldUndefined(ctx: CodegenContext, node: ts.Node, type: Va
 /**
  * (#7464) The type of the declared f64 slot named `name` (a module binding, a class field or static), branded
  * `undefSentinel` when the slot can hold `undefined` (`optional` for a `?:` field). Every read of the slot carries the
- * brand, and the readers that box or stringify an f64 (`String`, `+`, `typeof`, `JSON.stringify`) key on it, so they
+ * brand, and the readers that stringify or classify an f64 (`String`, `+`, template spans, `typeof`) key on it, so they
  * answer `undefined` where they would otherwise print the sentinel as NaN.
  */
 export function undefinedCapableSlotType(ctx: CodegenContext, name: ts.Node, type: ValType, optional = false): ValType {

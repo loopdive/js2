@@ -114,7 +114,7 @@ import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./re
 import { emitStandaloneSubclassMethodInstall } from "./standalone-subclass-method-install.js";
 import { emitVecProtoLinkInstall } from "./vec-proto-link.js"; // (#2917)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
-import { UNDEF_F64_BITS } from "./value-tags.js";
+import { pushUndefF64 } from "./value-tags.js";
 import { declaredField, fieldSlotType, fieldStartsUndefined } from "./uninitialised-field-undefined.js";
 import { noteStaticF64UndefinedSeed } from "./declarations/module-var-undefined-seed.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
@@ -2568,8 +2568,7 @@ function compileClassBodiesInner(
           fctx.body.push({ op: "i32.const", value: tagValue });
         } else if (field.type.kind === "f64") {
           if (field.undefinedDefault) {
-            fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS });
-            fctx.body.push({ op: "f64.reinterpret_i64" });
+            pushUndefF64(fctx.body);
           } else {
             fctx.body.push({ op: "f64.const", value: 0 });
           }
