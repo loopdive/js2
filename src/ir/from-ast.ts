@@ -12799,8 +12799,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     lowerEarlyReturn(stmt, cx);
     return;
   }
-  const clauseCx = { ...cx, scope: new Map(cx.scope) }; // an `if` clause's function is its own scope
-  if (ts.isFunctionDeclaration(stmt) && annexB.evaluateBlockFunction(stmt, annexBHost(clauseCx))) return;
+  if (ts.isFunctionDeclaration(stmt) && annexB.evaluateBlockFunction(stmt, annexBHost(cx))) return;
   demoteToLegacy(
     "body-shape-rejected",
     `ir/from-ast: unsupported body statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
@@ -16389,7 +16388,8 @@ function annexBHost(cx: LowerCtx): annexB.BlockFunctionLoweringHost {
   const functionValue = (fn: ts.FunctionDeclaration) =>
     functionObjects.functionObjectDynamicValue(value(fn), fn.name!, functionObjectLoweringHost(cx));
   const homesOf = (fn: ts.FunctionDeclaration) => cx.resolver?.annexBBlockFunctionHomes?.(fn);
-  return { builder: cx.builder, homesOf, functionValue, unbind: (name) => cx.scope.delete(name) };
+  const scoped = () => annexBHost({ ...cx, scope: new Map(cx.scope) });
+  return { builder: cx.builder, homesOf, functionValue, unbind: (name) => cx.scope.delete(name), scoped };
 }
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {

@@ -326,6 +326,9 @@ CaseClause/DefaultClause, or the sole statement of an `if` clause (§B.3.3, its 
   - The block binding is a function local: a ref cell when a closure writes it.
   - The var binding is a function local of the existing function-local var model (`function-local-var.ts`).
   - A parameter skips everything; `arguments` gets the write without a creation [N1].
+  - (Review RV7466, 2026-11-26) Until 2b lands, a function-level block function makes its function end at the
+    abort; a symbol-less reference in a function that binds the name itself is no reference to the script's binding
+    (pinned as a run-time trap). 2b replaces that trap with a refusal at select for the shapes it does not model.
 - **Eval code (2c, §B.3.2.3), after eval A4 (#7363), slice 3 (absent global) and slice 4 (`delete`).** Its own PR
   sequence; 2a does not wait for it. Review findings C1–C6 answered inline.
   - **List [C6].** Lane S2 measured it on main `c3b7be66` with the real harness, over all 469 files in

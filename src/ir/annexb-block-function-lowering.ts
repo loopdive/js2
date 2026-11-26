@@ -23,6 +23,8 @@ export interface BlockFunctionLoweringHost {
   readonly functionValue: (declaration: ts.FunctionDeclaration) => IrValueId;
   /** Unbind a name in the scope's own lowering scope: there it means the block binding, not an outer local. */
   readonly unbind: (name: string) => void;
+  /** A host over a copy of this one's lowering scope (an `if` clause's function is a scope of its own). */
+  readonly scoped: () => BlockFunctionLoweringHost;
 }
 
 /**
@@ -44,14 +46,15 @@ export function instantiateBlockFunctions(scope: ts.Block | ts.CaseBlock, host: 
 
 /**
  * The declaration's evaluation; false when it is no admitted block function. An `if` clause's declaration is its own
- * scope, which is entered right here (`host` lowers in a scope of its own, where the name is then unbound).
+ * scope, which is entered right here, in a copy of the enclosing lowering scope where the name is unbound.
  */
 export function evaluateBlockFunction(declaration: ts.FunctionDeclaration, host: BlockFunctionLoweringHost): boolean {
   const homes = host.homesOf(declaration);
   if (!homes) return false;
   if (ts.isIfStatement(declaration.parent)) {
-    host.unbind(declaration.name!.text);
-    instantiate(declaration, homes, host);
+    const clause = host.scoped();
+    clause.unbind(declaration.name!.text);
+    instantiate(declaration, homes, clause);
   }
   if (homes.var) {
     const value = host.builder.emitGlobalGet(homes.block.globalRef, homes.block.type);
