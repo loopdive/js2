@@ -27,4 +27,5 @@ On main, the Prepared path throws out of `compile()` for an assignment to a `con
 ## Resolution (2026-11-26)
 
 Duplicate of [#7434](./7434-prepared-const-reassignment-invariant.md), fixed by the PR that closes #7434. That issue
-file is the record; this one stays only so the id resolves.
+file is the record; this one stays only so the id resolves. The repro is pinned in
+`tests/issue-7434-prepared-const-write.test.ts` ("assignment at top level: the program refuses").
