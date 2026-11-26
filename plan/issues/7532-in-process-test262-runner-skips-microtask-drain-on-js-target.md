@@ -104,9 +104,10 @@ mirror.
 
 ### Acceptance criteria
 
-1. **Flip list.** All **283** root test files that reference `runTest262File` are run on base (main) and on the branch:
-   one vitest process per file, single fork, JSON report. Each file runs under an external wall timeout of 15 min
-   (`timeout 900`). A file that hits the timeout or exits without a report counts as a flip.
+1. **Flip list.** `rg -l runTest262File tests` lists 283 files: 280 test files plus three modules that are not tests
+   (`test262-runner.ts`, `test262-oracle-version.ts`, `test262-restore-builtins.ts`). All 280 test files are run on
+   base (main) and on the branch: one vitest process per file, single fork, JSON report. Each file runs under an
+   external wall timeout of 15 min (`timeout 900`). A file that hits the timeout or exits without a report counts as a flip.
    - Report every per-test flip (fail→pass, pass→fail, *→hang) in the PR body.
    - pass→fail and *→hang must be 0.
    - Expected fail→pass: the JS-target async rows that stopped at "async completion marker not observed", among them
