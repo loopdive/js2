@@ -706,3 +706,60 @@ Code quality:
 | 12 empty calls | `String()` / `Number()` / `Boolean()` direct and through the realm value; probes |
 | 13 slicing | B3b and B3c merged into B3bc with its yield |
 | other | `claude/7350-string-call` cited (`b05ac39870…`, feature commit `e50febcb71`); B3a absorbs it, the branch closes in its favour |
+
+### B3a result (2026-11-26, branch `claude/7350-b3` on main `bb9123f6a3`)
+
+**Built** (one code commit): the catalog's `wrapperRows` (identity rows, `identityOnly`, Number's five constants;
+ids appended to `NATIVE_VALUE_INTRINSICS`); the kernel's identity mark (`BUILTIN_IDENTITY_ONLY_FLAG`, B2b's name and
+bit); `realmConstructorId` / `realmConstructorOf` replacing the three Error recognisers; `HELD_FAMILIES` replacing
+`heldErrorConstructors`; `realmFamilies` / `holdsFamily`; `dynamic-wrapper-constructors.ts`; the static refusal of an
+unseeded key in `dynamic-member-access.ts`; the folds (`typeof X`, `Number.<constant>`) and the conversion calls in
+`realm-static-call.ts`; the pristine conversion plans (e50febcb71 absorbed, extended to `Number` and `Boolean`).
+
+**Deviations from the plan** (the code's reality):
+
+- *The mark's test sits in the kernel's own-property find* (`buildBuiltinFunctionFindOwn`), not in B2b's lookup status
+  4: every own query of a function object passes that find ([[Get]], [[HasProperty]] and [[Set]] through the lookup,
+  HasOwnProperty, [[GetOwnProperty]]), so one test covers all of them; the kernel's define probes the find first, so
+  `Object.defineProperty(S, "prototype", …)` aborts too. Both are emitted only where the realm holds an identity row,
+  so every other program keeps its bytes. B2b's ordinary-object arm (its identity-only namespaces) is not in B3a; B2b
+  adds it to the same find when it rebases. `delete` and `in` of a constructor's key stay compile-time refusals
+  (`delete has no IR lowering`, `__extern_has`).
+- *A static write* of an unseeded key (`Boolean.prototype = 1`) refuses by the write route's own receiver refusal
+  (`identifier "Boolean" is not in scope`) before the legalization's named refusal is reached; still a named refusal.
+- *`Number.isNaN(v)` / `Number.isFinite(v)` calls* are claimed first by an existing static-call lowering and answer as
+  node (as on base); only a read of such a static (`var f = Number.isNaN`) reaches the named refusal.
+- *Byte criterion*: `var x = Number.MAX_VALUE;` alone is not byte-equal to the literal program, because the #3418
+  dead-binding elision (shared with the ordinary pipeline, not changed here) drops `var x = <literal>` but keeps a
+  member read, which may run code in general. With `x` read, the five pairs are byte-identical (pinned in the test).
+  For the fold to give the literal's bytes, `source-dynamic-provenance.ts` treats a folded constant as typed like a
+  numeric literal.
+- *Conversion lowering*: the Prepared lane's `Number(v)` / `isNaN(v)` / `Boolean(v)` lower in `realm-static-call.ts`
+  (`lowerRealmConversionCall`); the ordinary pipeline's `lowerPreparedNumberCall` keeps its body unchanged. An admitted
+  conversion call is exempt from the implicit-flow rule (its value is a primitive), which `Number({})` in a typed
+  return needed once its operand became a carrier.
+- *`String(object)`* (direct call) still refuses (`String() of externref operand`), as on base; the value route
+  (`(0, String)(obj)`) converts.
+- *`typeof` fold* applies to every realm constructor (the Error constructors too): `check:prepared-bytes` is identical
+  on all 804 rows, so no measured program changed.
+- `builtin-global-binding.ts` now unwraps type assertions in a write target (`(String as any) = …`), which the absorbed
+  plan test needed.
+- Criterion 9 (prototype key sets) belongs to B3bc: B3a adds no prototype.
+
+**Measured** (`prepared-census.mts --harness real --jobs 3`, base = detached `bb9123f6a3`, head = this branch):
+
+| list | base pass | head pass | gained | lost | new crashes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1,068 stop files | 0 (1,068 CE) | 107 (+4 fail, 957 CE) | 107 | 0 | 0 |
+| 411-row shared sample (`.tmp/o411`) | 63 | 70 | 7 | 0 | 0 |
+| 420 sample (`l420.txt`) | 59 | 62 | 3 | 0 | 0 |
+
+The 4 new `fail` rows are uncatchable aborts (`unreachable`: `Object.getOwnPropertyDescriptor(String, "prototype")`
+three times, `str.constructor` once), never a wrong answer. Named rows: `division/S11.5.2_A4_T1.1.js` and
+`modulus/S11.5.3_A4_T3.js` pass; their mutated twins fail. All 112 gained rows got a mutated twin (one expected value
+or condition flipped); all 112 twins fail.
+
+**No regression**: `check:prepared-bytes` 804/804 identical; ordinary pipeline sample (198 carriers × default and
+standalone) 396/396 identical; `prove-emit-identity` 60/60 identical. Test suites: `issue-7354-*` and `issue-7350-*`
+fail only `o-objects` "refuses what the later steps build" (fails on base too); `issue-3518-*` fails the same 131
+tests on base and head.
