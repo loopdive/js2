@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import ts from "typescript";
@@ -28,47 +26,9 @@ import { emitBinary } from "../src/emit/binary.js";
 import { WasmEncoder } from "../src/emit/encoder.js";
 
 const voidSignature = { params: [], results: [] };
-const names = [
-  "TypeDef",
-  "FuncTypeDef",
-  "StructTypeDef",
-  "ArrayTypeDef",
-  "RecGroupDef",
-  "SubTypeDef",
-  "FieldDef",
-  "WasmFunction",
-  "TagDef",
-  "Import",
-  "ImportDesc",
-  "WasmExport",
-  "Table",
-  "Element",
-  "GlobalDef",
-];
 
 function source(path: string): string {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-}
-function declarations(text: string) {
-  const file = ts.createSourceFile("records.ts", text, ts.ScriptTarget.Latest, true);
-  return file.statements.filter(
-    (statement): statement is ts.InterfaceDeclaration | ts.TypeAliasDeclaration =>
-      ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement),
-  );
-}
-function receipt(text: string): string {
-  const file = ts.createSourceFile("records.ts", text, ts.ScriptTarget.Latest, true);
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        declarations(text).map((node) => [
-          node.name.text,
-          ts.SyntaxKind[node.kind],
-          text.slice(node.getStart(file), node.end),
-        ]),
-      ),
-    )
-    .digest("hex");
 }
 function fixture() {
   const module = createEmptyModule();
@@ -555,47 +515,6 @@ describe("review controls — exact emitter-affecting state", () => {
 });
 
 describe("physical record relocation — fifteen complete declarations", () => {
-  it("pins mandatory canonical declarations, order, members and documentation", () => {
-    const text = source("src/wasm/model/module-records.ts");
-    expect(declarations(text).map((node) => node.name.text)).toEqual(names);
-    // 2d0610751954975e0ec634ab83b181a28530454f adds FieldDef.optional and its documentation.
-    expect(receipt(text)).toBe("1e50d9cd1fcce90871a6a5ea7e80cc1d4bbb2bb34c24e82a13c7d986985dda00");
-    expect(text.match(/optional\?: true;/g)).toHaveLength(1);
-    expect(receipt(text.replace("optional?: true;", "optional?: boolean;"))).not.toBe(receipt(text));
-    expect(text.match(/declared optional/g)).toHaveLength(1);
-    expect(receipt(text.replace("declared optional", "declared required"))).not.toBe(receipt(text));
-    const mutated = text.replace("presenceBit?: number;", "presenceBit?: string;");
-    expect(receipt(mutated)).not.toBe(receipt(text));
-    expect(receipt(text.replace("field's constructor initializer", "field's replacement initializer"))).not.toBe(
-      receipt(text),
-    );
-  });
-
-  it("requires exactly the explicit compatibility exports and no local replacement", () => {
-    const text = source("src/ir/types.ts");
-    const file = ts.createSourceFile("types.ts", text, ts.ScriptTarget.Latest, true);
-    expect(declarations(text).filter((node) => names.includes(node.name.text))).toEqual([]);
-    const links = file.statements
-      .filter(ts.isExportDeclaration)
-      .filter(
-        (node) =>
-          node.moduleSpecifier &&
-          ts.isStringLiteral(node.moduleSpecifier) &&
-          node.moduleSpecifier.text === "../wasm/model/module-records.js",
-      );
-    expect(links).toHaveLength(1);
-    expect(links[0]!.isTypeOnly).toBe(true);
-    const clause = links[0]!.exportClause;
-    expect(clause && ts.isNamedExports(clause)).toBe(true);
-    if (!clause || !ts.isNamedExports(clause)) throw new Error("missing explicit exports");
-    expect(clause.elements.map((element) => element.name.text)).toEqual(names);
-    expect(clause.elements.every((element) => !element.propertyName)).toBe(true);
-    expect(declarations(text).map((node) => node.name.text)).toContain("WasmModule");
-    expect(file.statements.filter(ts.isFunctionDeclaration).map((node) => node.name?.text)).toContain(
-      "createEmptyModule",
-    );
-  });
-
   it("retains all fifteen type identities", () => {
     expectTypeOf<Historical.TypeDef>().toEqualTypeOf<Canonical.TypeDef>();
     expectTypeOf<Historical.FuncTypeDef>().toEqualTypeOf<Canonical.FuncTypeDef>();

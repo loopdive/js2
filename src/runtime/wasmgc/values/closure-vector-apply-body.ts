@@ -91,7 +91,7 @@ export function buildNativeClosureVectorApplyDefinition(
   const argumentBase = 12;
   const maxArguments = Math.max(0, ...entries.map((entry) => entry.params.length));
   const argumentLocals = Array.from({ length: maxArguments }, (_, index) => argumentBase + index);
-  let dispatch = buildClosureInvocationFailure(failure);
+  let dispatch = buildClosureInvocationFailure(failure, 0);
   for (const entry of [...entries].reverse()) {
     const args = entry.params.flatMap((type, index) =>
       buildClosureMethodArgument(argumentLocals[index]!, index, type, state.argc, entry.arguments),
@@ -139,7 +139,7 @@ export function buildNativeClosureVectorApplyDefinition(
       { name: "__result", type: { kind: "externref" } },
       ...argumentLocals.map((_, index): LocalDef => ({ name: `__arg${index}`, type: { kind: "externref" } })),
     ],
-    body: buildClosureInvocationBoundary(state, slots, [
+    body: buildClosureInvocationBoundary(state, failure.exceptionTag, slots, [
       ...(state.receiverPolicy === "exact"
         ? [{ op: "local.get", index: 1 } as Instr]
         : buildInstallableClosureReceiver(1, state.anyValueTypeIdx)),

@@ -118,6 +118,11 @@ interface IrAmbientGlobalFunctionCall {
   readonly operands: readonly { readonly argument: ts.Expression; readonly family: OperandFamily }[];
 }
 
+/** `isNaN`'s test of a number (§19.2.3 step 2): NaN is the one value unequal to itself. */
+export function emitIsNaN(builder: IrFunctionBuilder, number: IrValueId): IrValueId {
+  return builder.emitBinary("f64.ne", number, number, irBool());
+}
+
 /** What both sides ask of their lane and binding resolver. */
 export interface IrAmbientGlobalFunctionAdmission {
   readonly classify: ClassifyDeclared | undefined;
@@ -210,10 +215,7 @@ export function lowerAmbientGlobalFunctionCall(
       const matches = family === "string" ? type.kind === "string" : asVal(type)?.kind === "f64";
       return matches ? value : host.refuseOperand(call.name, index, type);
     });
-  if (call.name === "isNaN") {
-    const [n] = lowerOperands() as [IrValueId];
-    return builder.emitBinary("f64.ne", n, n, irBool());
-  }
+  if (call.name === "isNaN") return emitIsNaN(builder, (lowerOperands() as [IrValueId])[0]);
   const target = host.target(call.name);
   if (target === null) return null;
   const [text, radix] = lowerOperands() as [IrValueId, IrValueId | undefined];

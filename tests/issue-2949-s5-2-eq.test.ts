@@ -260,7 +260,9 @@ describe("#2949 S5.2 — emitDynEq emits a verifier-clean i32 dyn.eq node", () =
     const y = b.addParam("y", DYN);
     b.openBlock();
     const r = b.emitDynEq(x, y, { loose: true, negate: true });
-    expect(b.typeOf(r)).toEqual(I32);
+    // (#7354 W) The result is the boolean-branded i32.
+    const BOOL = irVal({ kind: "i32", boolean: true });
+    expect(b.typeOf(r)).toEqual(BOOL);
     b.terminate({ kind: "return", values: [r] });
     const fn = b.finish();
     const [node] = fn.blocks[0].instrs;
@@ -271,7 +273,7 @@ describe("#2949 S5.2 — emitDynEq emits a verifier-clean i32 dyn.eq node", () =
       loose: true,
       negate: true,
       result: r,
-      resultType: I32,
+      resultType: BOOL,
     });
     expect(verifyIrFunction(fn)).toEqual([]);
   });

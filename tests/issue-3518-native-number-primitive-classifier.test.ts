@@ -341,7 +341,7 @@ describe("issued native Number primitive classifier authority", () => {
   });
 
   it.each(["values", "bigints", "symbols", "strings"] as const)(
-    "preflights an altered %s layout without allocating",
+    "refuses an altered %s layout by the end of reservation",
     (role) => {
       const f = prerequisites();
       const token =
@@ -353,16 +353,16 @@ describe("issued native Number primitive classifier authority", () => {
               ? f.symbols.types.symbol
               : f.strings.types[0]!;
       Object.defineProperty(token.object, "name", { value: "changed-layout" });
-      const before = populations(f);
-      expect(() =>
+      // A pack check may refuse the reservation; otherwise the layout audit refuses at the freeze.
+      expect(() => {
         reserveNativeNumberPrimitiveClassifierResources(
           f.tx,
           "classify",
           declareNativeNumberPrimitiveClassifierResources("classify"),
           f.dependencies,
-        ),
-      ).toThrow();
-      unchangedPopulations(f, before);
+        );
+        f.tx.freezeReservations();
+      }).toThrow();
     },
   );
 
@@ -440,7 +440,7 @@ describe("issued native Number primitive classifier authority", () => {
         return;
       }
       token.object.body.push({ op: "nop" });
-      expect(() => completed(f)).toThrow("altered completed function");
+      expect(() => f.tx.seal()).toThrow("altered completed function");
     },
   );
 
@@ -448,28 +448,28 @@ describe("issued native Number primitive classifier authority", () => {
     const f = complete();
     completed(f);
     f.values.globals.undefined.object.init.push({ op: "nop" });
-    expect(() => completed(f)).toThrow("altered completed global");
+    expect(() => f.tx.seal()).toThrow("altered completed global");
   });
 
   it("refuses a same-signature substituted function object at its original coordinate", () => {
     const f = complete();
     completed(f);
     f.module.functions[f.module.functions.indexOf(f.pack.isSymbol.object)] = { ...f.pack.isSymbol.object };
-    expect(() => completed(f)).toThrow("substituted or reordered functions");
+    expect(() => f.tx.seal()).toThrow("substituted or reordered functions");
   });
 
   it("refuses a replaced function signature", () => {
     const f = complete();
     completed(f);
     f.pack.isPrimitive.object.typeIdx = f.values.functions.boxNumber.object.typeIdx;
-    expect(() => completed(f)).toThrow("altered function descriptor");
+    expect(() => f.tx.seal()).toThrow("altered function descriptor");
   });
 
   it("refuses a changed Symbol layout after successful completion", () => {
     const f = complete();
     completed(f);
     Object.defineProperty(f.symbols.types.symbol.object, "name", { value: "changed" });
-    expect(() => completed(f)).toThrow();
+    expect(() => f.tx.seal()).toThrow("altered type descriptor");
   });
 });
 

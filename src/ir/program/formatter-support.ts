@@ -5,7 +5,10 @@ import type { IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js
 import { irSupportFuncRef } from "../core/callable-bindings.js";
 import { irSupportTypeRef } from "../core/type-references.js";
 import { irSupportRef, type IrType } from "../core/types.js";
+import type { IrUnitInventory } from "../../shared/contracts/ir-unit-inventory.js";
+import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "../runtime/native-async-callables.js";
 import { freezePreparedIrValue } from "./data.js";
+import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./runtime-abi-identity.js";
 import type { IrFormatterKernelRole, IrNumberFormatRadixSupport, IrRuntimeSupportCallable } from "./runtime-support.js";
 
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
@@ -55,4 +58,26 @@ export function numberFormatRadixSupportDeclarations(sourceId: IrSourceId): {
     },
   };
   return freezePreparedIrValue(declarations) as typeof declarations;
+}
+
+/**
+ * (#7354 Str2) The formatter setup functions bound to a canonical callable rather than a setup-derived binding, by
+ * setup role: the batch's kernels and radix body (support callables), and the native adapter (intrinsic). One table
+ * for the physical plan, which binds them, and the Prepared provider census, which authenticates those bindings.
+ */
+export function numberFormatSetupAssociations(inventory: IrUnitInventory) {
+  const canonical = numberFormatRadixSupportDeclarations(preparedIrRuntimeAbiAnchor(inventory).id);
+  const adapter = NATIVE_ASYNC_CALLABLE_DECLARATIONS.find((row) => row.feature === "async.native.number-to-string")!;
+  return [
+    ...canonical.kernels.map((row) => ({ ...row, origin: "support" as const })),
+    { ...canonical.implementation, role: "radix-body", origin: "support" as const },
+    { ...adapter, role: "native-to-string", origin: "intrinsic" as const },
+  ].map((row) => ({
+    ...row,
+    role: ["number-format", row.role] as const,
+    bindingId:
+      row.ref.binding.kind === "support"
+        ? row.ref.binding.bindingId
+        : preparedIrRuntimeCallableBindingId(inventory, row.ref),
+  }));
 }

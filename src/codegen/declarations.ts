@@ -92,7 +92,7 @@ import {
   unwrapReturnCarrierExpression,
 } from "./declarations/host-carrier-object-literal.js"; // (#6650) return boundary: BOTH host-path reasons
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
-import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
+import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";

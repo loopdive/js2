@@ -64,6 +64,8 @@ export function buildSelfHostedIrBody(input: SelfHostedIrBuildInput): IrFunction
   )
     throw new Error(`stdlib-selfhost: callee declarations disagree for ${def.name}`);
 
+  // No `unselected` (#7364): this producer has no selector, but its source is the compiler's own, so a construct
+  // only the selector refuses is a compiler bug here and stays an invariant.
   const { main, lifted } = lowerFunctionAstToIr(fnDecl, {
     ownerUnitId: unitId,
     funcName: def.name,

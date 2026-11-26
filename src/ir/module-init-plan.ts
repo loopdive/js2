@@ -3,7 +3,10 @@
 import { ts } from "../ts-api.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
-import { createIrBindingId, type IrBindingId } from "./identity.js";
+import { createIrBindingId, type IrBindingId, type IrSourceId } from "./identity.js";
+import { functionValueBindings } from "./function-declaration-values.js";
+import { moduleBindingDeclarations } from "./module-bindings.js";
+import { isModuleInitGlobalDeclaration, moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 
 import type {
@@ -60,6 +63,8 @@ export interface BuildIrModuleInitPlanInput {
   readonly identityContext: IrPlanningIdentityContext;
   readonly target: IrModuleInitTarget;
   readonly deferTopLevelInit: boolean;
+  /** (#7354 F1b) The declarations read as values whose homes this script's bindings hold. */
+  readonly functionValues?: readonly ts.FunctionDeclaration[];
 }
 
 export interface LegacyModuleInitStaticEntry {
@@ -206,6 +211,8 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
   const exported = new Set<string>();
   let declarationOrdinal = 0;
   let sourceOrdinal = 0;
+  const declarationOrder = moduleBindingDeclarationOrder(sourceFile);
+  const redeclared = redeclaredScriptVarOrdinals(checker, declarationOrder);
 
   // Export declarations are order-independent (`export { value }` may appear
   // before `value`), so resolve their canonical local targets up front.
@@ -230,6 +237,12 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
       const kind = declarationKind(statement.declarationList);
       const statementBindingIds: IrBindingId[] = [];
       for (const declaration of statement.declarationList.declarations) {
+        const canonical = redeclared.get(declaration);
+        if (canonical !== undefined) {
+          statementBindingIds.push(irModuleGlobalBindingId(sourceId, canonical));
+          declarationOrdinal++;
+          continue;
+        }
         const names = bindingNames(declaration.name);
         const identifier = ts.isIdentifier(declaration.name);
         const globalBindingId = identifier ? irModuleGlobalBindingId(sourceId, declarationOrdinal) : null;
@@ -419,6 +432,13 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     }
   }
 
+  bindings.push(...nestedVarBindings(sourceFile, sourceId, declarationOrder, declarationOrdinal, redeclared));
+  bindings.push(
+    ...functionValueBindings(sourceFile, input.functionValues ?? [], declarationOrder.length, (ordinal) =>
+      irModuleGlobalBindingId(sourceId, ordinal),
+    ),
+  );
+
   const functions = sourceFile.statements.filter(ts.isFunctionDeclaration);
   for (const declaration of collectReassignedTopLevelFunctions(sourceFile, checker)) {
     const unitId = identityContext.unitIdByDeclaration.get(declaration);
@@ -460,6 +480,57 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
   });
   verifyIrModuleInitPlan(plan, sourceFile);
   return plan;
+}
+
+/**
+ * (#7372 1b) A repeated script `var` is one binding: a later declarator records no binding of its own, and its
+ * statement initializes the first declarator's global. Maps each later declarator to that first one's ordinal.
+ */
+function redeclaredScriptVarOrdinals(
+  checker: ts.TypeChecker,
+  declarationOrder: readonly ts.Node[],
+): ReadonlyMap<ts.Node, number> {
+  const ordinals = new Map(declarationOrder.map((declaration, ordinal) => [declaration, ordinal]));
+  const redeclared = new Map<ts.Node, number>();
+  for (const declaration of declarationOrder) {
+    if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) continue;
+    const [first, ...later] = moduleBindingDeclarations(declaration.name, checker);
+    if (first === declaration) for (const other of later) redeclared.set(other, ordinals.get(first)!);
+  }
+  return redeclared;
+}
+
+/**
+ * (#7372) The bindings of the script `var`s a nested modelled list declares (a block, branch, loop, `try` or
+ * `switch` of top-level code) and of pattern leaves, where they are module-init globals (in a script, not an ES
+ * module: `isModuleInitGlobalDeclaration`): their ordinals follow every top-level statement's
+ * (`moduleBindingDeclarationOrder`), and each is `undefined` from instantiation, as a top-level `var` is.
+ */
+function nestedVarBindings(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  declarationOrder: readonly ts.Node[],
+  firstOrdinal: number,
+  redeclared: ReadonlyMap<ts.Node, number>,
+): IrModuleInitBindingIntent[] {
+  return declarationOrder.slice(firstOrdinal).flatMap((declaration, index) => {
+    const binding = declaration as ts.VariableDeclaration | ts.BindingElement;
+    if (redeclared.has(declaration) || !isModuleInitGlobalDeclaration(binding)) return [];
+    const declarationOrdinal = firstOrdinal + index;
+    const name = binding.name as ts.Identifier;
+    return [
+      frozen({
+        declarationOrdinal,
+        names: Object.freeze([name.text]),
+        declarationKind: "var" as const,
+        mutable: true,
+        initialization: "undefined-at-instantiation" as const,
+        globalBindingId: irModuleGlobalBindingId(sourceId, declarationOrdinal),
+        tdzBindingId: null,
+        ...sourceRange(declaration, sourceFile),
+      }),
+    ];
+  });
 }
 
 /** Fail closed on malformed or non-canonical plan data before any body uses it. */

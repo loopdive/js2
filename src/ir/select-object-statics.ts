@@ -32,7 +32,7 @@ import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
 import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import * as objectStatics from "./object-statics.js";
-import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./program/builtin-prototype-keys.js";
 
 type Capability = Extract<
   IrBackendTargetCapability,

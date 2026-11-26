@@ -42,8 +42,12 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string) {
-  const result = await compile(source, options("test.js"));
+  const result = await compile(source, options("test.js"), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -122,10 +126,17 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       "g(5, 0) !== 0",
     ],
     [
-      "a script loop (a module-init local)",
+      "a script loop",
       "var r; for (var i = 0; i < 2; i = i + 1) { var g; if (i === 0) g = 5; else r = g; } function f() { return r; }",
       "f() !== 5",
       "f() !== undefined",
+    ],
+    // (#7372) The nested script `var` is the global the function reads.
+    [
+      "a script loop var read by a function",
+      "var r; function h(){ return g; } for (var i = 0; i < 2; i = i + 1) { var g; if (i === 0) g = 5; else r = h(); }",
+      "r !== 5",
+      "r !== undefined",
     ],
     [
       "a script while loop",
@@ -190,25 +201,13 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       ([shape, body]) =>
         [`repeated ${shape}`, `function f(v){ ${body} } f(5);`, /redeclaration of '[xvi]' in f/] as const,
     ),
-    [
-      "repeated in two script loops",
-      "var r; for (var i = 0; i < 1; i++) { var g; g = 5; } for (var j = 0; j < 1; j++) { var g; r = g; }",
-      "redeclaration of 'g' in <module-init>",
-    ],
-    [
-      "a script var declared again",
-      "var x; x = 1; var x; if (x !== 1) throw 1;",
-      "module binding x has no exact typed storage",
-    ],
-    [
-      "a script loop var read by a function",
-      "var r; function h(){ return g; } for (var i = 0; i < 2; i = i + 1) { var g; if (i === 0) g = 5; else r = h(); }",
-      'identifier "g" is not in scope in h',
-    ],
+    // (#7372) A nested and a repeated script `var` are one global: `tests/issue-7372-nested-script-var.test.ts`
+    // runs the two script programs this list refused.
     [
       "read by a closure",
       "function f(v, w){ var r = w; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r; } f(5, 0);",
-      "closure must have a return type annotation (f)",
+      // (#7354 Fa) The closure has the all-dynamic contract now; the hoisted `x` it reads has no capture.
+      'closure f__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
     ],
   ])("refuses a var %s by name", async (_, program, message) => {
     expect(await refusal(program)).toMatch(message);

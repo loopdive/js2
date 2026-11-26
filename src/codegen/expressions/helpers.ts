@@ -16,7 +16,7 @@ import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { funcSignatureOf } from "../func-space.js";
-import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { coerceType, compileExpression, skipTransparentExpressions, valTypesMatch } from "../shared.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { findUserBindingDecl } from "../index.js";
 export { tryCompileCallableStaticField } from "./static-callable-field.js";
@@ -434,8 +434,9 @@ export function emitWebCompatCallAssignmentTarget(
   fctx: FunctionContext,
   target: ts.Expression,
 ): boolean {
-  let unwrapped = target;
-  while (ts.isParenthesizedExpression(unwrapped)) unwrapped = unwrapped.expression;
+  // Look through the same wrappers as the early-error check (`isCallExpressionTarget`), so `(f() as T) += 1` throws
+  // like `f() += 1` instead of compiling to nothing (#7394).
+  const unwrapped = skipTransparentExpressions(target);
   if (!ts.isCallExpression(unwrapped)) return false;
 
   const resultType = compileExpression(ctx, fctx, unwrapped);

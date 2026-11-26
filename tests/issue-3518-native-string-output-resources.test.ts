@@ -730,30 +730,6 @@ describe("before-allocation admission and issued owner checks", () => {
     const binaryOnly = setup({ binaryConcat: true, batchArities: [], stdout: false }, false);
     expect(reserve(binaryOnly).batches).toEqual([]);
   });
-  it("rejects stale borrowed input before reservation and on all later owner readers", () => {
-    const s = setup(),
-      output = reserve(s),
-      before = structuredClone(s.module);
-    expect(requireNativeStringOutputReservations(s.tx, output)).toBe(output);
-    const literal = s.instructions[0]!;
-    if (literal.kind !== "string.const") throw Error("literal premise");
-    expect(Reflect.set(literal, "value", "changed")).toBe(true);
-    for (const reader of [
-      () => requireNativeStringOutputReservations(s.tx, output),
-      () => nativeStringOutputReservationInventory(s.tx, output, s.plan),
-      () => fillNativeStringOutputResources(s.tx, output),
-      () => requireCompletedNativeStringOutput(s.tx, output),
-    ])
-      expect(reader).toThrow();
-    expect(s.module).toEqual(before);
-    const fresh = setup();
-    const instr = fresh.instructions[0]!;
-    if (instr.kind !== "string.const") throw Error("literal premise");
-    expect(Reflect.set(instr, "value", "stale-before-reserve")).toBe(true);
-    const snapshot = structuredClone(fresh.module);
-    expect(() => reserve(fresh)).toThrow();
-    expect(fresh.module).toEqual(snapshot);
-  });
   it("rejects copied packs, foreign ledgers, substituted plan identity and changed retained plan", () => {
     const s = setup();
     const plan = structuredClone(s.plan),

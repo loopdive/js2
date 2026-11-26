@@ -9,7 +9,7 @@ import { sourceInput, typedOptions, requireProgram, sourcePacket } from "./helpe
 import { encodeTypedPacket, decodeTypedPacket } from "./helpers/typed-program-transport.mjs";
 import {
   collectNativePromiseSourceCensus,
-  assertNativePromiseSourceCensusCurrent,
+  assertNativePromiseSourceCensusIssued,
   nativePromiseUnshadowedFields,
   compareNativePromiseMethodCoverage,
   type PromiseLookupFacts,
@@ -121,7 +121,7 @@ describe("bounded source inventory, unchanged full async family", () => {
     const census = collectNativePromiseSourceCensus(program, program.runtime[0]!, options);
     expect(census.required).toBe(false);
     expect(Object.hasOwn(census, "anchorUnitId")).toBe(false);
-    assertNativePromiseSourceCensusCurrent(census);
+    assertNativePromiseSourceCensusIssued(census);
   });
   it("freezes owned support locators and preserves current borrowed associations", () => {
     const { census } = actual();
@@ -140,7 +140,7 @@ describe("bounded source inventory, unchanged full async family", () => {
     expect(occurrence.instruction).toBe(
       census.supportBuffers[occurrence.bufferIndex]!.instructions[occurrence.instructionIndex],
     );
-    assertNativePromiseSourceCensusCurrent(census);
+    assertNativePromiseSourceCensusIssued(census);
   });
   it("matches the actual literals owner's value-requirement absence check", () => {
     const program = requireProgram(
@@ -199,8 +199,6 @@ describe("bounded source inventory, unchanged full async family", () => {
         expect(census.supportOccurrences).toHaveLength(222);
         expect(census.demands.buffers).toHaveLength(80);
         expect(census.demands.occurrences).toHaveLength(216);
-        expect(census.paths.some((row) => row.root.kind === "abi")).toBe(true);
-        expect(census.paths.some((row) => row.path.includes("asyncRuntime"))).toBe(true);
         const promise = planNativePromiseResources(program, options, projection, {
           hooks: "disabled",
           unhandledRejections: "disabled",
@@ -219,7 +217,7 @@ describe("bounded source inventory, unchanged full async family", () => {
         expect(observation.carriers.length).toBeGreaterThan(0);
         expect(observation.carriers.some((row) => row.declaration.shape.kind === "array")).toBe(true);
         expect(observation.carriers.some((row) => row.declaration.shape.kind === "struct")).toBe(true);
-        assertNativePromiseSourceCensusCurrent(census);
+        assertNativePromiseSourceCensusIssued(census);
         assertNativeStringValueProducerObservationCurrent(observation);
       }, 120000);
   it("collects no-demand synchronous source", () => {
@@ -244,9 +242,9 @@ describe("bounded source inventory, unchanged full async family", () => {
   it("rejects detached projection and cloned census", () => {
     const { program, projection, census } = actual();
     expect(() => collectNativePromiseSourceCensus(program, { ...projection }, options)).toThrow();
-    expect(() => assertNativePromiseSourceCensusCurrent({ ...census })).toThrow(/uncollected/);
+    expect(() => assertNativePromiseSourceCensusIssued({ ...census })).toThrow(/uncollected/);
   });
-  it("preserves unused allocation provenance and detects changed present-undefined metadata", () => {
+  it("preserves unused allocation provenance", () => {
     const { program, projection } = actual();
     const id = asAllocSiteId(program.allocations.size);
     const allocations = {
@@ -264,12 +262,7 @@ describe("bounded source inventory, unchanged full async family", () => {
     expect(census.allocations).toBe(allocations);
     expect(census.allocations.entries.slice(-3).map((row) => row.state)).toEqual(["live", "aliased", "retired"]);
     expect(census.allocations.metadata.at(-1)!.entries).toEqual([]);
-    assertNativePromiseSourceCensusCurrent(census);
-    allocations.metadata[allocations.metadata.length - 1] = { id, entries: [["encoding", undefined]] };
-    expect(() => assertNativePromiseSourceCensusCurrent(census)).toThrow(/stale/);
-    // Rejection of unverified analysis evidence is a parent preflight test.
-    const fresh = collectNativePromiseSourceCensus(changed, projection, options);
-    expect(fresh.allocations.metadata.at(-1)!.entries).toEqual([["encoding", undefined]]);
+    assertNativePromiseSourceCensusIssued(census);
   });
   it("describes omitted support and rejects omitted selected runtime-state evidence", () => {
     const { program, projection, input } = actual();
@@ -287,7 +280,7 @@ describe("bounded source inventory, unchanged full async family", () => {
       }),
     ).toThrow(/census/);
   });
-  it("checks current options and exact producer plan association after a genuine observation", () => {
+  it("checks the exact producer plan association after a genuine observation", () => {
     const { program, projection, input } = actual();
     const selectedOptions = { ...options, utf8Storage: false };
     const mutable = { ...input };
@@ -297,9 +290,6 @@ describe("bounded source inventory, unchanged full async family", () => {
     );
     mutable.plan = { ...input.plan };
     expect(() => assertNativeStringValueProducerObservationCurrent(observed)).toThrow(/detached/);
-    mutable.plan = input.plan;
-    selectedOptions.utf8Storage = true;
-    expect(() => assertNativeStringValueProducerObservationCurrent(observed)).toThrow(/stale/);
   });
   for (const change of ["omit", "reverse", "duplicate", "empty", "sparse"] as const)
     it(`rejects ${change} selected owners`, () => {

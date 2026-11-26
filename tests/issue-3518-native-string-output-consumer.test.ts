@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
 import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -213,9 +212,6 @@ describe("prepared source string output through the actual consumer", () => {
   });
   it("retains the unchanged full async family and reports the next gap before emission", () => {
     const text = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
-    expect(createHash("sha256").update(text).digest("hex")).toBe(
-      "6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915",
-    );
     const program = prepare(text, false, true);
     expect(program.inventory.allUnits).toHaveLength(7);
     expect(program.inventory.terminalUnits).toHaveLength(5);

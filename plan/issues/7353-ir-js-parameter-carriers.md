@@ -1,10 +1,10 @@
 ---
 id: 7353
 title: "IR: JavaScript parameter carriers — one family and one carrier for an untyped parameter"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-16
-updated: 2026-11-16
+updated: 2026-11-19
 priority: medium
 horizon: m
 feasibility: medium
@@ -101,6 +101,131 @@ the harness waits until the other harness legs have landed.
   binary changes, with QuickJS and the Temporal provider built locally).
 - No unit that main lowers on IR is lost; refuse at select, never claim and
   then withdraw.
+
+## Plan amendment (2026-11-19, measured on main `ee3fcdd610`)
+
+### Step 0 (measured)
+
+Method: `.tmp` census script, compiled exactly as `ir-claim-ledger --wrapped`
+(`assembleOriginalHarness` primary + `originalHarnessCompileOptions(meta,
+"standalone")`, `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`),
+then `runTest262File(..., "standalone")` for the verdict. Population: the 9,174
+ES5 files (edition classifier, `_FIXTURE` excluded, the census count), seeded
+shuffle (seed 7353), first 1,200 files. A sample, not the full census.
+
+| | count |
+|---|---|
+| files | 1,200 |
+| skipped (negative, raw, module, runner skip) | 65 |
+| compiled | 1,114 |
+| IR-only | 237 |
+| IR-only and pass | 236 |
+| legacy units | 2,048 |
+| files with `propertyHelper.js` | 99 |
+
+| point | label | files carrying | only family left |
+|---|---|---|---|
+| 1 | `expr-binary-operand-families` | 103 | 14 |
+| 2 | `expr-logical-value-family` or `move-only[…]` | 124 | 7 |
+| 3 | `param-type-unresolved` | 88 | 0 |
+| 4 | `param-dynamic-carrier-diverges-from-legacy` | 98 | 0 |
+
+- **Point 1 outside the harness is a different shape.** Of the 103, 88 are
+  `verifyProperty` in `propertyHelper.js`. The other 15 are `<module-init>`
+  test bodies (`1 + null`, `{} ^ function(){}`, `{valueOf…} < 1`, …): no
+  parameter is involved, so slice 1 does not reach them. The 14 "only family
+  left" files are all of that kind.
+- **Point 2 has changed label.** `options && options.verifyProperty ||
+  verifyProperty` is now refused as `expr-logical-value-family` (98 files,
+  `verifyCallableProperty`), not by the move-only scan. Its right operand is a
+  top-level function used as a value: that is #7354 slice Fa / #7349 (lane S4),
+  not a parameter question. It leaves this issue.
+- **Points 3 and 4 never occur outside the harness** in the sample.
+- **After slice 1, `verifyProperty`'s next refusal is the move-only scan**
+  (`assert.notSameValue(desc, null, …)`: a dynamic argument to a harness
+  object's method), which #7342 already lists as the longest tail. So slice 1
+  frees no file and no census unit on its own; it is one leg.
+
+### Slices, re-cut
+
+1. **Slice 1 (parked, branch `claude/7353-param-carriers`).** A dynamic parameter, or a member or element read
+   through one, beside a carrier operand is the carrier
+   (`familyBesideCarrier` in `analysis/carrier-expression.ts`, over the same
+   `producesCarrier` from-ast's `expressionProducesDynamic` uses).
+   - Measured against the alternative: answering `dynamic` for every such read
+     in `provenIrFamily` adds refusals, because the other operand is often
+     still `unknown` (`x === name`, `i < a.length`, `message || ""` in
+     `assert.js` / `propertyHelper.js`). A pair of two `unknown`s is not
+     judged today; a `dynamic` beside an `unknown` is refused. So the
+     refinement only fires beside a carrier operand, where the pair is
+     already judged and already refused.
+   - Reuses `producesCarrier`; removes nothing (no duplicate predicate was
+     found for this question). Quality criterion: one helper next to its
+     sibling in `carrier-expression.ts`, select.ts grows by the call only.
+2. **Point 2 moves to lane S4** (function values), see above.
+3. **Slice 3 (parked, branch `claude/7353-param-carriers-s3`, WIP).** `@param {object} desc` plus nested `@param [desc.x]`
+   tags make TypeScript build a `JSDocTypeLiteral`; legacy stores a struct for
+   it and the IR refuses. Plain `@param {object}` already lowers as externref
+   and the IR claims it (`jsDocParamLowersAsExternref`). Target: on
+   standalone, legacy's `lowerParamType` stores a JSDoc type literal as
+   externref (one rule beside `parameterMayBeOmitted`), so the existing
+   selector arm answers `dynamic`. JS-environment bytes unchanged. Needs the
+   all-edition verdict check, since every `propertyHelper.js` binary changes.
+4. **Slice 4** waits for #7349 S1b, as planned. Per #7342 the Primordial
+   pair's divergent slots come from `@type {typeof …}` JSDoc, not call sites;
+   re-measure after slice 3.
+
+### Measured after the scope correction (2026-11-19, main `ee3fcdd610`)
+
+The goal is measured on the Prepared whole-program path (CLAUDE.md, decisions
+of 2026-11-15/16), so both pipelines were measured before going on.
+
+**(a) Prepared path** (`src/test262/test262-prepared-entry.ts`, standalone,
+`wholeProgram: prepared-program-required`). Real files still stop in the
+prelude (5 of 5 tried: `dyn.typeof`, a not-direct module binding), so each
+point was probed directly:
+
+| probe | result |
+|---|---|
+| untyped parameter (`id(3)`) | compiles |
+| point 1: member read on a dynamic parameter beside the carrier | refused: `dyn.member_get has no Prepared intrinsic` (objects, #7354 slice O) |
+| bare dynamic parameter beside the carrier | compiles |
+| point 3: JSDoc type literal (`@param {object} d` + `[d.x]`) | compiles |
+| point 4: call-site-refined parameter (`sq(3)`) | compiles |
+| `@type {typeof f}` | compiles |
+| unbracketed `@param {number} n` | refused: `type override (dynamic) disagrees with annotation (f64)` |
+| bracketed `@param {number} [n]` | compiles |
+
+- #7354 P's rule (an untyped parameter is always the dynamic value) already is
+  this issue's "one carrier" on the Prepared path; points 3 and 4 do not
+  exist there.
+- The one parameter gap left there is P's named gap: from-ast treats an
+  unbracketed JSDoc `number` / `string` / `boolean` `@param` as a contract.
+  Harness sites: `propertyHelper.js` (`functionLength`), `atomicsHelper.js`
+  ×3, `testIntl.js` ×10, `testIntlNumberFormat.js`, `wellKnownIntrinsicObjects.js`.
+  Rows reach it only after #7354 O / Fa / Fb.
+
+**(b) Ordinary pipeline**, slices 1 and 3 against the base run (same 1,200 files):
+
+| | slice 1 | slice 3 (99 `propertyHelper.js` files) |
+|---|---|---|
+| IR-only gained / lost | 0 / 0 | 0 / 0 |
+| legacy units | 2,048 → 2,048 | 860 → 860 |
+| verdict flips | 0 | 0 |
+| post-claim legacy rows | 112 → 112 | — |
+
+Slice 1 moves 6 units in probe programs (results equal node), none in the
+census. Slice 3 moves `verifyAccessorProperty` to its next refusal
+(`checkGet || checkSet`).
+
+**Decision (lead, 2026-11-19), as recommended:** park slices 1 and 3 (ordinary-only,
+measured yield 0). Count points 3 and 4 as done on the Prepared path by
+#7354 P. Take the JSDoc-contract gap as a Prepared-only rule once a run shows
+rows reaching it. The issue moves to the backlog. Points 3 and 4 are done by #7354 P on the
+Prepared path. "JSDoc is not a contract" waits until a run shows rows reaching
+it after #7354 O / Fa / Fb. Parked, unmerged: `claude/7353-param-carriers`
+(slice 1, committed and tested) and `claude/7353-param-carriers-s3` (slice 3,
+WIP).
 
 ## Acceptance criteria
 
