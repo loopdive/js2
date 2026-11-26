@@ -39,9 +39,14 @@ import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.j
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
-import { dynamicErrorConstruction, type RealmConstruction } from "./dynamic-error-constructors.js";
+import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
 import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
-import { realmCall, realmConstructorOf, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
+import {
+  realmCall,
+  realmConstructorOf,
+  realmIntrinsicOfHelper,
+  type RealmConstruction,
+} from "./dynamic-realm-calls.js";
 import type { RealmConstructor } from "./builtin-prototype-keys.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {

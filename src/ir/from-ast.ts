@@ -983,7 +983,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** (#7354 T) Exact source-bound `isNaN` call: `Number(v)`'s conversion, then the NaN test. */
   preparedIsNaNCall?(call: ts.CallExpression): boolean;
-  preparedBooleanCall?(call: ts.CallExpression): boolean; // (#7350 B3a) exact source-bound `Boolean` call
+  /** (#7350 B3a) Exact source-bound `Boolean` call: ToBoolean of the first argument. */
+  preparedBooleanCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
   preparedObjectCreateCall?(call: ts.CallExpression): "null" | undefined;
   /** Source-owned ordinary descriptor read; actual allocation provenance is revalidated downstream. */
@@ -7671,7 +7672,7 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
     throw new IrInvariantError("selection-preparation-mismatch", "build", "Number call plan has unsupported syntax");
   // (#7354 T, #7350 B3a) The Prepared lane binds no `js.number.from-value`: the realm's conversion call.
   if (functionObjects.createsFunctionObjects(cx.resolver))
-    return lowerRealmConversionCall(expr, functionObjectLoweringHost(cx), "number", absent);
+    return lowerRealmConversionCall(expr, functionObjectLoweringHost(cx), "Number", absent);
   if (expr.arguments.length === 0) return cx.builder.emitConst({ kind: "f64", value: absent }, IR_F64);
   const first = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
   // Extra arguments still run, in source order, though Number ignores them; getter conversion follows their effects.
@@ -7692,7 +7693,7 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
 function lowerPreparedConversionCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
   if (cx.resolver?.preparedBooleanCall?.(expr) === true)
-    return lowerRealmConversionCall(expr, functionObjectLoweringHost(cx), "boolean");
+    return lowerRealmConversionCall(expr, functionObjectLoweringHost(cx), "Boolean");
   return cx.resolver?.preparedIsNaNCall?.(expr) === true
     ? emitIsNaN(cx.builder, lowerPreparedNumberCall(expr, cx, NaN))
     : null;

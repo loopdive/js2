@@ -819,3 +819,24 @@ or condition flipped); all 112 twins fail.
 standalone) 396/396 identical; `prove-emit-identity` 60/60 identical. Test suites: `issue-7354-*` and `issue-7350-*`
 fail only `o-objects` "refuses what the later steps build" (fails on base too); `issue-3518-*` fails the same 131
 tests on base and head.
+
+**After review RV7433** (fixes on the same branch):
+
+- *Statics refuse by name.* `Object.getOwnPropertyDescriptor` / `defineProperty` with a string-literal key, and
+  `defineProperties` with a literal map, whose target is the pristine `String` / `Number` / `Boolean` and name a key
+  the identity row lacks, refuse at the front end (`tryLowerRealmStaticCall`) with the member read's wording
+  (`String.prototype is not reachable on this path yet (#7350 B3bc)`). Both sites call one test,
+  `identityOnlyKeyRefusal` (`builtin-prototype-keys.ts`). The statics' check sits in the front end, not in
+  `dynamic-object-statics.ts`: a literal map's keys exist only in the AST (in IR they are result-less
+  `js.object.define-data` calls that `definitions` does not reach), and one site for all three statics beats two
+  layers. A key the row has (`getOwnPropertyDescriptor(Number, "MAX_VALUE")`) lowers as before; a key known only at
+  run time still reaches the kernel's abort. As for the member read, a refusal inside a function declaration's
+  unit still compiles to that unit's abort body.
+- *One miss check after B2b rebases.* B3a's own-property find already covers every own query, so `claude/7350-b2b`
+  drops its lookup-walk check (`identityOnlyMiss` in `builtin-function-prototype-bodies.ts:58`) and its own mark
+  helper (`builtin-function-bodies.ts:135`) when it rebases onto B3a. The repo keeps one miss check, the find's.
+- `RealmConstruction` / `RealmConstructionBuilders` moved to `dynamic-realm-calls.ts` beside `realmConstructorOf`.
+- `X(v)`'s conversion and absent-argument answer ("", +0, false) have one owner, `WRAPPER_CONVERSIONS`
+  (`builtin-prototype-keys.ts`), which `lowerRealmConversionCall` and `dynamicWrapperConstruction` both read. The
+  direct `String(v)` route (`isAmbientStringBinding`) does not join: it is the ordinary pipeline's ambient-`String`
+  lowering, shared with the JS-environment and legacy paths, and moving it would change their bytes.

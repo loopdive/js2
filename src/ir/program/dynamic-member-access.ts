@@ -11,7 +11,7 @@ import type { IrType } from "../core/types.js";
 import {
   BUILTIN_REACHABLE_KEYS,
   FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
-  identityOnlyKeys,
+  identityOnlyKeyRefusal,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
@@ -96,9 +96,8 @@ export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key:
 function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): string {
   const key = constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
   const ctor = realmConstructorOf(instr.recv, b.definitions);
-  const own = ctor === undefined ? undefined : identityOnlyKeys(ctor.id);
-  if (own !== undefined && !own.has(key)) gap(`${ctor!.name}.${key} is not reachable on this path yet (#7350 B3bc)`);
-  return key;
+  const miss = ctor === undefined ? undefined : identityOnlyKeyRefusal(ctor, key);
+  return miss === undefined ? key : gap(miss);
 }
 
 /** "a number", "an object". */

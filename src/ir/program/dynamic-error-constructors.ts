@@ -23,13 +23,8 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { ERROR_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
 import type { IrType } from "../core/types.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-
-/** A call or construct whose callee is a realm constructor (`realmConstructorOf`). */
-export type RealmConstruction = Extract<IrInstr, { kind: "call" | "dyn.construct" }>;
-export type RealmConstructionBuilders = ChainBuilders & {
-  readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-};
 
 /** `X(message)` / `new X(message)` of the Error constructor `ctor`, into the instruction's result. */
 export function dynamicErrorConstruction(

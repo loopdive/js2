@@ -19,6 +19,7 @@ import {
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
+  type NativeWrapperConstructor,
 } from "../../runtime/contracts/native-realm-catalog.js";
 
 const propertiesOf = (intrinsicIds: readonly string[]): readonly NativeRealmProperty[] =>
@@ -82,17 +83,54 @@ const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map([
 ]);
 
 /**
+ * (#7350 B3a) `X(v)` of a wrapper constructor with NewTarget undefined (§22.1.1.1, §21.1.1.1, §20.3.1.1): ToString,
+ * ToNumber or ToBoolean of the first argument, and "", +0 or false without one. The one table both routes read: the
+ * front end's conversion call (`realm-static-call.ts`) and the call through the realm's value
+ * (`dynamic-wrapper-constructors.ts`).
+ */
+export const WRAPPER_CONVERSIONS = {
+  String: { to: "string", absent: "" },
+  Number: { to: "number", absent: 0 },
+  Boolean: { to: "boolean", absent: false },
+} as const satisfies Record<
+  NativeWrapperConstructor,
+  { readonly to: string; readonly absent: string | number | boolean }
+>;
+
+/**
  * (#7354 G1, #7350 B3a) The realm constructor the global `name` names, if it names one: the IR's one read of which
  * global names are the realm's constructors (`realmConstructorOf` derives the IR value's answer from it).
  */
 export const realmConstructorId = (name: string): RealmConstructor | undefined => REALM_CONSTRUCTORS.get(name);
 
+const REALM_CONSTRUCTORS_BY_ID: ReadonlyMap<string, RealmConstructor> = new Map(
+  [...REALM_CONSTRUCTORS.values()].map((ctor) => [ctor.id, ctor]),
+);
+/** (#7350 B3a) The realm constructor whose catalog id is `id`, if one is. */
+export const realmConstructorById = (id: string): RealmConstructor | undefined => REALM_CONSTRUCTORS_BY_ID.get(id);
+
 /**
- * (#7350 B3a) The own string keys of the realm constructor `id` where the catalog models only its identity
- * (`NativeRealmIntrinsic.identityOnly`): any other key of it is one the realm lacks.
+ * (#7350 B3a) The own string keys of each realm constructor the catalog models only as an identity
+ * (`NativeRealmIntrinsic.identityOnly`), by id: any other key of it is one the realm lacks.
  */
-export const identityOnlyKeys = (id: string): ReadonlySet<string> | undefined =>
-  NATIVE_REALM_CATALOG.intrinsics.some((row) => row.id === id && row.identityOnly) ? realmStringKeys(id) : undefined;
+const IDENTITY_ONLY_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, identityOnly, properties }) =>
+    identityOnly ? [[id, stringKeys(properties)] as const] : [],
+  ),
+);
+
+/**
+ * (#7350 B3a) The refusal of a static access to `key` of the pristine realm constructor `ctor` when its identity row
+ * lacks `key`: the realm does not hold the property, and the kernel would abort the access at run time. The one test
+ * a constant-key member access (`dynamic-member-access.ts`) and an `Object` static's target (`realm-static-call.ts`)
+ * share.
+ */
+export function identityOnlyKeyRefusal(ctor: RealmConstructor, key: string): string | undefined {
+  const own = IDENTITY_ONLY_KEYS.get(ctor.id);
+  return own === undefined || own.has(key)
+    ? undefined
+    : `${ctor.name}.${key} is not reachable on this path yet (#7350 B3bc)`;
+}
 
 /**
  * (#7350 B3a) `<name>.<key>` as a constant where the realm constructor `name` holds `key` as a data property with a

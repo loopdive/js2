@@ -8,7 +8,8 @@ import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
-import { realmConstructorId, type RealmConstructor } from "./builtin-prototype-keys.js";
+import { realmConstructorById, type RealmConstructor } from "./builtin-prototype-keys.js";
+import type { ChainBuilders } from "./dynamic-value-chains.js";
 
 /** The call of the realm's `feature` on `args`, its result (if the contract has one) into `result`. */
 export function realmCall(
@@ -38,7 +39,7 @@ export const realmIntrinsicOfHelper = (symbol: string): string | undefined =>
 
 /**
  * (#7354 G1, #7350 B3a) The realm constructor `value` is, when its definition (through its coercions) is the front
- * end's read of one: `realmConstructorId`'s answer for the id the helper reads (a constructor's id is `%name%`).
+ * end's read of one: the constructor whose id the helper reads.
  */
 export function realmConstructorOf(
   value: IrValueId,
@@ -50,9 +51,15 @@ export function realmConstructorOf(
     definition?.kind === "call" && definition.target.binding.kind === "runtime"
       ? realmIntrinsicOfHelper(definition.target.binding.symbol)
       : undefined;
-  const ctor = id === undefined ? undefined : realmConstructorId(id.slice(1, -1));
-  return ctor?.id === id ? ctor : undefined;
+  return id === undefined ? undefined : realmConstructorById(id);
 }
+
+/** A call or construct whose callee is a realm constructor ({@link realmConstructorOf}). */
+export type RealmConstruction = Extract<IrInstr, { kind: "call" | "dyn.construct" }>;
+/** What a realm constructor's call or construct is written with: the chain builders and the program's ToString. */
+export type RealmConstructionBuilders = ChainBuilders & {
+  readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+};
 
 /** The builders a synthesized TypeError is written with. */
 export interface TypeErrorBuilders {

@@ -113,9 +113,37 @@ describe("#7350 B3a — what the identity rows lack refuses by name or aborts", 
     ["new String", 'var w = new String("a");', "new String (a wrapper object; #7350 B3bc)"],
     ["new Number", "var w = new Number(1);", "new Number (a wrapper object; #7350 B3bc)"],
     ["new Boolean", "var w = new Boolean(1);", "new Boolean (a wrapper object; #7350 B3bc)"],
+    // An `Object` static whose target is the constructor and whose key is a constant: as visible as a member read.
+    [
+      "Object.getOwnPropertyDescriptor(String, 'prototype')",
+      'var d = Object.getOwnPropertyDescriptor(String, "prototype");',
+      "String.prototype is not reachable on this path yet (#7350 B3bc)",
+    ],
+    [
+      "Object.defineProperty(Number, 'zz', …)",
+      'var r = Object.defineProperty(Number, "zz", {value: 1});',
+      "Number.zz is not reachable on this path yet (#7350 B3bc)",
+    ],
+    [
+      "Object.defineProperties(Boolean, {length, zz})",
+      "var r = Object.defineProperties(Boolean, {length: {value: 1}, zz: {value: 2}});",
+      "Boolean.zz is not reachable on this path yet (#7350 B3bc)",
+    ],
   ])("refuses %s by name", async (_label, source, expected) => {
     expect(await refusal(source + CALLS, runnerOptions())).toContain(expected);
   });
+
+  it(
+    "an Object static of a key the identity row has still answers",
+    () =>
+      agreesWithNode(
+        `var d = Object.getOwnPropertyDescriptor(Number, "MAX_VALUE");
+var out = String(d.value === Number.MAX_VALUE) + String(d.writable) + String(d.configurable);${CALLS}`,
+        true,
+        runnerOptions(),
+      ),
+    SLOW,
+  );
 
   // A dynamic query of a key the realm lacks (through a variable) aborts, inside `try` / `catch` and inside an
   // `assert.throws`-shaped function alike: never caught, never `undefined`.
