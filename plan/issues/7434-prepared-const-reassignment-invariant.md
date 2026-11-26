@@ -48,8 +48,8 @@ top-level `const` write (#7461's `const c = 1; c = 2;`) compiled to a plain `glo
 where JS throws a TypeError.
 
 The fix lives in `src/ir/from-ast.ts`. The three identifier-write entries (assignment, compound assignment, `++`/`--`)
-ask `refuseImmutableWrite` before they branch on the binding's storage. It calls the selector's own predicate,
-`isWriteToConstDeclaration` (now exported from `const-binding-writes.ts`), and refuses through `refuseUnselected`
+ask `refuseImmutableWrite` (exported from `const-binding-writes.ts`) before they branch on the binding's storage. It
+calls the selector's own predicate, `isWriteToConstDeclaration`, and refuses through `refuseUnselected`
 (#7364): a named `const-write` refusal on the Prepared path, and an invariant after a selector claim, which never
 happens because the selector refuses the same writes first. #7354 T's function-expression-name arm moved into the same
 helper, since that is the other immutable binding, so `refuseNonSlotWrite` is the pre-pass invariant again and nothing
@@ -57,5 +57,8 @@ else.
 
 Under the Prepared entry's abort-body policy (#7354 U), a function that writes a `const` gets the abort body, and
 top-level code refuses the program. Lowering the TypeError itself is left to the IR's throw support.
+
+Accepted cost (review RV7348b): the refusal happens when the write is lowered, not when it runs, so top-level code
+with a dead write (`const c = 1; if (false) c = 2;`) used to compile and is now refused.
 
 #7461 is the same bug and is closed as its duplicate.
