@@ -37,6 +37,7 @@ import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { CLASS_CONSTRUCT_DISPATCH } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt } from "./func-space.js";
+import { buildUndispatchableClosureBitInstrs } from "./closures/method-dispatch-entries.js"; // (#7478)
 import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js";
 import { STANDALONE_CLASS_INSTANCE_PROTO } from "./standalone-class-instance-proto.js"; // (#6617)
 import type { CodegenContext } from "./context/types.js";
@@ -445,9 +446,17 @@ function fillStandaloneLinkBoundaryLateTerminals(ctx: CodegenContext): void {
     // bit 0 = [[Call]], bit 1 = [[Construct]] — the same encoding the host
     // lane's `__boundary_object_callable_kind` uses. Critically, bit 0 is
     // NOT `typeof === "function"`: a class has [[Construct]] but no [[Call]].
-    kindFn.body = [
+    // (#7478) Nor is it claimed for a closure this module cannot dispatch: the
+    // consumer routes every bit-0 value to our `__apply_closure`.
+    kindFn.locals = [];
+    const callBit: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isCallableIdx },
+    ];
+    const undispatchable = buildUndispatchableClosureBitInstrs(ctx, kindFn.locals, 0, 1);
+    if (undispatchable) callBit.push(...undispatchable, { op: "i32.eqz" }, { op: "i32.and" });
+    kindFn.body = [
+      ...callBit,
       { op: "i32.const", value: 1 },
       { op: "i32.and" },
       { op: "local.get", index: 0 },

@@ -53,9 +53,13 @@ import {
   classifyClosureDispatchRest,
   closureDispatchSelfTypeIdx,
   materializeClosureDispatchRest,
-  type ClosureDispatchRestCarrier,
 } from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
+import {
+  closureHostArity,
+  collectMethodDispatchEntries,
+  type ClosureDispatchEntry,
+} from "./closures/method-dispatch-entries.js"; // (#7478)
 import { applyTailDispatch } from "./closures/apply-extras-tail.js"; // (#6959 review)
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
@@ -578,29 +582,6 @@ function externToClosureI64(
     if (toBigintIdx !== undefined) return buildClosureI64Argument(argLocalIdx, toBigintIdx, undefined);
   }
   return buildClosureI64Argument(argLocalIdx, undefined, ctx.funcMap.get("__unbox_number"));
-}
-
-/**
- * Number of positional host arguments consumed before a source rest
- * parameter. The lifted Wasm function still has one additional vec formal for
- * `...rest`; the host bridge materializes that vec from the remaining
- * positional arguments instead of counting it as a JavaScript argument.
- */
-function closureHostArity(info: {
-  paramTypes: ValType[];
-  hasRestParam?: boolean;
-  nativeProtoVariadic?: boolean;
-}): number {
-  if (info.nativeProtoVariadic === true) return Math.max(0, info.paramTypes.length - 2);
-  return info.hasRestParam === true ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
-}
-
-interface ClosureDispatchEntry {
-  funcTypeIdx: number;
-  returnType: ValType | null;
-  selfTypeIdx: number;
-  closureArity: number;
-  rest?: ClosureDispatchRestCarrier;
 }
 
 /**
@@ -1267,10 +1248,6 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   const prevThisLocal = totalParams + 3;
   const resultSaveLocal = prevThisLocal + 1;
 
-  let baseWrapperIdx: number | undefined;
-  const seenFuncTypeIdx = new Set<number>();
-  const entries: ClosureDispatchEntry[] = [];
-  const restEntries: ClosureDispatchEntry[] = [];
   // (#3992) Every native-proto METHOD closure of this arity — see the collector.
   // (#6655) An above-cap dispatcher carries no native-prototype receivers: it
   // is reached only from `__apply_closure`'s `n > 8` arm, and a native proto
@@ -1279,55 +1256,10 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   // more chance to mis-claim a callee.
   const nativeProtoReceiverEntries = minHostArity > 0 ? [] : collectTransferredNativeProtoReceivers(ctx, arity);
 
-  for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
-    if (info.nativeProtoVariadic === true) continue;
-    const hostArity = closureHostArity(info);
-    if (hostArity > arity) continue;
-    // (#6655) An above-cap dispatcher carries ONLY the above-cap closures. It
-    // is reached solely from `__apply_closure`'s `8 < n <= top` arm, where a
-    // callee of ordinary arity cannot be selected — and a full ladder at
-    // arity 14 duplicates every arm `__call_fn_method_8` already has, at 14
-    // argument slots each, which is pure compile time on the corpus's largest
-    // modules. `minHostArity` is 0 (and therefore inert) for every ordinary
-    // dispatcher.
-    if (hostArity < minHostArity) continue;
-    const typeDef = mod.types[typeIdx];
-    if (!typeDef || typeDef.kind !== "struct") continue;
-    if (typeDef.superTypeIdx === -1 && baseWrapperIdx === undefined) {
-      baseWrapperIdx = typeIdx;
-    }
-    const funcTypeDef = mod.types[info.funcTypeIdx];
-    const selfTypeIdx = closureDispatchSelfTypeIdx(funcTypeDef?.kind === "func" ? funcTypeDef : undefined, typeIdx);
-
-    const funcType = funcTypeDef?.kind === "func" ? funcTypeDef : undefined;
-    const rest = classifyClosureDispatchRest(ctx, typeIdx, info, funcType, hostArity);
-    if (rest?.kind === "unsupported") continue; // (#5329) never emit a short call_ref
-    if (rest) {
-      restEntries.push({
-        funcTypeIdx: info.funcTypeIdx,
-        returnType: info.returnType,
-        selfTypeIdx,
-        closureArity: hostArity,
-        rest,
-      });
-      continue;
-    }
-
-    if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
-      seenFuncTypeIdx.add(info.funcTypeIdx);
-      entries.push({
-        funcTypeIdx: info.funcTypeIdx,
-        returnType: info.returnType,
-        selfTypeIdx,
-        closureArity: hostArity,
-      });
-    }
-  }
-  entries.push(...restEntries);
+  const { entries, baseWrapperIdx: firstRootIdx } = collectMethodDispatchEntries(ctx, arity, minHostArity);
   if (entries.length === 0 && nativeProtoReceiverEntries.length === 0) return;
 
-  baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
+  const baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, firstRootIdx);
   if (baseWrapperIdx === undefined) return;
 
   // Method calls can re-enter Wasm through a host-side facade just like free

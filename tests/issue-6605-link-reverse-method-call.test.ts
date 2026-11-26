@@ -149,8 +149,11 @@ describe("#6605 a consumer-owned receiver whose method is CALLED inside a linked
     // regression: the computed-key call now matches its literal-key twin
     // (`callsConsumerMethod`, asserted 7 above) instead of silently missing.
     expect(ex.callsThroughComputedKey()).toBe(7);
-    //  · arguments do not cross the boundary, so the call still declines;
-    expect(ex.callsWithArguments()).toBe(-1);
+    // (#7478) `add(3, 4)` now runs: the provider's `callableKind` no longer
+    // claims a consumer closure whose `(self, f64, f64)` signature only the
+    // consumer minted, so the consumer dispatches it locally instead of
+    // shipping it to a provider ladder with no arm for it (base: -1).
+    expect(ex.callsWithArguments()).toBe(7);
     //  · a method legitimately returning null is still indistinguishable from
     //    a miss, so it still throws — the reverse arm deliberately does not
     //    adopt a null answer (see `reverseMethodCallArmInstrs`);
