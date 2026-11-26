@@ -1,41 +1,38 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 W2) The wrapper prototypes' `valueOf` and `toString` (§22.1.3.35 / §22.1.3.29, §21.1.3.7 / §21.1.3.6,
- * §20.3.3.3 / §20.3.3.2): built-ins the dispatcher cannot call, so the legalization writes their algorithm where it
- * proves a call reaches one, by identity (OrdinaryToPrimitive, `ordinary-to-primitive.ts`; a method call,
- * `dynamic-prototype-methods.ts`).
+ * §20.3.3.3 / §20.3.3.2): built-ins the dispatcher cannot call, so the legalization answers a call that reaches one
+ * where it may (OrdinaryToPrimitive, `ordinary-to-primitive.ts`; a method call, `dynamic-prototype-methods.ts`).
  *
- * Each is thisXValue(this) (§22.1.3.35.1 thisStringValue and its siblings): a primitive of the kind is itself, a
- * wrapper's slot is read (`js.object.primitive-data`, `undefined` for no wrapper), anything else is a TypeError; then
- * `toString` is ToString of that primitive (Number.prototype.toString's radix is the caller's to refuse).
+ * One realm call decides it: `js.object.wrapper-this(method, this)` is thisXValue(this) (§22.1.3.35.1 thisStringValue
+ * and its siblings: a primitive of the kind, a wrapper's slot, else the method's TypeError) where `method` is a held
+ * wrapper method, and `null` for any other method; `toString` then answers ToString of that primitive.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { NATIVE_WRAPPER_CONSTRUCTORS, realmMethodId } from "../../runtime/contracts/native-realm-catalog.js";
-import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+import { realmCall } from "./dynamic-realm-calls.js";
 import type { CarrierKind } from "./dynamic-value-kinds.js";
 
-/** The legalization's builders these methods are written with. */
-export interface WrapperMethodBuilders extends TypeErrorBuilders {
+/** A built-in method a call may reach: whether `method` is it (`instrs` into `cond`), and its answer. */
+export interface BuiltinMethodTest {
+  readonly instrs: IrInstr[];
+  readonly cond: IrValueId;
+  readonly answer: (result: IrValueId) => IrInstr[];
+}
+
+/** The legalization's builders the test is written with. */
+export interface WrapperMethodBuilders {
+  readonly carrier: IrType;
+  readonly fresh: () => IrValueId;
   readonly intrinsic: (
     instr: IrInstr,
     id: IntrinsicId,
     args: readonly IrValueId[],
     result?: IrValueId | null,
   ) => IrInstr;
-  readonly kinds: {
-    readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
-    readonly learn: (value: IrValueId, kinds: readonly CarrierKind[]) => void;
-  };
+  readonly kinds: { readonly learn: (value: IrValueId, kinds: readonly CarrierKind[]) => void };
   readonly anyKind: (instr: IrInstr, of: readonly CarrierKind[], value: IrValueId, result: IrValueId) => IrInstr[];
-  readonly branch: (
-    cond: IrValueId,
-    then: (result: IrValueId) => IrInstr[],
-    else_: (result: IrValueId) => IrInstr[],
-    result: IrValueId,
-    resultType?: IrType,
-  ) => IrInstr;
   readonly kindChain: (
     instr: IrInstr,
     value: IrValueId,
@@ -44,71 +41,72 @@ export interface WrapperMethodBuilders extends TypeErrorBuilders {
     kinds: readonly CarrierKind[],
     resultType: IrType,
   ) => IrInstr[];
+  readonly branch: (
+    cond: IrValueId,
+    then: (result: IrValueId) => IrInstr[],
+    else_: (result: IrValueId) => IrInstr[],
+    result: IrValueId,
+    resultType?: IrType,
+  ) => IrInstr;
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+  /** (#7354 C2) The run-time abort, a carrier answer. */
+  readonly abort: (instr: IrInstr, result: IrValueId) => IrInstr[];
 }
 
-/** The primitive kind of each wrapper. */
-const KIND = { String: "string", Number: "number", Boolean: "boolean" } as const;
-type Wrapper = keyof typeof KIND;
-const METHODS = ["valueOf", "toString"] as const;
+const PRIMITIVES: readonly CarrierKind[] = ["string", "number", "boolean"];
+const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
-/** The method ids of the wrapper families `held` (catalog ids of their constructors). */
-export function wrapperMethods(held: ReadonlySet<string>): string[] {
-  return NATIVE_WRAPPER_CONSTRUCTORS.filter((name) => held.has(`%${name}%`)).flatMap((name) =>
-    METHODS.map((method) => realmMethodId(name + ".prototype", method)),
-  );
-}
-
-/** The wrapper and method an id of {@link wrapperMethods} names. */
-const parse = (id: string): { readonly wrapper: Wrapper; readonly method: (typeof METHODS)[number] } => {
-  const [wrapper, , method] = id.slice(1, -1).split(".") as [Wrapper, string, (typeof METHODS)[number]];
-  return { wrapper, method };
-};
-
-/** thisXValue(`receiver`) of `wrapper` into `result`: the primitive, or a TypeError. */
-function thisPrimitiveValue(
+/**
+ * Whether `method`, called with `receiver` as `this`, is a held wrapper method, and its answer (a carrier value).
+ * `radix`: the call passes an argument, which Number.prototype.toString reads as a radix the realm does not format
+ * (the run-time abort; String's and Boolean's `toString` ignore it).
+ */
+export function wrapperMethodTest(
   b: WrapperMethodBuilders,
   instr: IrInstr,
-  id: string,
+  method: IrValueId,
   receiver: IrValueId,
-  result: IrValueId,
-): IrInstr[] {
-  const { wrapper, method } = parse(id);
-  const kind = KIND[wrapper];
-  const unread = (r: IrValueId) => b.intrinsic(instr, "js.value.undefined", [], r);
-  const fails = (r: IrValueId) =>
-    typeErrorThen(b, `${wrapper}.prototype.${method} requires that 'this' be a ${wrapper}`, unread(r));
-  const itself =
-    (value: IrValueId) =>
-    (r: IrValueId): IrInstr[] => [{ kind: "coerce.to_externref", value, result: r, resultType: b.carrier }];
-  const arm = (held: CarrierKind, r: IrValueId): IrInstr[] => {
-    if (held === kind) return itself(receiver)(r);
-    if (held !== "object") return fails(r);
-    const [data, same] = [b.fresh(), b.fresh()];
-    return [
-      realmCall("js.object.primitive-data", [receiver], data),
-      ...b.anyKind(instr, [kind], data, same),
-      b.branch(same, itself(data), fails, r, b.carrier),
-    ];
+  radix = false,
+): BuiltinMethodTest {
+  const [value, absent, cond] = [b.fresh(), b.fresh(), b.fresh()];
+  b.kinds.learn(value, [...PRIMITIVES, "null"]);
+  const primitive = b.fresh();
+  b.kinds.learn(primitive, PRIMITIVES);
+  const carried = (from: IrValueId, r: IrValueId): IrInstr => ({
+    kind: "coerce.to_externref",
+    value: from,
+    result: r,
+    resultType: b.carrier,
+  });
+  const text = (r: IrValueId): IrInstr[] => {
+    const string = b.fresh();
+    return [...b.stringOf(instr, primitive, string), carried(string, r)];
   };
-  return b.kindChain(instr, receiver, result, arm, b.kinds.kindsOf(receiver), b.carrier);
-}
-
-/** The method `id` of {@link wrapperMethods} with `receiver` as `this`, into `result` (a carrier value). */
-export function wrapperMethodAnswer(
-  b: WrapperMethodBuilders,
-  instr: IrInstr,
-  id: string,
-  receiver: IrValueId,
-  result: IrValueId,
-): IrInstr[] {
-  if (parse(id).method === "valueOf") return thisPrimitiveValue(b, instr, id, receiver, result);
-  const [value, text] = [b.fresh(), b.fresh()];
-  const primitive = thisPrimitiveValue(b, instr, id, receiver, value);
-  b.kinds.learn(value, [KIND[parse(id).wrapper]]);
-  return [
-    ...primitive,
-    ...b.stringOf(instr, value, text),
-    { kind: "coerce.to_externref", value: text, result, resultType: b.carrier },
-  ];
+  const asText = (r: IrValueId): IrInstr[] =>
+    radix
+      ? b.kindChain(
+          instr,
+          primitive,
+          r,
+          (kind, s) => (kind === "number" ? b.abort(instr, s) : text(s)),
+          PRIMITIVES,
+          b.carrier,
+        )
+      : text(r);
+  return {
+    instrs: [
+      realmCall("js.object.wrapper-this", [method, receiver], value),
+      ...b.anyKind(instr, ["null"], value, absent),
+      { kind: "unary", op: "i32.eqz", rand: absent, result: cond, resultType: BOOLEAN },
+    ],
+    cond,
+    answer: (r) => {
+      const isToString = b.fresh();
+      return [
+        carried(value, primitive),
+        realmCall("js.object.wrapper-to-string", [method], isToString),
+        b.branch(isToString, asText, (s) => [carried(primitive, s)], r, b.carrier),
+      ];
+    },
+  };
 }

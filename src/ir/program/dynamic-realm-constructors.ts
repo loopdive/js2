@@ -30,7 +30,7 @@
  * abort for `%Error%` (`F.prototype = Error; TypeError instanceof F`), and `false` for every other prototype
  * ({@link functionChainAnswer}).
  */
-import type { IrInstr, IrValueId } from "../core/nodes.js";
+import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import {
   ERROR_ID,
@@ -62,11 +62,31 @@ export function realmConstructorOf(
     definition?.kind === "call" && definition.target.binding.kind === "runtime"
       ? realmIntrinsicOfHelper(definition.target.binding.symbol)
       : undefined;
-  return id !== undefined &&
-    (id === "%Object%" || errorConstructorSelector(id) >= 0 || wrapperConstructorSelector(id) >= 0)
-    ? id
-    : undefined;
+  return id !== undefined && isRealmConstructor(id) ? id : undefined;
 }
+
+/**
+ * The realm constructors `functions` read as values: the front end's reads of the realm's intrinsic (`identifier-read.ts`)
+ * that name a constructor. The one answer to "which constructors does the program hold" on the IR side; the realm
+ * derives its families from the same reads (`native-realm-requirements.ts`).
+ */
+export function realmConstructorsRead(functions: readonly IrFunction[]): ReadonlySet<string> {
+  const read = new Set<string>();
+  for (const fn of functions)
+    for (const block of fn.blocks)
+      for (const root of block.instrs)
+        forEachInstrDeep(root, (instr) => {
+          const id =
+            instr.kind === "call" && instr.target.binding.kind === "runtime"
+              ? realmIntrinsicOfHelper(instr.target.binding.symbol)
+              : undefined;
+          if (id !== undefined && isRealmConstructor(id)) read.add(id);
+        });
+  return read;
+}
+
+const isRealmConstructor = (id: string): boolean =>
+  id === "%Object%" || errorConstructorSelector(id) >= 0 || wrapperConstructorSelector(id) >= 0;
 
 /** `X(…args)` (`construct` false) or `new X(…args)` of the realm constructor `id`, into the instruction's result. */
 export function dynamicRealmConstruction(

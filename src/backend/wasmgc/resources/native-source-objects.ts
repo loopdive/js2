@@ -51,10 +51,13 @@ import {
 import {
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  realmMethodId,
 } from "../../../runtime/contracts/native-realm-catalog.js";
 import {
   buildPrimitiveDataDefinition,
   buildWrapperCreateDefinition,
+  buildWrapperThisDefinition,
+  buildWrapperToStringDefinition,
 } from "../../../runtime/wasmgc/values/realm-wrapper-bodies.js";
 import { realmWrapperKinds, type NativeRealmWrappers } from "./native-realm-wrappers.js";
 import type { NativeStringFlattenReservations } from "./native-string-flatten.js";
@@ -117,6 +120,38 @@ function wrapperOperands(dependencies: NativeSourceObjectDependencies, tx: Physi
     unboxNumber: values.functions.unboxNumber.handle,
     defineDataBody: d.defineDataBody,
     lengthKey: d.lengthKey,
+  };
+}
+/** (#7354 W2) The wrapper methods' wrong-receiver messages (V8's text), by kind and method. */
+const wrapperMethodMessage = (kind: string, method: string) =>
+  `${kind}.prototype.${method} requires that 'this' be a ${kind}`;
+const WRAPPER_METHOD_MESSAGES: readonly string[] = NATIVE_WRAPPER_CONSTRUCTORS.flatMap((kind) =>
+  ["valueOf", "toString"].map((method) => wrapperMethodMessage(kind, method)),
+);
+/** The held wrapper methods, as `wrapper-this` and `wrapper-to-string` test them. */
+function wrapperMethodOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
+  const { kernel, values } = dependencies;
+  const d = nativeBuiltinFunctionOperands(tx, kernel);
+  const key = literalKey(tx, dependencies);
+  const operands = wrapperOperands(dependencies, tx);
+  return {
+    ...operands,
+    sameValue: d.sameValue,
+    isNumber: values.functions.isNumber.handle,
+    methods: operands.kinds.flatMap((kind) =>
+      (["valueOf", "toString"] as const).map((method) => ({
+        kind,
+        method,
+        value: [
+          {
+            op: "call",
+            funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId(`${kind.kind}.prototype`, method))
+              .getter.handle,
+          } as Instr,
+        ],
+        throwTypeError: builtinTypeError(d, key(wrapperMethodMessage(kind.kind, method))),
+      })),
+    ),
   };
 }
 type Signature = { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
@@ -337,6 +372,15 @@ const ROWS = {
   "js.object.primitive-data": {
     signature: { params: [EXTERNREF], results: [EXTERNREF] },
     body: (dependencies, tx) => buildPrimitiveDataDefinition(wrapperOperands(dependencies, tx)),
+  },
+  "js.object.wrapper-this": {
+    signature: { params: [EXTERNREF, EXTERNREF], results: [EXTERNREF] },
+    literals: WRAPPER_METHOD_MESSAGES,
+    body: (dependencies, tx) => buildWrapperThisDefinition(wrapperMethodOperands(dependencies, tx)),
+  },
+  "js.object.wrapper-to-string": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: (dependencies, tx) => buildWrapperToStringDefinition(wrapperMethodOperands(dependencies, tx)),
   },
   "js.object.has-own": {
     signature: { params: [EXTERNREF, EXTERNREF, I32], results: [I32] },

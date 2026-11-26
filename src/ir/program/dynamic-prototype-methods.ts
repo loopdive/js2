@@ -17,7 +17,7 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
-import { wrapperMethodAnswer, wrapperMethods } from "./dynamic-wrapper-methods.js";
+import { wrapperMethodTest, type BuiltinMethodTest } from "./dynamic-wrapper-methods.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, carried } from "./dynamic-value-chains.js";
@@ -32,15 +32,15 @@ const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /**
- * The realm methods (catalog ids) `call` may call, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a
- * populated name on its receiver; `toString` Error.prototype's only where `held.errors` (the program holds the Error
- * family), and (#7354 W2) `toString` / `valueOf` a held wrapper's.
+ * The realm methods `call` may call, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a populated name on its
+ * receiver: an Object.prototype method or Error.prototype.toString (only where `held.errors`, the program holds the
+ * Error family) by catalog id, and (#7354 W2) whether a held wrapper's `valueOf` / `toString` may be it.
  */
 export function prototypeMethodOfCall(
   call: Call,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
-  held: { readonly errors: boolean; readonly wrappers: ReadonlySet<string> },
-): readonly string[] | undefined {
+  held: { readonly errors: boolean; readonly wrappers: boolean },
+): RealmMethods | undefined {
   if (closureMethodArity(call.target.name) === undefined) return undefined;
   const uncoerced = (value: IrValueId): IrValueId => {
     const definition = definitions.get(value);
@@ -54,9 +54,15 @@ export function prototypeMethodOfCall(
   const ids = [
     ...(objectMethod ? [objectPrototypeMethodId(objectMethod)] : []),
     ...(name === "toString" && held.errors ? [ERROR_TO_STRING_ID] : []),
-    ...wrapperMethods(held.wrappers).filter((id) => id.endsWith(`.${name}%`)),
   ];
-  return ids.length === 0 ? undefined : ids;
+  const wrapper = held.wrappers && (name === "valueOf" || name === "toString");
+  return ids.length === 0 && !wrapper ? undefined : { ids, wrapper };
+}
+
+/** The realm methods a call may reach: by identity (`ids`), and (W2) a held wrapper's (`wrapper`). */
+export interface RealmMethods {
+  readonly ids: readonly string[];
+  readonly wrapper: boolean;
 }
 
 /** `value`, the realm's Boolean of `test`, boxed into the carrier `result`. */
@@ -127,37 +133,44 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
 }
 
 /**
- * The legalized call: the algorithm of the realm's own method the callee is, tested by identity in turn, else the call
- * as it was. (#7354 G1) Error.prototype.toString is the realm's own (§20.5.3.4, `js.object.error-to-string`): its
- * receiver is the [[Get]]'s, an object, as no primitive's wrapper prototype reaches it. (#7354 W2) A wrapper's
- * `valueOf` / `toString` (`dynamic-wrapper-methods.ts`); Number.prototype.toString with a radix argument is the run-time
- * abort (the realm formats base 10 only).
+ * The legalized call: the algorithm of the realm's own method the callee is, tested in turn, else the call as it was.
+ * (#7354 G1) Error.prototype.toString is the realm's own (§20.5.3.4, `js.object.error-to-string`): its receiver is the
+ * [[Get]]'s, an object, as no primitive's wrapper prototype reaches it. (#7354 W2) A wrapper's `valueOf` / `toString`
+ * (`dynamic-wrapper-methods.ts`; Number.prototype.toString with a radix argument is the run-time abort).
  */
 export function dynamicPrototypeMethodCall(
   b: ObjectStaticBuilders,
   instr: Call,
-  ids: readonly string[],
+  methods: RealmMethods,
   dispatches: boolean,
 ): IrInstr[] {
+  const [receiver, callee] = instr.args as [IrValueId, IrValueId];
   const algorithm =
     (id: string) =>
     (r: IrValueId): IrInstr[] => {
-      if (id === ERROR_TO_STRING_ID) return [realmCall("js.object.error-to-string", [instr.args[0]!], r)];
+      if (id === ERROR_TO_STRING_ID) return [realmCall("js.object.error-to-string", [receiver], r)];
       if (id === objectPrototypeMethodId("isPrototypeOf")) return prototypeOf(b, instr, r);
-      if (id.startsWith("%Object.prototype."))
-        return ownProperty(b, instr, id === objectPrototypeMethodId("propertyIsEnumerable"), r);
-      if (id === "%Number.prototype.toString%" && instr.args.length > 2) return b.abort(instr, r);
-      return wrapperMethodAnswer({ ...b, carrier: CARRIER }, instr, id, instr.args[0]!, r);
+      return ownProperty(b, instr, id === objectPrototypeMethodId("propertyIsEnumerable"), r);
     };
-  const call = ids.reduceRight(
-    (otherwise: (r: IrValueId) => IrInstr[], id) =>
+  const identity = (id: string): BuiltinMethodTest => {
+    const [builtin, cond] = [b.fresh(), b.fresh()];
+    return {
+      instrs: [...b.realmIntrinsic(id, builtin), b.intrinsic(instr, "js.value.strict_eq", [callee, builtin], cond)],
+      cond,
+      answer: algorithm(id),
+    };
+  };
+  const tests = [
+    ...methods.ids.map((id) => () => identity(id)),
+    ...(methods.wrapper
+      ? [() => wrapperMethodTest({ ...b, carrier: CARRIER }, instr, callee, receiver, instr.args.length > 2)]
+      : []),
+  ];
+  const call = tests.reduceRight(
+    (otherwise: (r: IrValueId) => IrInstr[], test) =>
       (r: IrValueId): IrInstr[] => {
-        const [builtin, same] = [b.fresh(), b.fresh()];
-        return [
-          ...b.realmIntrinsic(id, builtin),
-          b.intrinsic(instr, "js.value.strict_eq", [instr.args[1]!, builtin], same),
-          b.branch(same, algorithm(id), otherwise, r, CARRIER),
-        ];
+        const { instrs, cond, answer } = test();
+        return [...instrs, b.branch(cond, answer, otherwise, r, CARRIER)];
       },
     // Without a source function no dispatcher exists, and every function value is a built-in: its abort.
     (r: IrValueId): IrInstr[] => (dispatches ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r)),

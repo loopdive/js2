@@ -8,12 +8,12 @@
  *
  * (#7354 M1, C1) No question about the built-in prototypes is asked here: no Prepared program can obtain one as a
  * value (tests/issue-7354-m-prototype-premise.test.ts pins every route), so code cannot change one, and naming
- * `String` as a callee or the intercepted `Object.prototype.toString.call(v)` reaches none.
+ * `String` as a callee or the intercepted `Object.prototype.toString.call(v)` reaches none. (#7354 G1, W2) Which realm
+ * constructors a program reads as values is the IR's answer, not the source's (`LegalizationProgram.constructors`).
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { realmConstructorId } from "./program/builtin-prototype-keys.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -25,21 +25,11 @@ const isMemberName = (node: ts.Identifier): boolean =>
  * Such a function, like a function expression, is a constructor whose `prototype` is an ordinary object the source
  * spells nowhere, so either one admits the object kind too.
  */
-export function programObjects(
-  sourceFiles: readonly ts.SourceFile[],
-  readsDeclarationValue: boolean,
-  isPristineGlobal: (identifier: ts.Identifier) => boolean,
-): ProgramObjects {
+export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDeclarationValue: boolean): ProgramObjects {
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
-  const constructors = new Set<string>();
   const visit = (node: ts.Node): void => {
-    // (#7354 G1, W2) A read of an unchanged global realm constructor (`identifier-read.ts` reads it the same way,
-    // through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such read.
-    const id = ts.isIdentifier(node) ? realmConstructorId(node.text) : undefined;
-    if (id !== undefined && !isMemberName(node as ts.Identifier) && isPristineGlobal(node as ts.Identifier))
-      constructors.add(id);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -49,5 +39,5 @@ export function programObjects(
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || constructors.size > 0, functions, namesSymbol, constructors };
+  return { present, functions, namesSymbol };
 }

@@ -16,7 +16,7 @@ import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
-import { wrapperMethodAnswer, wrapperMethods } from "./dynamic-wrapper-methods.js";
+import { wrapperMethodTest, type BuiltinMethodTest } from "./dynamic-wrapper-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -287,22 +287,26 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** The realm's built-in method `id`, recognised by identity (`ordinary-to-primitive.ts`), answering `answer`. */
-  const builtin = (instr: IrInstr, id: string, answer: (object: IrValueId, r: IrValueId) => IrInstr[]) => ({
-    is: (method: IrValueId, r: IrValueId): IrInstr[] => {
-      const value = fresh();
-      return [...builders.realmIntrinsic(id, value), intrinsic(instr, "js.value.strict_eq", [method, value], r)];
-    },
-    answer,
-  });
-  /** (#7354 G1, W2) Error.prototype.toString where a value may be an error; each held wrapper's two methods. */
+  /** (#7354 G1, W2) Error.prototype.toString, by identity, where a value may be an error; a held wrapper's methods. */
   const builtins = (instr: IrInstr) => [
     ...(holdsErrors(program)
-      ? [builtin(instr, ERROR_TO_STRING_ID, (object, r) => [realmCall("js.object.error-to-string", [object], r)])]
+      ? [
+          (method: IrValueId, object: IrValueId): BuiltinMethodTest => {
+            const [value, cond] = [fresh(), fresh()];
+            return {
+              instrs: [
+                ...builders.realmIntrinsic(ERROR_TO_STRING_ID, value),
+                intrinsic(instr, "js.value.strict_eq", [method, value], cond),
+              ],
+              cond,
+              answer: (r) => [realmCall("js.object.error-to-string", [object], r)],
+            };
+          },
+        ]
       : []),
-    ...wrapperMethods(heldWrappers(program)).map((id) =>
-      builtin(instr, id, (object, r) => wrapperMethodAnswer(wrapperMethodBuilders, instr, id, object, r)),
-    ),
+    ...(heldWrappers(program).size > 0
+      ? [(method: IrValueId, object: IrValueId) => wrapperMethodTest(wrapperMethodBuilders, instr, method, object)]
+      : []),
   ];
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
   const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);

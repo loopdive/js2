@@ -160,14 +160,12 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
  * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
- * way to `@@toPrimitive` and `@@toStringTag`, and (G1, W2) the realm constructors it names (built-in function
- * values, which make objects), by catalog id.
+ * way to `@@toPrimitive` and `@@toStringTag`.
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
-  readonly constructors: ReadonlySet<string>;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -176,6 +174,12 @@ export interface LegalizationProgram {
   readonly objects: ProgramObjects;
   /** Whether the program reads a catch binding (not only rethrows it): a value thrown here is read back as dynamic. */
   readonly catches: boolean;
+  /**
+   * (#7354 G1, W2) The realm constructors the program's IR reads as values (`realmConstructorsRead`), by catalog id:
+   * built-in function values, which make objects. An intercepted form (`String(v)`'s ToString, an `Object` static's
+   * call, `Object.prototype.toString.call(v)`) reads none.
+   */
+  readonly constructors: ReadonlySet<string>;
 }
 
 /** A program that builds no ordinary object. */
@@ -183,7 +187,6 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
   namesSymbol: false,
-  constructors: new Set<string>(),
 });
 
 /**
@@ -192,7 +195,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
  * (`native-realm-requirements.ts`), whose prototypes the program can read and write.
  */
 export const holdsErrors = (program: LegalizationProgram): boolean =>
-  program.catches || [...program.objects.constructors].some((id) => errorConstructorSelector(id) >= 0);
+  program.catches || [...program.constructors].some((id) => errorConstructorSelector(id) >= 0);
 
 /**
  * (#7354 W2) The wrapper families a value of the program may belong to: those it names, and all three where it names
@@ -200,7 +203,7 @@ export const holdsErrors = (program: LegalizationProgram): boolean =>
  * IR's uses), and their prototypes are the program's to read and write.
  */
 export function heldWrappers(program: LegalizationProgram): ReadonlySet<string> {
-  const named = program.objects.constructors;
+  const named = program.constructors;
   return new Set(WRAPPER_IDS.filter((id) => named.has(id) || named.has("%Object%")));
 }
 
@@ -209,7 +212,7 @@ export function heldWrappers(program: LegalizationProgram): ReadonlySet<string> 
  * or a wrapper constructor. A primitive's member access then reads through the realm's prototype objects.
  */
 export const obtainsPrototypes = (program: LegalizationProgram): boolean =>
-  program.objects.constructors.has("%Object%") || heldWrappers(program).size > 0;
+  program.constructors.has("%Object%") || heldWrappers(program).size > 0;
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
@@ -219,11 +222,8 @@ export const obtainsPrototypes = (program: LegalizationProgram): boolean =>
 export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
   return KIND_ORDER.filter(
     (kind) =>
-      (kind !== "object" || program.objects.present || holdsErrors(program)) &&
-      (kind !== "function" ||
-        program.objects.functions ||
-        holdsErrors(program) ||
-        program.objects.constructors.size > 0),
+      (kind !== "object" || program.objects.present || holdsErrors(program) || program.constructors.size > 0) &&
+      (kind !== "function" || program.objects.functions || holdsErrors(program) || program.constructors.size > 0),
   );
 }
 

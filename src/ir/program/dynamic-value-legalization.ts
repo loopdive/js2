@@ -102,7 +102,7 @@ const OBJECT_TAG_OF_DATA: ReadonlySet<string> = new Set(["string", "number", "bo
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
-  program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
+  program: LegalizationProgram = { objects: NO_OBJECTS, catches: false, constructors: new Set() },
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
@@ -124,7 +124,7 @@ export function legalizeDynamicValues(
     errors,
     wrappers: heldWrappers(program),
     prototypes: obtainsPrototypes(program),
-    staticKeys: unheldStaticKeys(program.objects.constructors),
+    staticKeys: unheldStaticKeys(program.constructors),
   };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
@@ -327,7 +327,7 @@ export function legalizeDynamicValues(
           return dynamicRealmConstruction(objectStatics, instr, realmConstructor, instr.args.slice(2), false);
         // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
         // (G1) a built-in's run-time abort.
-        const method = prototypeMethodOfCall(instr, definitions, { errors, wrappers: memberAccess.wrappers });
+        const method = prototypeMethodOfCall(instr, definitions, { errors, wrappers: memberAccess.wrappers.size > 0 });
         if (method !== undefined)
           return dynamicPrototypeMethodCall(objectStatics, instr, method, program.objects.functions);
         if (dispatched && !program.objects.functions)

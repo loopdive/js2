@@ -19,6 +19,7 @@ import { irClosureMethodReference } from "../core/closure-invocation-callables.j
 import type { LegalizationProgram } from "./dynamic-value-kinds.js";
 import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
+import type { BuiltinMethodTest } from "./dynamic-wrapper-methods.js";
 
 /** ToPrimitive's hint: `string` for ToString, `number` for ToNumber and (as `default`) for `+`. */
 export type ToPrimitiveHint = "string" | "number";
@@ -49,14 +50,11 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
   /** Whether the carrier `value` holds a primitive (none of the program's object kinds), into `result`. */
   readonly isPrimitive: (value: IrValueId, result: IrValueId) => IrInstr[];
   /**
-   * (#7354 G1, W2) The realm's built-in conversion methods the dispatcher cannot call, each recognised by identity and
-   * answered here: whether `method` is it, into `result`, and its answer for `object`. Error.prototype.toString where a
-   * value may be an error (`js.object.error-to-string`); a held wrapper family's `valueOf` and `toString`.
+   * (#7354 G1, W2) The realm's built-in conversion methods the dispatcher cannot call, each tested on the method read
+   * and answered here: Error.prototype.toString where a value may be an error (`js.object.error-to-string`), a held
+   * wrapper family's `valueOf` and `toString` (`dynamic-wrapper-methods.ts`).
    */
-  readonly builtins: readonly {
-    readonly is: (method: IrValueId, result: IrValueId) => IrInstr[];
-    readonly answer: (object: IrValueId, result: IrValueId) => IrInstr[];
-  }[];
+  readonly builtins: readonly ((method: IrValueId, object: IrValueId) => BuiltinMethodTest)[];
   /**
    * (#7354 G1) Where the program creates no source function, every callable method is a built-in, which the
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
@@ -131,8 +129,8 @@ function callIfCallable(
   const call = b.builtins.reduceRight(
     (otherwise: (r: IrValueId) => IrInstr[], builtin) =>
       (r: IrValueId): IrInstr[] => {
-        const same = b.fresh();
-        return [...builtin.is(method, same), b.branch(same, (s) => builtin.answer(object, s), otherwise, r, b.carrier)];
+        const test = builtin(method, object);
+        return [...test.instrs, b.branch(test.cond, test.answer, otherwise, r, b.carrier)];
       },
     dispatch,
   );

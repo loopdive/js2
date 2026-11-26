@@ -38,6 +38,7 @@ import {
   legalizeDynamicValues,
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
+import { realmConstructorsRead } from "./program/dynamic-realm-constructors.js";
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
@@ -362,11 +363,7 @@ export function programDynamicContracts(
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
-  const objects = programObjects(
-    sourceFiles,
-    functionDeclarationValues.length > 0,
-    pristineBuiltinGlobal(checker, sourceFiles),
-  );
+  const objects = programObjects(sourceFiles, functionDeclarationValues.length > 0);
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
     const functionCodeStrict = input.codeStrictness?.(code);
     return functionObjects &&
@@ -599,8 +596,9 @@ function legalizeSourceDynamicValues(
       );
     }
   };
+  const constructors = realmConstructorsRead(retargeted);
   const legalized = retargeted.map((fn) =>
-    owned(fn, () => legalizeDynamicValues(fn, allocations, { objects, catches })),
+    owned(fn, () => legalizeDynamicValues(fn, allocations, { objects, catches, constructors })),
   );
   if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))

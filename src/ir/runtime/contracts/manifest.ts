@@ -440,6 +440,8 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.has-own",
   "js.object.create-wrapper",
   "js.object.primitive-data",
+  "js.object.wrapper-this",
+  "js.object.wrapper-to-string",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -465,6 +467,8 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.has-own",
   "native.js.object.create-wrapper",
   "native.js.object.primitive-data",
+  "native.js.object.wrapper-this",
+  "native.js.object.wrapper-to-string",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

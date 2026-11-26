@@ -91,6 +91,10 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // value, or `undefined` for an object that is no wrapper.
   "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
   "js.object.primitive-data": declaration("js.object.primitive-data", [EXTERNAL], [EXTERNAL]),
+  // (#7354 W2) thisXValue(this) where the method is a held wrapper prototype's `valueOf` / `toString` (null for any
+  // other method, a TypeError for a wrong receiver), and whether the method is such a `toString`.
+  "js.object.wrapper-this": declaration("js.object.wrapper-this", [EXTERNAL, EXTERNAL], [EXTERNAL]),
+  "js.object.wrapper-to-string": declaration("js.object.wrapper-to-string", [EXTERNAL], [BOOLEAN]),
 });
 
 /**

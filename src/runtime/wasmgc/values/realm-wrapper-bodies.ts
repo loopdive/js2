@@ -54,7 +54,7 @@ const word = (enumerable: boolean): Instr => ({
 });
 
 /** The kind's primitive, a carrier value on the stack, as its slot's representation. */
-export function wrapperPayload(d: RealmWrapperOperands, kind: NativeWrapperConstructor): Instr[] {
+function wrapperPayload(d: RealmWrapperOperands, kind: NativeWrapperConstructor): Instr[] {
   if (kind === "Number") return [{ op: "call", funcIdx: d.unboxNumber }];
   const typeIdx = kind === "String" ? d.anyStrTypeIdx : d.boxedBooleanTypeIdx;
   return [
@@ -269,14 +269,74 @@ export function buildPrimitiveDataDefinition(d: RealmWrapperOperands): Definitio
   };
 }
 
+/** A held wrapper prototype's `valueOf` or `toString`: its function value and its wrong-receiver TypeError. */
+export interface RealmWrapperMethod {
+  readonly kind: RealmWrapperKind;
+  readonly method: "valueOf" | "toString";
+  /** The method's function object, as an externref (initializing the realm). */
+  readonly value: readonly Instr[];
+  /** Throws the TypeError of a receiver that is no value of the kind. */
+  readonly throwTypeError: readonly Instr[];
+}
+export interface RealmWrapperMethodOperands extends RealmWrapperOperands {
+  readonly methods: readonly RealmWrapperMethod[];
+  readonly sameValue: FuncHandle;
+  readonly isNumber: FuncHandle;
+}
+
+/** Whether the carrier value in `local` is a primitive of `kind`. */
+function isPrimitiveOf(d: RealmWrapperMethodOperands, kind: NativeWrapperConstructor, local: number): Instr[] {
+  if (kind === "Number") return [get(local), { op: "call", funcIdx: d.isNumber }];
+  return [
+    get(local),
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: kind === "String" ? d.anyStrTypeIdx : d.boxedBooleanTypeIdx },
+  ];
+}
+
 /**
- * (The initializer's part) A held family's prototype object that has a primitive slot (`String.prototype` is a String
- * object for "", §22.1.3): `prototype` and the slot's constant payload, allocated as that kind's wrapper.
+ * `js.object.wrapper-this(method, this) -> value`: where `method` is a held wrapper prototype's `valueOf` or
+ * `toString`, thisXValue(this) (§22.1.3.35.1 thisStringValue, §21.1.3.7.1, §20.3.3.3.1): a primitive of the kind
+ * itself, a wrapper's slot, else the method's TypeError; `null` for any other method (no primitive is null). The
+ * caller answers `valueOf` with it and `toString` with its ToString (`js.object.wrapper-to-string`).
  */
-export function wrapperPrototypeAllocation(
-  kind: RealmWrapperKind,
-  prototype: readonly Instr[],
-  payload: readonly Instr[],
-): Instr[] {
-  return [...prototype, ...payload, { op: "call", funcIdx: kind.allocation }];
+export function buildWrapperThisDefinition(d: RealmWrapperMethodOperands): Definition {
+  const answer = (row: RealmWrapperMethod): Instr[] => [
+    ...isPrimitiveOf(d, row.kind.kind, 1),
+    { op: "if", blockType: { kind: "empty" }, then: [get(1), { op: "return" }] },
+    get(1),
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: row.kind.typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [get(1), { op: "call", funcIdx: row.kind.read }, ...carrierOf(d, row.kind.kind), { op: "return" }],
+    },
+    ...row.throwTypeError,
+  ];
+  return {
+    locals: [],
+    body: [
+      ...d.methods.flatMap((row): Instr[] => [
+        get(0),
+        ...row.value,
+        { op: "call", funcIdx: d.sameValue },
+        { op: "if", blockType: { kind: "empty" }, then: answer(row) },
+      ]),
+      { op: "ref.null.extern" },
+    ],
+  };
+}
+
+/** `js.object.wrapper-to-string(method) -> i32`: whether `method` is a held wrapper prototype's `toString`. */
+export function buildWrapperToStringDefinition(d: RealmWrapperMethodOperands): Definition {
+  return {
+    locals: [],
+    body: [
+      int(0),
+      ...d.methods
+        .filter((row) => row.method === "toString")
+        .flatMap((row): Instr[] => [get(0), ...row.value, { op: "call", funcIdx: d.sameValue }, { op: "i32.or" }]),
+    ],
+  };
 }
