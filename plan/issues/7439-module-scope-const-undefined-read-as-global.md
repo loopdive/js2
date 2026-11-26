@@ -10,7 +10,7 @@ horizon: s
 task_type: bug
 area: ir
 goal: core-semantics
-related: [7380, 7104, 7106]
+related: [7380, 7104, 7106, 7514, 7515]
 ---
 
 # #7439 — module-scope `const undefined` is ignored
@@ -103,12 +103,12 @@ does not grow.
   descriptor and buffer-operand admissibility over `undefined` / `NaN` / `Infinity`. They are sound as they are, and this
   plan does not change them. Their doc gains one line pointing at the oracle answer as the precise form.
 
-**Not in scope (follow-ups, ids requested from the lead).**
+**Not in scope (follow-ups filed in this PR).**
 
-- Legacy sites that decide argument treatment from the spelling give wrong answers under shadowing too, as PRV
+- [#7514] Legacy sites that decide argument treatment from the spelling give wrong answers under shadowing too, as PRV
   measured: `x === undefined` with a module `const undefined = 42` gives 0 (node: 43), and `g(undefined)` takes the
   default parameter (8 instead of 43). There are 88 such syntactic tests in `src/codegen`.
-- An unrelated IR bug: `(void 0 as any) === (void 0)` is false on the default IR lane, while legacy gives true.
+- [#7515] An unrelated IR bug: `(void 0 as any) === (void 0)` is false on the default IR lane, while legacy gives true.
 
 **Acceptance.**
 
