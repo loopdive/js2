@@ -2337,21 +2337,40 @@ function terminateTailFallOut(cx: LowerCtx): void {
   cx.builder.terminate({ kind: "unreachable" });
 }
 
-/** A nested declaration bound as a closure with the dynamic signature ({@link lowerFunctionBody}). */
+/** A function body's nested declarations bound as closures with the dynamic signature ({@link lowerFunctionBody}). */
+interface HoistedClosures {
+  readonly signatures: ReadonlyMap<ts.FunctionDeclaration, IrClosureSignature>;
+  readonly placement: HoistedClosurePlacement;
+}
+
 function isHoistedDeclaration(s: ts.Statement, cx: LowerCtx): s is ts.FunctionDeclaration {
-  return ts.isFunctionDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined;
+  return cx.hoistedClosures?.signatures.has(s as ts.FunctionDeclaration) === true;
 }
 
 /** A function body, with the closures of its hoisted nested declarations placed ({@link placeHoistedClosures}). */
 function lowerFunctionBody(stmts: readonly ts.Statement[], cx: LowerCtx): void {
-  const hoisted = stmts.filter((s) => isHoistedDeclaration(s, cx));
-  lowerStatementList(stmts, hoisted.length > 0 ? { ...cx, hoistedClosures: placeHoistedClosures(stmts, hoisted) } : cx);
+  const signatures = new Map<ts.FunctionDeclaration, IrClosureSignature>();
+  for (const s of stmts) {
+    const signature = ts.isFunctionDeclaration(s) ? cx.resolver?.dynamicClosureSignature?.(s) : undefined;
+    if (signature) signatures.set(s as ts.FunctionDeclaration, signature);
+  }
+  const placement = signatures.size > 0 ? placeHoistedClosures(stmts, [...signatures.keys()]) : undefined;
+  lowerStatementList(stmts, { ...cx, hoistedClosures: placement && { signatures, placement } });
 }
 
-/** Bind the closures of the hoisted declarations placed before `statement`. */
+/**
+ * Bind the closures of the hoisted declarations placed before `statement`. A closure that captures another closure
+ * has no native carrier for that capture yet, so it is refused here, in its enclosing function.
+ */
 function makeHoistedClosures(statement: ts.Statement, cx: LowerCtx): void {
-  for (const fn of cx.hoistedClosures?.get(statement) ?? []) {
-    const value = lowerClosureExpressionWithSignature(fn, cx.resolver!.dynamicClosureSignature!(fn)!, undefined, cx, {
+  for (const fn of cx.hoistedClosures?.placement.get(statement) ?? []) {
+    const captured = analyseCaptures(fn, cx).find((capture) => capture.type.kind === "closure");
+    if (captured)
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: nested function ${fn.name!.text} captures the closure "${captured.name}" (${cx.funcName})`,
+      );
+    const value = lowerClosureExpressionWithSignature(fn, cx.hoistedClosures!.signatures.get(fn)!, undefined, cx, {
       writtenParameterSlots: true,
       ...cx.resolver?.closureCodeStrictness?.(fn),
     });
@@ -2437,11 +2456,6 @@ function accumulateDenseReduction(
 
 function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx: LowerCtx): boolean {
   const s = stmts[i]!;
-  // A `return` ends the list: what follows is unreachable, and its declarations were placed where they are named.
-  if (ts.isReturnStatement(s)) {
-    lowerTail(s, cx);
-    return true;
-  }
   // Slice 3 (#1169c): nested function declaration. Adds a
   // `nestedFunc` scope binding and lifts the body to a top-level IR
   // function in `cx.lifted`.
@@ -3052,7 +3066,7 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
   /** The nested declarations of the body being lowered, made before the statement each is placed at. */
-  readonly hoistedClosures?: HoistedClosurePlacement;
+  readonly hoistedClosures?: HoistedClosures;
   readonly funcName: string;
   readonly ownerUnitId: IrUnitId;
   // Slice 14 (#1228) — `null` means the enclosing function is void.

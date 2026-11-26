@@ -474,12 +474,13 @@ function checkAbiExports(
       const declaration = unitId && captures.get(unitId);
       const joins = (slot: PresentationSlot, type: IrType | undefined) =>
         sourceSlotMatches(slot, type) || dynamic(type);
+      // A void result joins the carrier: `return f()` of a closure holds `undefined`.
+      const voidJoinsCarrier =
+        declaration?.slots === "primitive" && !declaration.results.length && dynamic(contract.results[0]);
       if (
         declaration?.slots === "primitive" &&
         (contract.params.length !== declaration.params.length ||
-          // A void result joins the carrier: `return f()` of a closure holds `undefined`.
-          contract.results.length !==
-            declaration.results.length + Number(!declaration.results.length && dynamic(contract.results[0])) ||
+          contract.results.length !== declaration.results.length + (voidJoinsCarrier ? 1 : 0) ||
           declaration.params.some((slot, index) => !joins(slot, contract.params[index])) ||
           declaration.results.some((slot, index) => !joins(slot, contract.results[index])) ||
           !promiseContractMatches(declaration, contract.promise))

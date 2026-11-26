@@ -43,6 +43,10 @@ describe("#7492 — nested function declarations: node's answer", () => {
     ["inside an IIFE", "var out = String((function(){ function f(){ return 2; } return f(); })());"],
     ["a call result the checker calls void", "function g(){ function f(){} return f(); } var out = String(g());"],
     ["never named", "var c = 0; function g(){ c = c + 1; function f(){} } g(); var out = String(c);"],
+    [
+      "one capturing another, never called: still compiles",
+      "function g(){ function b(){ return 6; } function a(){ return b() + 1; } return a(); } var out = 'x';",
+    ],
   ])("%s", (_label, body) => agreesWithNode(body), SLOW);
 });
 
@@ -74,6 +78,16 @@ describe("#7492 — shapes left out abort by name", () => {
       "sibling mutual recursion",
       "function g(){ return even(4); function even(n){ return n === 0 ? true : odd(n - 1); } function odd(n){ return n === 0 ? false : even(n - 1); } } g();",
       'direct call to "odd" has no exact AST-site plan',
+    ],
+    [
+      "one capturing another",
+      "function g(){ function b(){ return 6; } function a(){ return b() + 1; } return a(); } g();",
+      'nested function a captures the closure "b"',
+    ],
+    [
+      "one returning another, both named in one statement",
+      "function g(){ var r = a()(); function a(){ return b; } function b(){ return 6; } return r; } g();",
+      'identifier "b" is not in scope',
     ],
     [
       "a rewritten declaration",

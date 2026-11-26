@@ -1,7 +1,8 @@
 ---
 id: 7492
 title: "Prepared path: unannotated nested function declarations as placed dynamic closures; statement shapes before and at a function tail"
-status: in-progress
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
@@ -14,7 +15,7 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7354, 7349, 7372, 7462]
-# 2026-11-26: +2 lines. The void-result join is one condition of the callable signature join in checkAbiExports;
+# 2026-11-26: +3 lines. The void-result join is one condition of the callable signature join in checkAbiExports;
 # it has no other home, and the file has no unit it could move to.
 loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
@@ -77,15 +78,18 @@ The 39 nested-function files, by what else their test body uses: plain 18, `this
 2. **Placement, in its own module `src/ir/hoisted-closures.ts`.** FunctionDeclarationInstantiation (§10.2.11 step
    36) makes the function object before the body's first statement. A closure snapshots its immutable captures when
    it is made, and the `var`s above the first use are initialised by then, so the closure is made just before the
-   first statement that names it, or the first hoisted declaration that names it. The binding is never written, so
-   the later creation is not observable. `placeHoistedClosures` is a pure AST function. from-ast's
-   `lowerFunctionBody` (the three body entries: top-level unit, nested lift, closure lift) computes it, and
-   `lowerStatementList` makes the placed closures before each statement.
+   first statement that names it (the declaration itself, if nothing names it earlier). The binding is never written,
+   so the later creation is not observable. `placeHoistedClosures` is a pure AST function. from-ast's
+   `lowerFunctionBody` (the three body entries: top-level unit, nested lift, closure lift) computes each signature once
+   and the placement, and `lowerStatementList` makes the placed closures before each statement. A closure that
+   captures another closure is refused by name when it is made (`makeHoistedClosures`): the native backend has no
+   carrier for a closure-typed capture yet ("closure capture closure needs its actual native carrier owner", a
+   program-level refusal on main for function expressions as well). So no declaration's place depends on another's.
 3. **One body-statement dispatcher.** `lowerStatementListPrefix` keeps only what is particular to a statement list:
-   a `return` ends the list (the rest is unreachable, and its declarations were placed where they are named), nested
-   declarations, inert classes, statement-position calls and the early-return `if`. Every other statement goes to
+   nested declarations, inert classes, statement-position calls and the early-return `if`. Every other statement goes to
    `lowerStmt`, whose arms it duplicated line for line (variable statements, assignments, loops, `with`, `for-in`,
-   `for-of`, `switch`, `throw`, `try`, `if`/`else`). `lowerStmt` gains the empty statement.
+   `for-of`, `switch`, `throw`, `try`, `if`/`else`, and an early `return` through `lowerEarlyReturn`). `lowerStmt`
+   gains the empty statement.
 4. **One fall-out rule.** `lowerTail` lowers any other statement with `lowerStmt` and then the implicit return:
    `fallOutReturn` (empty for void, the carrier's `undefined` for a dynamic result, refused before lowering for a
    typed result). The `if`-without-`else` tail's private copy of that return becomes a call to it. A statement list
@@ -113,6 +117,9 @@ The 39 nested-function files, by what else their test body uses: plain 18, `this
   presentation refusal ("nondefaultable reference widening"), the same as for function expressions today (#7462).
 - `this`, `arguments`, `typeof`, `.length` and `===` on the closure value, and mutual recursion between sibling
   declarations: each a named abort.
+- A declaration that captures another closure (a sibling declaration, a function-expression local): a named abort
+  ("nested function a captures the closure "b""). Follow-up: the native closure carrier for a closure-typed capture,
+  which function expressions need as well.
 - A declaration that captures a `var` declared after its first use: a named abort ("declared after the closure is
   created").
 
