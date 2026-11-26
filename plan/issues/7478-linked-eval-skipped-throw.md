@@ -76,6 +76,11 @@ throw "after";
   (`collectMethodDispatchEntries`). The dispatcher and the new predicate
   share it, so there is one source of truth for "which closures this module
   dispatches". `closure-exports.ts` shrinks.
+- **Import cycle.** The new module imports `closure-dispatch-rest` and
+  `transferred-native-proto`, and is imported by `closure-exports` and
+  `standalone-link-boundary`. All four are already in the codegen SCC, so any
+  module that serves both sides sits in it too. That accounts for the
+  `largestSccSize` grant 708 → 709.
 - **Rejected.** A consumer-side guard that skips the peer arm for any
   closure the consumer can dispatch. It broke #6643: a provider method run
   on the consumer's ladder reads the wrong `__current_this` (see #7479).
