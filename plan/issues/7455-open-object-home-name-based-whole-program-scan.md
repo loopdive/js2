@@ -119,13 +119,13 @@ After #7354 H2 the Prepared path's soundness depends on the two agreeing (#7457)
    - **Before** the old scanner is deleted, a throwaway differential computes the old `reassigned` set and the
      index-derived set over the equivalence corpus and the shared sample. It lists every symbol where they
      differ.
-   - Its output is recorded in the PR body, with each difference classified (finding 4). One is known by
-     reading: `identifierWritesOf` counts a top-level `var f = 1` that merges with `function f(){}`, and the
-     planner does not.
+   - Its output is recorded in the PR body, with each difference classified (finding 4). A difference expected
+     by reading, a top-level `var f = 1` merging with `function f(){}`, turned out not to be one: the checker
+     gives the declarator its own symbol, so neither side sees the write (#7480).
    - A write the planner missed is a fix: a cached funcref for a rewritten binding is wrong. Anything else
      stops the slice.
-   - What gets committed is per-form behaviour tests, not a self-comparison: var merge, destructuring default,
-     `for (f in o)` head, shorthand target, aliased import.
+   - What gets committed is per-form behaviour tests, not a self-comparison: destructuring default,
+     `for (f in o)` head, shorthand target, aliased import. The var merge is #7480.
 3. **#7455, the predicate split plus the scope widening.**
    - The admission set is **measured** before and after: the carriers `isReference` admits over the
      equivalence corpus, the playground examples and the shared sample. The plan makes no prediction of its
@@ -186,3 +186,9 @@ After #7354 H2 the Prepared path's soundness depends on the two agreeing (#7457)
   different checker symbol than the function's. So the index files that write under the declarator's symbol,
   not under the function's. The differential must show what the planner's `reassigned` and the index each
   say there before the fold.
+
+## PR 2 measured (2026-11-26, branch `claude/7457-planner-write-index`)
+
+- The differential found 0 disagreements in 24,949 checks over 1,160 function declarations.
+- Output stays byte-identical to PR 1: the 7,182 equivalence compiles and the 848 o411 and playground rows.
+- The var-merge case is #7480; see #7457's issue file.
