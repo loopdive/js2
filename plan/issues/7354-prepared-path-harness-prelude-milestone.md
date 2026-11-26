@@ -7214,3 +7214,108 @@ Prelude + `assert.sameValue(1, 1)`: 81,432 B / 5.7–7.3 s on the base, 95,918 B
 harness code, not the tests: `compareArray.format` in assert.js reads `String` as a value
 (`Array.prototype.map.call(arrayLike, String)`), so every prelude program holds the String family and Object.prototype's route.
 That function aborts on this path anyway, but the source fact cannot know it.
+
+## Slice A1 plan (2026-11-26, branch `claude/7354-a1` from `claude/7354-w2` c458a250fe; Phase 1, not started)
+
+Arrays on the Prepared path, driven by `propertyHelper.js`. Overlap: #7352 is still claimed by `c-lead` (2026-11-19);
+its lane (S13, `claude/7354-arrays*`) is suspended since 2026-11-20 and is read here for data only. L0c owns computed
+keys on ordinary objects (not started); O5 (PR 7428) owns for-in.
+
+### Measured (W2 head, strict entry, runner options, real `assert.js` + `sta.js` + includes; `.tmp/ph`)
+
+Of the 411-row sample, 43 rows stop at `Array` inside `propertyHelper.js` and 15 more name an array. Every
+propertyHelper.js statement was stubbed in turn (cumulative variants `v1`…`v13`) and the 43 rows re-run each time.
+Nothing on this path makes an array today: a literal refuses at top level ("resolver cannot register vec") and
+makes the function an abort body. A function body that fails to lower aborts only when it is called. A module-init
+statement that fails refuses the whole program.
+
+| # | propertyHelper.js needs (in source order) | where | gates | after it is lifted, the next stop |
+|---|---|---|---|---|
+| 1 | `Array` as a value: `Array.isArray`, `Array.prototype.join` / `push` (L27, L31, L32) | module-init | 43 | `identifier "Function" is not in scope` (all 43) |
+| 2 | `Function.prototype.call.bind(m)`, 4 times (L31–34): a bound built-in, called through a script var | module-init | 43 | `math.pow needs callable provider materialization` (all 43) |
+| 3 | `Math.pow(2, 32)` (L35) | module-init | 43 | run-time abort in module-init (all 43) |
+| 4 | `Object.defineProperty` / `getOwnPropertyDescriptor` / `getOwnPropertyNames` read as values (L28–30) | module-init | 43 | per row: 19 `dyn.publish_argc`, 6 test-side `var arr = []`, 7 aborts, 11 other built-ins (Date, RegExp, globalThis, `null` under f64) |
+| 5 | `arguments.length` (L47, L183) | verifyProperty, isWritable | 19, refused | 18: "a dynamic value flows into boolean \| undefined" (the JSDoc `@param {PropertyDescriptor\|undefined} desc`, L40, types the caller's literal) |
+| 6 | that JSDoc flow rule | test's call site | 18 | run-time aborts: computed key `obj[name]` (verifyProperty L99, verifyEqualTo; L0c), `delete obj[name]` (isWritable L204, isConfigurable; unowned), `arguments` in test closures (3) |
+| 7 | arrays inside the functions: `[]`, `__push`, `failures.length`, `__join`, gOPN's result read as `names.length` / `names[i]` | verifyProperty | ≈39 | — |
+
+With items 1–6 stubbed, 1 of the 43 rows passes (`harness/propertyhelper-verifynotenumerable-enumerable.js`).
+Lifting `Array` alone gains no propertyHelper row. Items 2–4 are not array work. They are "built-ins as values"
+(V1/P2): the dispatcher aborts on a built-in callee (G1, P1), and P1 put a built-in's algorithm at its call site.
+Nobody owns them today.
+
+### Representation: an array is an ordinary realm object with an [[ArrayExotic]] brand
+
+- **Chosen, (A).** `create-array` is OrdinaryObjectCreate(%Array.prototype%) plus one free bit in `$Object.flags`,
+  the same way G1 marks [[ErrorData]] with 0x800; the bit is still to be checked against the realm's and the legacy
+  encodings. Index keys and `length` are ordinary own data entries in the existing hash map (`length` is
+  {w, !e, !c}). The exotic part is a single hook, §10.4.2.1 ArrayDefineOwnProperty, at the descriptor pack's define
+  entry points (`defineData`, `defineAccessor`, `defineAttributes`). Every realm write funnels there: the set adapter,
+  element creation, defineProperty(ies) and create. The hook does three things. An index ≥ `length` grows `length`,
+  or is refused when `length` is not writable. A `length` define runs §10.4.2.4 ArraySetLength: ToUint32 ≠ ToNumber
+  is a catchable RangeError, and shrinking deletes from the top, stopping at a non-configurable index. Any other key
+  is ordinary.
+- What (A) gives for free, with no array arm anywhere: get, has, has-own, GOPD, holes (absent keys), elisions,
+  inherited `Array.prototype[1]`, sparse `x[4294967294]` (no allocation of that size), expandos, defineProperty on
+  an index, freeze, for-in (O5), and every computed-key route L0c builds over the string-keyed [[Get]] / [[Set]].
+  Keys come from W2's index formatter (`string-index-key-body.ts`) and the kernel's `arrayIndex`. `Array.isArray`,
+  `Object.prototype.toString`'s "Array" and the define hook all read the one bit.
+- **Cost.** `a[i]` with a number `i` formats a key string and does a hash probe, so it allocates once per access.
+  The vector design does a bounds check and an `array.get`. `push` is a format, a define and a length update.
+  `length = n` scans the map once. Own-key order is the map's insertion order, the same as for every ordinary
+  object today (an existing gap for out-of-order integer keys, not array-specific).
+- **Rejected, (B): an `$Array` subtype with a dense externref vector, a hole sentinel and a u32 length** (the S13
+  branch's design). Every own-property role (findOwn, the three defines, GOPD, delete, own keys, integrity levels,
+  the O1 2,808-case sweep) would need an array arm, plus a sparse fallback once an index gets non-default
+  attributes. S13 already ended with named traps and "a map entry under a dense slot". A dense store can come later
+  as a measured element-storage specialisation behind the same bit.
+- **Rejected, (C): the ordinary pipeline's typed vec.** It cannot hold holes, expandos or dynamic elements, and it
+  would be a second object-like carrier kind with a row in every dynamic table.
+
+### Steps, in order of rows unblocked
+
+- **A1a: arrays as realm values.**
+  - Catalog: an Array `Family` row through `familyRows`. %Array% is native. `isArray` is native; `from` and `of`
+    are unavailable. %Array.prototype% is itself an array with `length` 0, allocated as one (the W2 wrapper-prototype
+    precedent). Its methods are `unavailable` rows except `push`, `join` and `toString`, which are native in A1b.
+  - Kernel `realm-array-bodies.ts`, beside `realm-wrapper-bodies.ts`: create-array, the define hook, ArraySetLength.
+  - Contract row `js.object.create-array` in `native-source-objects.ts`.
+  - IR: `Array` in `realmIntrinsicRead`. `Array(n)` / `new Array(…)` / `Array.isArray(v)` as rows of
+    `dynamic-realm-constructors.ts`. The "Array" tag in `dynamic-object-tag.ts`.
+  - The literal: create-array, then CreateDataProperty for each present element, in a new front-end sibling.
+    `from-ast.ts`'s `lowerArrayLiteral` takes one arm, paid for by moving code out.
+  - Expected: about 6–8 of the 15 non-propertyHelper sample rows: S15.4.5.2_A1_T1, S15.4.5.1_A1.1_T2,
+    15.2.3.6-4-120/-135, 15.2.3.7-6-a-126/-156, 15.2.3.6-3-140-1, 11.1.4_4-5-1. The 43 rows move to item 2.
+- **A1b: the propertyHelper module-init runs (items 2–4).**
+  - The dispatcher's built-in arm (`closure-method-body.ts`) runs a held native built-in through one program-side
+    function `(callee, this, args) → value`. That function is an identity ladder over the held natives. It reuses
+    P1/G1/W2's call-site algorithms (`dynamic-builtin-methods.ts`) instead of copying them, and so it can use
+    `stringOf` and ToPrimitive. This is P2.
+  - `Function.prototype.call` / `apply` as natives.
+  - `bind` as BoundFunctionCreate: a kernel entry with target, this and arguments.
+  - `Array.prototype.push` / `join` / `toString` (`join` also gives an array its ToPrimitive).
+  - The Object statics as values, with `getOwnPropertyNames` returning an A1a array.
+  - `Math.pow`, as a physical provider.
+  - Expected: all 43 rows get past module-init. About 1 passes until items 5–6 and L0c land.
+- **A1c: verifyProperty's own shapes.** `arguments.length` on the Prepared path (`dyn.publish_argc`, slice C's
+  `arguments` lane), and the JSDoc flow rule extended to a literal argument under a `@param` type (W's rule). The
+  rows then need L0c's computed keys and a `delete` slice to pass.
+
+### Refuses / aborts (each sound)
+
+- A length value that is an object: ToNumber would need the program's ToPrimitive inside the kernel, so the realm
+  aborts by name.
+- Array.prototype methods not yet native: refusal by name where every kind refuses, else the abort (W2's rule).
+- `Array.from` / `of`, spread of an array: refusal by name.
+- A built-in called through a value before A1b: G1's abort, unchanged.
+
+### Placement and quality criterion
+
+- One array representation, the brand bit; no array arm in get, has, keys or computed keys.
+- The family is `familyRows` (no second family builder) and the hook is one function at the pack (no second
+  define).
+- The index key comes from W2's formatter; the literal lowering lives in a sibling module; from-ast ends ≤ base.
+- Programs that hold no Array family keep their Prepared bytes, and the ordinary pipeline is byte-identical.
+- Risk: `assert.js`'s `compareArray.format` reads `Array`, so every prelude program would hold the family. W2 paid
+  the same cost for `String` (+14 KB, about +1.5 s). A1a measures it, and only when the cost matters does A1a
+  narrow the "held" rule to functions that are not abort bodies.
