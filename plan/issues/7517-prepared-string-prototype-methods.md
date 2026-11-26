@@ -458,6 +458,22 @@ copied from its siblings):
 3. **`localeCompare`** answers code-unit order through `__str_compare`. This conforms, because
    §22.1.3.12 leaves the order implementation-defined. A test pins antisymmetry and `0` for equal
    strings, not V8's ICU order.
+4. **The RegExp/Symbol pattern gap is decided at select time** (PRV-7517 approval note). A call
+   site whose pattern may be an object, in a program that names `RegExp` or `Symbol`, is refused
+   at select. It is never claimed and then branched or withdrawn at run time.
+
+**Coordination with [#7489](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7489-prepared-function-caller-call-apply-bind) (S20, 2026-11-26), no objections to the API above:**
+- **Two seeding paths.** Function.prototype's methods are seeded on the realm through its catalog
+  row (`familyProperties`, `native-realm-families.ts`: a property naming a held intrinsic is
+  seeded). Object.prototype's methods are seeded through their entry behaviour
+  (`"object-prototype-method"`, `native-realm.ts`). Moving Error.prototype into
+  `NATIVE_PROTOTYPE_METHODS` keeps its seeding on one of these two paths, named in the
+  shared-dispatch step. String.prototype rows take the `familyProperties` path, so per-method
+  holding seeds exactly the held methods.
+- **One TypeError arm.** The thisStringValue TypeError reuses `throwingArm`
+  (`dynamic-value-chains.ts`, from #7480 r1); no second throwing helper.
+- **Merge point.** Slice C-1 adds `SLOPPY_FUNCTION_ARGUMENTS_KEY` and
+  `SLOPPY_FUNCTION_OWN_CALLER_KEY` to `builtin-prototype-keys.ts`, beside `nativePrototypeMethod`.
 
 ### Slices
 
