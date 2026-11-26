@@ -192,6 +192,18 @@ export function compileOptionalCallExpression(
   // `s: string | undefined`) or built-in (`a: number[] | undefined`) receiver:
   // no arm above dispatches their methods.
   const ladderReceiver = isLadderMethodReceiver(tsReceiverType);
+  // (#7430, #7469) `o?.f?.(args)` also short-circuits on the callee VALUE, which neither the typed closure-field call
+  // (an undefined field traps it) nor the dynamic method ladder (an undefined property throws) can do. Unless a declared
+  // or built-in method resolves it, past the receiver test it is the `o.f?.(args)` call on the held receiver, for a
+  // struct and a dynamic receiver alike; the receiver's short-circuit must match that call's `undefined` result.
+  const calleeValueCall = !methodResolved && !ladderReceiver && expr.questionDotToken !== undefined;
+  if (calleeValueCall) {
+    const delegated = withPreEvaluatedExpression(fctx, propAccess.expression, tmp, () =>
+      compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess),
+    );
+    resultType = settleDelegatedResult(fctx, delegated, resultType);
+    methodResolved = true;
+  }
   if (!methodResolved && ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || ladderReceiver)) {
     const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, tmp);
     if (delegated !== undefined) {
@@ -208,19 +220,11 @@ export function compileOptionalCallExpression(
   // closure field, push self + args, `call_ref` — and already normalizes a
   // nullable receiver via a guarded cast. The receiver is the one already held
   // for the nullish test, so a live property chain is not evaluated twice.
-  // (#7430) `o?.f?.(args)` also short-circuits on the field VALUE, which the
-  // typed call cannot do (an undefined field traps it): past the receiver test
-  // it is the `o.f?.(args)` call on the held receiver, whose `undefined` result
-  // the receiver's short-circuit must match.
-  let calleeValueCall = false;
   if (!methodResolved && isSupportedOptionalCallableReceiverShape(propAccess.expression)) {
     const structName = resolveStructName(ctx, tsReceiverType);
     if (structName) {
-      calleeValueCall = expr.questionDotToken !== undefined;
       const delegated = withPreEvaluatedExpression(fctx, propAccess.expression, tmp, () =>
-        calleeValueCall
-          ? compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess)
-          : compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName),
+        compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName),
       );
       if (delegated !== undefined) {
         resultType = settleDelegatedResult(fctx, delegated, resultType);
