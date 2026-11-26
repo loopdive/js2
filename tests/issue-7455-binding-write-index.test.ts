@@ -54,6 +54,18 @@ describe("#7455 one binding-write index per source file", () => {
     expect(preparedBindingRewritten(c2, d2("k"))).toBe(false);
   });
 
+  it("answers rewritten for a binding the checker leaves without a symbol (inside \`with\`)", () => {
+    const { sourceFile, checker } = analyze("with ({}) { function g() { return 1; } g = 5; } g();");
+    let g: ts.Identifier | undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "g") g = node.name;
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    expect(checker.getSymbolAtLocation(g!)).toBeUndefined();
+    expect(preparedBindingRewritten(checker, g!)).toBe(true);
+  });
+
   it("returns a var's symbol unchanged from de-aliasing", () => {
     const { checker, declared } = analyze("var o = 1;");
     const symbol = checker.getSymbolAtLocation(declared("o"))!;
