@@ -32,7 +32,10 @@
  *
  * The identifier must also RESOLVE to that module-scope function declaration:
  * the set is name-keyed, and a same-named function local must not consult a
- * global (the constraint #4204's own note records).
+ * global (the constraint #4204's own note records). That declaration must be
+ * one the write analysis recorded (`reassignedFunctionDeclarations`): when only
+ * a nested same-named declaration is written, the module one keeps its fixed
+ * value (#7456 RV7430).
  */
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
@@ -73,6 +76,7 @@ export function reassignedFunctionBindingIsDynamic(ctx: CodegenContext, id: ts.I
     declaration !== undefined &&
     ts.isFunctionDeclaration(declaration) &&
     declaration.name?.text === id.text &&
-    isModuleScoped(declaration)
+    isModuleScoped(declaration) &&
+    ctx.reassignedFunctionDeclarations?.has(declaration) === true
   );
 }

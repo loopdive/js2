@@ -49,10 +49,19 @@ const FUNCTION_DECLARATION_ROWS: readonly (readonly [string, "js" | "ts", string
   ],
 ];
 
-// Unchanged: a write that never runs, and a function-literal write (closure path), keep their answer.
+// Unchanged: a write that never runs, a function-literal write (closure path), and a never-written top-level `h`
+// whose same-named nested declaration is the one reassigned (RV7430: its bytes must equal main's), keep their answer.
+const NESTED_H = "function o() { function h() { return 5; }";
 const UNCHANGED_ROWS: readonly (readonly [string, "js" | "ts", string, string])[] = [
   ["write never runs", "js", `${HK} function w() { ({ h } = { h: k }); }`, "return h();"],
   ["function-literal write", "js", H, `h = ${FN2}; return h();`],
+  ["nested same-named h reassigned", "js", `${HK} ${NESTED_H} h = k; return h(); }`, "return h();"],
+  [
+    "nested same-named h written by shorthand",
+    "js",
+    `${HK} ${NESTED_H} ({ h } = { h: k }); return h(); }`,
+    "return h();",
+  ],
 ];
 
 // The issue's script-var shapes; correct on main, pinned here so a write-analysis change cannot lose them.

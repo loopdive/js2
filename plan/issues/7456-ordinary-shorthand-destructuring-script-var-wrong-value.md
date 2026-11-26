@@ -90,8 +90,40 @@ form is out of this lane's area. Reported separately.
 
 - `({ n = 5 } = {})`, `[n = 5] = []` give `NaN` (also for a local `let`): a destructuring-default bug in the
   assignment lowering, not a write analysis. Needs its own issue.
-- Two write analyses of a function binding remain (`registerReassignedFunctionGlobals` and the IR call planner's
-  `reassigned` set in `src/ir/imported-functions.ts`); both already resolve shorthand targets through the value
-  symbol, so folding them is a cleanup, not a fix (see #7354 H2 "Known, not done").
-- A nested `function h` inside another function still calls the top-level `h` when both exist (`funcMap` is keyed by
-  bare name); unchanged by this fix.
+- Two write analyses of a function binding remain (`registerReassignedFunctionGlobals` in `src/codegen/index.ts`
+  and the IR call planner's `reassigned` set in `src/ir/imported-functions.ts`); both already resolve shorthand
+  targets through the value symbol, so folding them is a cleanup, not a fix. Tracked by
+  [#7457](7457-call-planner-reassigned-set-vs-writes-query.md) (#7354 S6, PR 2). This fix uses the
+  `codegen/index.ts` one, which creates the global the write targets.
+
+## Review round 1 (RV7430, 2026-11-26)
+
+- **Finding (blocker).** `reassignedFunctionBindingIsDynamic` keyed on the NAME (`ctx.liveFuncBindingGlobals`) plus
+  "resolves to a module-scope declaration". When only a nested same-named declaration is reassigned, a module-scope
+  `h` that is never written lost its direct call, changing bytes for a program this PR does not fix.
+- **Fix.** The predicate also requires the resolved declaration to be in `ctx.reassignedFunctionDeclarations`, the
+  exact-declaration set the same pass (`registerReassignedFunctionGlobals`) builds, eval-only rebindings included.
+  The other caller, `moduleGlobalIsDynamicButStaticallyPrimitive` (`typeof` folding), tightens the same way: a
+  never-written module `h` folds again.
+- **Verification.** Pins: 2 rows added (a never-written top-level `h` whose nested `function h` is reassigned by
+  `h = k` / by shorthand; the top-level call answers like node), 29 programs x 2 targets = 58 rows, all pass. Bytes
+  vs main `41f0654e8c` (default + standalone): 44 probes, RV7430's program and 4 variants, and 179 test262 files
+  (80 `expressions/assignment/dstr`, 75 `statements/variable/dstr`, 24 other `expressions/assignment`), 456
+  compiles: 416 identical, including RV7430's program and every test262 file; the 40 that differ are the 20
+  probes that call a top-level declaration the program reassigns.
+
+## Known, not this PR
+
+Pre-existing on main (`41f0654e8c`); each has its own issue with a measured reproduction:
+
+- [#7481](7481-recursive-function-declaration-value-call-throws.md): a recursive declaration called through a
+  value (`var o = h; o(3)`) throws TypeError, with or without a write to `h`.
+- [#7482](7482-nested-function-declaration-calls-module-same-name.md): a nested `function h` that shadows a module
+  `h` calls the module one (`o()` gives 1, node 5); RV7430's program is wrong on both heads for this reason.
+- [#7483](7483-duplicate-function-declarations-js-compile-error.md): two `function h` declarations in a `.js` file
+  are a CE ("Duplicate identifier").
+- [#7484](7484-strict-method-bare-call-this-undefined-no-typeerror.md): a method called through a bare binding in a
+  module reads `this.v` as NaN instead of throwing TypeError; with `h = obj.m` this PR now matches the `var f`
+  behaviour (main gave the stale 1).
+- [#7485](7485-ir-alloc-provenance-jsdoc-optional-string-param.md): `String(g0())` over an omitted JSDoc string
+  parameter fails the IR alloc-provenance check (found in #7448, not RV7430).
