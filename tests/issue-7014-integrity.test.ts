@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, exist
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { makeToRel, runFiles, unaccountedRunErrors } from "../scripts/known-failures-gate.mjs";
+import { bisectUntaggedErrors, makeToRel, runFiles, unaccountedRunErrors } from "../scripts/known-failures-gate.mjs";
 import { resultsToIds } from "../scripts/lib/issue-tests-ids.mjs";
 import KnownFailuresReporter from "../scripts/lib/known-failures-reporter.mjs";
 
@@ -162,6 +162,84 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
     expect([...ids.failing].some((id: string) => id.includes("failed assertion"))).toBe(true);
     // (#7501) The worker's uncaughtException handler tags the error; the record names its file.
     expect(errors.join("\n")).toContain("[raised while running unhandled.test.js] Error: real unhandled error");
+  });
+
+  describe("bisection names the file behind each unattributed run error (#7518)", () => {
+    // A stand-in for vitestOnce: every file finishes, and a file in `raises` raises its own unattributed error.
+    const fakeRun =
+      (raises: Record<string, string>, calls: string[][]) => async (_root: string, _toRel: unknown, part: string[]) => {
+        calls.push(part);
+        return {
+          ended: new Map(part.map((file) => [file, { status: "passed" }])),
+          started: new Set(part),
+          timedOut: false,
+          code: 0,
+          runEnd: "passed",
+          runErrors: part.filter((file) => raises[file]).map((file) => raises[file]),
+        };
+      };
+    const files = ["a.test.js", "b.test.js", "c.test.js", "d.test.js"];
+    const options = { serial: false, heapMb: 1024, timeoutMs: 60_000 };
+    const runOf = (errors: string[]) => ({ ended: new Map(), timedOut: false, runErrors: errors });
+
+    it("labels each error with its own file, not the batch's", async () => {
+      const raises = { "b.test.js": "Error: from b\n    at x", "d.test.js": "Error: from d\n    at y" };
+      const errors = Object.values(raises);
+      const calls: string[][] = [];
+      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, calls) };
+      const labels = await bisectUntaggedErrors("/r", null, files, errors, runOf(errors), options, bisection);
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces with only this file in the run: b.test.js)");
+      expect(labels.get(errors[1])).toBe("(#7518 bisection: reproduces with only this file in the run: d.test.js)");
+      expect(calls.length).toBeLessThanOrEqual(6);
+    });
+
+    it("stops at its deadline and says so", async () => {
+      const errors = ["Error: from b"];
+      const calls: string[][] = [];
+      const bisection = { deadline: Date.now() - 1, label: "t", runOnce: fakeRun({ "b.test.js": errors[0] }, calls) };
+      const labels = await bisectUntaggedErrors("/r", null, files, errors, runOf(errors), options, bisection);
+      expect(calls).toEqual([]);
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: budget spent before it was located)");
+    });
+
+    it("skips tagged errors and batches that hit their timeout", async () => {
+      const calls: string[][] = [];
+      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun({}, calls) };
+      const tagged = ["[raised while running a.test.js] Error: x"];
+      expect((await bisectUntaggedErrors("/r", null, files, tagged, runOf(tagged), options, bisection)).size).toBe(0);
+      const timedOut = { ...runOf(["Error: y"]), timedOut: true };
+      expect((await bisectUntaggedErrors("/r", null, files, ["Error: y"], timedOut, options, bisection)).size).toBe(0);
+      expect(calls).toEqual([]);
+    });
+
+    it("traces a real untagged run error to its file through runFiles", async () => {
+      const root = scratch();
+      symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "dir");
+      writeFileSync(
+        join(root, "vitest.config.mjs"),
+        'export default { test: { include: ["*.test.js"], pool: "forks" } };\n',
+      );
+      for (const name of ["one", "two", "three"]) {
+        writeFileSync(
+          join(root, `${name}.test.js`),
+          'import {it,expect} from "vitest";\nit("ok",()=>expect(1).toBe(1));\n',
+        );
+      }
+      writeFileSync(
+        join(root, "leaks.test.js"),
+        `import {it,expect} from "vitest";
+it("leaks",async()=>{setTimeout(()=>{throw new Error("leaked")},0);await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
+      );
+      const errors: string[] = [];
+      await runFiles(root, makeToRel(root), ["one.test.js", "two.test.js", "leaks.test.js", "three.test.js"], {
+        label: "bisection",
+        onRunIntegrity: (e: string) => errors.push(e),
+      });
+      // The leak itself is tagged by the reporter; the run's unattributed exit 1 is located by bisection.
+      expect(errors.some((e) => e.startsWith("[raised while running leaks.test.js] Error: leaked"))).toBe(true);
+      const exit = errors.find((e) => e.startsWith("vitest exited 1"));
+      expect(exit).toContain("(#7518 bisection: reproduces with only this file in the run: leaks.test.js)");
+    });
   });
 
   for (const mode of ["gate", "update", "bootstrap", "ratchet"]) {
