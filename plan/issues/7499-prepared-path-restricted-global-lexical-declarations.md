@@ -11,7 +11,7 @@ feasibility: medium
 reasoning_effort: high
 task_type: bug
 goal: backend-agnostic-ir
-related: [7488, 7354]
+related: [7488, 7519, 7354]
 ---
 
 # Prepared path accepts lexical declarations of NaN / Infinity / undefined
@@ -52,47 +52,57 @@ uses.
 
 ### Which pipeline, and what kind of error (measured)
 
-- **Ordinary pipeline: already correct.** `noteRestrictedGlobalLexicalName` (`src/codegen/declarations.ts`) records
-  the first top-level lexical name that is `undefined`, `NaN` or `Infinity` in a Script (a source without
-  `externalModuleIndicator`), and `module-init-prologue.ts` makes `throw SyntaxError` the first instruction of
-  `__module_init`. It is a runtime SyntaxError at GlobalDeclarationInstantiation, not a compile-time early error
-  (test262 marks it `negative: phase: runtime`). Its name test is an inline copy of `GLOBAL_CONSTANTS`
-  (`src/shared/ambient-intrinsics.ts`).
-- **Prepared path: wrong.** On `995f3679` (standalone, Script goal):
+It is a runtime SyntaxError raised at GlobalDeclarationInstantiation, before any statement runs (test262 marks it
+`negative: phase: runtime`), not a compile-time early error. Measured on `995f3679` (the ordinary pipeline compiled
+and run, default and standalone; the Prepared path standalone, Script goal):
 
-  | Program | Prepared | node |
-  | --- | --- | --- |
-  | `let NaN = 1;`, `class NaN {}`, `const Infinity = 0;`, `class undefined {}` | **returns** | SyntaxError |
-  | `let undefined;`, `let x; let NaN;` | refused (`Phase 1 requires an initializer`) | SyntaxError |
-  | `var NaN;` (not lexical: no error in node either, sloppy) | refused (no typed storage) | returns |
+| Program | ordinary | Prepared | node |
+| --- | --- | --- | --- |
+| `let NaN = 1;` | throws | **returns** | SyntaxError |
+| `class NaN {}`, `class undefined {}` | **returns** | **returns** | SyntaxError |
+| `let {a: NaN} = {a:1}`, `let [Infinity] = [1]`, `const {Infinity} = {Infinity:1}` | **returns** | refused (destructuring) | SyntaxError |
+| `let undefined;`, `let x; let NaN;` | throws | refused (`Phase 1 requires an initializer`) | SyntaxError |
+| `var NaN;` (not lexical) | — | refused (no typed storage) | returns |
 
-### Decision: refuse at select on the Prepared path, sharing one predicate with the ordinary pipeline
+- The ordinary pipeline is only partly right: `noteRestrictedGlobalLexicalName` (`src/codegen/declarations.ts`) runs
+  only from the identifier arm of a top-level `let`/`const`, so class declarations and binding patterns slip through.
+  That is a gc-output change, so it is filed separately as
+  [#7519](7519-ordinary-restricted-global-lexical-classes-and-patterns.md) (PRV-7499, lead decision 2026-11-26).
+- The Prepared path is wrong for the class forms, and right for the pattern forms only by accident (the destructuring
+  producer is missing).
 
-- **Shared predicate** in `src/shared/ambient-intrinsics.ts`, next to `GLOBAL_CONSTANTS`:
-  `isRestrictedGlobalLexical(sourceFile, name)`: a Script source (no `externalModuleIndicator`) and a name in
-  `GLOBAL_CONSTANTS`. `noteRestrictedGlobalLexicalName` calls it instead of its inline test, so ordinary output is
-  unchanged (same condition), and the two pipelines cannot disagree. (Coordinated with S17 / #7439 so there is one
-  predicate for "restricted global name".)
-- **Prepared rule** in `src/ir/prepared-select-refusals.ts`: the first top-level `let`/`const` declaration or class
-  declaration of a source whose name satisfies the predicate is refused, code `restricted-global-lexical`, stage
-  `select`, detail "`let NaN` in a Script is a SyntaxError at instantiation, which the Prepared path does not raise".
-  Located at the declaration name through `sourceOwner` (#7500): GlobalDeclarationInstantiation is no unit's code.
-  It runs before the class rules, matching the spec, where instantiation precedes every evaluation.
-- **Why a refusal, not the SyntaxError:** the Prepared path can lower `throw new SyntaxError(…)` (probed: it throws),
-  but raising it at instantiation means prepending a synthetic throw to `<module-init>` ahead of its population, a
-  lowering arm of its own. The only test262 file with this shape (below) is a negative test that the harness prelude
-  already stops on the Prepared path, so the throw would gain nothing measurable today. The refusal makes the path
-  sound now; lowering the throw can follow when the prelude compiles.
+### Decision: one pure function, used by the Prepared path now and by the ordinary pipeline in #7519
+
+- **`restrictedGlobalLexicalName(sourceFile): string | undefined`** in `src/shared/ambient-intrinsics.ts`, next to
+  `GLOBAL_CONSTANTS`. It returns `undefined` for a Module (a source with `externalModuleIndicator`). Otherwise it returns
+  the first top-level lexically declared name in `GLOBAL_CONSTANTS`, where the lexically declared names are the
+  BoundNames of every top-level `let`/`const` declaration (identifiers and binding patterns, nested) and the names of
+  class declarations. Pure: AST only, no checker.
+- **Prepared rule** in `src/ir/prepared-select-refusals.ts`, first in the function (instantiation precedes every
+  evaluation): if the function returns a name for a source, refuse with code `restricted-global-lexical`, stage
+  `select`, detail "`NaN` is lexically declared in a Script: a SyntaxError at instantiation, which the Prepared path
+  does not raise". It is located at that declaration's name through `sourceOwner` (#7500), because
+  GlobalDeclarationInstantiation is no unit's code. The function returns the name; the rule locates its first
+  top-level occurrence among the declarations.
+- **Ordinary pipeline unchanged in this PR** (byte-identical): it keeps `noteRestrictedGlobalLexicalName` for now.
+  #7519 switches it to the same function once per source and deletes the per-declarator call. The shared function
+  therefore has one caller here and gains its second in #7519; that is the planned migration, not a speculative
+  abstraction.
+- **Why a refusal, not the SyntaxError, on the Prepared path:** the Prepared path can lower
+  `throw new SyntaxError(…)` (probed: it throws), but raising it at instantiation means a synthetic throw ahead of
+  `<module-init>`'s population, a lowering arm of its own, with no measurable gain today (yield below). The refusal
+  makes the path sound now.
 
 ### Acceptance
 
-- Correctness: the six lexical programs above are refused by name (`restricted-global-lexical`) under both
-  `unlowerableBodies` policies; `var NaN;` and a Module-goal `let NaN` are not refused by this rule; a non-restricted
-  `let x = 1` is unchanged.
-- Ordinary pipeline byte-identical on a sample × (default, standalone), and `decl-lex-restricted-global.js` keeps its
-  ordinary verdict.
-- Code quality: one predicate for restricted global lexical names (the inline copy in `declarations.ts` removed); the
-  rule sits in the one select-refusal module; no new owner concept.
+- Correctness: refused by name (`restricted-global-lexical`) under both `unlowerableBodies` policies:
+  `let NaN = 1`, `const Infinity = 0`, `class NaN {}`, `class undefined {}`, `let undefined;`, `let x; let NaN;`,
+  `let {a: NaN} = {a:1}`, `let [Infinity] = [1]`, `const {NaN} = {NaN:1}`, `const {Infinity} = {Infinity:1}`.
+- Not refused by this rule: `var NaN;`, a Module-goal `let NaN = 1` (with an `export`), `let x = 1`,
+  `let {a: b} = {a:1}`, a `NaN` inside a function or block (`{ let NaN = 1; }`, not top-level).
+- Ordinary pipeline byte-identical on a sample × (default, standalone).
+- Code quality: one pure function for "the restricted global lexical name of a Script", next to the name set; the rule
+  sits in the one select-refusal module; no new owner concept.
 
 ### Yield (measured)
 
