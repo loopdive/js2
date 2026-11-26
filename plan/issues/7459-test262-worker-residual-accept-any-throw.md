@@ -33,4 +33,9 @@ After #7354 slice X a runtime negative passes only when the thrown value's error
   rule at instantiate, `__module_init` and `test()`; `tests/test262-vitest.test.ts` passes the expected type through
   `ExecPool.run`, and its fork compiler opts into the kind export. Probe through the worker on head: a matching
   TypeError passes; a RangeError, `throw "TypeError: x"` and `throw 1` now fail (all passed before).
-- No CI lane runs either path, so no published row moves; the oracle bump is #7453's (17 → 18).
+- A review found a third place: `runSyntheticTest262File` (`tests/test262-runner.ts`, the legacy wrapper lane kept
+  for diagnostics and four tests) passed every throw of a runtime negative, a `CompileError`/`LinkError` at
+  instantiate included. It now checks for those first (a `compile_error`), reads the value and asks the same rule,
+  and compiles with the kind export. Pinned in `tests/issue-7453-thrown-value-kind.test.ts`: a TypeError passes,
+  `throw "TypeError: x"` and a RangeError fail.
+- No CI lane runs these paths, so no published row moves; the oracle bump is #7453's (17 → 18).
