@@ -317,3 +317,35 @@ Branch `claude/s20-fn-members`, measured against main `c3b7be66`.
   %Function.prototype%'s `caller` / `arguments` come from its catalog rows; the
   Error family rows reference only held intrinsics, so their seeding is
   unchanged.
+
+## Slice B result (2026-11-26)
+
+Branch `claude/s20-fn-call-apply` (stacked on slice A), measured against main
+`c3b7be66`.
+
+- **Census** (`candidates.txt`): slice A's 43 pass / 100 fail / 409 CE becomes
+  92 pass / 94 fail / 366 CE: +49 passes over slice A (27 CE → pass, 22 fail →
+  pass), none pass → fail. Cluster: 60 of 72 pass (slice B's 22 `call` /
+  `apply` files: 20 pass). The 2 left, `10.4.3-1-85-s` and `-85gs`, call a
+  sloppy `f` through `f.apply()` with no `this`, which needs the global object:
+  the C2-D3 run-time abort. The other 10 are `bind` (slice C).
+- 16 files go from compile error to a run-time fail. 10 trap in the kind abort
+  `js.value.unsupported` (`10.4.3-1-1…4-s`, `14.1-3…7,17-s`): after the strict
+  half passes, a sloppy function is called through `call` with `undefined` or a
+  primitive `this` (`bar.call(1)` needs a Number wrapper), the same C2-D3 abort
+  (read on `10.4.3-1-1-s`, `10.4.3-1-4-s`, `14.1-3-s`, `14.1-17-s`). The other 6
+  reach an abort body refused for another reason (`for-in` tail ×2,
+  `instanceof Boolean` / `String` / `Number`, an empty statement before a
+  tail). None answers a wrong value.
+- **Bytes**: the 170 ordinary-pipeline compiles hash to main's digest.
+- **Tests**: `tests/issue-7489-function-call-apply.test.ts` (10). The primitive
+  pin (R2, `(5).call` is `undefined`) passes on slice A too and holds that
+  seeding Function.prototype does not reach primitives; the others fail there.
+  Two F1/F1b pins of "`call` refuses" moved to `bind`.
+- **Shape**: `NATIVE_PROTOTYPE_METHODS` (catalog) is the one table of populated
+  prototype methods; `native-realm-requirements.ts` holds a prototype's methods
+  from it, replacing the positional `METHOD_IDS` slice. The realm seeds
+  `call` / `apply` on Function.prototype through slice A's catalog rule
+  (`familyProperties`); only Object.prototype's methods keep their entry's own
+  seeding (`object-prototype-method`). `builtin-prototype-keys.ts`
+  derives both prototypes' unpopulated keys with one helper.

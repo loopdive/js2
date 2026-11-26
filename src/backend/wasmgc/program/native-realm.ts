@@ -9,6 +9,8 @@ import {
   heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
+import { objectPrototypeMethodId } from "../../../ir/program/builtin-prototype-keys.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS } from "../../../runtime/contracts/native-realm-catalog.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
 import { deriveNativeStringOutputRequirements } from "../../../ir/program/native-string-output-requirements.js";
 import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
@@ -145,6 +147,9 @@ import {
   requireCompletedNativeSourceObjects,
   type NativeSourceObjectFeature,
 } from "../resources/native-source-objects.js";
+
+/** (#7354 P1) The catalog ids of the Object.prototype methods the realm populates. */
+const OBJECT_PROTOTYPE_METHOD_IDS: readonly string[] = NATIVE_OBJECT_PROTOTYPE_METHODS.map(objectPrototypeMethodId);
 
 function fail(detail: string): never {
   throw Error("native realm composition: " + detail);
@@ -310,12 +315,14 @@ function beginRealm(
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
     const row = catalog.intrinsics.find((row) => row.id === id),
       call = row?.callable;
+    // An Object.prototype method is seeded on the realm's Object.prototype by its entry; (#7489) every other one by
+    // its holder's catalog row (`familyProperties`).
     const behavior =
       index < catalog.bootstrap.length
         ? call?.implementation
-        : row?.heldWith !== undefined
-          ? "native"
-          : "object-prototype-method";
+        : OBJECT_PROTOTYPE_METHOD_IDS.includes(id)
+          ? "object-prototype-method"
+          : "native";
     const supported =
       index < catalog.bootstrap.length
         ? behavior === "function-prototype" || behavior === "throw-type-error"

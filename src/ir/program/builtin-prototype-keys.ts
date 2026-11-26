@@ -15,6 +15,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   realmMethodId,
+  type NativeFunctionPrototypeMethod,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
@@ -52,6 +53,10 @@ export function nativeObjectStatic(
  */
 export const nativeObjectPrototypeMethod = (name: string): NativeObjectPrototypeMethod | undefined =>
   nativeLength("Object.prototype", name) === undefined ? undefined : (name as NativeObjectPrototypeMethod);
+
+/** (#7489) `name` when the catalog marks `%Function.prototype.<name>%` native (`call`, `apply`). */
+export const nativeFunctionPrototypeMethod = (name: string): NativeFunctionPrototypeMethod | undefined =>
+  nativeLength("Function.prototype", name) === undefined ? undefined : (name as NativeFunctionPrototypeMethod);
 
 /** (#7354 P1) The catalog id of the native Object.prototype method `name`. */
 export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): string =>
@@ -166,18 +171,20 @@ const STRING_PROTOTYPE = [
   "trimRight",
 ];
 
+/** (#7354 P1, #7489) The keys the catalog gives the prototype `parent` that the realm's does not hold as a method. */
+const unpopulatedKeys = (parent: string): string[] =>
+  [...realmStringKeys(`%${parent}%`)].filter((key) => nativeLength(parent, key) === undefined);
+
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */
-const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
-  [...OBJECT_PROTOTYPE_KEYS].filter((key) => nativeObjectPrototypeMethod(key) === undefined),
-);
+const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(unpopulatedKeys("Object.prototype"));
 
 /**
  * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype that the realm
  * does not hold: every key the catalog gives them but `length` and `name`, which every function value owns from its
- * creation, and (#7489) Function.prototype's accessors, which the realm holds.
+ * creation, and (#7489) Function.prototype's accessors and native methods, which the realm holds.
  */
 const FUNCTION_REACHABLE_KEYS = new Set(
-  [...realmStringKeys("%Function.prototype%"), ...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter(
+  [...unpopulatedKeys("Function.prototype"), ...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter(
     (key) => key !== "length" && key !== "name" && !FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(key),
   ),
 );

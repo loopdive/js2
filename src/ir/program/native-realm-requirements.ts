@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
   NATIVE_ERROR_CONSTRUCTORS,
-  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  NATIVE_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
+  realmMethodId,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
@@ -31,9 +32,9 @@ export interface NativeRealmDescription {
   readonly sourceAllocationOccurrences: readonly number[];
   readonly objectUses: NativeObjectAccessRequirements["uses"];
   /**
-   * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
-   * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
-   * since no other read can reach one; (#7354 G1) the Error family where the program can observe an error
+   * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1,
+   * #7489) a prototype's native methods where the program reads one ([[Get]] of its name, or the method itself), none
+   * otherwise, since no other read can reach one; (#7354 G1) the Error family where the program can observe an error
    * ({@link heldErrorConstructors}).
    */
   readonly intrinsics: readonly string[];
@@ -115,15 +116,28 @@ const intrinsicOf = (use: Use): string | undefined =>
   use.feature === "js.object.intrinsic" && use.selector !== undefined
     ? NATIVE_VALUE_INTRINSICS[use.selector]
     : undefined;
-const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
+/** (#7354 P1, #7489) Each populated prototype's native methods: their names and catalog ids. */
+const PROTOTYPE_METHODS = Object.entries(NATIVE_PROTOTYPE_METHODS).map(([parent, names]) => ({
+  names: names as readonly string[],
+  ids: names.map((name) => realmMethodId(parent, name)),
+}));
 /** `Error.prototype.toString`'s id, and the family's: the Error constructors' and it. */
 const ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)!;
 const FAMILY_IDS: readonly string[] = [...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`), ERROR_TO_STRING];
-/** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
-const readsPrototypeMethod = (use: Use): boolean =>
-  METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
-  (use.feature === "js.object.get" &&
-    (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly (string | undefined)[]).includes(use.constantKey));
+/**
+ * (#7354 P1, #7489) The native prototype methods the realm holds: a prototype's all where some use reads one of them,
+ * by the [[Get]] of its name or as the method itself, since no other read can reach one.
+ */
+const heldPrototypeMethods = (uses: readonly Use[]): ReadonlySet<string> =>
+  new Set(
+    PROTOTYPE_METHODS.filter(({ names, ids }) =>
+      uses.some(
+        (use) =>
+          ids.includes(intrinsicOf(use) ?? "") ||
+          (use.feature === "js.object.get" && names.includes(use.constantKey ?? "")),
+      ),
+    ).flatMap(({ ids }) => ids),
+  );
 /** Whether some function of `program` binds a caught value: the one way a thrown error becomes a program value. */
 function bindsCaughtValue(program: PreparedIrProgram): boolean {
   let binds = false;
@@ -174,7 +188,7 @@ function calculate(
     !!(source.signatures.length || source.shapes.length || source.units.length || source.allocations.length);
   const numbers = numberUses(access);
   const errors = heldErrorConstructors(access.uses, program);
-  const methods = access.uses.some(readsPrototypeMethod);
+  const methods = heldPrototypeMethods(access.uses);
   if (!selectedSource && !access.uses.length && !numbers.length) return undefined;
   const anchor = program.inventory.sources.find((row) => row.kind === "entry");
   if (!anchor) fail("missing prepared entry anchor");
@@ -185,7 +199,7 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
-    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => (methods && METHOD_IDS.includes(id)) || errors.has(id)),
+    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => methods.has(id) || errors.has(id)),
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>
