@@ -73,7 +73,6 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import {
   BUILTIN_CTOR_ARITY,
-  getWellKnownSymbolId,
   NUMBER_CONSTANT_VALUES,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
@@ -91,6 +90,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * Spec `length` for ctors that DO get a runtime carrier but are absent from the
@@ -149,7 +149,7 @@ const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
  * `gOPD(Symbol, "iterator").value === Symbol.iterator` holds and
  * `verifyProperty`'s write / delete probes see one property model.
  *
- * Ids come from `getWellKnownSymbolId`, the table the value reads already use.
+ * Ids come from `wellKnownSymbolId`, the table the value reads already use.
  * Listing the names here rather than iterating that table keeps the seed to the
  * spec's own-property set even if the id table gains a compiler-internal entry.
  */
@@ -280,7 +280,7 @@ export function pushBuiltinCtorOwnPropSeed(
     const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
     if (boxSymbolIdx !== undefined) {
       for (const wellKnown of SYMBOL_WELL_KNOWN_OWN_PROPS) {
-        const id = getWellKnownSymbolId(wellKnown);
+        const id = wellKnownSymbolId(wellKnown);
         if (id === undefined) continue;
         fctx.body.push({ op: "local.get", index: objLocal });
         addStringConstantGlobal(ctx, wellKnown);

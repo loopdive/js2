@@ -92,10 +92,10 @@ import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { compileExpression, ensureLateImport } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -226,7 +226,7 @@ export function tryCompileStringSymbolProtocolDispatch(
   if (searchFact !== "object" && searchFact !== "class") return undefined;
   if (!isReEvaluable(searchExpr) || !isReEvaluable(receiverExpr)) return undefined;
 
-  const symbolId = getWellKnownSymbolId(method);
+  const symbolId = wellKnownSymbolId(method);
   if (symbolId === undefined) return undefined;
   const deps = prepareDeps(ctx);
   if (deps === undefined) return undefined;

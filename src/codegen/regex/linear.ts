@@ -41,7 +41,7 @@
  * the trail half is consumed on the next step, resuming at `pc + 1`" — the
  * one consumer that spans two code units.
  */
-import { INSTR_WIDTH, ReOp } from "./bytecode.js";
+import { INSTR_WIDTH, ReOp } from "../../runtime/contracts/regexp-bytecode.js";
 import { assertionHolds, classMatch, forwardCodePoint, unitMatches } from "./match-units.js";
 
 /** Opcodes the linear simulation executes. Anything else declines. */
