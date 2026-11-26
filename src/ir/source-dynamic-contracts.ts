@@ -59,6 +59,7 @@ import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
+import type { LiteralDynamicCodeSource } from "./literal-dynamic-code.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import {
@@ -367,6 +368,7 @@ export function programDynamicContracts(
     readonly checker: ts.TypeChecker;
     readonly policy: SourcePolicy;
     readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+    readonly literalDynamicCodeSources?: readonly LiteralDynamicCodeSource[];
   },
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
@@ -377,9 +379,10 @@ export function programDynamicContracts(
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, startupSources) : [];
+  // (#7487) A literal `Function` site makes a value of its source's declaration.
   const objects = programObjects(
     sourceFiles,
-    functionDeclarationValues.length > 0,
+    functionDeclarationValues.length > 0 || !!input.literalDynamicCodeSources?.some((row) => row.kind === "function"),
     pristineBuiltinGlobal(checker, sourceFiles),
   );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {

@@ -116,12 +116,14 @@ export function lowerTopLevelFunctionValue(
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
  * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
  * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
- * A function whose name is a computed key the compiler cannot evaluate refuses by name.
+ * A function whose name is a computed key the compiler cannot evaluate refuses by name. (#7487) `name`, when given, is
+ * the name SetFunctionName gives instead of the declaration's: a dynamic function's is `"anonymous"`.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
+  name?: string,
 ): void {
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
@@ -135,13 +137,13 @@ export function emitFunctionObjectInit(
       "build",
       "the name of a function under a computed key needs the key's value",
     );
-  const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
+  const ownName = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
       builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature)),
-      builder.emitCoerceToExternref(builder.emitStringConst(name)),
+      builder.emitCoerceToExternref(builder.emitStringConst(name ?? ownName)),
       builder.emitConst({ kind: "f64", value: expectedArgumentCountOfParams(fn.parameters) }, irVal({ kind: "f64" })),
       builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
     ],

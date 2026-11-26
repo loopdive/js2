@@ -22,7 +22,8 @@ import { irUnitFuncRef } from "./core/callable-bindings.js";
 import type { AbortBodies } from "./abort-bodies.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
-import type { FunctionValueGlobal } from "./function-declaration-values.js";
+import { functionDeclarationUnit, type FunctionValueGlobal } from "./function-declaration-values.js";
+import { literalFunctionDeclaration, type LiteralDynamicCodeReceipt } from "./literal-dynamic-code.js";
 import type { SourceClosureInvocationPlan } from "./source-closure-invocation.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
 import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
@@ -44,7 +45,10 @@ export interface SourceUnitLowering {
   readonly identity: ReturnType<typeof buildIrPlanningIdentityContext>;
   readonly allocations: AllocSiteRegistry;
   readonly dynamicContracts: ProgramDynamicContracts;
-  readonly signatures: ReadonlyMap<IrUnitId, { readonly params: readonly IrType[] }>;
+  readonly signatures: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
   readonly bodyResults: ReadonlyMap<IrUnitId, IrType | null>;
   readonly globals: readonly {
     readonly binding: ModuleBindingGlobal;
@@ -67,8 +71,8 @@ export interface SourceUnitLowering {
   readonly sourceMap: ((unit: TerminalUnit) => IrFunctionSourceMapContext) | undefined;
   /** (#7354 U) The `unlowerableBodies` policy, when switched on. */
   readonly abortBodies: AbortBodies | undefined;
-  /** (#7363) Each literal eval site's called source, which holds its text (`literal-dynamic-code.ts`). */
-  readonly literalEvalCalls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
+  /** (#7363, #7487) Each literal eval site's called source and each `Function` site's source. */
+  readonly literalCode: Pick<LiteralDynamicCodeReceipt, "evalCalls" | "functionSites">;
 }
 
 type LoweredSourceUnit = {
@@ -124,10 +128,14 @@ function lowerUnitOnce(
     moduleInitFunctionValues: () =>
       lowering.functionValues.filter((value) => value.declaration.getSourceFile() === source),
     literalEvalCalledInit: (call) => {
-      const called = lowering.literalEvalCalls.get(call);
+      const called = lowering.literalCode.evalCalls.get(call);
       if (!called) return undefined;
       const unitId = identity.moduleInitUnitIdBySourceFile.get(called);
       return unitId ? irUnitFuncRef({ unitId, name: identity.terminalByUnitId.get(unitId)!.displayName }) : null;
+    },
+    literalFunctionUnit: (site) => {
+      const source = lowering.literalCode.functionSites.get(site);
+      return source && functionDeclarationUnit(identity, lowering.signatures, literalFunctionDeclaration(source));
     },
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";

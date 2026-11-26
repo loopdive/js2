@@ -100,14 +100,30 @@ export function functionValueBindings(
   );
 }
 
-/** One declaration's value: its unit, the unit's contract, and its home. */
-export interface FunctionDeclarationValue {
+/** A declaration's unit and the unit's contract: what a function object of the declaration calls. */
+export interface FunctionDeclarationUnit {
   readonly declaration: ts.FunctionDeclaration;
   readonly unitId: IrUnitId;
   readonly unitName: string;
   readonly params: readonly IrType[];
   readonly returnType: IrType | null;
+}
+
+/** One declaration's value: its unit, the unit's contract, and its home. */
+export interface FunctionDeclarationValue extends FunctionDeclarationUnit {
   readonly home: ModuleBindingGlobal;
+}
+
+/** The declaration's unit; a contract the trampoline cannot carry (a typed parameter) refuses by name. */
+export function functionDeclarationUnit(
+  identity: Pick<IrPlanningIdentityContext, "unitIdByDeclaration" | "terminalByUnitId">,
+  signatures: ReadonlyMap<IrUnitId, { readonly params: readonly IrType[]; readonly returnType: IrType | null }>,
+  declaration: ts.FunctionDeclaration,
+): FunctionDeclarationUnit {
+  const unitId = identity.unitIdByDeclaration.get(declaration)!;
+  const { params, returnType } = signatures.get(unitId)!;
+  if (params.some((type) => type.kind !== "dynamic")) refuse(declaration.name!.text, "has a typed parameter");
+  return { declaration, unitId, unitName: identity.terminalByUnitId.get(unitId)!.displayName, params, returnType };
 }
 
 /** A home as the source producer lists its globals. */
@@ -142,8 +158,7 @@ export function functionDeclarationValues(
     if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration).length > 1)
       refuse(name, "has a second declaration");
     const rewritten = preparedBindingRewritten(checker, declaration.name!);
-    const { params, returnType } = signatures.get(unitId)!;
-    if (params.some((type) => type.kind !== "dynamic")) refuse(name, "has a typed parameter");
+    const unit = functionDeclarationUnit(identity, signatures, declaration);
     const start = declaration.getStart();
     const plan = startup.find((row) => row.bindings.some((binding) => binding.start === start))!;
     const binding = plan.bindings.find((row) => row.names[0] === name && row.start === start)!;
@@ -158,11 +173,7 @@ export function functionDeclarationValues(
       type: irDynamic(rewritten ? undefined : JS_TAG_IDS.Function),
     };
     return {
-      declaration,
-      unitId,
-      unitName: identity.terminalByUnitId.get(unitId)!.displayName,
-      params,
-      returnType,
+      ...unit,
       home,
       global: {
         binding: home,
@@ -200,18 +211,23 @@ export function emitFunctionDeclarationValues(
   cx: FunctionValueHost,
   values: readonly FunctionDeclarationValue[],
 ): void {
-  for (const value of values) {
-    const signature: IrClosureSignature = { params: value.params, returnType: DYNAMIC };
-    const closure = cx.builder.emitClosureNew(liftTrampoline(cx, value, signature), signature, [], []);
-    emitFunctionObjectInit(cx.builder, closure, value.declaration);
-    const callable = cx.builder.emitCallablePack(closure, signature);
-    const dynamic = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [callable], irDynamic());
-    cx.builder.emitGlobalSet(value.home.globalRef, dynamic!);
-  }
+  for (const value of values) cx.builder.emitGlobalSet(value.home.globalRef, emitFunctionDeclarationObject(cx, value));
 }
 
-/** `(__self, ...args) => carrier(unit(...args))`: a derived function of the module-init. */
-function liftTrampoline(cx: FunctionValueHost, value: FunctionDeclarationValue, signature: IrClosureSignature) {
+/**
+ * A fresh function object of the declaration, as a dynamic value: a closure of its trampoline, made a function object
+ * (`emitFunctionObjectInit`, named `name` when given). (#7487) A literal `Function` site makes one per evaluation.
+ */
+export function emitFunctionDeclarationObject(cx: FunctionValueHost, unit: FunctionDeclarationUnit, name?: string) {
+  const signature: IrClosureSignature = { params: unit.params, returnType: DYNAMIC };
+  const closure = cx.builder.emitClosureNew(liftTrampoline(cx, unit, signature), signature, [], []);
+  emitFunctionObjectInit(cx.builder, closure, unit.declaration, name);
+  const callable = cx.builder.emitCallablePack(closure, signature);
+  return cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [callable], irDynamic())!;
+}
+
+/** `(__self, ...args) => carrier(unit(...args))`: a derived function of the lowering unit. */
+function liftTrampoline(cx: FunctionValueHost, value: FunctionDeclarationUnit, signature: IrClosureSignature) {
   const identity = allocateLiftedFunctionArtifact(cx, () => `${value.declaration.name!.text}__value`);
   recordLiftedUnitProvenance(identity, cx);
   const builder = new IrFunctionBuilder(identity, [DYNAMIC], false, cx.allocRegistry);

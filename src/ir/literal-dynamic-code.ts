@@ -39,6 +39,15 @@ export interface LiteralDynamicCodeSource {
   readonly source: ts.SourceFile;
 }
 
+/** What the receipt proves of a program's relation, by site and by source. */
+export interface LiteralDynamicCodeReceipt {
+  readonly evalCalls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
+  readonly functionSites: ReadonlyMap<ts.CallExpression | ts.NewExpression, ts.SourceFile>;
+  readonly sources: ReadonlySet<ts.SourceFile>;
+  readonly calledSources: ReadonlySet<ts.SourceFile>;
+  readonly dependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>;
+}
+
 /** The script a qualifying site's text becomes: its name and its text. */
 export interface LiteralDynamicCodeText {
   readonly kind: LiteralDynamicCodeKind;
@@ -87,24 +96,20 @@ export function pairLiteralDynamicCodeSources(
 
 /**
  * The receipt: each row's site is a qualifying site of its kind in the entry, its source is a script of the program
- * whose text is the site's, and no site or source occurs twice. Returns each related eval call's source, every
- * related source and the called ones among them (an eval's: its call site runs it), and each source's dependency on
- * the entry, which holds its site: the inventory orders a source after its dependencies, so the entry is planned and
- * lowered before the texts it runs, whatever the names sort to.
+ * whose text is the site's, and no site or source occurs twice. Returns each related eval call's and function site's
+ * source, every related source and the called ones among them (an eval's: its call site runs it), and each source's
+ * dependency on the entry, which holds its site: the inventory orders a source after its dependencies, so the entry
+ * is planned and lowered before the texts it runs, whatever the names sort to.
  */
 export function verifyLiteralDynamicCodeSources(
   rows: readonly LiteralDynamicCodeSource[] | undefined,
   sourceFiles: readonly ts.SourceFile[],
   entry: ts.SourceFile,
-): {
-  readonly evalCalls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
-  readonly sources: ReadonlySet<ts.SourceFile>;
-  readonly calledSources: ReadonlySet<ts.SourceFile>;
-  readonly dependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>;
-} {
+): LiteralDynamicCodeReceipt {
   const qualifying = new Map(qualifyingSites(entry).map((row) => [row.site, row]));
   const sites = new Set<ts.Node>();
   const evalCalls = new Map<ts.CallExpression, ts.SourceFile>();
+  const functionSites = new Map<ts.CallExpression | ts.NewExpression, ts.SourceFile>();
   const sources = new Set<ts.SourceFile>();
   const calledSources = new Set<ts.SourceFile>();
   for (const { site, kind, source } of rows ?? []) {
@@ -126,9 +131,20 @@ export function verifyLiteralDynamicCodeSources(
     if (kind === "eval") {
       evalCalls.set(site as ts.CallExpression, source);
       calledSources.add(source);
-    }
+    } else functionSites.set(site, source);
   }
-  return { evalCalls, sources, calledSources, dependencies: new Map([...sources].map((source) => [source, [entry]])) };
+  return {
+    evalCalls,
+    functionSites,
+    sources,
+    calledSources,
+    dependencies: new Map([...sources].map((source) => [source, [entry]])),
+  };
+}
+
+/** The one declaration a `function` source holds: the receipt matched its text with a qualifying site's. */
+export function literalFunctionDeclaration(source: ts.SourceFile): ts.FunctionDeclaration {
+  return source.statements[0] as ts.FunctionDeclaration;
 }
 
 /** Whether an identifier of `sourceFile` uses the prefix the dynamic functions' synthesized names are made of. */

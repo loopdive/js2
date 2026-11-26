@@ -1716,7 +1716,7 @@ export function prepareIrProgramSources(
                 project: sourceMapProjector.project,
               }),
       abortBodies: input.unlowerableBodies,
-      literalEvalCalls: code.evalCalls,
+      literalCode: code,
     };
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;
