@@ -3,6 +3,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import * as oldManifest from "../src/ir/runtime-program-manifest.js";
 import * as manifest from "../src/ir/program/runtime-manifest.js";
+import { locatedFailure } from "../src/ir/program/owner.js";
 import * as oldProjection from "../src/ir/program-runtime-validation.js";
 import * as projection from "../src/ir/program/runtime-validation.js";
 import { irProgramRuntimeDemands } from "../src/ir/program/runtime-demands.js";
@@ -114,7 +115,7 @@ describe("canonical whole-program runtime projection owners", () => {
   it("forwards manifest producer and projection validators by identity", () => {
     expect(oldManifest.prepareWholeProgramRuntimeManifest).toBe(manifest.prepareWholeProgramRuntimeManifest);
     expect(oldManifest.checkFunctionPopulation).toBe(manifest.checkFunctionPopulation);
-    expect(oldManifest.locatedFailure).toBe(manifest.locatedFailure);
+    expect(oldManifest.locatedFailure).toBe(locatedFailure);
     expect(oldManifest.invariant).toBe(manifest.invariant);
     expect(oldProjection.assertPreparedIrRuntimeProjection).toBe(projection.assertPreparedIrRuntimeProjection);
     expect(oldProjection.assertPreparedIrSemanticRuntimeSeparation).toBe(
@@ -188,7 +189,7 @@ describe("canonical whole-program runtime projection owners", () => {
   });
   it("removes nonserializable causes while retaining the supplied diagnostic and real owner", () => {
     const fn = sqrt.ir.functions[0]!;
-    const result = manifest.locatedFailure(request(sqrt), fn.unitId, {
+    const result = locatedFailure(request(sqrt), fn.unitId, {
       kind: "invariant",
       code: "verifier-failure",
       stage: "verify",

@@ -21,8 +21,6 @@ import { classifyIrFailure, IrInvariantError } from "../../shared/contracts/ir-p
 import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { locatedFailure, preparedIrProgramOwner } from "./owner.js";
-
-export { locatedFailure };
 import { preparedIrReadonlyMap } from "./data.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
