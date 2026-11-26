@@ -13151,14 +13151,19 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   }
   if (binding.kind === "local" && binding.type.kind === "boxed") {
     const newValue = lowerExpr(rhs, cx, binding.type.inner);
-    const newType = cx.builder.typeOf(newValue);
+    // (#7354 L0c) A cell of the dynamic value (the Prepared lane's) stores the value in the carrier.
+    const stored =
+      binding.type.inner.kind === "dynamic"
+        ? functionObjects.concreteIntoDynamic(newValue, rhs, functionObjectLoweringHost(cx))
+        : newValue;
+    const newType = cx.builder.typeOf(stored);
     if (!irTypeAssignable(newType, binding.type.inner)) {
       demoteToLegacy(
         "property-write-unsupported",
         `ir/from-ast: assignment to captured "${id.text}" (${describeIrType(binding.type.inner)}) got ${describeIrType(newType)} in ${cx.funcName}`,
       );
     }
-    cx.builder.emitRefCellSet(binding.value, newValue);
+    cx.builder.emitRefCellSet(binding.value, stored);
     return newValue;
   }
   if (binding.kind === "withField") {

@@ -169,11 +169,8 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = function (a) { var k = function () { return a; }; a = 2; return k(); }; f(1);",
       'captures non-local binding "a"',
     ],
-    [
-      "a nested closure writing a parameter",
-      "var f = function (a) { var k = function () { a = 5; }; k(); return a; }; f(1);",
-      'mutable closure capture "a" must be a primitive',
-    ],
+    // (#7354 L0c) A nested closure writing a parameter shares the carrier's cell now
+    // (tests/issue-7354-l0c-captured-writes.test.ts).
     [
       "`arguments` aliasing a written parameter",
       "var f = function (a) { a = 2; return arguments[0]; }; f(1);",
