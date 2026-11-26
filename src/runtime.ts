@@ -2445,6 +2445,13 @@ function _nativeErrorToHost(value: any, exports: Record<string, Function> | unde
   }
 }
 
+/** (#7491) An exception escaping a module export, as JS sees it: tag removed, native error struct → JS Error. */
+export function moduleExceptionToHost(error: unknown, exports: Record<string, Function>): unknown {
+  const payload = normalizeModuleCallbackException(error, { getExports: () => exports }, "module-tag-payload");
+  const translated = _nativeErrorToHost(payload, exports);
+  return translated === _MISS ? payload : translated;
+}
+
 function _isNativeOpenObject(value: any, exports: Record<string, Function> | undefined): boolean {
   const classify = exports?.__object_is_native_open as ((value: any) => number) | undefined;
   if (typeof classify !== "function") return false;
@@ -4575,13 +4582,7 @@ export function wrapExports(
         result = (val as Function).apply(this, marshalled);
         scheduleNativeMicrotaskCheckpoint(exportsForMarshal); // (#6982)
       } catch (error) {
-        const payload = normalizeModuleCallbackException(
-          error,
-          { getExports: () => exportsForMarshal },
-          "module-tag-payload",
-        );
-        const translated = _nativeErrorToHost(payload, exportsForMarshal);
-        throw translated === _MISS ? payload : translated;
+        throw moduleExceptionToHost(error, exportsForMarshal);
       }
       if (sig?.result === "boolean") {
         if (typeof result !== "number" || (result !== 0 && result !== 1) || Object.is(result, -0)) {
