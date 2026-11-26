@@ -71,9 +71,13 @@ Both causes confirmed; both are legacy codegen (the IR does not claim these comp
   `__bigint_carrier_compare` (BigInt::lessThan over narrow/wide carriers, in `bigint-carrier-body.ts` next to the
   equality body, sharing its accessors).
 
-Pins: `tests/issue-7403-bigint-maybe-bigint-comparison.test.ts`, 198 rows (gc + standalone), expected values computed
-by node: 136 fail on main, all pass. Bytes: 160 test262 files (100 sampled + 60 BigInt) × {gc, standalone}
-identical to main.
+Pins: `tests/issue-7403-bigint-maybe-bigint-comparison.test.ts`, expected values computed by node, gc + standalone.
+They include wide pairs with different limb counts and a top limb ≥ 2^31; mutating the carrier ordering to signed
+limbs or dropping its limb-count check turns 4 / 10 rows red (RV7438).
+
+Bytes: 160 test262 files (100 sampled + 60 BigInt) × {gc, standalone} are identical to main. Programs that hold a
+wide BigInt constant in a reference slot DO change, as intended (the carrier types now exist when the first one is
+folded): of 14 such probes, 7 change on both targets — 6 flip from wrong to node's answer, 1 keeps its answer.
 
 ### Left open
 
@@ -81,3 +85,4 @@ identical to main.
   the i64 lane cannot hold it, for every BigInt operator, not only these comparisons.
 - `tests/issue-6656-bigint-wide-carrier.test.ts > narrowedString` fails on main c3b7be66 and with this change alike.
 - The loose `==` rows above (RV7339) are unchanged.
+- A wide constant inside an array or object literal (`[2n ** 70n]`, `{ v: 2n ** 70n }`) still wraps.

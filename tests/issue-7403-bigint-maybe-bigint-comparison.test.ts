@@ -45,6 +45,17 @@ const RELATIONAL_ROWS: readonly (readonly [string, string, string])[] = [
   ...["5n", "-5n", "2n ** 70n", "2n ** 70n + 1n", "2n ** 71n", "-(2n ** 70n)", "-(2n ** 71n)", "1e30", "NaN"].flatMap(
     (value) => ["2n ** 70n", "2n ** 70n + 1n", "-(2n ** 70n)"].map((k) => ["any", value, k] as const),
   ),
+  // Wide against wide with different limb counts (2, 3, 4) and a top limb at or past 2^31, both signs.
+  ...[
+    "2n ** 63n",
+    "2n ** 96n + 5n",
+    "2n ** 128n - 1n",
+    "-(2n ** 63n)",
+    "-(2n ** 96n + 5n)",
+    "-(2n ** 128n - 1n)",
+  ].flatMap((value) =>
+    ["2n ** 64n", "2n ** 128n - 1n", "-(2n ** 64n)", "-(2n ** 128n - 1n)"].map((k) => ["any", value, k] as const),
+  ),
 ];
 
 /** `main()` scores `g() === k`, `g() !== k`, `k === g()`, `g() == k` as the bits 1, 2, 4, 8. */

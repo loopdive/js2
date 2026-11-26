@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
+import { WIDE_FIELD_MAG, WIDE_FIELD_SIGN } from "./bigint-carrier-layouts.js";
 
 /** Read the carrier's low signed 64 bits. This truncating view is not ToBigInt or value equality. */
 export function buildReadBigIntCarrierBody(type: TypeHandle): Instr[] {
@@ -16,9 +17,6 @@ export interface BigIntCarrierTypes {
   readonly limbs: TypeHandle;
   readonly wide: TypeHandle;
 }
-
-const WIDE_FIELD_SIGN = 1;
-const WIDE_FIELD_MAG = 2;
 
 /** Accessors over carriers held in locals: the wide test, a wide field, and the narrow i64 view. */
 function carrierAccess(types: BigIntCarrierTypes) {

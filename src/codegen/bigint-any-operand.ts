@@ -121,6 +121,23 @@ interface BigIntSide {
   readonly againstBigInt: () => Instr[];
 }
 
+/** The operands once evaluated: the other one in `anyLocal`, the BigInt one in `bigLocal` unless it is a constant. */
+interface CompiledComparison {
+  readonly anyLocal: number;
+  readonly bigLocal?: number;
+  readonly side: BigIntSide;
+}
+
+/** What both `BigIntSide` builders share. */
+interface ComparisonFrame {
+  readonly ctx: CodegenContext;
+  readonly fctx: FunctionContext;
+  readonly expr: ts.BinaryExpression;
+  readonly bigintOnLeft: boolean;
+  readonly ops: ComparisonOps;
+  readonly wide: NonNullable<ReturnType<typeof wideBigIntComparisons>>;
+}
+
 /**
  * (#7373, #7403) `==`, `!=`, `<`, `<=`, `>`, `>=` when exactly one side is statically BigInt and the other may hold a
  * BigInt at run time (`typeMayBeBigInt(otherTsType)`). A BigInt there is compared as a BigInt (§7.2.15 step 1,
@@ -143,64 +160,18 @@ export function emitMaybeBigIntComparison(
   const wide = wideBigIntComparisons(ctx);
   if (wide === undefined || !ctx.funcMap.has("__typeof_bigint") || !ctx.funcMap.has("__to_bigint")) return undefined;
 
-  const inSourceOrder = (big: Instr[], other: Instr[]): Instr[] =>
-    bigintOnLeft ? [...big, ...other] : [...other, ...big];
-  // `ordering` is the other operand against the BigInt one (-1, 0, 1); the BigInt side stands in as 0.
-  const againstZero = (ordering: Instr[]): Instr[] => [
-    ...inSourceOrder([{ op: "i32.const", value: 0 }], ordering),
-    { op: ops.i32 },
-  ];
+  const frame: ComparisonFrame = { ctx, fctx, expr, bigintOnLeft, ops, wide };
   const wideConstant = wideBigIntConstantOf(ctx, fctx, bigintOnLeft ? expr.left : expr.right);
-  let anyLocal: number;
-  let side: BigIntSide;
-  /** Temps to release besides `anyLocal`. */
-  const temps: number[] = [];
-  if (wideConstant !== undefined) {
-    // A constant has no effects: only the other operand is evaluated.
-    anyLocal = allocTempLocal(fctx, EXTERNREF);
-    if (!compileInto(ctx, fctx, bigintOnLeft ? expr.right : expr.left, EXTERNREF, anyLocal)) {
-      releaseTempLocal(fctx, anyLocal);
-      return null;
-    }
-    side = {
-      asNumber: [{ op: "f64.const", value: Number(wideConstant) }],
-      againstBigInt: () => againstZero(wide.compare(anyLocal, wideConstant)),
-    };
-  } else {
-    const operands = compileOperandLocals(ctx, fctx, expr, bigintOnLeft);
-    if (operands === null) return null;
-    const { bigLocal } = operands;
-    anyLocal = operands.anyLocal;
-    temps.push(bigLocal);
-    side = {
-      asNumber: [{ op: "local.get", index: bigLocal }, { op: "f64.convert_i64_s" }],
-      againstBigInt: () => [
-        ...wide.isWide(anyLocal),
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: againstZero(wide.sign(anyLocal)),
-          else: [
-            ...inSourceOrder(
-              [{ op: "local.get", index: bigLocal }],
-              [
-                { op: "local.get", index: anyLocal },
-                { op: "call", funcIdx: ctx.funcMap.get("__to_bigint")! },
-              ],
-            ),
-            { op: ops.i64 },
-          ],
-        },
-      ],
-    };
-  }
+  const compiled = wideConstant === undefined ? compileI64Side(frame) : compileWideConstantSide(frame, wideConstant);
+  if (compiled === null) return null;
+  const { anyLocal, bigLocal, side } = compiled;
 
   const saved = pushBody(fctx);
   fctx.body.push({ op: "local.get", index: anyLocal });
   coerceType(ctx, fctx, EXTERNREF, { kind: "f64" }, "number");
   const otherAsNumber = fctx.body;
   popBody(fctx, saved);
-  const asNumbers: Instr[] = [...inSourceOrder(side.asNumber, otherAsNumber), { op: ops.f64 }];
+  const asNumbers: Instr[] = [...inSourceOrder(frame, side.asNumber, otherAsNumber), { op: ops.f64 }];
   const notBigInt: Instr[] =
     ops.onNull === undefined
       ? asNumbers
@@ -220,8 +191,67 @@ export function emitMaybeBigIntComparison(
     { op: "call", funcIdx: ctx.funcMap.get("__typeof_bigint")! },
     { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: side.againstBigInt(), else: notBigInt },
   );
-  for (const temp of [...temps, anyLocal]) releaseTempLocal(fctx, temp);
+  if (bigLocal !== undefined) releaseTempLocal(fctx, bigLocal);
+  releaseTempLocal(fctx, anyLocal);
   return { kind: "i32" };
+}
+
+function inSourceOrder(frame: ComparisonFrame, big: Instr[], other: Instr[]): Instr[] {
+  return frame.bigintOnLeft ? [...big, ...other] : [...other, ...big];
+}
+
+/** `ordering` is the other operand against the BigInt one (-1, 0, 1); the BigInt side stands in as 0. */
+function againstZero(frame: ComparisonFrame, ordering: Instr[]): Instr[] {
+  return [...inSourceOrder(frame, [{ op: "i32.const", value: 0 }], ordering), { op: frame.ops.i32 }];
+}
+
+/** The BigInt side on the i64 lane; a `$BigIntWide` on the other side orders by its sign. */
+function compileI64Side(frame: ComparisonFrame): CompiledComparison | null {
+  const { ctx, fctx, expr, bigintOnLeft, ops, wide } = frame;
+  const operands = compileOperandLocals(ctx, fctx, expr, bigintOnLeft);
+  if (operands === null) return null;
+  const { anyLocal, bigLocal } = operands;
+  const againstBigInt = (): Instr[] => [
+    ...wide.isWide(anyLocal),
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: againstZero(frame, wide.sign(anyLocal)),
+      else: [
+        ...inSourceOrder(
+          frame,
+          [{ op: "local.get", index: bigLocal }],
+          [
+            { op: "local.get", index: anyLocal },
+            { op: "call", funcIdx: ctx.funcMap.get("__to_bigint")! },
+          ],
+        ),
+        { op: ops.i64 },
+      ],
+    },
+  ];
+  return {
+    anyLocal,
+    bigLocal,
+    side: { asNumber: [{ op: "local.get", index: bigLocal }, { op: "f64.convert_i64_s" }], againstBigInt },
+  };
+}
+
+/** A BigInt constant outside the i64 range: compared with the carrier ordering. It has no effects, so only the other operand is evaluated. */
+function compileWideConstantSide(frame: ComparisonFrame, value: bigint): CompiledComparison | null {
+  const { ctx, fctx, expr, bigintOnLeft, wide } = frame;
+  const anyLocal = allocTempLocal(fctx, EXTERNREF);
+  if (!compileInto(ctx, fctx, bigintOnLeft ? expr.right : expr.left, EXTERNREF, anyLocal)) {
+    releaseTempLocal(fctx, anyLocal);
+    return null;
+  }
+  return {
+    anyLocal,
+    side: {
+      asNumber: [{ op: "f64.const", value: Number(value) }],
+      againstBigInt: () => againstZero(frame, wide.compare(anyLocal, value)),
+    },
+  };
 }
 
 /** Compile `side` as `want` into `local`; false when it did not compile. */

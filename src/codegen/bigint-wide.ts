@@ -49,7 +49,13 @@
  * Runtime arithmetic on the i64 lane is unchanged (it still wraps), because an
  * i64 slot cannot hold the wider result.
  */
-import { buildBigIntLimbsType, buildWideBigIntType } from "../runtime/wasmgc/values/bigint-carrier-layouts.js";
+import {
+  buildBigIntLimbsType,
+  buildWideBigIntType,
+  WIDE_FIELD_MAG,
+  WIDE_FIELD_SIGN,
+  WIDE_FIELD_VALUE,
+} from "../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import {
   buildBigIntCarrierCompareDefinition,
   buildBigIntCarrierEqualityDefinition,
@@ -69,10 +75,6 @@ const I64_MIN = -(1n << 63n);
 const I64_MAX = (1n << 63n) - 1n;
 /** Compile-time folding refuses to build anything larger than this. */
 const MAX_FOLD_BITS = 1 << 16;
-
-const WIDE_FIELD_VALUE = 0;
-const WIDE_FIELD_SIGN = 1;
-const WIDE_FIELD_MAG = 2;
 
 /**
  * Register `$BigIntLimbs` and `$BigIntWide` right after `$BigInt`. Called from
@@ -837,25 +839,28 @@ function ensureBigIntCarrierFormatter(ctx: CodegenContext): number | undefined {
 }
 
 /**
- * `__bigint_carrier_eq(anyref, anyref) -> i32` — BigInt::equal (§6.1.6.2.13)
- * for two values already known to be bigint carriers. Canonical form makes a
- * wide value never equal to an i64 one, and two wide values equal exactly when
- * sign and magnitude limbs agree.
+ * A `(anyref, anyref) -> i32` helper over two values already known to be bigint carriers, built once per module by
+ * `build`; undefined when the module has no wide form.
  */
-export function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {
-  const existing = ctx.funcMap.get("__bigint_carrier_eq");
+function ensureCarrierPairHelper(
+  ctx: CodegenContext,
+  name: string,
+  build: typeof buildBigIntCarrierEqualityDefinition,
+): number | undefined {
+  const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   const types = wideTypes(ctx);
   if (types === undefined) return undefined;
-  const { locals, body } = buildBigIntCarrierEqualityDefinition(types);
-  return pushHelper(
-    ctx,
-    "__bigint_carrier_eq",
-    [{ kind: "anyref" }, { kind: "anyref" }],
-    [{ kind: "i32" }],
-    locals,
-    body,
-  );
+  const { locals, body } = build(types);
+  return pushHelper(ctx, name, [{ kind: "anyref" }, { kind: "anyref" }], [{ kind: "i32" }], locals, body);
+}
+
+/**
+ * `__bigint_carrier_eq(anyref, anyref) -> i32` — BigInt::equal (§6.1.6.2.13). Canonical form makes a wide value never
+ * equal to an i64 one, and two wide values equal exactly when sign and magnitude limbs agree.
+ */
+export function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {
+  return ensureCarrierPairHelper(ctx, "__bigint_carrier_eq", buildBigIntCarrierEqualityDefinition);
 }
 
 /**
@@ -885,7 +890,11 @@ export function wideBigIntComparisons(ctx: CodegenContext):
       ...asAny(local),
       ...carrierInstrs(types, value),
       { op: "any.convert_extern" },
-      { op: "call", funcIdx: ensureBigIntCarrierCompare(ctx, types) },
+      // `__bigint_carrier_compare` — BigInt::lessThan as an ordering; `types` exists, so the helper does.
+      {
+        op: "call",
+        funcIdx: ensureCarrierPairHelper(ctx, "__bigint_carrier_compare", buildBigIntCarrierCompareDefinition)!,
+      },
     ],
   };
 }
@@ -902,24 +911,6 @@ export function wideBigIntConstantOf(
     isGlobal: (id) => isGlobalBuiltinIdentifier(ctx, fctx, id),
   });
   return value === undefined || (value >= I64_MIN && value <= I64_MAX) ? undefined : value;
-}
-
-/** `__bigint_carrier_compare(anyref, anyref) -> i32` — BigInt::lessThan as an ordering, for two bigint carriers. */
-function ensureBigIntCarrierCompare(
-  ctx: CodegenContext,
-  types: { wide: number; limbs: number; narrow: number },
-): number {
-  const existing = ctx.funcMap.get("__bigint_carrier_compare");
-  if (existing !== undefined) return existing;
-  const { locals, body } = buildBigIntCarrierCompareDefinition(types);
-  return pushHelper(
-    ctx,
-    "__bigint_carrier_compare",
-    [{ kind: "anyref" }, { kind: "anyref" }],
-    [{ kind: "i32" }],
-    locals,
-    body,
-  );
 }
 
 /**
