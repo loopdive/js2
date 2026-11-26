@@ -12,6 +12,7 @@
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  SLOPPY_FUNCTION_OWN_CALLER_KEY,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   realmMethodId,
@@ -112,18 +113,8 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  */
 const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
-/**
- * (#7489) The key an implementation may give a sloppy plain function as its own (§17.1): `arguments`, V8's live
- * arguments object, which no Prepared function owns. Its access takes the run-time split of
- * `dynamic-member-access.ts` (`withoutOwnCaller`).
- */
-export const SLOPPY_FUNCTION_ARGUMENTS_KEY = "arguments";
-
-/**
- * (#7489) The own key that marks a sloppy plain function: the `caller` `js.object.init-function` gives exactly the
- * functions slice A's rule names (`emitFunctionObjectInit`), the one place the rule is written.
- */
-export const SLOPPY_FUNCTION_OWN_CALLER_KEY = "caller";
+/** (#7489) The own key that marks a sloppy plain function (the catalog's): the IR's one read of it. */
+export { SLOPPY_FUNCTION_OWN_CALLER_KEY };
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [

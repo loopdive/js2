@@ -48,7 +48,10 @@ import {
   nativeBuiltinFunctionSingletonBinding,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
-import { NATIVE_VALUE_INTRINSICS } from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  NATIVE_VALUE_INTRINSICS,
+  SLOPPY_FUNCTION_OWN_CALLER_KEY,
+} from "../../../runtime/contracts/native-realm-catalog.js";
 import {
   buildErrorToStringDefinition,
   buildIsErrorDefinition,
@@ -218,7 +221,7 @@ const ROWS = {
         create: createOperands(dependencies),
         prototypeKey: key("prototype"),
         constructorKey: key("constructor"),
-        callerKey: key("caller"),
+        callerKey: key(SLOPPY_FUNCTION_OWN_CALLER_KEY),
       });
     },
   },

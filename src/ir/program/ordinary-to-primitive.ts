@@ -16,7 +16,7 @@
 import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import { irClosureMethodReference } from "../core/closure-invocation-callables.js";
 import type { LegalizationProgram } from "./dynamic-value-kinds.js";
-import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+import { realmCall, textKey, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
 /** ToPrimitive's hint: `string` for ToString, `number` for ToNumber and (as `default`) for `+`. */
@@ -84,13 +84,10 @@ export function ordinaryToPrimitive(
     const name = names[index];
     // The TypeError does not complete; the text only gives the arm its value.
     if (name === undefined) return [...typeError(b, "Cannot convert object to primitive value"), ...answer.text("", r)];
-    const [text, key] = [b.fresh(), b.fresh()];
+    const key = b.fresh();
     const next = (s: IrValueId) => step(index + 1, s);
     const method = (s: IrValueId) => callIfCallable(b, object, key, answer, next, s);
-    const named: IrInstr[] = [
-      b.text(name, text),
-      { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },
-    ];
+    const named: IrInstr[] = textKey(b, name, key);
     if (name !== "toString") return [...named, ...method(r)];
     // Only an absent `toString` has an answer of its own; an absent `valueOf` is skipped like any non-callable one.
     const held = b.fresh();

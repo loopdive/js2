@@ -57,6 +57,12 @@ export function typeError(b: TypeErrorBuilders, message: string): IrInstr[] {
   ];
 }
 
+/** (#7489) The constant property key `name` into `result`: its text, carried into the dynamic value. */
+export function textKey(b: TypeErrorBuilders, name: string, result: IrValueId): IrInstr[] {
+  const text = b.fresh();
+  return [b.text(name, text), { kind: "coerce.to_externref", value: text, result, resultType: b.carrier }];
+}
+
 /** {@link typeError}, then `answer`: the value of an arm that ends in the throw, which no code reads. */
 export function typeErrorThen(b: TypeErrorBuilders, message: string, answer: IrInstr): IrInstr[] {
   return [...typeError(b, message), answer];

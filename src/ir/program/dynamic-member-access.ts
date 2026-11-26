@@ -12,14 +12,13 @@ import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest
 import {
   BUILTIN_REACHABLE_KEYS,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
-  SLOPPY_FUNCTION_ARGUMENTS_KEY,
   SLOPPY_FUNCTION_OWN_CALLER_KEY,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
-import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+import { realmCall, textKey, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
 /** The legalization builders a member access is written with. */
@@ -165,29 +164,27 @@ const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * (#7489) A function's `arguments`: a sloppy plain function's is implementation-defined (V8's live arguments object, which
- * no Prepared function owns), every other function's is Function.prototype's %ThrowTypeError% accessor. Which one the
- * value is shows only at run time, by the own `caller` slice A gives exactly the sloppy plain functions: that one takes
- * the run-time abort, never a guessed value; any other takes `access`, the realm's [[Get]] or [[Set]]. Every other key
- * is `access` alone.
+ * (#7489) A function value's access of key `name` into `result`: `access`, the realm's [[Get]] or [[Set]], but for
+ * `arguments`. A sloppy plain function's `arguments` is implementation-defined (V8's live arguments object, which no
+ * Prepared function owns); every other function's is Function.prototype's %ThrowTypeError% accessor. Which one the value
+ * is shows only at run time, by the own `caller` slice A gives exactly the sloppy plain functions: that one takes the
+ * run-time abort, never a guessed value; any other takes `access`.
  */
-function withoutOwnCaller(
+function functionAccess(
   b: MemberAccessBuilders,
   instr: MemberGet | MemberSet,
   name: string,
   abort: Abort,
   access: (result: IrValueId) => IrInstr[],
-): (result: IrValueId) => IrInstr[] {
-  if (name !== SLOPPY_FUNCTION_ARGUMENTS_KEY) return access;
-  return (result) => {
-    const [text, key, owns] = [b.fresh(), b.fresh(), b.fresh()];
-    return [
-      b.text(SLOPPY_FUNCTION_OWN_CALLER_KEY, text),
-      { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },
-      ...b.selectorCall("js.object.has-own", [instr.recv, key], 0, owns),
-      b.branch(owns, abort, access, result, b.carrier),
-    ];
-  };
+  result: IrValueId,
+): IrInstr[] {
+  if (name !== "arguments") return access(result);
+  const [key, owns] = [b.fresh(), b.fresh()];
+  return [
+    ...textKey(b, SLOPPY_FUNCTION_OWN_CALLER_KEY, key),
+    ...b.selectorCall("js.object.has-own", [instr.recv, key], 0, owns),
+    b.branch(owns, abort, access, result, b.carrier),
+  ];
 }
 
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
@@ -235,9 +232,14 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
     },
     function: (r, abort) =>
-      withoutOwnCaller(b, instr, name, abort, (s) => [
-        realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s),
-      ])(r),
+      functionAccess(
+        b,
+        instr,
+        name,
+        abort,
+        (s) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s)],
+        r,
+      ),
     primitive: (_kind, r) => inherited(r),
   };
   return memberAccess(b, instr, access, result);
@@ -274,7 +276,7 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     // (#7354 F1, D4) Every key Object.prototype holds but its accessor is a writable data property, so OrdinarySet
     // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only an accessor's setter
     // would run code the realm lacks: Object.prototype's. (#7489) A function's `caller` / `arguments` are the realm's: a
-    // sloppy function's own read-only `caller`, else Function.prototype's %ThrowTypeError% setter (`withoutOwnCaller`).
+    // sloppy function's own read-only `caller`, else Function.prototype's %ThrowTypeError% setter (`functionAccess`).
     missing: (kind) =>
       MEMBER_ACCESS_ARM[kind] !== "type-error" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
         ? "Object.prototype's accessor"
@@ -283,7 +285,7 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     unread,
     object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
     function: (r, abort, throwTypeError) =>
-      withoutOwnCaller(b, instr, name, abort, (s) => putValue("function", s, throwTypeError))(r),
+      functionAccess(b, instr, name, abort, (s) => putValue("function", s, throwTypeError), r),
     primitive: (kind, r, throwTypeError) =>
       instr.sloppy === true ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
   };
