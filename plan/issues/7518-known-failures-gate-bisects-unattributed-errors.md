@@ -57,8 +57,8 @@ errors, until each error reproduces in a single-file run.
 
 Labels:
 
-- `(#7518 bisection: reproduces with only this file in the run: <file>)`
-- `(#7518 bisection: reproduces with only one of these files (errors with this first line are not told apart) in the run: <files>)`
+- `(#7518 bisection: reproduces alone in: <file>)`
+- `(#7518 bisection: reproduces alone in: <file>, <file> (same first line, not told apart))`
 - `(#7518 bisection: not reproduced in a smaller run)`
 - `(#7518 bisection: budget spent before it was located)`
 
@@ -74,7 +74,7 @@ known-failures-gate: repro bisection: 2 file(s), 1 of 1 error(s) reproduced, 66s
 known-failures-gate: repro bisection: 1 file(s), 1 of 1 error(s) reproduced, 66s
 known-failures-gate: repro bisection: 1 file(s), 0 of 1 error(s) reproduced, 1s
 Error: [vitest-worker]: Timeout calling "onTaskUpdate"
-    (#7518 bisection: reproduces with only this file in the run: c.test.js)
+    (#7518 bisection: reproduces alone in: c.test.js)
 ```
 
 This also settles the timeout's cause: a worker blocked past birpc's 60 s RPC
@@ -83,6 +83,7 @@ timeout raises it, without any main-process load.
 **Pins** (`tests/issue-7014-integrity.test.ts`):
 
 - two different errors in one batch, each labelled with its own file;
+- only the batch's own errors are followed, not new ones a smaller run raises;
 - errors that share a first line get the shared label;
 - a spent budget makes no runs and says so;
 - the deadline starts at the first bisection run;
@@ -94,9 +95,23 @@ timeout raises it, without any main-process load.
   record is located to the leaking file.
 
 Mutations checked, each failing at least one pin:
+- following every error a smaller run raises (`.filter(() => true)`);
 - removing the timeout cap;
 - dropping "timed out at the deadline → budget spent";
 - resetting the deadline on every run.
+
+## Known limits
+
+- **No retry on a load-dependent miss.** An error that needs the whole batch's
+  load and does not reproduce in a smaller run is labelled "not reproduced in a
+  smaller run", and its file stays unnamed. Flaky runs cause misses, not wrong
+  blame.
+- **Generic synthetic keys.** The gate's own records, such as `vitest exited 1
+  after all selected files finished without an attributable exit`, have the
+  same first line whatever the cause. They match any file that exits 1 without
+  a failed test. The end-to-end pin relies on that key.
+- **Serial re-runs are not bisected.** Untagged errors from the serial re-run
+  loop (crashed files, one at a time) are still refused without a label.
 
 ## Cost
 

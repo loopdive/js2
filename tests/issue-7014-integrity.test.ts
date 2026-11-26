@@ -187,9 +187,18 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       const errors = Object.values(raises);
       const calls: string[][] = [];
       const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, calls) };
-      const labels = await bisectUntaggedErrors("/r", null, files, errors, runOf(errors), options, bisection);
-      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces with only this file in the run: b.test.js)");
-      expect(labels.get(errors[1])).toBe("(#7518 bisection: reproduces with only this file in the run: d.test.js)");
+      const labels = await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        errors,
+        runOf(errors),
+        options,
+        bisection,
+        bisection.runOnce,
+      );
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces alone in: b.test.js)");
+      expect(labels.get(errors[1])).toBe("(#7518 bisection: reproduces alone in: d.test.js)");
       expect(calls.length).toBeLessThanOrEqual(6);
     });
 
@@ -197,7 +206,16 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       const errors = ["Error: from b"];
       const calls: string[][] = [];
       const bisection = { deadline: Date.now() - 1, label: "t", runOnce: fakeRun({ "b.test.js": errors[0] }, calls) };
-      const labels = await bisectUntaggedErrors("/r", null, files, errors, runOf(errors), options, bisection);
+      const labels = await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        errors,
+        runOf(errors),
+        options,
+        bisection,
+        bisection.runOnce,
+      );
       expect(calls).toEqual([]);
       expect(labels.get(errors[0])).toBe("(#7518 bisection: budget spent before it was located)");
     });
@@ -206,9 +224,15 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       const calls: string[][] = [];
       const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun({}, calls) };
       const tagged = ["[raised while running a.test.js] Error: x"];
-      expect((await bisectUntaggedErrors("/r", null, files, tagged, runOf(tagged), options, bisection)).size).toBe(0);
+      expect(
+        (await bisectUntaggedErrors("/r", null, files, tagged, runOf(tagged), options, bisection, bisection.runOnce))
+          .size,
+      ).toBe(0);
       const timedOut = { ...runOf(["Error: y"]), timedOut: true };
-      expect((await bisectUntaggedErrors("/r", null, files, ["Error: y"], timedOut, options, bisection)).size).toBe(0);
+      expect(
+        (await bisectUntaggedErrors("/r", null, files, ["Error: y"], timedOut, options, bisection, bisection.runOnce))
+          .size,
+      ).toBe(0);
       expect(calls).toEqual([]);
     });
 
@@ -221,8 +245,17 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
         runOnce: fakeRun({ "b.test.js": errors[0] }, []),
       };
       const before = Date.now();
-      const labels = await bisectUntaggedErrors("/r", null, files, errors, runOf(errors), options, bisection);
-      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces with only this file in the run: b.test.js)");
+      const labels = await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        errors,
+        runOf(errors),
+        options,
+        bisection,
+        bisection.runOnce,
+      );
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces alone in: b.test.js)");
       expect(bisection.deadline).toBeGreaterThanOrEqual(before + 60_000);
     });
 
@@ -237,7 +270,16 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
           return run(root, toRel, part);
         },
       };
-      await bisectUntaggedErrors("/r", null, files, ["Error: from b"], runOf(["Error: from b"]), options, bisection);
+      await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        ["Error: from b"],
+        runOf(["Error: from b"]),
+        options,
+        bisection,
+        bisection.runOnce,
+      );
       expect(timeouts.length).toBeGreaterThan(0);
       for (const timeout of timeouts) expect(timeout).toBeLessThanOrEqual(5_000);
     });
@@ -279,9 +321,30 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
         runOf(errors),
         options,
         bisection,
+        bisection.runOnce,
       );
       expect(calls).toBe(2);
       expect(labels.get(errors[0])).toBe("(#7518 bisection: budget spent before it was located)");
+    });
+
+    it("follows only the batch's own errors, not new ones a smaller run raises", async () => {
+      // c.test.js raises "Error: noise" in smaller runs only; the batch's one error comes from b.test.js.
+      const calls: string[][] = [];
+      const raises = { "b.test.js": "Error: from b", "c.test.js": "Error: noise" };
+      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, calls) };
+      const errors = ["Error: from b"];
+      const labels = await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        errors,
+        runOf(errors),
+        options,
+        bisection,
+        bisection.runOnce,
+      );
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces alone in: b.test.js)");
+      expect(calls).not.toContainEqual(["c.test.js"]);
     });
 
     it("says so when errors that share a first line reproduce in more than one file", async () => {
@@ -296,9 +359,10 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
         runOf([same, same]),
         options,
         bisection,
+        bisection.runOnce,
       );
       expect(labels.get(same)).toBe(
-        "(#7518 bisection: reproduces with only one of these files (errors with this first line are not told apart) in the run: a.test.js, c.test.js)",
+        "(#7518 bisection: reproduces alone in: a.test.js, c.test.js (same first line, not told apart))",
       );
     });
 
@@ -328,7 +392,7 @@ it("leaks",async()=>{setTimeout(()=>{throw new Error("leaked")},0);await new Pro
       // The leak itself is tagged by the reporter; the run's unattributed exit 1 is located by bisection.
       expect(errors.some((e) => e.startsWith("[raised while running leaks.test.js] Error: leaked"))).toBe(true);
       const exit = errors.find((e) => e.startsWith("vitest exited 1"));
-      expect(exit).toContain("(#7518 bisection: reproduces with only this file in the run: leaks.test.js)");
+      expect(exit).toContain("(#7518 bisection: reproduces alone in: leaks.test.js)");
     });
   });
 

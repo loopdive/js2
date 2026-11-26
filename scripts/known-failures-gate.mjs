@@ -443,40 +443,44 @@ const errorKey = (error) => error.split("\n", 1)[0];
  * to their own files; errors that share a first line share their label, which says so. Skipped: errors the reporter already tagged with a file, and batches that hit their timeout,
  * whose halves would each wait out the timeout again. Every bisection run counts against one deadline per runFiles
  * call, started by the first one. Returns a label per error; the errors stay refused either way. `bisection` carries
- * the budget, the deadline once started, the log label and, in tests only, a stand-in for vitestOnce (`runOnce`).
+ * the budget, the deadline once started and the log label. `runOnce` is vitestOnce; tests pass a stand-in.
  */
-export async function bisectUntaggedErrors(root, toRel, files, runErrors, run, options, bisection) {
+export async function bisectUntaggedErrors(
+  root,
+  toRel,
+  files,
+  runErrors,
+  run,
+  options,
+  bisection,
+  runOnce = vitestOnce,
+) {
   const labels = new Map();
   const untagged = runErrors.filter((error) => !error.startsWith("[raised while running "));
   if (untagged.length === 0 || run.timedOut) return labels;
-  const located = new Map();
-  const exhausted = await locateErrorFiles(
-    root,
-    toRel,
-    files,
-    new Set(untagged.map(errorKey)),
-    options,
-    bisection,
-    located,
-  );
+  const search = { root, toRel, options, bisection, runOnce, located: new Map() };
+  const exhausted = await locateErrorFiles(search, files, new Set(untagged.map(errorKey)));
   for (const error of untagged) {
-    const where = located.get(errorKey(error));
+    const where = search.located.get(errorKey(error));
     // Errors with the same first line cannot be told apart (two RPC timeouts share their whole stack), so a
     // located key names every file it reproduced in, and says so when that is more than one.
-    const shared =
-      where?.size > 1 ? "one of these files (errors with this first line are not told apart)" : "this file";
+    const shared = where?.size > 1 ? " (same first line, not told apart)" : "";
     labels.set(
       error,
       where
-        ? `(#7518 bisection: reproduces with only ${shared} in the run: ${[...where].join(", ")})`
+        ? `(#7518 bisection: reproduces alone in: ${[...where].join(", ")}${shared})`
         : `(#7518 bisection: ${exhausted ? "budget spent before it was located" : "not reproduced in a smaller run"})`,
     );
   }
   return labels;
 }
 
-/** Recurses into the halves of `files` whose run raises one of `keys`; records each key's single-file runs. */
-async function locateErrorFiles(root, toRel, files, keys, options, bisection, located) {
+/**
+ * Recurses into the halves of `files` whose run raises one of `keys`, and records each key's single-file runs in
+ * `search.located`. Returns whether the budget ran out before every key was located.
+ */
+async function locateErrorFiles(search, files, keys) {
+  const { root, toRel, options, bisection, runOnce, located } = search;
   if (files.length === 1) {
     for (const key of keys) located.set(key, (located.get(key) ?? new Set()).add(files[0]));
     return false;
@@ -489,7 +493,6 @@ async function locateErrorFiles(root, toRel, files, keys, options, bisection, lo
     const remaining = bisection.deadline - Date.now();
     if (remaining <= 0) return true;
     const t0 = Date.now();
-    const runOnce = bisection.runOnce ?? vitestOnce;
     const r = await runOnce(root, toRel, part, { ...options, timeoutMs: Math.min(options.timeoutMs, remaining) });
     const seen = new Set(
       unaccountedRunErrors(r, part)
@@ -501,7 +504,7 @@ async function locateErrorFiles(root, toRel, files, keys, options, bisection, lo
         `error(s) reproduced${r.timedOut ? " (TIMED OUT)" : ""}, ${Math.round((Date.now() - t0) / 1000)}s`,
     );
     if (r.timedOut) exhausted ||= Date.now() >= bisection.deadline;
-    else if (seen.size) exhausted ||= await locateErrorFiles(root, toRel, part, seen, options, bisection, located);
+    else if (seen.size) exhausted ||= await locateErrorFiles(search, part, seen);
   }
   return exhausted;
 }
