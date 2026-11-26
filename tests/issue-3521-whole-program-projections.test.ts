@@ -13,6 +13,7 @@ import {
 } from "../src/ir/program.js";
 import type { RuntimeManifestPolicy } from "../src/ir/runtime-manifest.js";
 import type { IrInstr } from "../src/ir/nodes.js";
+import { rebuiltPreparedData } from "./helpers/rebuilt-prepared-data.js";
 
 const HOST: RuntimeManifestPolicy = { backend: "wasmgc", target: "host" };
 const LINEAR: RuntimeManifestPolicy = { backend: "linear", target: "host" };
@@ -58,7 +59,10 @@ describe("one semantic program with complete runtime projections", () => {
       expect(program.runtime[index]!.prepared.functions[0]!.blocks).not.toBe(program.ir.functions[0]!.blocks);
     }
     expect(() => assertPreparedIrProgram(program)).not.toThrow();
-    const replayed = { ...program, runtime: freezePreparedIrValue(program.runtime) as PreparedIrProgram["runtime"] };
+    const replayed = {
+      ...program,
+      runtime: freezePreparedIrValue(rebuiltPreparedData(program.runtime)) as PreparedIrProgram["runtime"],
+    };
     expect(replayed.runtime[0]!.prepared.functions[0]!.blocks).not.toBe(
       program.runtime[0]!.prepared.functions[0]!.blocks,
     );
@@ -109,7 +113,7 @@ describe("one semantic program with complete runtime projections", () => {
     expect(runtime.asyncPlan).not.toBe(semantic.asyncPlan);
     expect(preparedIrDataMismatch(runtime.asyncPlan, semantic.asyncPlan)).toBeUndefined();
     expect(() => assertPreparedIrProgram(program)).not.toThrow();
-    const copied = freezePreparedIrValue(program.runtime) as PreparedIrProgram["runtime"];
+    const copied = freezePreparedIrValue(rebuiltPreparedData(program.runtime)) as PreparedIrProgram["runtime"];
     expect(preparedIrDataMismatch(program.runtime, copied)).toBeUndefined();
     expect(() => assertPreparedIrProgram({ ...program, runtime: copied })).toThrow("exact semantic plan owner");
   });
