@@ -10,8 +10,15 @@
 // where no kind the receiver may hold can answer it; beside a kind that answers, a kind the realm cannot answer for (a
 // write to the realm's error, a read of a key only a built-in prototype holds) is the run-time abort.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OBJECT_PROTOTYPE_KEYS } from "../src/ir/program/builtin-prototype-keys.js";
-import { abortsAtRunTime, agreesWithNode, gapText, refusal, throwsAsNode } from "./helpers/prepared-node-agreement.js";
+import { OBJECT_PROTOTYPE_KEYS, nativeObjectPrototypeMethod } from "../src/ir/program/builtin-prototype-keys.js";
+import {
+  abortsAtRunTime,
+  agreesWithNode,
+  gapText,
+  refusal,
+  runPrepared,
+  throwsAsNode,
+} from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -70,10 +77,22 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
   // C3: the catalog's Object.prototype keys are the one list. (#7354 C2) Off an object, a data key is found on the
   // object's own or source-built chain, else it is Object.prototype's, which the realm lacks: the abort. The accessor
   // `__proto__` is the only key no object can answer, so it still refuses at compile time.
-  const DATA_KEYS = [...OBJECT_PROTOTYPE_KEYS].filter((key) => key !== "__proto__");
+  // (#7354 P1, O1c) The realm's Object.prototype holds its native methods: a read of one answers the built-in.
+  const DATA_KEYS = [...OBJECT_PROTOTYPE_KEYS].filter(
+    (key) => key !== "__proto__" && nativeObjectPrototypeMethod(key) === undefined,
+  );
   it.each(DATA_KEYS)(
     "ends a read of Object.prototype's %s off an object at the run-time abort",
     (key) => abortsAtRunTime(`function g(){ var o = {a:1}; return o.${key}; } g();`),
+    180_000,
+  );
+  it.each([...OBJECT_PROTOTYPE_KEYS].filter((key) => nativeObjectPrototypeMethod(key) !== undefined))(
+    "answers a read of Object.prototype's native %s off an object with the realm's method",
+    async (key) => {
+      const source = `function g(){ var o = {a:1}; return o.${key}; } if (typeof g() !== "function") throw 1;`;
+      expect(() => new Function(source)()).not.toThrow();
+      expect(await runPrepared(source)).toBe("returned");
+    },
     180_000,
   );
   it(

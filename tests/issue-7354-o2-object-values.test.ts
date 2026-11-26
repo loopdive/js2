@@ -156,15 +156,31 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
     expect(objects("export const n = 1;")).toEqual({
       present: false,
       functions: false,
+      readsPrototypeMethods: false,
       namesSymbol: false,
       namesErrors: false,
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
+      readsPrototypeMethods: false,
       namesSymbol: false,
       namesErrors: false,
     });
+  });
+
+  // (#7354 O1c) A read of a native Object.prototype method by constant key holds a built-in function value: it admits
+  // the function kind (`admittedKinds`) but creates no source function, so no dispatcher.
+  it("answers whether the program reads a native Object.prototype method", () => {
+    expect(objects("export const o = { a: 1 }; export const v = o.hasOwnProperty;")).toMatchObject({
+      functions: false,
+      readsPrototypeMethods: true,
+    });
+    expect(
+      objects('export const o = { a: 1 }; export const v = o["propertyIsEnumerable"];').readsPrototypeMethods,
+    ).toBe(true);
+    expect(objects("export const o = { a: 1 }; export const v = o.a;").readsPrototypeMethods).toBe(false);
+    expect(objects("export const o = { hasOwnProperty: 1 };").readsPrototypeMethods).toBe(false);
   });
 
   // (#7354 G1) An Error constructor makes objects; naming one (not as a member) admits the object kind.

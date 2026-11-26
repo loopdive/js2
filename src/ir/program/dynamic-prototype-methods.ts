@@ -120,8 +120,16 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
  * The legalized call: the method's algorithm when the callee is the realm's own method, else the call as it was.
  * (#7354 G1) Error.prototype.toString is the realm's own (§20.5.3.4, `js.object.error-to-string`): its receiver is
  * the [[Get]]'s, an object, as no primitive's wrapper prototype reaches it.
+ * (#7354 O1c) `dispatches`: the program creates a source function, so a dispatcher exists. Without one the callee is
+ * a built-in or no function at all, which the dispatcher would answer with its run-time abort or its TypeError: the
+ * other value is that abort here, and the program needs no dispatcher.
  */
-export function dynamicPrototypeMethodCall(b: ObjectStaticBuilders, instr: Call, method: RealmMethod): IrInstr[] {
+export function dynamicPrototypeMethodCall(
+  b: ObjectStaticBuilders,
+  instr: Call,
+  method: RealmMethod,
+  dispatches: boolean,
+): IrInstr[] {
   const [builtin, same] = [b.fresh(), b.fresh()];
   const algorithm = (r: IrValueId): IrInstr[] =>
     method === "Error.prototype.toString"
@@ -132,6 +140,12 @@ export function dynamicPrototypeMethodCall(b: ObjectStaticBuilders, instr: Call,
   return [
     ...b.realmIntrinsic(methodId(method), builtin),
     b.intrinsic(instr, "js.value.strict_eq", [instr.args[1]!, builtin], same),
-    b.branch(same, algorithm, (r) => [{ ...instr, result: r, resultType: CARRIER }], instr.result!, CARRIER),
+    b.branch(
+      same,
+      algorithm,
+      (r) => (dispatches ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r)),
+      instr.result!,
+      CARRIER,
+    ),
   ];
 }

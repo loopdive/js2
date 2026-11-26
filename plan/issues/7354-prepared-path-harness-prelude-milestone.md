@@ -5786,6 +5786,31 @@ Found by S12, measured again on main 41f0654e8c.
 - Mutation: drop the new clause, and the run tests must fail.
 - **Code quality:** one clause in the one walk; reuse of the catalog predicate; no new module, no grant, no second key list.
 
+### O1c result (2026-11-26, `claude/7354-o1c`)
+
+The plan above held for value reads, and turned out to be incomplete for calls. Measured with the clause alone: a method call `o.hasOwnProperty("a")` in a program with no source function failed at the physical plan ("js.closure.call:1 needs runtime function materialization"). P1's method-call shape keeps a dispatcher call as its fallback, for the case where the callee is not the realm's method, and the dispatcher exists only where the program creates a source function. The lead approved the change below without a separate plan review (2026-11-26).
+
+- **`ProgramObjects.readsPrototypeMethods`** is new, in the one walk (`source-plain-objects.ts`, `readsObjectPrototypeMethod`, over the catalog predicate `nativeObjectPrototypeMethod`). `admittedKinds` admits the function kind for it. `functions` keeps its meaning, "creates a source function, so a dispatcher exists".
+- **`dynamicPrototypeMethodCall(…, dispatches)`**: without a dispatcher, the fallback is the run-time abort that the dispatcher would have given for a built-in callee. For a non-callable callee it gives the abort where the dispatcher would have thrown its TypeError: fail-closed. The legalization asks `prototypeMethodOfCall` before the "creates no function value" gap, which still refuses a detached call (`var h = o.hasOwnProperty; h('a')`).
+- **S12's (2) runs.** The dead `__fv` is elided before the walk, but the method read admits the kind by itself.
+- **S12's (1) is a different gap.** In a function, `var o = {}` is a raw externref, and the method call on it is from-ast's "method call .hasOwnProperty(...) on externref not in slice 4" (P1's notes). The function keeps its U abort body. Pinned.
+- **String receivers** still abort; pinned.
+
+Tests:
+- `tests/issue-7354-o1c-method-reads.test.ts`: 8 tests. Node agrees on own, absent and non-enumerable keys, on `typeof`, on the dead-`__fv` program and on `isPrototypeOf`. Also pinned: the abort fallback, the detached-call refusal, S12's (1) as an abort body, and the string abort.
+- Moved pins:
+  - P1 "what refuses": now the detached call.
+  - M1 "keys a built-in prototype holds": the three native methods now answer the realm's method, and node agrees.
+  - O2's `ProgramObjects` literals: the new field, plus a test of the walk.
+
+Mutations:
+- Drop the admission: 7 of 8 tests fail.
+- Keep the dispatcher fallback: 5 of 8 fail.
+
+Bytes:
+- `prepared-byte-identity.mts`: 804 of 804 identical against main 41f0654e8c.
+- The four touched modules are imported only by the Prepared producer (`program-source.ts`), so the ordinary pipeline cannot change.
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs

@@ -266,12 +266,13 @@ export function legalizeDynamicValues(
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const error = dispatched ? errorConstructorOf(instr.args[1]!, definitions) : undefined;
         if (error !== undefined) return dynamicErrorConstruction(objectStatics, instr, error, instr.args.slice(2));
+        const method = prototypeMethodOfCall(instr, definitions, errors);
+        if (method !== undefined)
+          return dynamicPrototypeMethodCall(objectStatics, instr, method, program.objects.functions);
         // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
         // (G1) a built-in's run-time abort.
         if (dispatched && !program.objects.functions)
           return gap(`${instr.target.name} in a program that creates no function value`);
-        const method = prototypeMethodOfCall(instr, definitions, errors);
-        if (method !== undefined) return dynamicPrototypeMethodCall(objectStatics, instr, method);
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&

@@ -103,11 +103,13 @@ describe("#7354 P1 — what ends at the run-time abort", () => {
 });
 
 describe("#7354 P1 — what refuses", () => {
+  // (#7354 O1c) A method read admits the function kind itself, so `typeof o.hasOwnProperty` runs
+  // (tests/issue-7354-o1c-method-reads.test.ts). What still needs a source function is a call through a method value.
   it(
-    "a program that reads a method but creates no function value (the function kind is not admitted)",
+    "a detached call in a program that creates no function value (no dispatcher exists)",
     async () => {
-      expect(await refusal("var o = {a: 1}; var out = typeof o.hasOwnProperty;", runnerOptions())).toBe(
-        "dynamic operation member read 'hasOwnProperty' in a program that creates no function value has no Prepared intrinsic",
+      expect(await refusal("var o = {a: 1}; var h = o.hasOwnProperty; var out = h('a');", runnerOptions())).toBe(
+        "dynamic operation js.closure.call:1 in a program that creates no function value has no Prepared intrinsic",
       );
     },
     SLOW,

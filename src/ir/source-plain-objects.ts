@@ -13,12 +13,25 @@
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { errorConstructorId } from "./program/builtin-prototype-keys.js";
+import { errorConstructorId, nativeObjectPrototypeMethod } from "./program/builtin-prototype-keys.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
   (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
   ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
+
+/**
+ * (#7354 O1c) `node` reads, by constant key, a method the realm's Object.prototype holds (P1): the value it reads is a
+ * built-in function, whatever function values the source creates.
+ */
+const readsObjectPrototypeMethod = (node: ts.Node): boolean => {
+  const key = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  return key !== undefined && nativeObjectPrototypeMethod(key) !== undefined;
+};
 
 /**
  * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`).
@@ -32,6 +45,7 @@ export function programObjects(
 ): ProgramObjects {
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
+  let readsPrototypeMethods = false;
   let namesSymbol = false;
   let namesErrors = false;
   const visit = (node: ts.Node): void => {
@@ -47,9 +61,10 @@ export function programObjects(
       ts.isFunctionExpression(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
+    readsPrototypeMethods ||= readsObjectPrototypeMethod(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
+  return { present: present || namesErrors, functions, readsPrototypeMethods, namesSymbol, namesErrors };
 }

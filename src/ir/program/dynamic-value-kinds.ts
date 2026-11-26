@@ -158,13 +158,16 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
 /**
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
- * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
+ * (source closures, which the dispatcher calls), so the function kind is, (O1c) whether it reads a built-in
+ * Object.prototype method, which admits the kind too but makes no dispatcher, (O2b) whether it names `Symbol`, the only
  * way to `@@toPrimitive` and `@@toStringTag`, and (G1) whether it names an Error constructor (a built-in function
  * value, which makes objects).
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
+  /** (#7354 O1c) Whether it reads a native Object.prototype method (P1), a built-in function value. */
+  readonly readsPrototypeMethods: boolean;
   readonly namesSymbol: boolean;
   readonly namesErrors: boolean;
 }
@@ -181,6 +184,7 @@ export interface LegalizationProgram {
 export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
+  readsPrototypeMethods: false,
   namesSymbol: false,
   namesErrors: false,
 });
@@ -195,13 +199,16 @@ export const holdsErrors = (program: LegalizationProgram): boolean => program.ca
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
  * an error, which is an ordinary object, and (F1) the function kind only where it creates function values or (G1) may
- * hold a built-in one (an Error constructor, an error's methods).
+ * hold a built-in one (an Error constructor, an error's methods, (O1c) a native Object.prototype method it reads).
  */
 export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
   return KIND_ORDER.filter(
     (kind) =>
       (kind !== "object" || program.objects.present || holdsErrors(program)) &&
-      (kind !== "function" || program.objects.functions || holdsErrors(program)),
+      (kind !== "function" ||
+        program.objects.functions ||
+        program.objects.readsPrototypeMethods ||
+        holdsErrors(program)),
   );
 }
 
