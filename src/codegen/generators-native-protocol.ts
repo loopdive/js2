@@ -3,6 +3,7 @@ import type { GeneratorReadBinding } from "../runtime/wasmgc/values/object-get-a
 /** Ordinary protocol property values for native generator state objects. */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -31,11 +32,7 @@ const protocolKeys: readonly NativeGeneratorProtocolKey[] = ["iterator", "next",
 const prepared = new WeakSet<CodegenContext>();
 const getterName = (key: NativeGeneratorProtocolKey) => `__native_generator_method_value_${key}`;
 const load = (index: number): Instr => ({ op: "local.get", index });
-const call = (ctx: CodegenContext, name: string): Instr => {
-  const funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined) throw new Error(`Missing generator protocol dependency ${name}`);
-  return { op: "call", funcIdx };
-};
+const call = (ctx: CodegenContext, name: string): Instr => ({ op: "call", funcIdx: requireHelper(ctx, name) });
 function scratch(name: string): FunctionContext {
   return {
     name,
