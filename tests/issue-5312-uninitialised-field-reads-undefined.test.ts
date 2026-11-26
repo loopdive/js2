@@ -26,16 +26,17 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /** Compile `source` on one lane and call its exported `main`. */
 async function runLane(source: string, lane: "gc" | "standalone"): Promise<unknown> {
   const result = lane === "standalone" ? await compile(source, { target: "standalone" }) : await compile(source);
   expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
-  const imports = lane === "standalone" ? {} : buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  const instance =
+    lane === "standalone"
+      ? (await WebAssembly.instantiate(result.binary, {})).instance
+      : await instantiateWithRuntime(result);
   const exports = instance.exports as Record<string, () => unknown>;
-  (imports as { setExports?: (e: unknown) => void }).setExports?.(exports);
   return exports.main!();
 }
 

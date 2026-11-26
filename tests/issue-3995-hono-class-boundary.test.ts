@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile, compileProject } from "../src/index.js";
-import { buildCompiledImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, exportName = "test"): Promise<unknown> {
   const result = await compile(source, { platform: "web" });
@@ -12,10 +12,7 @@ async function run(source: string, exportName = "test"): Promise<unknown> {
       `Compile failed:\n${result.errors.map((error) => `  L${error.line}: ${error.message}`).join("\n")}`,
     );
   }
-  const imports = buildCompiledImports(result);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setInstance?.(instance);
-  imports.__setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, (...args: unknown[]) => unknown>)[exportName]!();
 }
 
@@ -35,10 +32,7 @@ async function runProject(files: Record<string, string>): Promise<unknown> {
         `Compile failed:\n${result.errors.map((error) => `  L${error.line}: ${error.message}`).join("\n")}`,
       );
     }
-    const imports = buildCompiledImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setInstance?.(instance);
-    imports.__setInstance?.(instance);
+    const instance = await instantiateWithRuntime(result);
     instance.exports.__module_init?.();
     return (instance.exports as Record<string, (...args: unknown[]) => unknown>).test!();
   } finally {

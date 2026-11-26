@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #1830 (integer-index ↔ well-known-symbol-id collision) — host mode.
 //
@@ -18,11 +18,7 @@ import { buildImports } from "../src/runtime.ts";
 async function runHost(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as never);
   if (!r.success) throw new Error("compile error: " + (r.errors?.[0]?.message ?? "unknown"));
-  const imp = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
-    setInstance?: (i: WebAssembly.Instance) => void;
-  };
-  const { instance } = await WebAssembly.instantiate(r.binary, imp);
-  if (typeof imp.setInstance === "function") imp.setInstance(instance);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { test(): unknown }).test();
 }
 

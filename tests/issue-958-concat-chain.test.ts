@@ -1,35 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports as buildRuntimeImports } from "../src/runtime.js";
-import { buildStringConstants } from "../src/runtime.js";
-
-function buildImports(result: any): WebAssembly.Imports {
-  const manualEnv: Record<string, Function> = {
-    number_toString: (v: number) => String(v),
-  };
-  const jsString = {
-    concat: (a: string, b: string) => (a || "") + (b || ""),
-    length: (s: string) => (s ? s.length : 0),
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => (s ? s.substring(start, end) : ""),
-    charCodeAt: (s: string, i: number) => (s ? s.charCodeAt(i) : 0),
-  };
-  // Use runtime buildImports for full support (including __concat_N)
-  if (result.imports && result.imports.length > 0) {
-    const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    const mergedEnv = { ...manualEnv, ...runtimeResult.env };
-    return {
-      env: mergedEnv,
-      "wasm:js-string": jsString,
-      string_constants: buildStringConstants(result.stringPool),
-    } as WebAssembly.Imports;
-  }
-  return {
-    env: manualEnv,
-    "wasm:js-string": jsString,
-    string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports;
-}
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("String concat chain batching (#958)", () => {
   it("3-operand chain uses __concat_3 import", async () => {
@@ -65,8 +36,7 @@ describe("String concat chain batching (#958)", () => {
     }`;
     const result = await compile(source);
     expect(result.success).toBe(true);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe("hello world");
   });
 
@@ -76,8 +46,7 @@ describe("String concat chain batching (#958)", () => {
     }`;
     const result = await compile(source);
     expect(result.success).toBe(true);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe("abcdef");
   });
 
@@ -89,8 +58,7 @@ describe("String concat chain batching (#958)", () => {
     }`;
     const result = await compile(source);
     expect(result.success).toBe(true);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe("value: 42 ok: true");
   });
 
@@ -103,8 +71,7 @@ describe("String concat chain batching (#958)", () => {
     }`;
     const result = await compile(source);
     expect(result.success).toBe(true);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe("hello world");
   });
 
@@ -117,8 +84,7 @@ describe("String concat chain batching (#958)", () => {
     }`;
     const result = await compile(source);
     expect(result.success).toBe(true);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe("pre-middle-suf");
   });
 });

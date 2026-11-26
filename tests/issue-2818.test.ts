@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { runTest262File } from "./test262-runner.js";
 
 /**
@@ -36,15 +36,7 @@ async function runNum(source: string): Promise<number> {
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool) as unknown as {
-    importObject?: WebAssembly.Imports;
-    setExports?: (e: WebAssembly.Exports) => void;
-  } & WebAssembly.Imports;
-  const { instance } = await WebAssembly.instantiate(
-    result.binary,
-    (imports.importObject ?? imports) as WebAssembly.Imports,
-  );
-  if (typeof imports.setExports === "function") imports.setExports(instance.exports);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as { test: () => number }).test();
 }
 
@@ -53,15 +45,7 @@ async function runStr(source: string): Promise<string> {
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool) as unknown as {
-    importObject?: WebAssembly.Imports;
-    setExports?: (e: WebAssembly.Exports) => void;
-  } & WebAssembly.Imports;
-  const { instance } = await WebAssembly.instantiate(
-    result.binary,
-    (imports.importObject ?? imports) as WebAssembly.Imports,
-  );
-  if (typeof imports.setExports === "function") imports.setExports(instance.exports);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as { test: () => string }).test();
 }
 

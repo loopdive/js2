@@ -67,6 +67,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, compileMulti } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runSingle(source: string): Promise<unknown> {
   const result = await compile(source, {
@@ -75,11 +76,7 @@ async function runSingle(source: string): Promise<unknown> {
     fileName: "issue-5244.js",
   });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-  const imports = result.importObject as WebAssembly.Imports & {
-    __setInstance?: (i: WebAssembly.Instance) => void;
-  };
-  const { instance } = await WebAssembly.instantiate(result.binary as unknown as BufferSource, imports);
-  imports.__setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   (instance.exports as { __module_init?: () => void }).__module_init?.();
   return (instance.exports as unknown as Record<string, () => unknown>).test!();
 }
@@ -182,11 +179,7 @@ export function test() { return shortOne() + " / " + fullOne(); }`,
       { allowJs: true, skipSemanticDiagnostics: true },
     );
     expect(result.success).toBe(true);
-    const imports = result.importObject as WebAssembly.Imports & {
-      __setInstance?: (i: WebAssembly.Instance) => void;
-    };
-    const { instance } = await WebAssembly.instantiate(result.binary as unknown as BufferSource, imports);
-    imports.__setInstance?.(instance);
+    const instance = await instantiateWithRuntime(result);
     (instance.exports as { __module_init?: () => void }).__module_init?.();
     expect((instance.exports as unknown as Record<string, () => unknown>).test!()).toBe(
       "1|2|3|4|D|D|D|D|D|D / 11|12|13|14|15|16|17|18|19|20",

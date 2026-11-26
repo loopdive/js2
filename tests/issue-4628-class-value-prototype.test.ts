@@ -27,6 +27,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, deferTopLevelInit = false): Promise<unknown> {
   const result = await compile(source, {
@@ -37,9 +38,7 @@ async function run(source: string, deferTopLevelInit = false): Promise<unknown> 
     deferTopLevelInit,
   });
   expect(result.success).toBe(true);
-  const imports = result.importObject as WebAssembly.Imports & { __setInstance?: (i: WebAssembly.Instance) => void };
-  const { instance } = await WebAssembly.instantiate(result.binary as unknown as BufferSource, imports);
-  imports.__setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   (instance.exports as { __module_init?: () => void }).__module_init?.();
   return (instance.exports as { run?: () => unknown }).run?.();
 }

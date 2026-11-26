@@ -34,7 +34,7 @@ import { describe, expect, it } from "vitest";
 
 import { ts } from "../src/ts-api.js";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { planIrCompilation } from "../src/ir/select.js";
 
 type SelectOpts = Record<string, unknown>;
@@ -67,10 +67,7 @@ async function instantiate(
       `compile failed (${experimentalIR ? "IR" : "legacy"}):\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     );
   }
-  const imports = buildImports(r.imports as never, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports as never);
-  const withSetExports = imports as { setExports?: (e: unknown) => void };
-  if (typeof withSetExports.setExports === "function") withSetExports.setExports(instance.exports);
+  const instance = await instantiateWithRuntime(r);
   const emitted = new Set((r.irOutcomes ?? []).filter((o) => o.kind === "emitted").map((o) => o.displayName));
   return { test: (instance.exports as { test: (a?: unknown) => unknown }).test, emitted };
 }

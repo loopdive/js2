@@ -37,7 +37,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string): Promise<Record<string, Function>> {
   const r = await compile(source, { fileName: "test.ts" });
@@ -45,11 +45,8 @@ async function run(source: string): Promise<Record<string, Function>> {
     throw new Error(`compile failed:\n${r.errors.map((e) => `  L${e.line}:${e.column} ${e.message}`).join("\n")}`);
   }
   new WebAssembly.Module(r.binary);
-  const imports: any = buildImports(r.imports, undefined, r.stringPool);
-  const inst = await WebAssembly.instantiate(r.binary, imports);
-  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
-  if (typeof imports.setInstance === "function") imports.setInstance(inst.instance);
-  return inst.instance.exports as Record<string, Function>;
+  const instance = await instantiateWithRuntime(r);
+  return instance.exports as Record<string, Function>;
 }
 
 describe("#1716 — ToPropertyKey coercion (object used as property key)", () => {

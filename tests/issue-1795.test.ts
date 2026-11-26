@@ -11,14 +11,12 @@ import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function instantiate(src: string) {
   const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, r.errors?.[0]?.message).toBe(true);
-  const imports = buildImports(r.imports ?? [], undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary!, imports as unknown as WebAssembly.Imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   (instance.exports as { __module_init?: () => void }).__module_init?.();
   return instance.exports as Record<string, Function>;
 }

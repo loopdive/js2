@@ -14,17 +14,15 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function exportsOf(source: string): Promise<Record<string, Function>> {
   const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed:\n${r.errors.map((e) => `  L${e.line}:${e.column} ${e.message}`).join("\n")}`);
   }
-  const imports: any = buildImports(r.imports, undefined, r.stringPool);
-  const inst = await WebAssembly.instantiate(r.binary, imports);
-  if (typeof imports.setExports === "function") imports.setExports(inst.instance.exports);
-  return inst.instance.exports as Record<string, Function>;
+  const instance = await instantiateWithRuntime(r);
+  return instance.exports as Record<string, Function>;
 }
 
 describe("#1347b — for-await-of obtains async iterator from closure-valued Symbol.asyncIterator", () => {

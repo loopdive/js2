@@ -35,18 +35,12 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(src: string): Promise<unknown> {
   const r = await compile(src);
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
-  const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
-    setExports?: (e: Record<string, Function>) => void;
-  };
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (typeof imports.setExports === "function") {
-    imports.setExports(instance.exports as Record<string, Function>);
-  }
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => unknown>).test?.();
 }
 

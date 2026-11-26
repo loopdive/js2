@@ -32,7 +32,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { compileProject } from "../src/index.js";
-import { buildCompiledImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -160,10 +160,7 @@ function instantiate(): Promise<WebAssembly.Exports> {
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
-    const hostImports = buildCompiledImports(result, {}) as Record<string, unknown> & WebAssembly.Imports;
-    const { instance } = await WebAssembly.instantiate(result.binary, hostImports);
-    (hostImports.setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
-    (hostImports.__setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
+    const instance = await instantiateWithRuntime(result);
     (instance.exports.__module_init as (() => void) | undefined)?.();
     return instance.exports;
   })();

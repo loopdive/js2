@@ -14,7 +14,7 @@
 // Object.defineProperty array+accessor ordering half are carved to a follow-up.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { wrapExports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function forInKeys(body: string): Promise<string> {
   const src = `export function test(): any { ${body} }`;
@@ -23,11 +23,8 @@ async function forInKeys(body: string): Promise<string> {
     skipSemanticDiagnostics: true,
   } as never)) as any;
   expect(result.success, result.errors?.[0]?.message).toBe(true);
-  const importObject: any = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setInstance?.(instance);
-  const ex = wrapExports(instance.exports, { signatures: result.exportSignatures });
-  return ex.test() as string;
+  const instance = await instantiateWithRuntime(result);
+  return (instance.exports as { test(): unknown }).test() as string;
 }
 
 describe("#2739 (a) — for-in walks a setPrototypeOf prototype chain", () => {
@@ -75,16 +72,11 @@ describe("#2739 (a) — for-in walks a setPrototypeOf prototype chain", () => {
 // (#2739 b) — constructor-function prototype chain. `new F()` instances must
 // enumerate the ctor's `.prototype` object's enumerable keys after their own
 // keys, with own keys (including the typed struct FIELDS) shadowing.
-import { buildImports } from "../src/runtime.js";
 
 async function runHost(src: string): Promise<unknown> {
   const r = (await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as never)) as any;
   if (!r.success) throw new Error("compile error: " + (r.errors?.[0]?.message ?? "unknown"));
-  const imp = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
-    setInstance?: (i: WebAssembly.Instance) => void;
-  };
-  const { instance } = await WebAssembly.instantiate(r.binary, imp);
-  if (typeof imp.setInstance === "function") imp.setInstance(instance);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { test(): unknown }).test();
 }
 

@@ -70,7 +70,7 @@ import {
   resolveRuntimeHostCapabilityRecord,
 } from "../src/ir/runtime-host-capabilities.js";
 import { attachIrStringSupport } from "../src/ir/string-support.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const identities = createTestIrFunctionIdentityFactory("issue-3526-string-boundary-compare");
@@ -163,8 +163,7 @@ function outcome(result: CompileResult, name: string): IrObservedOutcome {
 }
 
 async function instantiate(result: CompileResult): Promise<Record<string, (...args: never[]) => number>> {
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, (...args: never[]) => number>;
 }
 

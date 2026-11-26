@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // (#3323) for-in over an ARRAY receiver must enumerate the own enumerable
 // non-index STRING keys (added via `arr.k = v` / `Object.defineProperty`) in
@@ -15,8 +15,7 @@ for (var __k in arr) { __s = __s + __k + ","; }
 export function test() { return __s; }`;
   const r: any = await compile(src, { fileName: "t.ts" });
   if (!r.success) throw new Error(`compile failed: ${JSON.stringify(r.errors)}`);
-  const imports = buildImports(r.imports, undefined, r.stringPool, {});
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as any).test() as string;
 }
 

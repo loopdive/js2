@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ENV_STUB = { console_log_number: () => {}, console_log_string: () => {}, console_log_bool: () => {} };
@@ -25,12 +25,7 @@ const ENV_STUB = { console_log_number: () => {}, console_log_string: () => {}, c
 async function instantiate(source: string) {
   const r = await compile(source, { fileName: "t.ts" });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
-  const imports = buildImports(r.imports, ENV_STUB, r.stringPool) as Record<string, unknown> & {
-    setExports?: (e: unknown) => void;
-  };
-  const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
-  imports.setExports?.(instance.exports);
-  return instance;
+  return instantiateWithRuntime(r, ENV_STUB);
 }
 
 describe("#1933 — runtime multi-instance isolation", () => {

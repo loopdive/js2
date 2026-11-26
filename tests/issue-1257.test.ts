@@ -21,7 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -35,9 +35,7 @@ async function runCatch(source: string): Promise<{ value: unknown; valid: boolea
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "<unknown>"}`);
   }
   const valid = WebAssembly.validate(r.binary);
-  const imports = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  (imports as { setExports?: (e: object) => void }).setExports?.(instance.exports);
+  const instance = await instantiateWithRuntime(r, ENV_STUB);
   const value = await (instance.exports as Record<string, () => unknown>).test();
   return { value, valid };
 }

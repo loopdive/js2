@@ -20,7 +20,7 @@
 // we're testing here is the *runtime binding*, not the JSX-parser fix.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileAndRun(
   src: string,
@@ -31,8 +31,7 @@ async function compileAndRun(
   if (!r.success) {
     throw new Error("compile failed: " + JSON.stringify(r.errors.slice(0, 3).map((e) => e.message)));
   }
-  const imports = buildImports(r.imports ?? [], deps, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r, deps);
   return { instance, exports: instance.exports as Record<string, Function> };
 }
 

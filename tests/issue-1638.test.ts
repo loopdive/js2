@@ -1,20 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runStr(src: string): Promise<string> {
   const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE:" + (r.errors?.[0]?.message ?? "?"));
-  const imports = buildImports(r.imports, undefined, r.stringPool, {});
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports.test as () => string)();
 }
 
 async function runI32(src: string): Promise<number> {
   const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE:" + (r.errors?.[0]?.message ?? "?"));
-  const imports = buildImports(r.imports, undefined, r.stringPool, {});
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports.test as () => number)();
 }
 
