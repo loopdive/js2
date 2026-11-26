@@ -125,6 +125,18 @@ describe("#7377 — refusals by name", () => {
     ["a let head", "var o = { a: 1 }; for (let k in o) {}", 'for-in head "k" declares no script var'],
     // (N3) An undeclared head would be an implicit global: never the loop's private slot.
     ["an undeclared head", "var o = { a: 1 }; for (k in o) {}", 'assignment to undeclared identifier "k"'],
+    // (#7434) A const head would write the const: refused like every other write to one (`refuseImmutableWrite`).
+    [
+      "a const identifier head",
+      'var o = { a: 1 }; const k = "x"; for (k in o) {}',
+      'const-write: for-in head write to "k"',
+    ],
+    // A `let` head is no const: it reaches the typed module binding's own refusal (a string binding, a dynamic key).
+    [
+      "a let identifier head over a typed binding",
+      'var o = { a: 1 }; let k = ""; for (k in o) {}',
+      'assignment to module binding "k" (string) got dynamic',
+    ],
     // R5 pin: `delete` has no lowering on this path yet, so the deleted-key case cannot run.
     ["a delete in the body", "var o = { a: 1, b: 2 }; for (var k in o) { delete o.b; }", "delete has no IR lowering"],
     // R1 pin: a Symbol-keyed descriptor cannot be named here, so the walk's Symbols are pinned on a kernel fixture.

@@ -11588,6 +11588,7 @@ function forInHead(
       "build",
       `ir/from-ast: for-in head is not an identifier (${cx.funcName})`,
     );
+  refuseImmutableWrite(init, "for-in head write to", cx);
   const target = identifierWriteTarget(init, init, cx) ?? refuseUndeclaredWrite(init, cx);
   if (target.kind === "scope" && target.binding.kind !== "moduleGlobal")
     throw new IrUnsupportedError(
