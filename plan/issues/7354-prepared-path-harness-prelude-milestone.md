@@ -5748,6 +5748,21 @@ declaration's position; the name joins the script var homes (`irOwnedScriptVarHo
 block, strict code, or a lexical top-level name of the same name refuses by name. Estimate L; not started unless
 1–3 land with budget left. Lead decision: not in this slice.
 
+### O1c parked (2026-11-26)
+
+Branch `claude/7354-o1c`, head 31398135e8 (from main 41f0654e8c), no PR. Parked by the lead because its measured yield is 0: the 411 sample stays at 83 → 83, nothing lost.
+
+What it does:
+- A read of a native Object.prototype method by constant key (`readsPrototypeMethods` in the one source walk, `source-plain-objects.ts`) admits the function kind.
+- The P1 method-call shape's fallback becomes the run-time abort where the program creates no source function, so no dispatcher is needed there.
+- A detached call (`var h = o.hasOwnProperty; h('a')`) still refuses by name.
+
+Effect:
+- S12's finding (2), a dead `__fv`, runs.
+- S12's finding (1) is from-ast's "method call … on externref not in slice 4" on a function-local `{}`, P1's known limit, and stays an abort body.
+
+It is tested: 8 O1c tests, 2 mutations, 804/804 Prepared bytes identical. Take it into the PR of whichever slice can show a yield for it (S12, or O6).
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
