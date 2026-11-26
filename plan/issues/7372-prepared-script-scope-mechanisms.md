@@ -4,7 +4,7 @@ title: "Prepared IR path: script-scope mechanisms (nested var, block functions, 
 status: in-progress
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
 priority: high
 horizon: l
 feasibility: hard
@@ -92,14 +92,137 @@ home refuses because it requires one declaration. Plan: the home and the produce
 declaration; each later declarator maps to the same global entry; the startup plan records no storage for a
 redeclaration's ordinal.
 
-### Slice 2 — FunctionDeclaration in a block at script level (planned)
+### Slice 2 — Annex B block functions (lane S19, plan 2026-11-26)
 
-Rule to state and build: ES5 has no block functions; the test262 ES5 files rely on the web-legacy behaviour that
-Annex B.3.3 (ES2015) codified for sloppy scripts: the function is hoisted inside its block (callable before its
-statement in the block), and when its statement is evaluated the function value is also assigned to a script
-`var` of the same name (undefined before). Build the block-level binding only where the function is a direct
-callable (no value use); refuse by name a block function used as a value, one in strict code, and one whose name
-collides with a lexical binding.
+Owner: lane S19. Replaces the earlier two-sentence plan for slice 2. Slices 3 and 4 (undeclared writes, `delete`)
+stay with lane S10.
+
+#### Measured (main `c3b7be66`, 2026-11-26, real harness, strict Prepared entry, standalone)
+
+Census (`scripts/ir-census/prepared-census.mts --harness real`) on the 578 ES5 files under
+`annexB/language/{function,global}-code`, `annexB/language/statements` and `language/statements/{block,function,if,
+switch,labeled}`. Abort-body attribution by a scratch probe that matches the trap frame to
+`requiredPreparedAbortBodies`. Annex B function-code and global-code pass **0** of 310 today.
+
+| where | first stop | files |
+| --- | --- | ---: |
+| global-code | compile error `identifier "f" is not in scope in <module-init>` | 64 |
+| global-code | compile error `unsupported body statement FunctionDeclaration in <module-init>` | 49 |
+| global-code | `direct call to "Function"` 24, other 16 | 40 |
+| function-code | trap, abort `identifier "f" is not in scope in <module-init>__closure_N` | 72 |
+| function-code | trap, abort `unsupported body statement FunctionDeclaration` | 33 |
+| function-code | trap, abort `unexpected statement before tail (got Block …)` 11, `redeclaration of 'f'` 8, `EmptyStatement` 5 | 24 |
+| function-code | other | 28 |
+
+Reproduced by hand (same entry, raw source):
+
+- `{ function g() { return 2; } } if (g() !== 2) throw 1;` → compile error `unsupported body statement
+  FunctionDeclaration in <module-init>`.
+- `function outer() { function g() { return 2; } return g(); } outer();` → abort `nested func must have a return
+  type annotation (outer)`. **An unannotated nested function declaration fails on the Prepared path even outside a
+  block.** Every function-code file has its block function inside a function (an IIFE), so the function-code
+  cluster cannot pass before nested function declarations do (#7349 S3 territory).
+- Script-level building blocks already run: `var x; function g(){return 2} x = g; x()` (F1b's value home + a script
+  var), `if (true) { var y = function () { return 2; }; } y()` (slice 1's nested var + a closure literal).
+
+**Yield estimate** (not a build, labelled as such): each script-level block function rewritten in the source as
+`var F = function F(…){…};` at its own position (B.3.3's var write, without the block binding) makes **30** global-code
+files pass (6 each of `update`, `existing-var-update`, `existing-var-no-init`, `existing-block-fn-update`,
+`existing-block-fn-no-init`; the two `switch` forms fail elsewhere). The rewrite cannot model `block-scoping`,
+`skip-early-err*` (a `let f` beside it) or `existing-fn-*` (a top-level `function f` beside it); those 8 + 64 + 16
+files need the real mechanism and then meet other walls, so the estimate for slice 2a is **30 to 50 files**. The
+`init` and `existing-*-global-init` rows (24) read the global object (`fnGlobalObject`, `verifyProperty`), Session B's
+area, and stay out. Function-code: **0** before nested function declarations exist; the same rewrite there stops at
+`identifier "f" is not in scope` (61), `redeclaration of 'f'` (26), `unexpected statement before tail` (13).
+
+#### Semantics to build (ECMA-262 §B.3.2.1–B.3.2.6; ES5 sloppy code relies on them)
+
+For each FunctionDeclaration *f* named *F* directly in the statement list of a Block, CaseClause or DefaultClause
+(and, by §B.3.3, the sole statement of an `if` clause, treated as a block around it):
+
+1. **Block binding (always, sloppy and strict).** *F* is a lexical binding of that block, initialized to a new
+   function object when the block is entered (BlockDeclarationInstantiation), before the block's first statement.
+   Several declarations of *F* in one block: the last one wins (§B.3.2.4, sloppy only). Inside the block, including
+   inside *f*'s own body, *F* reads and writes this binding (`f = 123` in the body changes it, not the var).
+2. **Var binding (sloppy only, §B.3.2.1 function / §B.3.2.2 script).** Only when replacing *f* by `var F` would raise
+   no early error: no `let`/`const`/`class` *F* in any block from *f*'s block up to the function body or script, nor
+   at that top level; a simple `catch (F)` parameter does not block (§B.3.4), a `for (let F …)` head does. Function
+   level also skips it when *F* is a parameter name, or `arguments`. When it applies:
+   - if *F* is not already a `var`, a parameter or a function declared at that top level, a var binding *F* is
+     created at entry with `undefined`;
+   - otherwise the existing binding is used, with its existing initial value (`existing-fn-no-init`);
+   - **when *f*'s statement is evaluated**, the var binding is set to the block binding's current value.
+3. **Strict code:** step 1 only. A read of *F* outside the block resolves to whatever an outer scope binds, or to
+   no binding.
+4. **Script vs function level.** At script level the var binding is the script var (a global): the slice-1 nested
+   `var` home. At function level it is a function-scoped local.
+
+The TypeScript checker binds a sloppy block function to its container: one symbol answers both the block and the var
+binding (verified with a scratch program: `f` before, inside and after the block all resolve to the
+FunctionDeclaration; a `let g` beside a block `function g` resolves outside the block to the `let`). So which binding
+a read means is decided by position, not by symbol: inside *f*'s block (lexically, not under a nested block that
+declares its own *F*) it is the block binding; elsewhere it is the var binding.
+
+#### Target structure
+
+- **New module `src/ir/annexb-block-functions.ts`** — pure, backend-independent analysis, asked by both pipelines:
+  `blockFunctionBindings(varScope)` answers, for a script or a function body, each block function with its binding
+  block, whether the var binding applies (and why not, as a refusal name), and whether it is new or reuses an
+  existing `var`/parameter/function. Reads only the AST. It reuses `ast-scope.ts`'s `lexicalDeclarations`,
+  `addLexicalNames` and `isFunctionScopeBoundary` (exported for this, not copied).
+- **Script var (2a):** a new var binding is one more module-init binding in the slice-1 machinery:
+  `moduleBindingDeclarationOrder` (`module-init-vars.ts`) appends the canonical (first) block function of each name
+  that needs a new var binding, and the startup plan (`module-init-plan.ts`, beside `nestedVarBindings`) gives it an
+  `undefined-at-instantiation` `var` intent. No second var-hoisting mechanism; the home is the existing dynamic
+  script-var home (`irOwnedScriptVarHome`).
+- **Existing binding reused:** a `var F` keeps its home; a top-level `function F` keeps F1b's value home, which is
+  mutable when rewritten. `preparedBindingRewritten` (`module-binding-script-var.ts`) counts a B.3.3 evaluation of a
+  same-named block function as a write, which closes the "Annex B block function" route named in that module's H2
+  doc; the route's pin in `tests/issue-7354-h2-script-binding-routes.test.ts` changes from refusal to a run.
+- **Block binding at script level (2a):** a module-init dynamic home per block function name and block, typed like
+  F1b's (`irDynamic(JS_TAG_IDS.Function)` unless rewritten). Script-level code runs once, so a global is exact;
+  a block inside a script-level loop body is re-entered and refuses by name in 2a ("block function in a loop body").
+- **The function object:** the block function is lowered as the closure literal it is, through the existing
+  dynamic-closure route (`resolver.dynamicClosureSignature` → `lowerClosureExpressionWithSignature`), whose literal
+  union (`IrClosureLiteral`, `from-ast.ts`) gains `ts.FunctionDeclaration`. Its name is not a self-binding (unlike a
+  named function expression): inside the body *F* is the block binding. Step 1 checks that the dynamic-closure
+  planner (`source-dynamic-contracts.ts`) admits the declaration the way it admits a function expression; if it does
+  not, the extension goes there, not into a copy.
+- **Lowering arms (`from-ast.ts`, kept to two calls):** on entering a statement list that declares block functions,
+  one call emits each function object into its block home (source order, last wins); the `FunctionDeclaration` arm of
+  `lowerBodyStatement` (today the `unsupported body statement` refusal) emits the var write or nothing. Both bodies
+  live in a new `src/ir/annexb-block-function-lowering.ts` beside `function-declaration-values.ts`, so `from-ast.ts`
+  grows by the two dispatch lines only.
+- **Identifier resolution:** the module-init identifier read and write (`identifier-read.ts` classification and the
+  module-binding write) ask the analysis which binding a reference to *F* means by position.
+- **Function level (2b), after nested function declarations run on the Prepared path:** the same analysis; the block
+  binding is a function local (a ref cell when a closure writes it, as captured locals are), the var binding a
+  function local created by the existing function-local var model (`function-local-var.ts`). Starts only when
+  `function outer(){ function g(){return 2} return g(); }` runs on main. Until then the function-level arm keeps
+  aborting by name, with one named reason instead of today's five.
+
+Still refused by name in 2a: a block function in a script-level loop body; a labelled function declaration; a
+generator or async function in a block; a block function whose closure the dynamic-closure planner refuses (its own
+reason); a script with a `with` or direct `eval` (H2 invariant).
+
+#### Order (small PRs, each with pin tests that fail on main)
+
+1. **2a-1** analysis module + unit tests on the §B.3.2 conditions (no lowering change; every case of the test262
+   variants as a pure-AST fixture: `update`, `no-init`, `existing-var/fn/block-fn`, `skip-param`,
+   `skip-early-err{,-block,-switch,-try,-for,-for-in,-for-of}`, `no-skip-try`, strict, `if` clause, `switch`).
+2. **2a-2** script level: block home + function object at block entry + var write + resolution. Pins: each program
+   run through the strict Prepared entry and node, right answer returns, a wrong twin throws.
+3. **2b** function level, after nested function declarations land.
+
+#### Acceptance
+
+- Correctness: the 2a programs agree with node; every 2a census file either passes or stops at a gap outside this
+  slice; no file that passes on main stops passing (re-run the 578-file census, base `c3b7be66` vs head).
+- Bytes: JS-environment and ordinary-pipeline output byte-identical on the annexB and `language/statements` files
+  (default and standalone, base export vs head).
+- Code quality: one analysis module both pipelines can ask; no second var-hoisting or home mechanism (slice-1
+  bindings, the script-var home and the closure-literal route are reused); `from-ast.ts` grows by dispatch lines
+  only; no loc/func grant, or a dated one the review agrees cannot be split.
 
 ### Slice 3 — sloppy write to an undeclared name (planned)
 
