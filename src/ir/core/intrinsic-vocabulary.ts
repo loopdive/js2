@@ -89,7 +89,8 @@ export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[n
  * produces them, from its dynamic-value legalization. (#7354 Ty) The
  * `is_*` tag tests answer `typeof v === "number"` / `"boolean"` / `"string"` and (#7354 Fa) `"function"`;
  * (#7354 Str2) `as_string` reads the native string a string-kinded value carries; (#7354 L0a) `string_compare` orders
- * two string-kinded values by UTF-16 code units (-1/0/1).
+ * two native strings by UTF-16 code units (-1/0/1): the Prepared lane's one string compare, for typed strings and for
+ * the dynamic relational operators' string arm.
  */
 export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
   "js.value.as_string",

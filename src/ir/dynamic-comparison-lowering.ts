@@ -1,32 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#2949 S5.3, #7354 L0a) The front end's comparisons over the dynamic value: which operand pairs take the carrier, and
- * the relational operators' lowering. Equality over the carrier is `dyn.eq` (from-ast's `tryLowerDynamicEq`); on the
- * Prepared path both are expanded by the dynamic-value legalization (`program/dynamic-comparisons.ts`), and on the
- * ordinary pipeline the relational helpers are codegen's (`dyn-ops.ts`).
+ * (#2949 S5.3, #3167, #7354 L0a) The front end's relational and equality comparisons that are not two proven numbers:
+ * which operand pairs take the dynamic carrier, the relational operators over it, and the compare of two typed
+ * strings. Equality over the carrier is `dyn.eq` (from-ast's `tryLowerDynamicEq`). On the Prepared path the carrier
+ * operators are expanded by the dynamic-value legalization (`program/dynamic-comparisons.ts`); on the ordinary
+ * pipeline the relational helpers are codegen's (`dyn-ops.ts`).
  */
 import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { asVal, irVal, type IrBinop, type IrType, type IrValueId } from "./nodes.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { asVal, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { storedCarrierValue, type FunctionObjectLoweringHost } from "./function-object-lowering.js";
-import { IrUnsupportedError } from "./outcomes.js";
-import {
-  IR_DYN_GE_FN,
-  IR_DYN_GT_FN,
-  IR_DYN_LE_FN,
-  IR_DYN_LT_FN,
-} from "../shared/contracts/dynamic-operator-helpers.js";
+import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
+import { RELATIONAL_OPERATORS, type RelationalOperator } from "../shared/contracts/dynamic-operator-helpers.js";
 
-/** What a comparison is lowered with: from-ast's function-object host (its builder, boxing and lane). */
-export type ComparisonLoweringHost = FunctionObjectLoweringHost;
-
-const RELATIONAL: ReadonlyMap<ts.SyntaxKind, { readonly binop: IrBinop; readonly helper: string }> = new Map([
-  [ts.SyntaxKind.LessThanToken, { binop: "f64.lt", helper: IR_DYN_LT_FN }],
-  [ts.SyntaxKind.LessThanEqualsToken, { binop: "f64.le", helper: IR_DYN_LE_FN }],
-  [ts.SyntaxKind.GreaterThanToken, { binop: "f64.gt", helper: IR_DYN_GT_FN }],
-  [ts.SyntaxKind.GreaterThanEqualsToken, { binop: "f64.ge", helper: IR_DYN_GE_FN }],
-]);
+const I32 = irVal({ kind: "i32" });
 const EQUALITY: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.EqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsToken,
@@ -34,22 +22,29 @@ const EQUALITY: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
 ]);
 
+/** The relational operator `op` is, if it is one. */
+function relationalOperator(op: ts.SyntaxKind): RelationalOperator | undefined {
+  const token = ts.tokenToString(op);
+  return token !== undefined && Object.hasOwn(RELATIONAL_OPERATORS, token)
+    ? RELATIONAL_OPERATORS[token as keyof typeof RELATIONAL_OPERATORS]
+    : undefined;
+}
+
 /**
  * (#7354 L0a) On the Prepared lane, whether a comparison takes the carrier: every pair except two dynamic values (the
- * front end's dynamic arm already has them) and the typed fast paths, which are two numeric scalars of one kind (two
- * numbers) and two strings under an equality operator; an `externref` scalar is an object value, not a number. A string relational, a string against a non-string, two scalars of
- * different kinds (a Boolean against a number) and an object or function operand are JavaScript's coercions, which the
- * carrier's legalization implements.
+ * front end's dynamic arm already has them) and the typed paths, which are two numeric scalars of one kind (two
+ * numbers) and two strings; an `externref` scalar is an object value, not a number. A string against a non-string, two
+ * scalars of different kinds (a Boolean against a number) and an object or function operand are JavaScript's
+ * coercions, which the carrier's legalization implements.
  */
 export function comparisonTakesCarrier(
   op: ts.SyntaxKind,
   lt: IrType,
   rt: IrType,
-  host: ComparisonLoweringHost,
+  host: FunctionObjectLoweringHost,
 ): boolean {
-  if (!host.createsFunctionObjects() || (!RELATIONAL.has(op) && !EQUALITY.has(op))) return false;
-  if (lt.kind === "dynamic" && rt.kind === "dynamic") return false;
-  if (lt.kind === "string" && rt.kind === "string") return RELATIONAL.has(op);
+  if (!host.createsFunctionObjects() || (relationalOperator(op) === undefined && !EQUALITY.has(op))) return false;
+  if ((lt.kind === "dynamic" && rt.kind === "dynamic") || (lt.kind === "string" && rt.kind === "string")) return false;
   const [lv, rv] = [asVal(lt), asVal(rt)];
   return lv === null || rv === null || lv.kind !== rv.kind || lv.kind === "externref";
 }
@@ -61,26 +56,10 @@ export function comparisonTakesCarrier(
 export function carrierOperand(
   value: IrValueId,
   source: ts.Expression,
-  host: ComparisonLoweringHost,
+  host: FunctionObjectLoweringHost,
 ): IrValueId | null {
   const carried = storedCarrierValue(value, source, host);
   return host.builder.typeOf(carried).kind === "dynamic" ? carried : null;
-}
-
-/**
- * The end of the front end's dynamic arm when no producer took the operands: (L0a) a comparison taken for the carrier
- * whose operand has none is a capability gap; any other pair broke the producer promise.
- */
-export function dynamicOperandsUnlowered(op: ts.SyntaxKind, carrierComparison: boolean, funcName: string): Error {
-  const operator = ts.tokenToString(op);
-  if (carrierComparison)
-    return new IrUnsupportedError(
-      "operand-coercion-unsupported",
-      "build",
-      `ir/from-ast: '${operator}' operand has no dynamic carrier in ${funcName}`,
-    );
-  // invariant (producer-promise): every admitted dynamic operand pair has a producer — #7144.
-  return new Error(`ir/from-ast: admitted dynamic '${operator}' has no lowering in ${funcName}`);
 }
 
 /**
@@ -111,12 +90,12 @@ export function tryLowerDynamicRelational(
   rhs: IrValueId,
   lt: IrType,
   rt: IrType,
-  host: ComparisonLoweringHost,
+  host: FunctionObjectLoweringHost,
 ): IrValueId | null {
-  const relational = RELATIONAL.get(op);
+  const relational = relationalOperator(op);
   if (relational === undefined) return null;
   const helper = (l: IrValueId, r: IrValueId): IrValueId => {
-    const result = host.builder.emitCall(irRuntimeFuncRef(relational.helper), [l, r], irVal({ kind: "i32" }));
+    const result = host.builder.emitCall(irRuntimeFuncRef(relational.helper), [l, r], I32);
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(
@@ -131,10 +110,35 @@ export function tryLowerDynamicRelational(
   if ([lt, rt].every((type) => type.kind === "dynamic" || asVal(type)?.kind === "f64")) {
     const lf = relOperandToF64(lhs, lt, host.builder)!;
     const rf = relOperandToF64(rhs, rt, host.builder)!;
-    return host.builder.emitBinary(relational.binop, lf, rf, irVal({ kind: "i32" }));
+    return host.builder.emitBinary(relational.number, lf, rf, I32);
   }
   if (!host.createsFunctionObjects()) return null;
   const dynL = carrierOperand(lhs, expr.left, host);
   const dynR = carrierOperand(rhs, expr.right, host);
   return dynL === null || dynR === null ? null : helper(dynL, dynR);
+}
+
+/**
+ * (#3167) A both-string relational `<`/`>`/`<=`/`>=` (§7.2.13: code-unit order, not locale, not numeric): the -1/0/1
+ * sign of the compare, folded to the operator's boolean by a signed i32 compare against 0 (the sign is total for two
+ * strings). The ordinary pipeline calls the mode-resolved helper (`IR_STRING_COMPARE_FN`, `resolveFunc` in
+ * integration.ts); (#7354 L0a) the Prepared lane's compare is the `js.value.string_compare` intrinsic, the one the
+ * dynamic relational operators' string arm calls too.
+ */
+export function emitStringRelational(
+  op: ts.SyntaxKind,
+  lhs: IrValueId,
+  rhs: IrValueId,
+  host: FunctionObjectLoweringHost,
+): IrValueId {
+  const relational = relationalOperator(op)!;
+  const sign = host.createsFunctionObjects()
+    ? host.builder.emitIntrinsic("js.value.string_compare", [lhs, rhs])
+    : host.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], I32);
+  if (sign === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: string compare produced void result (${host.funcName})`);
+  }
+  const zero = host.builder.emitConst({ kind: "i32", value: 0 }, I32);
+  return host.builder.emitBinary(relational.sign, sign, zero, I32);
 }

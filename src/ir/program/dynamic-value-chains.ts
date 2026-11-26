@@ -42,7 +42,7 @@ export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 /** (#7354 C2) The Boolean that `instanceof`, a comparison and the realm's tests answer (`TEST_RESULT` is unbranded). */
 export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 export const boolean = (value: boolean, result: IrValueId): IrInstr => ({
@@ -430,7 +430,18 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     );
     return { instrs, value: result };
   };
-  return { stringOf, toNumber, primitiveOf };
+  /**
+   * (#7354 L0a) The ToPrimitive of each once-evaluated operand in source order (`+`, the relational operators and
+   * loose equality convert the left operand first): the instructions, then the primitives they answer.
+   */
+  const primitivesOf = (instr: IrInstr, values: readonly IrValueId[]) => {
+    const converted = values.map((value) => primitiveOf(instr, value));
+    return {
+      instrs: converted.flatMap((operand) => operand.instrs),
+      values: converted.map((operand) => operand.value),
+    };
+  };
+  return { stringOf, toNumber, primitivesOf };
 }
 
 /**
@@ -442,7 +453,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
  */
 export function additionBuilder(builders: ChainBuilders, conversions: ReturnType<typeof conversionBuilders>) {
   const { kinds, intrinsic, fresh, kindTest, branch, disjunction } = builders;
-  const { stringOf, primitiveOf } = conversions;
+  const { stringOf, primitivesOf } = conversions;
   const concat = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
     const [left, right, text] = [fresh(), fresh(), fresh()];
     return [
@@ -462,9 +473,7 @@ export function additionBuilder(builders: ChainBuilders, conversions: ReturnType
     ];
   };
   return (instr: IrInstr, values: readonly IrValueId[], result: IrValueId): IrInstr[] => {
-    const converted = values.map((value) => primitiveOf(instr, value));
-    const prelude = converted.flatMap((operand) => operand.instrs);
-    const operands = converted.map((operand) => operand.value);
+    const { instrs: prelude, values: operands } = primitivesOf(instr, values);
     const roles = operands.map((value) => kinds.kindsOf(value).map((kind) => ADD_ROLE[kind]));
     if (roles.some((role) => role.every((r) => r === "concat"))) {
       // A concatenation is a known string to the next `+` of a chain (`"a" + v + "b"`). Legalization meets a value's

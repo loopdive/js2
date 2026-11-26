@@ -3,87 +3,59 @@
  * (#7354 L0a) The dynamic-value legalization of the comparisons whose operands may be of different kinds: the
  * relational operators (the front end's `__ir_dyn_lt/le/gt/ge`, §13.10.1 over IsLessThan §7.2.13) and loose equality
  * (`dyn.eq` with `loose`, IsLooselyEqual §7.2.14). Both are written with the conversions `+` uses
- * (`conversionBuilders`): ToPrimitive is `primitiveOf` and ToNumber `toNumber`, so a comparison runs the one
+ * (`conversionBuilders`): ToPrimitive is `primitivesOf` and ToNumber `toNumber`, so a comparison runs the one
  * ToPrimitive of the dynamic value (`ordinary-to-primitive.ts`).
  *
  * ToPrimitive's hint is `number` for both: IsLessThan asks for it, and IsLooselyEqual's `default` is answered as
  * `number` by every object kind this lane admits (OrdinaryToPrimitive; Date, the one exception, does not exist here).
- * Two strings are ordered by UTF-16 code units (`js.value.string_compare`) and equal as strict equality has them.
+ * Two strings are ordered by UTF-16 code units (`js.value.string_compare`, the Prepared lane's one string compare) and
+ * equal as strict equality has them.
  */
-import type { IrBinop, IrInstr, IrValueId } from "../core/nodes.js";
+import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import {
-  IR_DYN_GE_FN,
-  IR_DYN_GT_FN,
-  IR_DYN_LE_FN,
-  IR_DYN_LT_FN,
-} from "../../shared/contracts/dynamic-operator-helpers.js";
-import { boolean, type ChainBuilders, type conversionBuilders } from "./dynamic-value-chains.js";
+import { RELATIONAL_OPERATORS, type RelationalOperator } from "../../shared/contracts/dynamic-operator-helpers.js";
+import { I32, boolean, type ChainBuilders, type conversionBuilders } from "./dynamic-value-chains.js";
 import { IS_OBJECT, type CarrierKind } from "./dynamic-value-kinds.js";
 
-/** How each relational operator folds a number comparison and a string compare's sign (-1/0/1). */
-interface Relational {
-  readonly number: IrBinop;
-  readonly sign: IrBinop;
-}
-
-/**
- * The relational operators by front-end helper. `a > b` is IsLessThan(b, a) and `a <= b` is the negation of it with
- * undefined (a NaN) as false: for numbers exactly `f64.gt` / `f64.le`, which are false on NaN; for strings the sign's
- * order. ToPrimitive still runs on `a` first for every operator (LeftFirst only orders the two conversions).
- */
-const RELATIONAL: ReadonlyMap<string, Relational> = new Map([
-  [IR_DYN_LT_FN, { number: "f64.lt", sign: "i32.lt_s" }],
-  [IR_DYN_LE_FN, { number: "f64.le", sign: "i32.le_s" }],
-  [IR_DYN_GT_FN, { number: "f64.gt", sign: "i32.gt_s" }],
-  [IR_DYN_GE_FN, { number: "f64.ge", sign: "i32.ge_s" }],
-]);
-
 /** The relational operator the front-end helper `symbol` stands for, if it is one. */
-export const relationalOfHelper = (symbol: string): Relational | undefined => RELATIONAL.get(symbol);
+export const relationalOfHelper = (symbol: string): RelationalOperator | undefined =>
+  Object.values(RELATIONAL_OPERATORS).find((operator) => operator.helper === symbol);
 
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 const NULLISH: readonly CarrierKind[] = ["undefined", "null"];
 const STRING: readonly CarrierKind[] = ["string"];
 
-type Conversions = ReturnType<typeof conversionBuilders>;
-
-export function comparisonBuilders(builders: ChainBuilders, conversions: Conversions) {
+export function comparisonBuilders(
+  builders: ChainBuilders,
+  { toNumber, primitivesOf }: ReturnType<typeof conversionBuilders>,
+) {
   const { admitted, intrinsic, fresh, holds, branch } = builders;
-  const { toNumber, primitiveOf } = conversions;
-  const binary = (op: IrBinop, lhs: IrValueId, rhs: IrValueId, result: IrValueId, resultType: IrType): IrInstr => ({
-    kind: "binary",
-    op,
-    lhs,
-    rhs,
-    result,
-    resultType,
-  });
   /**
-   * Whether both operands (`i32.and`) or either (`i32.or`) hold one of `of`, into `cond`: `known` where the kinds
-   * decide it (one operand decides an `and` false and an `or` true on its own).
+   * Whether every operand (`i32.and`) or some operand (`i32.or`) holds one of `of`, into `cond`, with `known` where
+   * the proven kinds decide it: one operand decides an `every` false and a `some` true on its own. (The chains'
+   * `disjunction` or-s tests it is handed; this decides from the operands' kinds first.)
    */
-  const both = (
+  const operandsHold = (
     instr: IrInstr,
-    op: "i32.and" | "i32.or",
+    quantifier: "every" | "some",
     operands: readonly IrValueId[],
     of: readonly CarrierKind[],
     cond: IrValueId = fresh(),
     resultType: IrType = I32,
   ) => {
     const tests = operands.map((value) => holds(instr, value, of));
-    const decides = op === "i32.or";
+    const decisive = quantifier === "some";
     const decided = tests.map((test) => test.known);
-    const known = decided.includes(decides) ? decides : decided.every((d) => d === !decides) ? !decides : undefined;
+    const known = decided.includes(decisive) ? decisive : decided.every((d) => d === !decisive) ? !decisive : undefined;
+    const op = decisive ? "i32.or" : "i32.and";
     const instrs: IrInstr[] = [
       ...tests.flatMap((test) => test.instrs),
-      binary(op, tests[0]!.cond, tests[1]!.cond, cond, resultType),
+      { kind: "binary", op, lhs: tests[0]!.cond, rhs: tests[1]!.cond, result: cond, resultType },
     ];
     return { instrs, cond, known };
   };
   /** `then` where the test holds, `else_` where not: one arm when the kinds decide it, a branch otherwise. */
   const choose = (
-    test: ReturnType<typeof both>,
+    test: ReturnType<typeof operandsHold>,
     then: (r: IrValueId) => IrInstr[],
     else_: (r: IrValueId) => IrInstr[],
     result: IrValueId,
@@ -104,7 +76,7 @@ export function comparisonBuilders(builders: ChainBuilders, conversions: Convers
     resultType: IrType,
   ): IrInstr[] =>
     choose(
-      both(instr, "i32.and", operands, STRING),
+      operandsHold(instr, "every", operands, STRING),
       textual,
       (r) => {
         const numbers = operands.map(() => fresh());
@@ -113,69 +85,69 @@ export function comparisonBuilders(builders: ChainBuilders, conversions: Convers
       result,
       resultType,
     );
-  /** ToPrimitive of each operand, left first (§7.2.13 step 1/2 run both before either is compared). */
-  const primitives = (instr: IrInstr, operands: readonly IrValueId[]) => {
-    const converted = operands.map((value) => primitiveOf(instr, value));
-    return {
-      instrs: converted.flatMap((operand) => operand.instrs),
-      values: converted.map((operand) => operand.value),
-    };
-  };
 
   /** `l <op> r` of two once-evaluated carrier operands into `result` (IsLessThan with the operator's fold). */
-  const relational = (instr: IrInstr, operator: Relational, operands: readonly IrValueId[], result: IrValueId) => {
-    const { instrs, values } = primitives(instr, operands);
+  const relational = (
+    instr: IrInstr,
+    operator: RelationalOperator,
+    operands: readonly IrValueId[],
+    result: IrValueId,
+  ) => {
+    const type = instr.resultType!;
+    const { instrs, values } = primitivesOf(instr, operands);
     const compare = (r: IrValueId): IrInstr[] => {
-      const [sign, zero] = [fresh(), fresh()];
+      const [left, right, sign, zero] = [fresh(), fresh(), fresh(), fresh()];
       return [
-        intrinsic(instr, "js.value.string_compare", values, sign),
+        intrinsic(instr, "js.value.as_string", [values[0]!], left),
+        intrinsic(instr, "js.value.as_string", [values[1]!], right),
+        intrinsic(instr, "js.value.string_compare", [left, right], sign),
         { kind: "const", value: { kind: "i32", value: 0 }, result: zero, resultType: I32 },
-        binary(operator.sign, sign, zero, r, instr.resultType!),
+        { kind: "binary", op: operator.sign, lhs: sign, rhs: zero, result: r, resultType: type },
       ];
     };
     const order = (numbers: readonly IrValueId[], r: IrValueId): IrInstr[] => [
-      binary(operator.number, numbers[0]!, numbers[1]!, r, instr.resultType!),
+      { kind: "binary", op: operator.number, lhs: numbers[0]!, rhs: numbers[1]!, result: r, resultType: type },
     ];
-    return [...instrs, ...textOrNumber(instr, values, compare, order, result, instr.resultType!)];
+    return [...instrs, ...textOrNumber(instr, values, compare, order, result, type)];
   };
 
   /**
    * `l == r` of two once-evaluated carrier operands into `result`. `undefined` and `null` equal each other and nothing
    * else, without a conversion; two objects are equal only as the same object, without a conversion; otherwise the
    * object side (if any) is converted (§7.2.14 steps 11-12) and the primitives compared: a conversion that answers
-   * `undefined` or `null` equals nothing here (the other side is neither), two texts compare as strings, and any other
-   * pair as numbers (a Boolean's ToNumber first, steps 9-10, and a string's against a number, steps 5-6, are one rule).
+   * `undefined` or `null` equals nothing here (the other side is neither), two strings compare as strings, and any
+   * other pair as numbers (a Boolean's ToNumber first, steps 9-10, and a string's against a number, steps 5-6, are one
+   * rule).
    */
   const looseEquality = (instr: IrInstr, operands: readonly IrValueId[], result: IrValueId): IrInstr[] => {
     const type = instr.resultType!;
-    const nullish = both(instr, "i32.or", operands, NULLISH);
     const bothNullish = (r: IrValueId): IrInstr[] => {
-      const test = both(instr, "i32.and", operands, NULLISH, r, type);
+      const test = operandsHold(instr, "every", operands, NULLISH, r, type);
       return test.known === undefined ? test.instrs : [boolean(test.known, r)];
     };
     const objects = admitted.filter((kind) => IS_OBJECT[kind]);
     const identity = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", operands, r)];
     const converted = (r: IrValueId): IrInstr[] => {
-      const { instrs, values } = primitives(instr, operands);
-      const equalTexts = (s: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", values, s)];
+      const { instrs, values } = primitivesOf(instr, operands);
+      const equalStrings = (s: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", values, s)];
       const equalNumbers = (numbers: readonly IrValueId[], s: IrValueId): IrInstr[] => [
-        binary("f64.eq", numbers[0]!, numbers[1]!, s, type),
+        { kind: "binary", op: "f64.eq", lhs: numbers[0]!, rhs: numbers[1]!, result: s, resultType: type },
       ];
       return [
         ...instrs,
         ...choose(
-          both(instr, "i32.or", values, NULLISH),
+          operandsHold(instr, "some", values, NULLISH),
           (s) => [boolean(false, s)],
-          (s) => textOrNumber(instr, values, equalTexts, equalNumbers, s, type),
+          (s) => textOrNumber(instr, values, equalStrings, equalNumbers, s, type),
           r,
           type,
         ),
       ];
     };
     return choose(
-      nullish,
+      operandsHold(instr, "some", operands, NULLISH),
       bothNullish,
-      (r) => choose(both(instr, "i32.and", operands, objects), identity, converted, r, type),
+      (r) => choose(operandsHold(instr, "every", operands, objects), identity, converted, r, type),
       result,
       type,
     );

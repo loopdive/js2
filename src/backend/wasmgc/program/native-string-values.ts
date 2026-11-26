@@ -563,7 +563,7 @@ export function reserveNativeStringValueResources(
             ? {
                 layout: strings.layout,
                 flatten: flatten.flatten,
-                ...(input.plan.dynamicValues.strictEqStrings ? { equals: equality!.equals } : {}),
+                equals: input.plan.dynamicValues.strictEqStrings ? equality!.equals : undefined,
               }
             : undefined,
         )

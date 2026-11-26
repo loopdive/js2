@@ -88,6 +88,13 @@ export const EXTERNREF_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
   result: I32_TYPE,
 });
 
+/** (#7354 L0a) `(string, string) -> i32` — the -1/0/1 code-unit order of two native strings. */
+const STRING_PAIR_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([Object.freeze({ kind: "string" as const }), Object.freeze({ kind: "string" as const })]),
+  result: I32_TYPE,
+});
+
 /** (#7354 Str2) `(externref) -> string` — the native string a dynamic value that is a string carries. */
 const EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
@@ -236,7 +243,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_string": definition("js.value.is_string", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
-  "js.value.string_compare": definition("js.value.string_compare", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.string_compare": definition("js.value.string_compare", STRING_PAIR_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.to_boolean": definition("js.value.to_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.undefined": definition("js.value.undefined", NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.value.unsupported": definition("js.value.unsupported", NULLARY_TO_STRING_INTRINSIC_SIGNATURE),

@@ -19,10 +19,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import { buildStringEqualityBody } from "../runtime/wasmgc/values/string-equality-body.js";
-import {
-  buildStringCompareBody,
-  buildStringCompareScratchLocals,
-} from "../runtime/wasmgc/values/string-compare-body.js";
+import { buildStringCompareDefinition } from "../runtime/wasmgc/values/string-compare-body.js";
 import { buildStringConcatDefinition } from "../runtime/wasmgc/values/string-concat-bodies.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -374,15 +371,8 @@ export function emitStrCompareHelpers(shared: NativeStrShared): void {
     ctx.nativeStrHelpers.set("__str_compare", funcIdx);
 
     const layout = { nativeStrTypeIdx: strTypeIdx, nativeStrDataTypeIdx: strDataTypeIdx };
-    const body = buildStringCompareBody(layout, { a: 0, b: 1, scratch: 2 });
-
-    pushDefinedFunc(ctx, funcIdx, {
-      name: "__str_compare",
-      typeIdx,
-      locals: buildStringCompareScratchLocals(layout),
-      body: wrapBodyWithFlatten(body, [0, 1]),
-      exported: false,
-    });
+    const { locals, body } = buildStringCompareDefinition(layout, getFlattenIdx());
+    pushDefinedFunc(ctx, funcIdx, { name: "__str_compare", typeIdx, locals, body, exported: false });
   }
 }
 
