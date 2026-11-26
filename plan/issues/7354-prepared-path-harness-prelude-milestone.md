@@ -5763,6 +5763,85 @@ Effect:
 
 It is tested: 8 O1c tests, 2 mutations, 804/804 Prepared bytes identical. Take it into the PR of whichever slice can show a yield for it (S12, or O6).
 
+### O7: compound member writes on a dynamic value (plan, 2026-11-26, `claude/7354-o7-compound-member` from main c3b7be667a)
+
+**Measured.** The rows are S9's census failure cluster 10 (main 6694a8b8; list from S9):
+`language/expressions/compound-assignment/11.13.2-23-s.js` … `-44-s.js`, 22 files, all `onlyStrict`.
+
+- Every one is `assert.throws(TypeError, function(){ obj.prop OP= 20; })`, then `assert.sameValue(obj.prop, v)`.
+  - In 23–33, `prop` is non-writable (`defineProperty` with `writable: false`).
+  - In 34–44, `prop` is an accessor with `set: undefined`.
+  - The 11 operators are `*= /= %= += -= <<= >>= >>>= &= ^= |=`.
+- On main c3b7be667a all 22 trap at run time, the same as on 6694a8b8. The function expression gets the U abort body for
+  "ir/from-ast: compound property write on dynamic not in IR scope" (`lowerPropertyCompound`, which takes only
+  `object` / `class` receivers).
+- **What else stands in the way: nothing.** With the real harness (assert.js + sta.js, strict), the same programs with
+  `obj.prop = 20` in place of `obj.prop *= 20` **pass**, for both the non-writable and the accessor half. The plain
+  dynamic write (O3, `dyn.member_set` with the strictness bit) already throws the strict TypeError. So the expected
+  yield is +22 on the ES5 census.
+- **S12's (1), "method call … on externref not in slice 4": 0 rows** on 6694a8b8 (S9), as a first stop or as an
+  abort-body refusal. So it is not part of O7.
+
+**Target structure: from-ast's compound arm, no new IR operation.**
+
+- `lowerPropertyCompound` (`src/ir/from-ast.ts`) gains the dynamic arm. Its condition is the same as the plain write's
+  `dynamicNamedWrite` in `lowerPropertyAssignment`: a dynamic or raw-externref receiver (`isRawExternrefReceiver`), in
+  code whose strictness is known (`cx.functionCodeStrict !== undefined`), with an identifier name.
+  1. Evaluate the receiver once.
+  2. Box the key as a string.
+  3. `old = emitDynMemberGet(recv, key)`. This is GetValue, before the RHS (§13.15.2 step 1), and it runs a getter
+     through the realm (O2).
+  4. Lower the RHS as dynamic (a synthetic `1` for `++` / `--`).
+  5. Apply the operator (below).
+  6. `emitDynMemberSet(recv, key, result, !cx.functionCodeStrict)`. PutValue: OrdinarySet's false is the strict
+     TypeError, which is what the 22 rows need, or a sloppy no-op.
+- **Reuse, and the duplicate this removes:**
+  - The receiver/key boxing of the plain write's dynamic arm becomes one helper. Both the plain arm and the compound
+    arm call it (`dynamicNamedMember(lhs, recv, cx) → { target, key } | undefined`), so it is no longer written twice.
+  - The operator step is the identifier compound's dynamic arms in `lowerCompoundAssignment`:
+    - `+=` → `emitDynamicAdd` (ToPrimitive, then concat or sum);
+    - the numeric operators → `numberCompoundBinaryOperator` + `relOperandToF64` (ToNumber of a dynamic operand)
+      + `emitNumberBinary`, with the result boxed `NumberF64`.
+    That step moves into one helper, `dynamicCompoundResult(op, old, rhs, cx)`, called by both the identifier
+    dynamic-slot arms and the new member arm. Admission stays with `compoundWriteAdmissible`.
+- **Scope:** statement position (`lowerAdoptedMutatingStatement`, where `lowerPropertyCompound` is called) and a named
+  key.
+  - `o[k] op= v` (a computed key) stays a named refusal: the dynamic member read refuses a computed key.
+  - Expression-position compound members stay refused as they are today.
+  - `o?.x op= v` stays refused.
+
+**Acceptance.**
+
+- New `tests/issue-7354-o7-compound-member.test.ts`, with the O2 run harness (the right answer returns, a wrong twin
+  throws, node agrees). Programs:
+  - each operator on a writable data property of a script-var object, and of a parameter;
+  - `++` / `--`;
+  - `+=` with a string operand;
+  - a getter/setter pair, with GetValue before the RHS and one get and one set observed;
+  - strict non-writable → TypeError, with the value unchanged;
+  - strict getter-only → TypeError;
+  - sloppy non-writable → no-op;
+  - a nullish receiver → TypeError before the RHS.
+- Named refusal pins:
+  - a computed key;
+  - expression position.
+- Two rows from the cluster, run through the real-harness probe in the test (one non-writable, one accessor).
+- Census of the 22 files: 22 pass, 0 regressions in the 411 sample, and the before/after counts quoted with the runner
+  of `plan/samples/README-7354-o411.md`.
+- Bytes:
+  - `check:prepared-bytes` rows change only where a program has a dynamic compound member write;
+  - the identifier compound refactor must leave the 13 playground examples × default/standalone and the equivalence
+    gate byte-identical.
+- Mutations:
+  - the arm skips the read (uses the RHS alone);
+  - the sloppy bit is inverted;
+  - `+=` takes the numeric path.
+- **Code quality:**
+  - one dynamic member target helper, shared by assignment and compound;
+  - one dynamic compound operator helper, shared by the identifier and member arms;
+  - no new IR operation and no new module;
+  - from-ast's net growth is offset by the two extractions. If a grant is still needed, it is stated with its reason.
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
