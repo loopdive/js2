@@ -47,6 +47,14 @@ export function capturePreparedJobRequest(options, targetOverride) {
   });
 }
 
+/**
+ * The worker's one compile-refusal rule, for both lanes: an unsuccessful result or an error-severity diagnostic.
+ * A warning, such as a TypeScript error the compiler tolerates in JS input, does not refuse a compile.
+ */
+export function compileResultHasErrors(result) {
+  return !result.success || result.errors.some((error) => error.severity === "error");
+}
+
 export function refusePreparedArtifactPaths(request, wasmPath, metaPath) {
   if (request && (wasmPath !== undefined || metaPath !== undefined))
     fail("strict artifact cache paths are unavailable; no legacy artifact read/write");
@@ -154,7 +162,7 @@ export function observePreparedExecutionJobResult(compiler, result, execution, r
     !base.units.abi.length ||
     result.success !== true ||
     !Array.isArray(result.errors) ||
-    result.errors.length !== 0
+    compileResultHasErrors(result)
   )
     fail("complete successful units/errors are missing");
   if (

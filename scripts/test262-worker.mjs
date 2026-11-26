@@ -1,5 +1,6 @@
 import {
   capturePreparedJobRequest,
+  compileResultHasErrors,
   refusePreparedArtifactPaths,
   observePreparedExecutionJobResult,
   observePreparedFrontendJobResult,
@@ -2245,7 +2246,7 @@ process.on("message", async (msg) => {
       preparedRequest,
     );
     preparedResult = result;
-    preparedCompilationSucceeded = result.success === true && result.errors.length === 0;
+    preparedCompilationSucceeded = !compileResultHasErrors(result);
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
   } catch (err) {
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
@@ -2308,11 +2309,12 @@ process.on("message", async (msg) => {
   const compileMs = performance.now() - compileStart;
   const compileMetadata = buildResultMetadata(result, false);
 
-  const hasErrors = !result.success || result.errors.some((e) => e.severity === "error");
+  const hasErrors = compileResultHasErrors(result);
 
   // oracle-version-exempt: explicit IR was previously unavailable and has its own result namespace;
   // the added strict refusal cannot reclassify any existing legacy verdict.
-  if (preparedRequest && (hasErrors || result.errors.length !== 0)) {
+  // A Prepared result is refused on the ordinary lane's predicate: a warning the compiler tolerates does not refuse it.
+  if (preparedRequest && hasErrors) {
     const ownedFrontendFailure = compilerBundle.requiredPreparedFrontendFailure(result);
     if (execute && isNegative && !isRuntimeNegative && ownedFrontendFailure) {
       try {
@@ -2435,7 +2437,8 @@ process.on("message", async (msg) => {
   // diagnostic is a static rejection => pass. (This warning arm is part of the
   // documented-lenient compile-SUCCEEDED fallback; strictly requiring a
   // severity-error diagnostic of the expected type is the #2912 follow-up.)
-  if (execute && isNegative && result.errors.length > 0) {
+  // The Prepared lane certifies a compile-time negative only through its owned frontend failure (above), never a warning.
+  if (!preparedRequest && execute && isNegative && result.errors.length > 0) {
     const warnCodes = result.errors.filter((e) => e.code).map((e) => e.code);
     const warnMsg = result.errors.map((e) => e.message).join("; ");
     const matched = negativeCompileErrorMatches(expectedErrorType, warnCodes, warnMsg);
