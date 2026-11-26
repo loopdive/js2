@@ -2,6 +2,7 @@
 import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
   buildBuiltinVectorCall,
+  type BuiltinCallArguments,
   builtinFailure,
   builtinUndefined,
   sourceClosureOrdinal,
@@ -77,8 +78,8 @@ export function buildBuiltinFunctionGetOwn(d: BuiltinFunctionPropertyOperands): 
  * (#7354 O2) Call(`callee`, `receiver`, the locals `args`) of an accessor half, which ToPropertyDescriptor's IsCallable
  * left a built-in or a source closure, leaving the result: a built-in through the kernel's own call
  * (`buildBuiltinVectorCall`); a source closure through the program's dispatcher of that arity, or, without
- * `accessorCalls` (no source closure can be stored as a half: `realmAccessors`), the trap. `args`: the argument locals
- * and a free externref local for their vector. The callee is program code: a caller must not use anything it computed about an
+ * `accessorCalls` (no source closure can be stored as a half: `realmAccessors`), the trap. `args`: the arguments and a
+ * free externref local for their vector. The callee is program code: a caller must not use anything it computed about an
  * object before the call.
  */
 export type AccessorCallOperands = Pick<
@@ -89,7 +90,7 @@ export function buildAccessorCall(
   d: AccessorCallOperands,
   callee: number,
   receiver: number,
-  args?: { readonly vector: number; readonly values: readonly number[] },
+  args?: BuiltinCallArguments,
 ): Instr[] {
   const values = args?.values ?? [];
   const source = d.accessorCalls?.[values.length];
@@ -101,13 +102,8 @@ export function buildAccessorCall(
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      then: source ? [get(receiver), get(callee), ...values.map(get), call(source)] : [{ op: "unreachable" }],
-      else: buildBuiltinVectorCall(
-        d,
-        [get(callee)],
-        [get(receiver)],
-        args && { vector: args.vector, values: values.map((value) => [get(value)]) },
-      ),
+      then: source ? [get(receiver), get(callee), ...values.flat(), call(source)] : [{ op: "unreachable" }],
+      else: buildBuiltinVectorCall(d, [get(callee)], [get(receiver)], args),
     },
   ];
 }

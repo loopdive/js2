@@ -164,7 +164,7 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
         { op: "local.tee", index: setter },
         { op: "ref.is_null" },
         { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-        ...buildAccessorCall(d, setter, 3, { vector, values: [2] }),
+        ...buildAccessorCall(d, setter, 3, { vector, values: [[{ op: "local.get", index: 2 }]] }),
         { op: "drop" },
         { op: "i32.const", value: 1 },
         { op: "return" },

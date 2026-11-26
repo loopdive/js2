@@ -411,14 +411,15 @@ export function buildBuiltinFunctionArgument(
     },
   ];
 }
-/**
- * Call(callee, receiver, args) of a built-in through the kernel's `callVector`, leaving the result. Arguments are pushed
- * onto a vector built in their externref local `vector`; without, the new vector is passed as made.
- */
+/** A call's arguments, each an instruction sequence, and the free externref local their vector is built in. */
 export interface BuiltinCallArguments {
   readonly vector: number;
   readonly values: readonly (readonly Instr[])[];
 }
+/**
+ * Call(callee, receiver, args) of a built-in through the kernel's `callVector`, leaving the result. Without `args` the
+ * new vector is passed as made.
+ */
 export function buildBuiltinVectorCall(
   d: Pick<BuiltinFunctionBodyOperands, "newVector" | "push" | "vectorTypeIdx" | "callVector">,
   callee: readonly Instr[],
