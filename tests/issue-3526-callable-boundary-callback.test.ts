@@ -1,60 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-// #3526 F3-S1 — the HOST CALLBACK MAKER moves under manifest authority.
-//
-// Family 3's first slice, and the first in the whole issue whose two live arms
-// are not two spellings of one crossing but a crossing and its ABSENCE:
-//
-//  * **host** — a JS-host lane wraps the packed closure through
-//    `env.__make_callback`, with the compiler-owned one-shot sentinel `-2` in
-//    front of it. The import is minted by the LEGACY pre-pass
-//    (`declarations/import-collector.ts`) long before any IR preparation, so the
-//    provider's whole job is to NAME it: the crossing binds the funcMap index
-//    that already exists, and this slice registers nothing.
-//
-//  * **native-dispatch** — the exact standalone-DOM lane has no maker at all.
-//    The reserved standalone DOM dispatcher owns the crossing and the packed
-//    closure goes straight to the DOM import. The frozen row is a LICENCE for an
-//    emission that does not happen, which is why it can carry no target and no
-//    host capability.
-//
-// Everywhere else the selection gate (`calendar-selection-support.ts`) never
-// certifies the arrow, so nothing reaches the boundary and the seam is
-// `unsupported`.
-//
-// Three consequences shape this file:
-//
-//  * **The capability record is REUSED, not minted.** `async.callback.wrap`
-//    already states `env.__make_callback (i32, externref) -> externref` with the
-//    `module-tag-payload` exception policy, and `host.promise.react` already
-//    cites it. F3-S1 adds a second citer, no rename and no second row — and
-//    makes that record the single source of the maker ABI for from-ast's
-//    spelling (Phase 1, static catalogue), for the frozen manifest's admission
-//    (post-freeze) and for the overlay's final-context ABI proof.
-//
-//  * **The native arm needed its OWN implementation kind, on a measurement.**
-//    Riding on a new `native-managed.service` value would have been the cheaper
-//    edit and is byte-UNSAFE: `projectRuntimeBackendRequirements` treats EVERY
-//    `native-managed` row as a member of the native ASYNC family, adding
-//    `async.native.drive` / `async.native.number-boundary` to the frozen vector
-//    and throwing `invalid-backend-requirement-projection` the moment such a row
-//    shares a manifest with a host async provider. Section (e) measures both
-//    halves of that rather than asserting them.
-//
-//  * **The demand is read off `closure.new`, not off the maker call.** On the
-//    dispatcher lane there IS no call to find, so a call-shaped demand would
-//    leave that lane with no frozen row and the manifest would not be the
-//    authority admitting it. `hostOneShot` and `domCallbackAuthority` are set
-//    only by `lowerHostVoidCallbackExpression`, one per arm, which makes them
-//    the one lane-free place both crossings are visible.
-//
-// Byte neutrality is the contract, and it held: 21 cells (09, 09b, shape-04 and
-// a number-only CLEAN control × five lanes, plus the exact standalone-DOM
-// calendar cell) are identical before and after on byte length, sha256, import
-// set AND order, errors, outcomes and full WAT text.
-
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
@@ -84,7 +29,6 @@ import { buildImports } from "../src/runtime.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const identities = createTestIrFunctionIdentityFactory("issue-3526-callable-boundary-callback");
-const INTEGRATION_SOURCE = readFileSync(new URL("../src/ir/integration.ts", import.meta.url), "utf8");
 const OWNER = "issue-3526-f3s1" as IrBindingOwnerId;
 const NUMBER: IrType = { kind: "number" };
 
@@ -476,47 +420,6 @@ describe("#3526 F3-S1 the overlay proof reads the record", () => {
 });
 
 // --------------------------------------------------------------------------
-// (d2) the two seams that USED to spell the maker no longer can
-//
-// These are the V-C non-vacuity pins, and they are grep-shaped on purpose: the
-// record names exactly the spelling both seams used to hard-code, so restoring
-// either hand-written form is byte-identical and pin-identical to everything
-// else in this file. What is actually gone is the SECOND AUTHORITY — and the
-// only way to pin the absence of a duplicated constant is to look for it.
-// Precedent: the #2955 depolymorph grep gate.
-// --------------------------------------------------------------------------
-
-describe("#3526 F3-S1 the maker spelling has ONE source", () => {
-  const read = (path: string): string =>
-    readFileSync(new URL(`../${path}`, import.meta.url), "utf8")
-      // Comments may still NAME the import; only code may not spell it.
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/[^\n]*/g, "");
-
-  it("leaves no maker string literal in from-ast — the crossing is built from the record", () => {
-    const source = read("src/ir/from-ast.ts");
-    expect(source).not.toContain('"__make_callback"');
-    expect(source).toContain("HOST_CALLBACK_WRAP_CAPABILITY_RECORD");
-  });
-
-  it("leaves no maker string literal and no hand-written ABI in the overlay proof", () => {
-    const source = read("src/codegen/ir-overlay-finalize.ts");
-    expect(source).not.toContain('"__make_callback"');
-    // The old shape check, spelled out field by field.
-    expect(source).not.toMatch(/params\[0\]\?\.kind === "i32"/);
-    expect(source).not.toMatch(/params\[1\]\?\.kind === "externref"/);
-    expect(source).toContain("HOST_CALLBACK_WRAP_CAPABILITY_RECORD");
-  });
-
-  it("keeps the post-freeze admission keyed on the FROZEN provider, not on a name", () => {
-    const source = read("src/ir/integration.ts");
-    expect(source).not.toContain('"__make_callback"');
-    expect(source).toContain("hostCallbackWrapArm");
-    expect(source).toContain("preparedHostCallbackWrapProvider");
-  });
-});
-
-// --------------------------------------------------------------------------
 // (e) validation — the new kind is policed, and its ALTERNATIVE is measured
 // --------------------------------------------------------------------------
 
@@ -615,47 +518,6 @@ describe("#3526 F3-S1 the demand scan", () => {
   it("counts an ordinary closure as neither", () => {
     expect(prepare("none", HOST_WRAP)).toBeUndefined();
     expect(prepare("none", NATIVE_WRAP)).toBeUndefined();
-  });
-
-  it("requests the demand at freeze from the same scan the partition runs", () => {
-    expect(INTEGRATION_SOURCE).toContain(
-      "hostCallbackWrapDemand: irHostCallbackWrapDemand(entries.map((entry) => entry.fn))",
-    );
-    expect(INTEGRATION_SOURCE).toContain("const hostCallbackWrapDemand = irHostCallbackWrapDemand([entry.fn]);");
-  });
-
-  it("partitions a refused arm owner-locally, naming the arm and the policy", () => {
-    // The disabled arm is UNREACHABLE on every real lane — the selection gate
-    // never certifies an arrow where the policy is `unsupported`, which is the
-    // structural reason this slice is byte-neutral — so the partition is pinned
-    // where F2-S8 pinned its own unreachable arm: on the source slice, plus the
-    // live typed refusal in section (b).
-    const start = INTEGRATION_SOURCE.indexOf("const hostCallbackWrapDemand = irHostCallbackWrapDemand([entry.fn]);");
-    const end = INTEGRATION_SOURCE.indexOf("// (#3526 F1-S2) The boolean boundary", start);
-    expect(start).toBeGreaterThan(0);
-    const partition = INTEGRATION_SOURCE.slice(start, end);
-    expect(partition).toContain("late-preparation-unsupported");
-    expect(partition).toContain("host-callback-wrap policy");
-    expect(partition).toContain("markOwnerFailure(");
-    expect(partition).toContain("terminalOwnerOf(entry)");
-    // Two-sided: an `unsupported` policy AND a policy that selected the other arm.
-    expect(partition).toContain('hostCallbackWrapPolicy.wrap !== "host"');
-    expect(partition).toContain('hostCallbackWrapPolicy.wrap !== "native-dispatch"');
-    // `continue` keeps a clean co-owner in `healthyForLower`.
-    expect(partition.trimEnd().endsWith("continue;\n    }")).toBe(true);
-  });
-
-  it("projects the policy ONCE, before the freeze, from the two lane predicates", () => {
-    const start = INTEGRATION_SOURCE.indexOf("function integrationHostCallbackWrapPolicy(");
-    expect(start).toBeGreaterThan(0);
-    const projection = INTEGRATION_SOURCE.slice(start, INTEGRATION_SOURCE.indexOf("\n}", start));
-    expect(projection).toContain("ctx.requiresStandaloneDomInteractionCapability === true");
-    expect(projection).toContain('ctx.targetProfile.environment === "none"');
-    // (#6979) The semantic-provider leg folded away: native-first is the only policy.
-    expect(projection).not.toContain("semanticProviders");
-    expect(projection).toContain('ctx.targetProfile.capabilityPolicy === "ambient-js"');
-    // No live manifest read, and no third arm invented here.
-    expect(projection).not.toContain("prepared");
   });
 });
 

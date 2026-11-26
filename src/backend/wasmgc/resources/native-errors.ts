@@ -13,11 +13,18 @@ import {
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { NATIVE_ERROR_CONSTRUCTORS } from "../../../runtime/contracts/native-realm-catalog.js";
 
 export interface NativeErrorDependencies {
   readonly strings: NativeStringLiteralReservations;
   /** Supplied from the existing tag authority; no second builtin catalog. */
   readonly typeErrorTag: number;
+  /**
+   * (#7354 G1) Where the realm holds the Error family, its error creation `(message, selector)`: every realm TypeError
+   * is then an ordinary object of %TypeError.prototype%, the one representation a program that can read an error has.
+   * Elsewhere no program code reads a thrown value, and `$Error_struct` stays.
+   */
+  readonly create?: FunctionReservation;
 }
 export interface NativeErrorReservations {
   readonly type: TypeReservation;
@@ -80,7 +87,8 @@ export function requireNativeErrorReservations(
     owner.key !== expectedRequirements.key ||
     owner.sourceDependencies !== expectedDependencies ||
     owner.dependencies.strings !== expectedDependencies.strings ||
-    owner.dependencies.typeErrorTag !== expectedDependencies.typeErrorTag
+    owner.dependencies.typeErrorTag !== expectedDependencies.typeErrorTag ||
+    owner.dependencies.create !== expectedDependencies.create
   )
     throw new Error("native errors: substituted or stale producer inputs");
   requireNativeStringLiteral(tx, expectedDependencies.strings, "TypeError");
@@ -115,16 +123,23 @@ export function fillNativeErrorResources(tx: PhysicalModuleReservations, pack: N
   if (owner.filled) throw new Error("native errors: duplicate fill");
   tx.physicalIndex(pack.type);
   const name = requireNativeStringLiteral(tx, owner.dependencies.strings, "TypeError");
+  const { create } = owner.dependencies;
   tx.fillFunction(pack.newTypeError, {
     locals: [],
-    body: buildErrorConstructorBody(
-      pack.type.typeIndex,
-      owner.dependencies.typeErrorTag,
-      1,
-      name.kind === "global"
-        ? { kind: "global", index: tx.physicalIndex(name.global), representation: "gc" }
-        : { kind: "callable", handle: name.function.handle, representation: "gc" },
-    ),
+    body: create
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "i32.const", value: NATIVE_ERROR_CONSTRUCTORS.indexOf("TypeError") },
+          { op: "call", funcIdx: create.handle },
+        ]
+      : buildErrorConstructorBody(
+          pack.type.typeIndex,
+          owner.dependencies.typeErrorTag,
+          1,
+          name.kind === "global"
+            ? { kind: "global", index: tx.physicalIndex(name.global), representation: "gc" }
+            : { kind: "callable", handle: name.function.handle, representation: "gc" },
+        ),
   });
   owner.filled = true;
 }

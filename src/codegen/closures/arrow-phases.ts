@@ -37,7 +37,7 @@ import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js"
 import { publishClosureSourceInfo } from "./closure-type-sources.js"; // (#6913)
 import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
 import { isWithinNode, writeTargetsByName } from "./outer-write-index.js"; // (#6988)
-import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis } from "../../shared/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
 // (#4440) object-literal accessors / methods — §10.2.9 comes from the property key

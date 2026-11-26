@@ -6,6 +6,7 @@ import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./pr
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { checkUnlessSettled, settledAtIssue, type PreparedIrSettlement } from "./settled-verdict.js";
 
 export type NativeValueStringRepresentation = "native-string" | "primitive-only";
 export interface NativeValueResourcePlan {
@@ -18,7 +19,12 @@ interface Source {
   readonly projection: PreparedIrProgramRuntimeProjection;
   readonly strings: NativeValueStringRepresentation;
 }
-const sources = new WeakMap<NativeValueResourcePlan, Source>();
+interface Issued {
+  readonly source: Source;
+  /** The re-derivation below, settled at issue once the plan and its source can no longer change. */
+  readonly authentication: PreparedIrSettlement;
+}
+const sources = new WeakMap<NativeValueResourcePlan, Issued>();
 
 function fail(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", "native value resources: " + detail);
@@ -112,17 +118,20 @@ export function deriveNativeValueResourcePlan(
   projection: PreparedIrProgramRuntimeProjection,
   strings: NativeValueStringRepresentation,
 ): NativeValueResourcePlan {
-  const source = { program, projection, strings };
+  const source = Object.freeze({ program, projection, strings });
   const plan = freezePreparedIrValue(calculate(source)) as NativeValueResourcePlan;
-  sources.set(plan, source);
+  sources.set(plan, { source, authentication: settledAtIssue(Object.freeze([plan, source])) });
   return plan;
 }
 
 /** Require the issued plan and recheck its live selected source; never accept a copied absence flag. */
 export function assertNativeValueResourcePlan(plan: NativeValueResourcePlan): void {
-  const source = sources.get(plan);
-  if (!source || preparedIrDataMismatch(plan, calculate(source)) !== undefined)
-    fail("unissued or stale selected native value requirements");
+  const issued = sources.get(plan);
+  if (!issued) fail("unissued or stale selected native value requirements");
+  checkUnlessSettled(issued.authentication, Object.freeze([plan, issued.source]), () => {
+    if (preparedIrDataMismatch(plan, calculate(issued.source)) !== undefined)
+      fail("unissued or stale selected native value requirements");
+  });
 }
 
 /** Join an issued plan to its exact source; visible plan equality grants no authority. */
@@ -132,7 +141,7 @@ export function assertNativeValueResourcePlanFor(
   projection: PreparedIrProgramRuntimeProjection,
   strings: NativeValueStringRepresentation,
 ): void {
-  const source = sources.get(plan);
+  const source = sources.get(plan)?.source;
   if (!source || source.program !== program || source.projection !== projection || source.strings !== strings)
     fail("native value requirements were not issued for this program/projection/representation");
   assertNativeValueResourcePlan(plan);

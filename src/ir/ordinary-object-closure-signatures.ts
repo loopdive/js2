@@ -12,6 +12,20 @@ export type OrdinaryObjectClosureSignatureResult =
   | { readonly kind: "supported"; readonly signature: IrClosureSignature }
   | { readonly kind: "unsupported"; readonly detail: string };
 
+/**
+ * `node` sits inside an object literal that has an accessor (a descriptor literal). A closure literal there, nested
+ * ones included, takes its signature from the checker ({@link resolveOrdinaryObjectClosureSignature}); no other
+ * signature rule applies to it.
+ */
+export function ownedByDescriptorLiteral(node: ts.Node): boolean {
+  const hasAccessor = (ancestor: ts.Node): boolean =>
+    ts.isObjectLiteralExpression(ancestor) &&
+    ancestor.properties.some(
+      (property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property),
+    );
+  return ts.findAncestor(node.parent, hasAccessor) !== undefined;
+}
+
 /** Checker-derived signatures only; no provider or runtime representation authority. */
 export function resolveOrdinaryObjectClosureSignature(
   checker: ts.TypeChecker,

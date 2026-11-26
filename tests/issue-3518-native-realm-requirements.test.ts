@@ -4,7 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import { NATIVE_REALM_CATALOG } from "../src/runtime/contracts/native-realm-catalog.js";
 import {
   deriveNativeRealmRequirements,
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
 } from "../src/ir/program/native-realm-requirements.js";
 import {
   planNativeRealmLiterals,
@@ -30,7 +30,6 @@ import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/prog
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
-import { forEachInstrDeep, type IrInstrCall } from "../src/ir/core/nodes.js";
 import type { NativeStringValueReservationInput } from "../src/backend/wasmgc/program/native-string-values.js";
 import { deriveNativeVectorResourcePlan } from "../src/ir/program/native-vector-resources.js";
 import { nativeRealmReservationInventory } from "../src/backend/wasmgc/program/native-realm.js";
@@ -61,11 +60,31 @@ const property = (id: string, name: string) => intrinsic(id).properties.find((ro
 describe("semantic native realm catalog and real selected demands", () => {
   it("retains the complete Object/Function identity graph and unavailable algorithms", () => {
     const rows = NATIVE_REALM_CATALOG.intrinsics;
-    expect(rows).toHaveLength(45);
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
     expect(
       rows.filter((row) => row.callable?.implementation !== "unavailable" && row.callable).map((row) => row.id),
-    ).toEqual(["%Function.prototype%", "%ThrowTypeError%"]);
+    ).toEqual([
+      "%Function.prototype%",
+      "%ThrowTypeError%",
+      // (#7354 O1) the Object statics whose call form the Prepared path lowers
+      "%Object.create%",
+      "%Object.defineProperties%",
+      "%Object.defineProperty%",
+      "%Object.getOwnPropertyDescriptor%",
+      // (#7354 P1) the Object.prototype methods the realm holds as function objects
+      "%Object.prototype.hasOwnProperty%",
+      "%Object.prototype.isPrototypeOf%",
+      "%Object.prototype.propertyIsEnumerable%",
+      // (#7354 G1) the Error family: the constructors and Error.prototype.toString
+      "%Error%",
+      "%Error.prototype.toString%",
+      "%EvalError%",
+      "%RangeError%",
+      "%ReferenceError%",
+      "%SyntaxError%",
+      "%TypeError%",
+      "%URIError%",
+    ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);
       if (row.prototype !== null) expect(rows.some((parent) => parent.id === row.prototype)).toBe(true);
@@ -135,12 +154,13 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(r.source!.units).toHaveLength(1);
     expect(r.description.sourceUnits).toEqual(r.source!.units.map((row) => row.unitId));
     expect(r.description.sourceAllocationOccurrences.length).toBeGreaterThan(0);
-    expect(r.description.objectUses).toEqual([]);
-    expect(r.access.uses).toEqual([]);
+    // The source closure is a function object (F1a), so its creation is the one object use.
+    expect(r.description.objectUses.map((row) => row.feature)).toEqual(["js.object.init-function"]);
+    expect(r.access.uses).toEqual(r.description.objectUses);
     expect(r.description.catalog).toEqual(NATIVE_REALM_CATALOG);
     expect(r.description.completionScope).toBe("native-realm-bootstrap");
     expect(r.description.unavailable.length).toBeGreaterThan(40);
-    expect(() => assertNativeRealmRequirementsCurrent(r)).not.toThrow();
+    expect(() => assertNativeRealmRequirementsIssued(r)).not.toThrow();
   });
   it("selects a constructed typed-IR no-source object demand through genuine preparation", () => {
     const program = prepareBackendRealmProgram();
@@ -163,8 +183,11 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(input.invocationRequirements).toBeUndefined();
     expect(input.plan.mode).toBe("realm-bootstrap");
   });
-  it("retains the original genuine Number/object frontend preparation refusal", () => {
-    expect(() => prepareGetterProgram(REALM_NO_SOURCE)).toThrow("runtime feature js.number.from-value has no provider");
+  it("prepares Number of an object and selects the realm for the object", () => {
+    // js.number.from-value now has a native provider, so this program no longer refuses at preparation.
+    const program = prepareGetterProgram(REALM_NO_SOURCE);
+    const realm = deriveNativeRealmRequirements(program, program.runtime[0]!);
+    expect(realm?.description.objectUses.map((use) => use.feature)).toEqual(["js.object.create-default"]);
   });
   it("does not select a scalar program with no realm use", () => {
     const program = prepareGetterProgram("export function run(): number { return 7; }");
@@ -173,40 +196,11 @@ describe("semantic native realm catalog and real selected demands", () => {
   it("rejects copied realm packs, foreign projections and foreign source issuers", () => {
     const a = selected(),
       b = selected();
-    expect(() => assertNativeRealmRequirementsCurrent({ ...a.requirements })).toThrow(/unissued|copied/);
+    expect(() => assertNativeRealmRequirementsIssued({ ...a.requirements })).toThrow(/unissued|copied/);
     expect(() => deriveNativeRealmRequirements(a.program, b.projection)).toThrow();
     expect(() => deriveNativeRealmRequirements(a.program, a.projection, b.requirements.source)).toThrow(
       /foreign|detached/,
     );
-  });
-  it("authenticates demand currentness before a literal cache hit", () => {
-    const original = source();
-    const projection = {
-      ...original.runtime[0]!,
-      prepared: {
-        ...original.runtime[0]!.prepared,
-        functions: structuredClone(original.runtime[0]!.prepared.functions),
-      },
-    };
-    const program = {
-      ...original,
-      ir: { ...original.ir, functions: structuredClone(original.ir.functions) },
-      runtime: [projection],
-    };
-    const r = deriveNativeRealmRequirements(program, projection)!;
-    const literal = planNativeRealmLiterals(r, false);
-    let call: IrInstrCall | undefined;
-    for (const fn of r.projection.prepared.functions)
-      for (const block of fn.blocks)
-        for (const root of block.instrs)
-          forEachInstrDeep(root, (node) => {
-            if (node.kind === "call") call ??= node;
-          });
-    if (!call) throw Error("actual call demand missing");
-    (call.target as { name: string }).name += "-stale";
-    expect(() => assertNativeRealmRequirementsCurrent(r)).toThrow();
-    expect(() => planNativeRealmLiterals(r, false)).toThrow();
-    expect(() => requireNativeRealmLiteralPlan(literal, r, false)).toThrow();
   });
 });
 

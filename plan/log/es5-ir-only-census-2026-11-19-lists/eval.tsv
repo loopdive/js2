@@ -1,0 +1,96 @@
+built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+built-ins/global/S10.2.3_A1.1_T2.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+built-ins/global/S10.2.3_A1.2_T2.js	ir/from-ast: identifier "eval" is not in scope in test
+language/eval-code/direct/cptn-nrml-empty-block.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-do-while.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-empty.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-for.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-if.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-switch.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-var.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-empty-while.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/cptn-nrml-expr-prim.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/direct/global-env-rec-eval.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in testcase
+language/eval-code/direct/global-env-rec.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in testcase
+language/eval-code/direct/non-string-primitive.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/eval-code/indirect/global-env-rec-catch.js	ir/from-ast: identifier "eval" is not in scope in testcase
+language/eval-code/indirect/global-env-rec-eval.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in testcase
+language/eval-code/indirect/global-env-rec-fun.js	ir/from-ast: identifier "eval" is not in scope in testcase
+language/eval-code/indirect/global-env-rec.js	ir/from-ast: identifier "eval" is not in scope in testcase
+language/expressions/addition/S11.6.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/bitwise-and/S11.10.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/bitwise-not/S11.4.8_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/bitwise-or/S11.10.3_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/call/S11.2.3_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/call/eval-first-arg.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/comma/S11.14_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/conditional/S11.12_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/does-not-equals/S11.9.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/equals/S11.9.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/greater-than/S11.8.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/grouping/S11.1.6_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/in/S11.8.7_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S11.8.6_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/left-shift/S11.7.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/less-than/S11.8.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/logical-and/S11.11.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/logical-not/S11.4.9_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/logical-or/S11.11.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/new/S11.2.2_A1.1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/new/S11.2.2_A1.2.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/object/11.1.5_4-4-a-3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/property-accessors/S11.2.1_A1.1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/property-accessors/S11.2.1_A1.2.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/right-shift/S11.7.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/strict-equals/S11.9.4_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/typeof/syntax.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/unary-minus/S11.4.7_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/unary-plus/S11.4.6_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/expressions/void/S11.4.2_A1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-17-s.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in testcase
+language/function-code/10.4.3-1-17gs.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-18gs.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-19-s.js	ir/from-ast: identifier "eval" is not in scope in testcase
+language/function-code/10.4.3-1-19gs.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+language/function-code/10.4.3-1-20-s.js	ir/from-ast: identifier "eval" is not in scope in testcase
+language/function-code/10.4.3-1-20gs.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+language/statements/do-while/S12.6.1_A3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/do-while/S12.6.1_A5.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/do-while/S12.6.1_A7.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/do-while/S12.6.1_A8.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/expression/S12.4_A2_T1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/expression/S12.4_A2_T2.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/for-in/S12.6.4_A3.1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/for-in/S12.6.4_A3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/for-in/S12.6.4_A4.1.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/for-in/S12.6.4_A4.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/for/head-init-expr-check-empty-inc-empty-completion.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/for/head-init-var-check-empty-inc-empty-completion.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/function/name-unicode.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/if/S12.5_A2.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/if/cptn-empty-statement.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/variable/12.2.1-10-s.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+language/statements/variable/12.2.1-20-s.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+language/statements/variable/12.2.1-21-s.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+language/statements/variable/12.2.1-9-s.js	ir/from-ast: identifier "eval" is not in scope in <module-init>
+language/statements/while/S12.6.2_A3.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/while/S12.6.2_A5.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/while/S12.6.2_A7.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/statements/while/S12.6.2_A8.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/white-space/string-form-feed.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/white-space/string-horizontal-tab.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/white-space/string-nbsp.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/white-space/string-space.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>
+language/white-space/string-vertical-tab.js	ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>

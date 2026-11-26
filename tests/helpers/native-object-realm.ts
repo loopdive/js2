@@ -1,14 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { prepareGetterProgram } from "./native-getter-invocation-fixture.js";
-import {
-  fillRealmLayoutFixture,
-  reserveRealmAnchorControls,
-  STATE_SOURCE,
-  ext,
-  f64,
-  as,
-  get,
-} from "./native-realm-object-layouts.js";
+import { STATE_SOURCE, ext, f64, as } from "./native-realm-object-layouts.js";
 import { deriveNativeRealmRequirements } from "../../src/ir/program/native-realm-requirements.js";
 import { deriveNativeVectorResourcePlan } from "../../src/ir/program/native-vector-resources.js";
 import { deriveNativeValueResourcePlan } from "../../src/ir/program/native-value-resources.js";
@@ -17,12 +9,10 @@ import { reserveNativeVectorTypes } from "../../src/backend/wasmgc/resources/nat
 import {
   reserveNativeStringLiteralResources,
   nativeStringLiteralReservationInventory,
-  fillNativeStringLiteralResources,
 } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import {
   declareNativeInvocationSubstrateResources,
   reserveNativeInvocationSubstrateResources,
-  fillNativeInvocationSubstrateResources,
 } from "../../src/backend/wasmgc/resources/native-invocation-substrate.js";
 import { declareNativePublicBuiltinFunctionRequests } from "../../src/backend/wasmgc/resources/native-builtin-function-requests.js";
 import {
@@ -30,19 +20,10 @@ import {
   instantiateNativeClosureRequirements,
   reserveNativeClosureResources,
 } from "../../src/backend/wasmgc/resources/native-closures.js";
-import {
-  beginNativeSourceClosureEmission,
-  bindNativeSourceClosureUnits,
-  nativeRealmSourceClosureCallableBindings,
-  nativeSourceClosureResolver,
-  fillPreparedPrimaryUnit,
-  requireCompletedNativeSourceClosures,
-} from "../../src/ir/program-native-invocation.js";
+import { beginNativeSourceClosureEmission } from "../../src/ir/program-native-invocation.js";
 import { irUnitCallableBindingId } from "../../src/ir/core/callable-bindings.js";
 import type { IrUnitId } from "../../src/shared/contracts/ir-identity.js";
 import type { PhysicalFunctionSignature, FunctionReservation } from "../../src/wasm/physical/module-reservations.js";
-import type { IrLowerResolver } from "../../src/ir/backend/lower-contracts.js";
-import { emitBinary } from "../../src/emit/binary.js";
 import { createEmptyModule } from "../../src/ir/types.js";
 import { PhysicalModuleReservations } from "../../src/wasm/physical/module-reservations.js";
 import {
@@ -208,70 +189,4 @@ export function publicRealmSourceSlots(
     return { fn, slot, name };
   });
   return { slots, signatures, factories };
-}
-/** Real source bodies plus full catalog *types*, with no dummy builtin body or public population installed. */
-export function publicRealmSourceRuntime(displaced = false, decoded = false) {
-  const f = publicRealmFoundation(displaced, decoded),
-    c = publicRealmClosures(f),
-    s = publicRealmSourceSlots(f, c);
-  const controls = reserveRealmAnchorControls(f);
-  const call = f.tx.reserveFunction("control:call", "controlCall", { params: [ext, f64], results: [f64] });
-  f.tx.freezeReservations();
-  bindNativeSourceClosureUnits(f.tx, c.source!, s.slots);
-  const callables = nativeRealmSourceClosureCallableBindings(f.tx, c.source!, f.realm);
-  fillRealmLayoutFixture(f);
-  controls.fill();
-  fillNativeStringLiteralResources(f.tx, f.strings);
-  fillNativeInvocationSubstrateResources(f.tx, f.substrate);
-  const resolver: IrLowerResolver = {
-    ...nativeSourceClosureResolver(f.tx, c.source!),
-    resolveFunc(ref) {
-      const slot = ref.binding.kind === "unit" && s.slots.get(ref.binding.unitId);
-      if (slot) return slot.handle;
-      throw Error("unexpected source callable");
-    },
-    resolveGlobal() {
-      throw Error("unexpected source global");
-    },
-    resolveType() {
-      throw Error("unexpected source type");
-    },
-    internFuncType(sig) {
-      return f.tx.internFunctionType(sig.params, sig.results);
-    },
-  };
-  for (const [id, slot] of s.slots)
-    fillPreparedPrimaryUnit(
-      f.tx,
-      f.projection.prepared.functions.find((row) => row.unitId === id)!,
-      slot,
-      s.signatures.get(id)!,
-      resolver,
-      "wasmgc",
-      c.source,
-    );
-  const binding = callables.entries[0]!.signature;
-  f.tx.fillFunction(call, {
-    locals: [],
-    body: [
-      ...as(0, c.closures.root.typeIndex),
-      get(1),
-      ...as(0, c.closures.root.typeIndex),
-      { op: "struct.get", typeIdx: c.closures.root.typeIndex, fieldIdx: 0 },
-      { op: "ref.cast", typeIdx: binding.liftedFuncTypeIndex },
-      { op: "call_ref", typeIdx: binding.liftedFuncTypeIndex },
-    ],
-  });
-  for (const { slot, name } of s.factories) f.tx.defineExport("control:export:" + name, name, slot);
-  f.tx.defineExport("control:export:call", "call", call);
-  requireCompletedNativeSourceClosures(f.tx, c.source!);
-  f.tx.seal();
-  const wasm = new WebAssembly.Module(emitBinary(f.module) as BufferSource);
-  return {
-    f,
-    c,
-    callables,
-    wasm,
-    instance: () => new WebAssembly.Instance(wasm).exports as Record<string, (...args: any[]) => any>,
-  };
 }

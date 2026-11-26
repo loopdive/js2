@@ -29,7 +29,7 @@
 // the actual invariant, and it is what test262's `propertyHelper.js` checks.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { expectedArgumentCountOfParams } from "../src/codegen/function-expected-argument-count.js";
+import { expectedArgumentCountOfParams } from "../src/shared/function-expected-argument-count.js";
 import { ts } from "../src/ts-api.js";
 
 /** Compile `body` as the `test()` export and run it host-free. */

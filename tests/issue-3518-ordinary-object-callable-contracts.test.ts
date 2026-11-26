@@ -19,11 +19,29 @@ const CONTRACTS = [
   ["js.object.define-attributes", [REF, REF, FLAGS], []],
   ["js.object.get", [REF, REF, REF], [REF]],
   ["js.object.has", [REF, REF], [BOOL]],
+  // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
+  ["js.object.create-type-error", [REF], [REF]],
+  // (#7354 O3) OrdinarySet, its original receiver beside the object, as Get's
+  ["js.object.set", [REF, REF, REF, REF], [BOOL]],
+  // (#7354 G1) [[ErrorData]] of an object, an error's creation (message, constructor selector), and
+  // Error.prototype.toString; a built-in function object by its selector
+  ["js.object.is-error", [REF], [BOOL]],
+  ["js.object.create-error", [REF, { kind: "val", val: { kind: "i32" } }], [REF]],
+  ["js.object.error-to-string", [REF], [REF]],
+  ["js.object.intrinsic", [{ kind: "val", val: { kind: "i32" } }], [REF]],
+  // (#7354 C2) OrdinaryHasInstance's prototype-chain walk
+  ["js.object.inherits", [REF, REF], [BOOL]],
+  // (#7354 O1) the realm's half of Object.defineProperty / defineProperties / getOwnPropertyDescriptor
+  ["js.object.descriptor-define", [REF, REF, REF], []],
+  ["js.object.descriptors-define", [REF, REF], []],
+  ["js.object.own-descriptor", [REF, REF], [REF]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {
   it("declares prototype modes, descriptor presence, original receiver and boolean Has independently", () => {
-    expect(ORDINARY_OBJECT_RUNTIME_FEATURES).toEqual(CONTRACTS.map(([name]) => name));
+    // Every feature of the manifest's list has its declaration; the table gives the signatures they carry.
+    for (const feature of ORDINARY_OBJECT_RUNTIME_FEATURES)
+      expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(feature))).toMatchObject({ feature });
     for (const [name, params, results] of CONTRACTS) {
       const declaration = irRuntimeCallableDeclaration(irIntrinsicFuncRef(name));
       expect(declaration).toMatchObject({ feature: name, params, results });
@@ -48,9 +66,33 @@ describe("ordinary object semantic contracts", () => {
     (name) => expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(name))).toBeUndefined(),
   );
 
-  it.each(CONTRACTS)("cannot materialize %s merely because its semantic declaration exists", (name) => {
+  // On standalone WasmGC each contract has one provider, its native one: the manifest lists all of them
+  // (`ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS`). Selecting a provider is not serving it: since #7354 O1 the native
+  // realm serves create-default, define-data and get; (#7354 O4, O3, O2b) create-type-error, set and has; (#7354 G1) is-error, create-error, error-to-string and intrinsic.
+  it.each(CONTRACTS)("selects the native provider for %s on standalone WasmGC", (name) => {
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature(name);
-    expect(() => builder.freeze()).toThrow(expect.objectContaining({ code: "missing-runtime-provider" }));
+    expect(builder.freeze().providers.map((provider) => provider.id)).toEqual([`native.${name}`]);
+  });
+
+  // Every other policy still has no provider: the declaration alone materializes nothing there.
+  const ELSEWHERE = [
+    { target: "standalone", backend: "linear" },
+    { target: "wasi", backend: "wasmgc" },
+    { target: "wasi", backend: "linear" },
+    { target: "host", backend: "wasmgc" },
+    { target: "host", backend: "linear" },
+  ] as const;
+  it.each(CONTRACTS)("cannot materialize %s merely because its semantic declaration exists", (name) => {
+    for (const policy of ELSEWHERE) {
+      const builder = new RuntimeManifestBuilder(policy);
+      builder.requestFeature(name);
+      expect(() => builder.freeze(), JSON.stringify(policy)).toThrow(
+        expect.objectContaining({
+          code: "provider-target-unavailable",
+          message: `${name} requires standalone WasmGC`,
+        }),
+      );
+    }
   });
 });

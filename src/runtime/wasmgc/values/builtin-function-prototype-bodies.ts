@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
-import { builtinUndefined, builtinFailure, type BuiltinFunctionDefinition } from "./builtin-function-bodies.js";
+import {
+  builtinUndefined,
+  builtinFailure,
+  sourceClosureOrdinal,
+  type BuiltinFunctionDefinition,
+} from "./builtin-function-bodies.js";
 import {
   buildBuiltinFunctionEntryGet,
   type BuiltinFunctionPropertyOperands,
@@ -136,6 +141,55 @@ export function buildBuiltinFunctionHas(d: BuiltinFunctionPrototypeOperands): Bu
   return { locals: [], body: [get(0), get(1), call(d.lookup), { op: "drop" }] };
 }
 /**
+ * One [[GetPrototypeOf]] step of a heterogeneous walk into `next`: a function object's link, or an ordinary object's
+ * actual link. `unknown` runs for a carrier that is neither; `unresolved` for an ordinary object whose null link is the
+ * storage's implicit parent rather than a known null. `next` differs from `cursor`: that check reads the cursor after
+ * the link is stored.
+ */
+export function buildBuiltinFunctionParentStep(
+  d: BuiltinFunctionPrototypeOperands,
+  cursor: number,
+  next: number,
+  unknown: readonly Instr[],
+  unresolved: readonly Instr[],
+): Instr[] {
+  return [
+    get(cursor),
+    call(d.match),
+    {
+      op: "if",
+      blockType: empty,
+      then: [get(cursor), call(d.getPrototypeOf), set(next)],
+      else: [
+        get(cursor),
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: d.objectTypeIdx },
+        { op: "i32.eqz" },
+        { op: "if", blockType: empty, then: structuredClone([...unknown]) },
+        // Prototype population is irrelevant to the walk; the actual Object.prototype null link is known, while an
+        // implicit parent is unresolved.
+        ...object(d, cursor),
+        { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },
+        { op: "extern.convert_any" },
+        { op: "local.tee", index: next },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: empty,
+          then: [
+            ...object(d, cursor),
+            { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+            n(128),
+            { op: "i32.and" },
+            { op: "i32.eqz" },
+            { op: "if", blockType: empty, then: structuredClone([...unresolved]) },
+          ],
+        },
+      ],
+    },
+  ];
+}
+/**
  * Bounded SetPrototypeOf on owned builtin targets. An unresolved or unknown walk
  * returns 2/3 before mutation. Ordinary objects cannot acquire function links here.
  */
@@ -152,6 +206,11 @@ export function buildBuiltinFunctionSetPrototype(d: BuiltinFunctionPrototypeOper
       { op: "local.tee", index: 4 },
       { op: "i32.eqz" },
       { op: "if", blockType: empty, then: builtinFailure(d) },
+      // (#7354 C) A source closure's [[Prototype]] is fixed until a slice needs it mutable (ES5 has no way to ask).
+      get(4),
+      n(sourceClosureOrdinal(d)),
+      { op: "i32.eq" },
+      { op: "if", blockType: empty, then: [n(3), { op: "return" }] },
       get(0),
       call(d.getPrototypeOf),
       get(1),
@@ -178,39 +237,7 @@ export function buildBuiltinFunctionSetPrototype(d: BuiltinFunctionPrototypeOper
               get(0),
               call(d.sameValue),
               { op: "if", blockType: empty, then: [n(0), { op: "return" }] },
-              get(2),
-              call(d.match),
-              {
-                op: "if",
-                blockType: empty,
-                then: [get(2), call(d.getPrototypeOf), set(3)],
-                else: [
-                  get(2),
-                  { op: "any.convert_extern" },
-                  { op: "ref.test", typeIdx: d.objectTypeIdx },
-                  { op: "i32.eqz" },
-                  { op: "if", blockType: empty, then: [n(3), { op: "return" }] },
-                  // Prototype population is irrelevant to the cycle check; the actual
-                  // Object.prototype null link is known, while an implicit parent is unresolved.
-                  ...object(d, 2),
-                  { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },
-                  { op: "extern.convert_any" },
-                  { op: "local.tee", index: 3 },
-                  { op: "ref.is_null" },
-                  {
-                    op: "if",
-                    blockType: empty,
-                    then: [
-                      ...object(d, 2),
-                      { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-                      n(128),
-                      { op: "i32.and" },
-                      { op: "i32.eqz" },
-                      { op: "if", blockType: empty, then: [n(2), { op: "return" }] },
-                    ],
-                  },
-                ],
-              },
+              ...buildBuiltinFunctionParentStep(d, 2, 3, [n(3), { op: "return" }], [n(2), { op: "return" }]),
               get(3),
               set(2),
               { op: "br", depth: 0 },

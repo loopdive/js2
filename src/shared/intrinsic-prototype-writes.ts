@@ -124,6 +124,18 @@ export function sourceRunsDynamicCode(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).dynamicCode;
 }
 
+/**
+ * Whether a binding named `name` may be written by a route that is no identifier write of it: code the source does
+ * not spell, a reflective route, or a member of that name stored, deleted or defined on any object. A script binding
+ * is a property of the global object, so `this.f = v`, `globalThis["f"] = v` and
+ * `Object.defineProperty(globalThis, "f", …)` all write it; a write under a computed name is
+ * {@link sourceMayWriteGlobalObject}'s question.
+ */
+export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: string): boolean {
+  const use = prototypeUse(sourceFile);
+  return use.dynamicCode || use.reflective || use.writtenNames.has(name);
+}
+
 /** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
 export function sourceMayWriteUnspelledMember(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).unspelledWrite;

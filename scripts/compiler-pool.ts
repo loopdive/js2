@@ -176,7 +176,10 @@ export class CompilerPool {
       // semantics locally as well so Date parsing/formatting verdicts do not
       // depend on the developer machine. TEST262_TZ remains an explicit
       // diagnostic override.
-      env: { ...process.env, TZ: process.env.TEST262_TZ ?? "UTC" },
+      // (#7354 U) The worker measures the compiler as shipped, where the Prepared self-checks are off
+      // (src/shared/contracts/prepared-validation.ts): vitest.config.ts turns them on for every test in its
+      // own processes, and inherited here they tripled a prelude compile against the 30 s row limit.
+      env: { ...process.env, TZ: process.env.TEST262_TZ ?? "UTC", JS2WASM_VALIDATE_PREPARED: "0" },
     });
     if (workerPath === this.#preparedBuiltinPath) this.#preparedChildren.add(proc);
     // Own this exact generation before any job handler or signal can see it.

@@ -10,6 +10,7 @@ import {
   buildBuiltinFunctionMethodDefinition,
   type BuiltinFunctionBodyOperands,
 } from "../../src/runtime/wasmgc/values/builtin-function-bodies.js";
+import { buildStandardTryTable } from "../../src/wasm/physical/exception-control.js";
 import { buildBuiltinFunctionGet } from "../../src/runtime/wasmgc/values/builtin-function-prototype-bodies.js";
 import { nativeObjectDescriptorReservationInventory } from "../../src/backend/wasmgc/resources/native-object-descriptors.js";
 import { NATIVE_BUILTIN_FUNCTION_LITERALS } from "../../src/backend/wasmgc/resources/native-builtin-function-requests.js";
@@ -102,6 +103,7 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
     entries: [
       {
         typeIdx: entry.type.typeIndex,
+        metadataTypeIdx: entry.metadata.type.typeIndex,
         metadataId: entry.metadata.metadata.id,
         liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
         singleton: tx.physicalIndex(g.singleton),
@@ -193,13 +195,16 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
   tx.fillFunction(fn.call, { locals: [], body: callBody });
   tx.fillFunction(fn.catch, {
     locals: [],
+    // A standard try_table like the kernel's own guards: V8 refuses a module that mixes it with a legacy try.
     body: [
-      {
-        op: "try",
-        blockType: { kind: "val", type: ext },
-        body: structuredClone(callBody),
-        catches: [{ tagIdx: d.exceptionTag, body: [globalSet("thrown"), { op: "rethrow", depth: 0 }] }],
-      },
+      buildStandardTryTable({ kind: "val", type: ext }, structuredClone(callBody), [
+        {
+          kind: "catch",
+          tagIdx: d.exceptionTag,
+          payloadType: ext,
+          body: [globalSet("thrown"), global("thrown"), { op: "throw", tagIdx: d.exceptionTag }],
+        },
+      ]),
     ],
   });
   tx.fillFunction(
@@ -288,10 +293,10 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
       ...arm(5, [
         n(0),
         globalSet("mode"),
-        {
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [
+        // Only the program tag is thrown in this module, so catching it and throwing its payload again is the rethrow.
+        buildStandardTryTable(
+          { kind: "empty" },
+          [
             { op: "call", funcIdx: entry.getter.handle },
             ...literal("value"),
             get(0),
@@ -299,9 +304,15 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
             { op: "local.set", index: 4 },
             { op: "drop" },
           ],
-          catches: [],
-          catchAll: [n(5), globalSet("mode"), { op: "rethrow", depth: 0 }],
-        },
+          [
+            {
+              kind: "catch",
+              tagIdx: d.exceptionTag,
+              payloadType: ext,
+              body: [n(5), globalSet("mode"), { op: "throw", tagIdx: d.exceptionTag }],
+            },
+          ],
+        ),
         n(5),
         globalSet("mode"),
         get(4),

@@ -96,5 +96,8 @@ export default defineConfig({
     // test. With describe.concurrent (see PR #14), a 10s ceiling flipped
     // tests from pass→compile_timeout under CPU contention (issue #1171).
     testTimeout: 35000,
+    // (#7380) Tests run the Prepared path's self-checks, which a production compile skips
+    // (src/shared/contracts/prepared-validation.ts). `JS2WASM_VALIDATE_PREPARED=0` turns them off for a measurement.
+    env: { JS2WASM_VALIDATE_PREPARED: process.env.JS2WASM_VALIDATE_PREPARED ?? "1" },
   },
 });

@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 16;
+export const ORACLE_VERSION = 17;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -418,6 +418,12 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "Historical results and failures are preserved; no measured flip count, " +
       "baseline rewrite or regression allowance is asserted. Default legacy " +
       "verdict logic and the independent fast-oracle revision are unchanged.",
+  },
+  {
+    version: 17,
+    note:
+      "#7354 X: a runtime negative matches on the error kind its one reader read (name or constructor name), " +
+      "never on message text or on the label written for a thrown value that could not be read.",
   },
 ];
 

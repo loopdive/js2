@@ -19,6 +19,7 @@
  * different question "may this be evaluated in i32 GIVEN an enclosing ToInt32?"
  */
 import { forEachChild, ts } from "../../ts-api.js";
+import { skipTransparentExpressions } from "../../shared/transparent-expressions.js";
 
 /**
  * #1120: Detect locals that should be allocated as `i32` instead of `f64`
@@ -236,23 +237,17 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
         (ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left))
       ) {
         disqualifyFromTarget(node.left);
-      } else if (ts.isIdentifier(node.left)) {
-        const name = node.left.text;
-        if (op === ts.SyntaxKind.EqualsToken && candidates.has(name)) {
-          recordCandidate(name, { kind: "assign", expr: node.right });
-        } else if (
-          candidates.has(name) &&
-          (op === ts.SyntaxKind.PlusEqualsToken ||
-            op === ts.SyntaxKind.MinusEqualsToken ||
-            op === ts.SyntaxKind.AsteriskEqualsToken ||
-            op === ts.SyntaxKind.AmpersandEqualsToken ||
-            op === ts.SyntaxKind.BarEqualsToken ||
-            op === ts.SyntaxKind.CaretEqualsToken ||
-            op === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-            op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
-            op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken)
-        ) {
-          recordCandidate(name, { kind: "compound", op, rhs: node.right });
+      } else if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) {
+        // (#7394) `(x) /= 4` and `x! %= 3` write `x` like the bare forms, and every compound operator is a write:
+        // `isCompoundI32Safe` decides which keep the slot i32. Recording only some of them left `x /= 4` promoted.
+        const target = skipTransparentExpressions(node.left);
+        if (ts.isIdentifier(target) && candidates.has(target.text)) {
+          recordCandidate(
+            target.text,
+            op === ts.SyntaxKind.EqualsToken
+              ? { kind: "assign", expr: node.right }
+              : { kind: "compound", op, rhs: node.right },
+          );
         }
       }
     }
@@ -271,11 +266,10 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
     }
     if (
       (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(node.operand) &&
-      candidates.has(node.operand.text)
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     ) {
-      recordCandidate(node.operand.text, { kind: "incdec" });
+      const operand = skipTransparentExpressions(node.operand);
+      if (ts.isIdentifier(operand) && candidates.has(operand.text)) recordCandidate(operand.text, { kind: "incdec" });
     }
     forEachChild(node, collectMutations);
   }
@@ -419,17 +413,8 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
     ) {
       return true;
     }
-    // #1236 — `+=`, `-=`, `*=` desugar to `lhs = lhs + rhs` etc., which
-    // routes through f64 arithmetic and a trailing `i32.trunc_sat_f64_s`.
-    // Saturation on overflow silently corrupts long-running accumulators
-    // (see #1236 / Option A). Demote to f64 instead.
-    if (
-      op === ts.SyntaxKind.PlusEqualsToken ||
-      op === ts.SyntaxKind.MinusEqualsToken ||
-      op === ts.SyntaxKind.AsteriskEqualsToken
-    ) {
-      return false;
-    }
+    // #1236 — every other compound (`+=`, `/=`, `**=`, the logical ones) routes through f64 arithmetic and a
+    // trailing `i32.trunc_sat_f64_s`, which truncates a fraction and saturates an overflow. Demote to f64 instead.
     return false;
   }
 

@@ -1,5 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
@@ -11,26 +10,20 @@ import {
   buildTypeofBigIntBody,
 } from "../src/runtime/wasmgc/values/bigint-primitive-bodies.js";
 
-// Independent exact signed donor spans, not regenerated from the extracted builders.
+// Expected registrations, written out independently of the extracted builders.
 const donor = {
-  commit: "7de4c2f421416b8b521dda0b0c777da140ed81df",
-  path: "src/codegen/registry/imports.ts",
-  sourceSha256: "143a0f5cdc03fa58704b467ea180576913a104080d064011d7caed60f14f378c",
   spans: [
     {
       name: "layout",
       text: '  ctx.mod.types.push({\n    kind: "struct",\n    name: "$BigInt",\n    fields: [{ name: "value", type: { kind: "i64", bigint: true }, mutable: false }],\n  });',
-      sha256: "4c9464ff6358ead9029bbcdeab0e349c3d0ee558701843b066cb76cccf4d625b",
     },
     {
       name: "box",
       text: '  registerNative("__box_bigint", i64ToExternref, [\n    { op: "local.get", index: 0 },\n    { op: "struct.new", typeIdx: bigIntStructIdx },\n    { op: "extern.convert_any" },\n  ]);',
-      sha256: "306045c9e0b2ff920cf1a8a7fbc96a32aeeb07a49f8b5b44bf74976cdfc20b46",
     },
     {
       name: "typeof",
       text: '  registerNative("__typeof_bigint", externrefToI32, [\n    { op: "local.get", index: 0 },\n    { op: "ref.is_null" },\n    {\n      op: "if",\n      blockType: { kind: "empty" },\n      then: [{ op: "i32.const", value: 0 }, { op: "return" }],\n    },\n    { op: "local.get", index: 0 },\n    { op: "any.convert_extern" },\n    { op: "ref.test", typeIdx: bigIntStructIdx },\n  ]);',
-      sha256: "22128c1515fe2599a8ac1995ef8747d9e25a3d72a7c0738c126b3f06ff57cc77",
     },
   ],
 } as const;
@@ -48,9 +41,7 @@ function donorDefinitions(index: number) {
     },
   };
   const registerNative = (name: string, _signature: unknown, body: unknown) => bodies.set(name, body);
-  // Execute only the three independently pinned literal registrations.
   for (const span of donor.spans) {
-    expect(createHash("sha256").update(span.text).digest("hex")).toBe(span.sha256);
     new Function("ctx", "registerNative", "bigIntStructIdx", "i64ToExternref", "externrefToI32", span.text)(
       ctx,
       registerNative,

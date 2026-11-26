@@ -1,10 +1,10 @@
 ---
 id: 7333
 title: "IR: a call-graph-closure caller should call a selection-refused callee as it calls a withdrawn one"
-status: ready
+status: backlog
 sprint: Backlog
 created: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-19
 priority: medium
 horizon: m
 feasibility: medium
@@ -73,3 +73,42 @@ refused unit, not its callers.
       identical wherever the route set is unchanged.
 - [ ] The rule lives in the call-graph gate or the callee-resolution seam it
       shares with from-ast. There is no per-shape special case.
+
+## Parked (2026-11-19, measured)
+
+Reproduced on main `ee3fcdd6`: both shapes refuse `t` and `<module-init>`
+(`call-graph-closure`) on gc, standalone and wasi. This is lost yield, not a
+claim-then-withdraw: nothing is claimed and then withdrawn.
+
+**Mechanism tried** (WIP, unmerged: branch
+`claude/7333-refused-callee-bridge` @ `74e283a7`). Reuse the caller-direction
+certificate `legacyCallerAbiIsProjected` for the callee direction at the three
+gates (structural closure, identity closure, `assessModuleInit`), plan the call
+to the refused callee's legacy slot as a direct-call target, and take its
+signature from the override computation (extracted to
+`resolveIrFunctionOverride`). Both shapes then go IR.
+
+**Measured**, 700-file seeded ES5 sample (seed 7106, the census population),
+standalone, original harness, compiled and run, base `ee3fcdd6` vs that head:
+IR-only and passing 130 → 130 (0 gained, 0 lost), legacy units 1,261 → 1,260,
+verdict flips 0, post-claim errors 41 → 42. The new one,
+`language/statements/function/S13_A13_T2.js`: the now-claimed module-init's
+`'…' + __func(1)` withdraws, because the selector families the call by the
+TypeMap while the bridge signature says `dynamic`.
+
+**Defect that blocks it.** The certificate does not cover the return ABI. A
+callee whose legacy body returns `f64` while the IR override says `dynamic`
+gives invalid Wasm (`global.set expected externref, found f64`), on the
+runner's gc lane too (that lane is not `jsHostExterns`, so a host-lane policy
+gate does not keep gc output).
+
+**Ceiling.** 17 of the 700 files carry `call-graph-closure`; about 8 have the
+module-init plus one refused callee as their only legacy units, and those
+callees are zero-parameter JS functions the current certificate never admits.
+So at most about 8/700 (1.1 %) on the ordinary pipeline.
+
+**What a correct version needs.** An exact ABI-parity certificate (the legacy
+slot's function type equals the lowered override type, result included) and
+the selector's call-result family taken from that same signature. Under the
+2026-11-16 decision (the goal is measured on the Prepared whole-program path)
+this ordinary-pipeline slice is not taken now.
