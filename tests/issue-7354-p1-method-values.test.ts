@@ -98,10 +98,6 @@ describe("#7354 P1 — what ends at the run-time abort", () => {
       "a string receiver (the String exotic's own keys)",
       "function id(v){ return v; } id('abc').hasOwnProperty('length');",
     ],
-    [
-      "a getter that defines the method (calling it needs O2)",
-      "var o = {}; Object.defineProperty(o, 'hasOwnProperty', {get: function(){ return fv; }}); o.hasOwnProperty('x');",
-    ],
     ["Object.prototype's other keys stay C2-D1's own-or-abort", "var o = {}; String(o.toString);"],
   ])("%s", (_label, body) => abortsAtRunTime(PRELUDE + body, runnerOptions()), SLOW);
 });

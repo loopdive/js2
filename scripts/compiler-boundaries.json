@@ -421,6 +421,7 @@
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
         "src/runtime/wasmgc/values/source-object-bodies.ts",
+        "src/runtime/wasmgc/values/kernel-get-body.ts",
         "src/runtime/wasmgc/values/source-function-object-bodies.ts",
         "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
         "src/runtime/wasmgc/values/object-static-bodies.ts",
@@ -15336,6 +15337,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/source-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/kernel-get-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

@@ -11,7 +11,7 @@
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
-import { kernelGetInto } from "./source-object-bodies.js";
+import { kernelGetInto } from "./kernel-get-body.js";
 
 /** A family property: a string, or a realm entry or object by catalog id. */
 export interface RealmFamilyProperty {

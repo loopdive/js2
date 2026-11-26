@@ -88,6 +88,8 @@ export interface NativeBuiltinFunctionDependencies {
   readonly exception: TagReservation | TagImportReservation;
   /** (#7354 G1) Where the realm holds the Error family: its error creation, reserved by the realm, filled here. */
   readonly errorCreate?: FunctionReservation;
+  /** (#7354 O2) The program's dispatchers a source getter / setter is called through (`nativeInvocationAccessorCalls`). */
+  readonly accessorCalls?: { readonly get: FunctionReservation; readonly set: FunctionReservation };
 }
 const functionRoles = [
   "initialize",
@@ -176,7 +178,7 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   const required = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
     required.some((key) => !Object.hasOwn(d, key)) ||
-    Object.keys(d).some((key) => ![...required, "errorCreate"].includes(key))
+    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls"].includes(key))
   )
     fail("unexpected dependency input");
   if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
@@ -454,7 +456,8 @@ function operands(
   owner: Owner,
 ): BuiltinFunctionPrototypeOperands {
   const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests),
-    dd = owner.dependencies.descriptorDependencies;
+    dd = owner.dependencies.descriptorDependencies,
+    calls = owner.dependencies.accessorCalls;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
   const literal = (text: string, external = true): Instr[] => [
@@ -516,6 +519,12 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(calls && {
+      accessorCalls: {
+        source: [calls.get.handle, calls.set.handle],
+        builtin: [pack.functions.method0.handle, pack.functions.method1.handle],
+      },
+    }),
   };
 }
 /**

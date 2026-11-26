@@ -206,19 +206,25 @@ function sourceBooleanResult(
  * with P's all-dynamic signature on the native lane: every parameter and the result are the dynamic value. Its
  * callers include calls through values (`js.closure.call:N` passes and returns the carrier), so, as for an
  * unannotated declaration's parameters, no call site types it. A parameter list with a default, a rest element or
- * a pattern, and a generator or async literal, have no such contract; neither has a literal inside a descriptor
- * literal, whose signature is the checker's ({@link ownedByDescriptorLiteral}).
+ * a pattern, and a generator or async literal, have no such contract. (#7354 O2) An object literal's `get` / `set`
+ * accessor is such a value too (the realm calls it through the dispatcher, a program reads it through
+ * `Object.getOwnPropertyDescriptor`), and so is a function expression inside such a literal, both on the lane of
+ * their enclosing function declaration: in an exported one (a typed #3518 program) they keep the checker's
+ * signature ({@link ownedByDescriptorLiteral}).
  */
 function sourceDynamicClosureSignature(
   policy: SourcePolicy,
-  expression: ts.FunctionExpression,
+  expression: ts.FunctionLikeDeclaration,
 ): { readonly params: readonly IrType[]; readonly returnType: IrType } | undefined {
+  const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
+    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression)) ||
+    (descriptorLiteral &&
+      dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||
     expression.asteriskToken !== undefined ||
     expression.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    ownedByDescriptorLiteral(expression) ||
     expression.parameters.some(
       (parameter) =>
         parameter.type !== undefined ||
@@ -296,7 +302,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicCarrierIsExternref?: () => boolean;
     readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
     /** (#7354 Fa) The all-dynamic signature of an unannotated function expression, if the lane admits one. */
-    readonly dynamicClosureSignature?: (expression: ts.FunctionExpression) => Signature | undefined;
+    readonly dynamicClosureSignature?: (expression: ts.FunctionLikeDeclaration) => Signature | undefined;
     /** (#7354 Fa) {@link staticFunctionValue}. */
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
