@@ -59,7 +59,7 @@ import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
-import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
+import { functionDeclarationsReadAsValues, isFunctionLocalDeclaration } from "./function-declaration-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 
@@ -219,7 +219,7 @@ function sourceDynamicClosureSignature(
   const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
-    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression)) ||
+    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression) || isFunctionLocalDeclaration(expression)) ||
     (descriptorLiteral &&
       dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||

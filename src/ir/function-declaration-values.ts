@@ -43,6 +43,48 @@ const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
  * order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
  * is one: [[Construct]] takes the function object, its `prototype` included.
  */
+/**
+ * (#7354 L0c) A function declaration with a body inside a function, not a script's: on the Prepared lane it is a
+ * function value its function makes at entry (from-ast hoists one with the all-dynamic contract), so the program may
+ * create function objects.
+ */
+export function isFunctionLocalDeclaration(node: ts.Node): node is ts.FunctionDeclaration {
+  return ts.isFunctionDeclaration(node) && node.body !== undefined && !ts.isSourceFile(node.parent);
+}
+
+/** The body of the function `node` is declared in, if any. */
+export function enclosingFunctionBody(node: ts.Node): ts.Node | undefined {
+  const fn = ts.findAncestor(node.parent, ts.isFunctionLike);
+  return fn && "body" in fn ? fn.body : undefined;
+}
+
+const capturesByBody = new WeakMap<ts.Block, ReadonlySet<ts.VariableDeclaration>>();
+
+/**
+ * (#7354 L0c) The `var` declarations of a function body that its function-local declarations read or write. from-ast
+ * hoists them with the functions, as cells of the carrier, so the provenance counts them as the dynamic value.
+ */
+export function localDeclarationCaptures(body: ts.Block, checker: ts.TypeChecker): ReadonlySet<ts.VariableDeclaration> {
+  let captured = capturesByBody.get(body);
+  if (captured === undefined) {
+    const found = new Set<ts.VariableDeclaration>();
+    const visit = (node: ts.Node): void => {
+      const declaration = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node)?.valueDeclaration : undefined;
+      if (
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        enclosingFunctionBody(declaration) === body
+      )
+        found.add(declaration);
+      ts.forEachChild(node, visit);
+    };
+    for (const statement of body.statements) if (isFunctionLocalDeclaration(statement)) visit(statement.body!);
+    captured = found;
+    capturesByBody.set(body, captured);
+  }
+  return captured;
+}
+
 export function functionDeclarationsReadAsValues(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],

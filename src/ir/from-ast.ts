@@ -189,7 +189,11 @@ import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
 import { someReturnedValue } from "./function-returns.js";
 import { describeIrType } from "./describe-ir-type.js";
-import type { FunctionDeclarationValue } from "./function-declaration-values.js";
+import {
+  isFunctionLocalDeclaration,
+  localDeclarationCaptures,
+  type FunctionDeclarationValue,
+} from "./function-declaration-values.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -206,9 +210,10 @@ import { irBool, irTypeIsBoolean } from "./boolean-brand.js";
 import { carrierStringFamily, lowerConcatOperand, lowerPrimitiveToString } from "./primitive-to-string.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import {
-  collectOuterWrites,
-  collectTransitiveClosureCaptures,
+  analyseClosureCaptures,
   isCapturedByOrdinaryDescriptor,
+  type CaptureSource,
+  type NestedCapture,
 } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "../shared/property-key-fold.js";
@@ -2351,8 +2356,18 @@ function terminateTailFallOut(cx: LowerCtx): void {
 
 function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): void {
   // (#7354 L0b) An EmptyStatement completes empty (§14.4); on the Prepared lane it neither lowers nor is the tail.
-  const stmts = functionObjects.onPreparedDynamicLane(cx.resolver)
-    ? statements.filter((statement) => !ts.isEmptyStatement(statement))
+  // (L0c) A function declaration in a function body with the lane's all-dynamic contract is hoisted there before the
+  // statements run (§10.2.11 step 36); an annotated one keeps the nested-function lowering.
+  const lane = functionObjects.onPreparedDynamicLane(cx.resolver);
+  const hoisted = lane
+    ? statements.filter(
+        (s): s is ts.FunctionDeclaration =>
+          isFunctionLocalDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined,
+      )
+    : [];
+  hoistFunctionDeclarations(hoisted, cx);
+  const stmts = lane
+    ? statements.filter((statement) => !ts.isEmptyStatement(statement) && !hoisted.includes(statement as never))
     : statements;
   if (stmts.length < 1) {
     // #7104 — an empty dynamic-return body returns the carrier's undefined.
@@ -2396,6 +2411,37 @@ function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): 
     if (done) return;
   }
   lowerTail(stmts[stmts.length - 1]!, cx);
+}
+
+/**
+ * (#7354 L0c) Each declaration's name is first bound to a cell of the carrier (`undefined`), so the functions capture
+ * the cell and a sibling or the function itself is read at call time; then each cell gets its function value, in
+ * source order, so a later declaration of the same name wins.
+ */
+function hoistFunctionDeclarations(declarations: readonly ts.FunctionDeclaration[], cx: LowerCtx): void {
+  const cellType: IrType = { kind: "boxed", inner: irDynamic() };
+  const body = declarations[0]?.parent;
+  const captured = body && ts.isBlock(body) && cx.checker ? [...localDeclarationCaptures(body, cx.checker)] : [];
+  const names = [...declarations.map((d) => d.name!.text), ...captured.map((d) => (d.name as ts.Identifier).text)];
+  for (const name of new Set(names.filter((n) => !cx.scope.has(n)))) {
+    const cell = cx.builder.emitRefCellNew(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined), irDynamic());
+    cx.scope.set(name, { kind: "local", value: cell, type: cellType, hoisted: true });
+  }
+  for (const declaration of declarations) {
+    const closure = lowerDynamicClosure(declaration, cx)!;
+    const value = functionObjects.functionObjectDynamicValue(
+      closure,
+      declaration.name!,
+      functionObjectLoweringHost(cx),
+    );
+    const binding = cx.scope.get(declaration.name!.text);
+    if (binding?.kind !== "local" || !binding.hoisted)
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: function declaration shares a parameter's name in ${cx.funcName}`,
+      );
+    cx.builder.emitRefCellSet(binding.value, value);
+  }
 }
 
 /**
@@ -3053,7 +3099,14 @@ function bindEntryThis(scope: Map<string, ScopeBinding>, builder: IrFunctionBuil
 }
 
 type ScopeBinding =
-  | { kind: "local"; value: IrValueId; type: IrType; stringEncoding?: Encoding }
+  | {
+      kind: "local";
+      value: IrValueId;
+      type: IrType;
+      stringEncoding?: Encoding;
+      /** (#7354 L0c) A cell bound at function entry for a hoisted `var` or function: its declaration is a write. */
+      hoisted?: true;
+    }
   | {
       /**
        * #4206 static `with` binding. The receiver is captured by reference;
@@ -3141,16 +3194,6 @@ type ScopeBinding =
  * in a refcell on first use (rebinding `cx.scope` in-place so
  * subsequent outer reads/writes go through the cell).
  */
-interface NestedCapture {
-  readonly name: string;
-  /** Stored capture type. For a with-field this is the object receiver type. */
-  readonly type: IrType;
-  readonly mutable: boolean;
-  readonly outerValue: IrValueId;
-  /** Rehydrate an invocation-time object-property binding, not a value snapshot. */
-  readonly withField?: { readonly name: string; readonly type: IrType };
-}
-
 interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLoweringPlans {
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
@@ -4470,6 +4513,11 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     );
   }
   const name = d.name.text;
+  const hoisted = cx.scope.get(name);
+  if (hoisted?.kind === "local" && hoisted.hoisted) {
+    if (d.initializer) lowerIdentifierAssignment(d.name, d.initializer, cx);
+    return;
+  }
   const redeclaredModuleVar = isRedeclaredModuleVar(d, name, cx);
   if (redeclaredModuleVar && !d.initializer) return;
   if (!d.initializer && !redeclaredModuleVar && bindUninitializedModuleVar(d, name, cx)) return;
@@ -7948,8 +7996,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding, after the propertyHelper alias arms (the
   // selector's order: those aliases are script `var`s in a dynamic module home too, but keep legacy's provider).
-  const bindingLogicalType =
-    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
+  const bindingLogicalType = binding && heldType(binding);
   // (#7287) …or a script `var` in its dynamic home (`print`); (#7354 F1b) a declaration's value home keeps its call;
   // (F2) on the Prepared lane in any position and also from module-init, whose scope binds the home.
   const lane = functionObjects.onPreparedDynamicLane(cx.resolver);
@@ -13857,17 +13904,21 @@ function lowerCarrierConditional(expr: ts.ConditionalExpression, cx: LowerCtx): 
 
 /**
  * (#7354 L0b) On the Prepared lane, a conditional whose arms are primitives of different kinds (`c ? n : undefined`,
- * `c ? "s" : null`) joins on the carrier.
+ * `c ? "s" : null`) joins on the carrier; (L0c) so does a primitive beside a call through a binding of the dynamic
+ * value (a function declaration's cell), whatever the checker infers for its result.
  */
 function laneMixedConditional(expr: ts.ConditionalExpression, cx: LowerCtx): boolean {
   if (!functionObjects.onPreparedDynamicLane(cx.resolver)) return false;
   const typed = (arm: ts.Expression): OperandFamily | null => {
     if (isUnshadowedGlobalExpression(arm, "undefined", cx)) return "undefined";
+    const callee =
+      ts.isCallExpression(arm) && ts.isIdentifier(arm.expression) ? cx.scope.get(arm.expression.text) : undefined;
+    if (callee && heldType(callee)?.kind === "dynamic") return "dynamic";
     const family = checkerOperandFamily(arm, cx);
     return isSupportedPrimitiveFamily(family) ? family : null;
   };
   const [whenTrue, whenFalse] = [expr.whenTrue, expr.whenFalse].map((arm) => conditionalJoinArmFamily(arm, typed));
-  return whenTrue !== null && whenFalse !== null && conditionalJoinFamily(whenTrue, whenFalse) === "unknown";
+  return whenTrue !== null && whenFalse !== null && whenTrue !== whenFalse;
 }
 
 /**
@@ -16221,12 +16272,8 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       ambientThisStrict: memberPlan.thisStrict,
     });
   }
-  const dynamicSignature = cx.resolver?.dynamicClosureSignature?.(expr);
-  if (dynamicSignature)
-    return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, {
-      writtenParameterSlots: true,
-      ...cx.resolver?.closureCodeStrictness?.(expr),
-    });
+  const dynamicClosure = lowerDynamicClosure(expr, cx);
+  if (dynamicClosure !== null) return dynamicClosure;
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   if (ownedByDescriptorLiteral(expr)) {
@@ -16369,8 +16416,22 @@ function lowerHostVoidCallbackExpression(
   );
 }
 
+/**
+ * (#7354 Fa) A function value with the Prepared lane's all-dynamic contract (`dynamicClosureSignature`), or `null`
+ * when the lane gives it none. (L0c) A function declaration inside a function is one too.
+ */
+function lowerDynamicClosure(expr: IrClosureLiteral | ts.FunctionDeclaration, cx: LowerCtx): IrValueId | null {
+  const signature = cx.resolver?.dynamicClosureSignature?.(expr);
+  return signature
+    ? lowerClosureExpressionWithSignature(expr, signature, undefined, cx, {
+        writtenParameterSlots: true,
+        ...cx.resolver?.closureCodeStrictness?.(expr),
+      })
+    : null;
+}
+
 function lowerClosureExpressionWithSignature(
-  expr: IrClosureLiteral,
+  expr: IrClosureLiteral | ts.FunctionDeclaration,
   signature: IrClosureSignature,
   expectedReadonlyCaptures: ReadonlySet<string> | undefined,
   cx: LowerCtx,
@@ -16666,7 +16727,7 @@ function innerName(fn: ts.FunctionDeclaration): string {
  */
 function liftClosureBody(
   liftedIdentity: IrFunctionIdentity,
-  expr: IrClosureLiteral,
+  expr: IrClosureLiteral | ts.FunctionDeclaration,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
@@ -16886,120 +16947,33 @@ function liftClosureBody(
   return builder.finish(closureSubtype);
 }
 
-/**
- * Walk a closure / nested-function's parameter initializers and body, collecting identifiers that
- * reference outer-scope `local` bindings. Classifies each capture as
- * mutable (the body OR the outer writes to it) or read-only.
- *
- * Outer writes are conservatively detected by walking the entire
- * outer body — any identifier-LHS write to `name` upgrades it to
- * mutable, even if the closure body itself is read-only. This is the
- * safe-and-simple approach the legacy path uses too.
- */
+/** The value a slot or local binding holds: a slot's logical type, a local's, or (#7354 L0c) its cell's content. */
+function heldType(binding: ScopeBinding): IrType | undefined {
+  if (binding.kind === "slot") return binding.asType ?? binding.type;
+  if (binding.kind !== "local") return undefined;
+  return binding.type.kind === "boxed" ? binding.type.inner : binding.type;
+}
+
+/** The enclosing binding a closure body's `name` reads, as the capture analysis sees it. */
+function captureSource(name: string, cx: LowerCtx): CaptureSource | undefined {
+  const binding = cx.scope.get(name);
+  if (binding?.kind === "withField") {
+    const { receiver, name: field, type } = binding;
+    return { kind: "withField", receiver, receiverType: cx.builder.typeOf(receiver), field, type };
+  }
+  return binding?.kind === "local" || binding?.kind === "moduleGlobal" ? binding : binding && { kind: "other" };
+}
+
 function analyseCaptures(
   fn: ts.FunctionDeclaration | IrClosureLiteral,
   cx: LowerCtx,
   orderedCaptureNames?: readonly string[],
 ): NestedCapture[] {
-  const referenced = new Set<string>();
-  const written = new Set<string>();
-  const ownParams = new Set<string>();
-  if (ts.isFunctionExpression(fn) && fn.name) ownParams.add(fn.name.text);
-  for (const p of fn.parameters) {
-    for (const name of collectPatternBindingNames(p.name)) ownParams.add(name);
-  }
-
-  const visit = (node: ts.Node): void => {
-    // Descendants lower separately, but their free outer bindings must first
-    // be transported through this closure's environment.
-    if (node !== fn && (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node))) {
-      if (cx.checker) {
-        const transitive = collectTransitiveClosureCaptures(node, fn, cx.checker);
-        transitive.referenced.forEach((name) => referenced.add(name));
-        transitive.written.forEach((name) => written.add(name));
-      }
-      return;
-    }
-    if (ts.isIdentifier(node)) {
-      referenced.add(node.text);
-      // (#6992) Every write form, destructuring and for-in/for-of heads included.
-      if (isLexicalBindingWrite(node)) written.add(node.text);
-    }
-    forEachChild(node, visit);
-  };
-  for (const parameter of fn.parameters) {
-    if (parameter.initializer) visit(parameter.initializer);
-  }
-  if (fn.body) {
-    if (ts.isBlock(fn.body)) {
-      for (const s of fn.body.statements) visit(s);
-    } else {
-      visit(fn.body);
-    }
-  }
-
-  const outerWrites = collectOuterWrites(fn);
-
-  if (orderedCaptureNames) {
-    validateExactCapturePlan(
-      orderedCaptureNames,
-      referenced,
-      ownParams,
-      (name) => (cx.scope.get(name)?.kind === "local" ? "local" : cx.scope.has(name) ? "other" : undefined),
-      cx.funcName,
-    );
-  }
-
-  const captures: NestedCapture[] = [];
-  const captureOrder: Iterable<string> = orderedCaptureNames ?? referenced;
-  for (const name of captureOrder) {
-    if (ownParams.has(name)) continue;
-    const binding = cx.scope.get(name);
-    if (!binding) continue;
-    if (binding.kind === "withField") {
-      const receiverType = cx.builder.typeOf(binding.receiver);
-      if (receiverType.kind !== "object") {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: with binding "${name}" has a non-object receiver in ${cx.funcName}`,
-        );
-      }
-      captures.push({
-        name,
-        type: receiverType,
-        mutable: false,
-        outerValue: binding.receiver,
-        withField: { name: binding.name, type: binding.type },
-      });
-      continue;
-    }
-    // (#7130) A module-scope binding is a global, not an environment slot:
-    // the lifted body reaches the same `__mod_` storage itself.
-    if (binding.kind === "moduleGlobal") continue;
-    if (binding.kind !== "local") {
-      // Slice 3 doesn't yet capture closure / nested-fn bindings — that
-      // would require either lifting the inner closure to a top-level
-      // ref.func or adding closure VALUE fields to the capture struct.
-      // Defer.
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: closure inside ${cx.funcName} captures non-local binding "${name}" — not in slice 3`,
-      );
-    }
-    // If the local is already a refcell (a sibling closure boxed it),
-    // the capture's logical type is the inner IrType — we deref on
-    // read in `lowerClosureExpression`. #1926 — boxed.inner is already an
-    // IrType, so use it directly (no irVal re-wrap).
-    const logicalType: IrType = binding.type.kind === "boxed" ? binding.type.inner : binding.type;
-    const isMutable = binding.type.kind === "boxed" || written.has(name) || outerWrites.has(name);
-    captures.push({
-      name,
-      type: logicalType,
-      mutable: isMutable,
-      outerValue: binding.value,
-    });
-  }
-  return captures;
+  return analyseClosureCaptures(
+    fn,
+    { checker: cx.checker, funcName: cx.funcName, lookup: (name) => captureSource(name, cx) },
+    orderedCaptureNames,
+  );
 }
 
 // ---------------------------------------------------------------------------

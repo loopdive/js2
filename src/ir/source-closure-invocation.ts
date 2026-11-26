@@ -35,6 +35,7 @@ function unsupported(detail: string): never {
 export function fixedClosureParameters(
   node:
     | ts.FunctionExpression
+    | ts.FunctionDeclaration
     | ts.ArrowFunction
     | ts.MethodDeclaration
     | ts.GetAccessorDeclaration

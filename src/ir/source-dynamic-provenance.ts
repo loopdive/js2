@@ -23,6 +23,7 @@ import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
+import { enclosingFunctionBody, localDeclarationCaptures } from "./function-declaration-values.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 
 type Carries = (expression: ts.Expression) => boolean;
@@ -84,7 +85,7 @@ export function sourceDynamicProvenance(
           localNeedsDynamicCarrier(declaration)),
     );
   const localNeedsDynamicCarrier = (declaration: ts.VariableDeclaration): boolean =>
-    dynamicCarrier && rewrittenStringLocal(checker, declaration);
+    dynamicCarrier && (rewrittenStringLocal(checker, declaration) || capturedByLocalDeclaration(checker, declaration));
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
@@ -155,6 +156,12 @@ export function sourceDynamicProvenance(
   return { scriptVarHome, carries: (expression) => carries(expression), localNeedsDynamicCarrier };
 }
 
+/** (#7354 L0c) A function's `var` a function declaration inside it reads or writes (`localDeclarationCaptures`). */
+function capturedByLocalDeclaration(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
+  const body = enclosingFunctionBody(declaration);
+  return body !== undefined && ts.isBlock(body) && localDeclarationCaptures(body, checker).has(declaration);
+}
+
 /**
  * (#7354 L0b) An unannotated function-level local created with a string and stored into again. The lane has no
  * string slot (its string representation is the program's own type), so such a local lives in the carrier.
@@ -174,7 +181,8 @@ function rewrittenStringLocal(checker: ts.TypeChecker, declaration: ts.VariableD
 
 /**
  * The source function declaration with a body that `call` calls directly, if any. (#7354 H2) A call of a rewritten
- * declaration reads its binding, which may hold any value.
+ * declaration reads its binding, which may hold any value; (L0c) so does a call of a declaration inside a function,
+ * whose binding is the carrier's cell.
  */
 export function sourceFunctionCallee(
   checker: ts.TypeChecker,
@@ -183,6 +191,7 @@ export function sourceFunctionCallee(
   const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
   return callee !== undefined &&
     ts.isFunctionDeclaration(callee) &&
+    ts.isSourceFile(callee.parent) &&
     callee.body !== undefined &&
     !preparedBindingRewritten(checker, callee.name!)
     ? callee
