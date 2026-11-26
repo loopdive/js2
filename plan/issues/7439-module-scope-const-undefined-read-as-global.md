@@ -69,7 +69,9 @@ The selector's rule `isGlobalUndefinedIdentifier` (`src/ir/analysis/operand-admi
   - `ambient`: the symbol at `id` is the checker's ambient `undefined` (`resolveName("undefined", undefined, Value,
     false)`) and its type is `undefined`. Because the symbol is the same one, a top-level script `var undefined` (no
     effect per spec) stays `ambient`.
-  - `shadowed`: the symbol is a different binding declared in a non-declaration source file.
+  - (PRV nit) The arms run in this order. First, the ambient symbol with declarations merged into it
+    (`declare global { var undefined: number }`, a script `var undefined`) is `unknown`. Then the ambient symbol with
+    none is `ambient`. Only after that, a different symbol declared in a non-declaration source file is `shadowed`.
   - `unknown`: anything else. That covers no symbol (inside `with` and on synthesized nodes, where
     `getSymbolAtLocation` is undefined, as PRV measured), and `declare global { var undefined: number }`.
 - **In-house backend.** It disagrees with the checker (script `var`, `with`), so it answers only what its binder proves:
@@ -83,13 +85,16 @@ does not grow.
 **Callers. Each consumer uses the answer only in its safe direction.**
 
 - **The rule.** `isGlobalUndefinedIdentifier(id, locals, undefinedReadOf)` keeps the local-name test and replaces
-  `isModuleBinding` with `undefinedReadOf(id) === "ambient"`. It is the only IR rule. The selector reaches the oracle
-  through its existing resolver (`IrModuleBindingResolver` gains `undefinedReadOf`, implemented by codegen over
-  `ctx.oracle`), and the builder through `cx.oracle`. With no oracle the answer is `unknown`, so the read is refused by
+  `isModuleBinding` with `undefinedReadOf(id) === "ambient"`. It is the only IR rule. The selector and the builder reach
+  the oracle through the module-binding resolver. (PRV-7439 C1) `undefinedReadOf` is added once, in
+  `makeIrLegacyModuleBindingResolver` (`src/ir/module-bindings.ts`), over `options.oracle`. Every resolver factory
+  inherits it: codegen's, integration's, and the Prepared path's `makeIrIdentityModuleBindingResolver`, which already
+  passes `oracle: input.oracle`. So the Prepared path, which reads `undefined` in the shared harness prelude, answers
+  `ambient` rather than `unknown`. With no oracle the answer is `unknown`, so the read is refused by
   name, and the #7380 no-checker test passes unchanged.
 - **IR sites routed through the rule** (folding the duplicates):
-  - `select.ts` 3541, 3697, 4219, 11980, 12815 and the `isUnshadowedUndefinedIdentifier` wrapper (18 call sites,
-    unchanged callers);
+  - `select.ts` 3541, 3697, 4219, 11980, 12815 and the `isUnshadowedUndefinedIdentifier` wrapper (call sites recounted
+    and listed in the PR, unchanged callers);
   - `from-ast.ts` 2717 (its inline `resolveName` / `getSymbolAtLocation` proof is deleted), `isUnshadowedGlobalExpression`'s
     `undefined` case, and 15948;
   - `identifier-read.ts`'s `global-undefined` arm.
@@ -122,6 +127,8 @@ does not grow.
 
   The exception is files with a `shadowed` read; each is listed with its reason.
 - The two #7380 tests in `tests/issue-3518-native-family-source-identity.test.ts` pass unchanged.
+- (PRV-7439 C2) No lost passes on the Prepared path (`TEST262_COMPILER_PATH=ir`), measured on the same test262 sample
+  before and after.
 - Quality:
   - one oracle method and one IR rule;
   - every listed spelling-only IR site goes through the rule;

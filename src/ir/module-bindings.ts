@@ -6,7 +6,7 @@
 
 import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
-import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
+import { checkerOracleOf, type TypeOracle, type UndefinedRead } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { dynamicCallArgumentAdmissible, type OperandFamily } from "./analysis/operand-admissibility.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
@@ -848,6 +848,8 @@ interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   readonly isAmbientBinding: (node: ts.Identifier) => boolean;
   /** (#7118) Every declaration of the identifier's symbol is a lib one. */
   readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
+  /** (#7439) What a read spelled `undefined` reads, from the compile's oracle. */
+  readonly undefinedReadOf: (node: ts.Identifier) => UndefinedRead;
   /** Resolve a local variable use to its exact declaration for alias tracking. */
   readonly localVariableDeclaration: (node: ts.Identifier) => ts.VariableDeclaration | undefined;
   /** Resolve any same-source local value use to its exact lexical declaration. */
@@ -975,16 +977,8 @@ const NON_F64_NATIVE_NUMBER_ALIASES = new Set(["i8", "i16", "i32", "u8", "u16", 
 // Mirrors the `UpdateRetypeQuerySource` pattern in update-retyped-bindings.ts.
 type BindingQuerySource = ts.TypeChecker | Pick<TypeOracle, "valueDeclarationOf" | "declarationsOf">;
 
-const checkerBindingOracles = new WeakMap<ts.TypeChecker, TsCheckerOracle>();
-
 function bindingOracle(source: BindingQuerySource): Pick<TypeOracle, "valueDeclarationOf" | "declarationsOf"> {
-  if ("valueDeclarationOf" in source && "declarationsOf" in source) return source;
-  let oracle = checkerBindingOracles.get(source);
-  if (!oracle) {
-    oracle = new TsCheckerOracle(source);
-    checkerBindingOracles.set(source, oracle);
-  }
-  return oracle;
+  return "valueDeclarationOf" in source && "declarationsOf" in source ? source : checkerOracleOf(source);
 }
 
 /** Ordered declaration candidates: value declaration first, then the full
@@ -2488,6 +2482,7 @@ export function makeIrLegacyModuleBindingResolver(
     },
     isAmbientBinding,
     isLibOnlyBinding,
+    undefinedReadOf: (node: ts.Identifier) => (options.oracle ?? checkerOracleOf(checker)).undefinedReadOf(node),
     readsStringValue: (node: ts.Identifier) =>
       stringBindingReadIsValue(checker, node, resolve, classifyPrimitiveExpression, isLibOnlyBinding),
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
@@ -2772,6 +2767,10 @@ export function makeIrModuleBindingResolver(
       ownerAt(node);
       return legacy.isLibOnlyBinding(node);
     },
+    undefinedReadOf(node: ts.Identifier): UndefinedRead {
+      ownerAt(node);
+      return legacy.undefinedReadOf(node);
+    },
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       ownerAt(node);
       return legacy.localVariableDeclaration(node);
@@ -2909,6 +2908,7 @@ export function projectIrModuleBindingResolverToLegacy(
     isDirectModuleBinding: (node: ts.Identifier) => resolver.isDirectModuleBinding(node),
     isAmbientBinding: (node: ts.Identifier) => resolver.isAmbientBinding(node),
     isLibOnlyBinding: (node: ts.Identifier) => resolver.isLibOnlyBinding(node),
+    undefinedReadOf: (node: ts.Identifier) => resolver.undefinedReadOf(node),
     localVariableDeclaration: (node: ts.Identifier) => resolver.localVariableDeclaration(node),
     localValueDeclaration: (node: ts.Identifier) => resolver.localValueDeclaration(node),
     externCallArgumentsMatch: (call: ts.CallExpression | ts.NewExpression) => resolver.externCallArgumentsMatch(call),

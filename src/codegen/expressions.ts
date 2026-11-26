@@ -1130,7 +1130,7 @@ function compileExpressionInner(
     return { kind: "externref" };
   }
 
-  if (ts.isIdentifier(expr) && expr.text === "undefined") {
+  if (ts.isIdentifier(expr) && expr.text === "undefined" && ctx.oracle.undefinedReadOf(expr) !== "shadowed") {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }

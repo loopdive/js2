@@ -50,6 +50,7 @@ import {
   type SignatureFact,
   type TypeFact,
   type TypeOracle,
+  type UndefinedRead,
 } from "./oracle.js";
 import {
   ARRAY_METHOD_RETURNS,
@@ -168,6 +169,18 @@ export class InHouseOracle implements TypeOracle {
    * direction (§13.5.1.2 `delete`, sloppy implicit globals), so the curated
    * global set is consulted first and errs toward "resolvable".
    */
+  /**
+   * The binder proves only a shadowing binding. A script's top-level declaration is global (a script `var undefined`
+   * changes nothing), and an unbound name may sit in a `with` body, so neither is ever `ambient`.
+   */
+  undefinedReadOf(id: ts.Identifier): UndefinedRead {
+    const declaration = this.valueDeclarationOf(id);
+    if (!declaration) return "unknown";
+    const sourceFile = declaration.getSourceFile();
+    const scriptGlobal = !ts.isExternalModule(sourceFile) && !ts.findAncestor(declaration.parent, ts.isFunctionLike);
+    return scriptGlobal ? "unknown" : "shadowed";
+  }
+
   isUnresolvableIdentifier(id: ts.Identifier): boolean {
     if (!isBindingReferencePosition(id)) return false;
     if (this.bindingOf(id)) return false;
