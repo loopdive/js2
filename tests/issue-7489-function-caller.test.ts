@@ -91,7 +91,7 @@ describe("#7489 A — refusals that stay", () => {
     ["a generator", "function* g() {} var c = g.caller;"],
     ["an async function", "async function g() {} var c = g.caller;"],
   ])(
-    "%s still refuses before it gets an own caller (§17.1 excludes it)",
+    "%s still refuses on this path (its own-caller operand is pinned below)",
     async (_label, source) => {
       expect(await refusal(source, runnerOptions())).not.toBe("");
     },
