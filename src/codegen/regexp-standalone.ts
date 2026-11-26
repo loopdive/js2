@@ -128,7 +128,6 @@ import {
   fileMentionsSymbolMatch,
   fileObservesRegExpExecProtocol,
 } from "./regexp-symbol-protocol-call.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import { hostRegExpRegisterInstrs } from "./helpers/host-regexp-search.js";
 import {
@@ -143,6 +142,7 @@ import {
   TOKEN_STAR,
   TOKEN_UNSUPPORTED,
 } from "./regexp-dynamic-pattern.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
 
@@ -4988,7 +4988,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
       subject === undefined ||
       !isStringLikeArg(ctx, subject) ||
       (limit !== undefined && (regExpArgType(ctx, limit).flags & ts.TypeFlags.NumberLike) === 0);
-    const splitId = getWellKnownSymbolId("split");
+    const splitId = wellKnownSymbolId("split");
     if (observed && splitId !== undefined) {
       ensureRegExpNativeProtoGlue(ctx);
       const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, splitId);
@@ -5007,7 +5007,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
       subject === undefined ||
       replacement === undefined ||
       !isStringLikeArg(ctx, subject);
-    const replaceId = getWellKnownSymbolId("replace");
+    const replaceId = wellKnownSymbolId("replace");
     if (observed && replaceId !== undefined) {
       ensureRegExpNativeProtoGlue(ctx);
       const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, replaceId);
@@ -5033,7 +5033,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
     const observed = fileObservesRegExpExecProtocol(expr) || !isStringLikeArg(ctx, strExpr);
     if (observed) {
       ensureRegExpNativeProtoGlue(ctx);
-      const symbolId = getWellKnownSymbolId(symbolMethod);
+      const symbolId = wellKnownSymbolId(symbolMethod);
       if (symbolId !== undefined) {
         const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, [strExpr], symbolId);
         if (routed !== undefined) return routed;

@@ -3,7 +3,7 @@
 //
 // Root cause: `hasNativeBuiltinConstantHandler` (property-access.ts) omitted a
 // `Symbol` arm, so the standalone builtin-static-value-read refusal pre-empted
-// the existing well-known-symbol constant emitter (`getWellKnownSymbolId`).
+// the existing well-known-symbol constant emitter (`wellKnownSymbolId`).
 // Reading `Symbol.iterator`/`Symbol.asyncIterator`/… as a value (a bare property
 // read or a computed-key) refused-loud in `--target standalone`, blocking the
 // `language/{statements,expressions}/class/dstr` iterator-protocol families.

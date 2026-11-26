@@ -47,9 +47,9 @@ import {
 import { compileStringIntegerArg, emitArgAsNativeString } from "./string-ops.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneStringSearchFunctionReplace } from "./regex-replace-fn.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { sourceWritesRegExpProtoSymbol } from "./regexp-proto-symbol-writes.js"; // (#6651 B9)
 import { emitRegExpCreateInvoke, tryInvokeReplacedOnSearchValue } from "./regexp-proto-symbol-invoke.js"; // (#6651 B9)
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * The well-known symbol each `String.prototype` search-value method consults
@@ -235,7 +235,7 @@ function tryInvokeReplacedProtocol(
   protocol: "match" | "search",
   staged: NonNullable<ReturnType<typeof stageCoercedOperands>>,
 ): ValType | null | undefined {
-  const symbolId = getWellKnownSymbolId(protocol);
+  const symbolId = wellKnownSymbolId(protocol);
   if (symbolId === undefined || !sourceWritesRegExpProtoSymbol(expr, protocol)) return undefined;
   return emitRegExpCreateInvoke(ctx, fctx, staged.regexpOverride.regexpLocal, symbolId, protocol, () => {
     if (staged.inputOverride() === null) return false;
