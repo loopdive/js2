@@ -477,7 +477,9 @@ function checkAbiExports(
       if (
         declaration?.slots === "primitive" &&
         (contract.params.length !== declaration.params.length ||
-          contract.results.length !== declaration.results.length ||
+          // A void result joins the carrier: `return f()` of a closure holds `undefined`.
+          contract.results.length !==
+            declaration.results.length + Number(!declaration.results.length && dynamic(contract.results[0])) ||
           declaration.params.some((slot, index) => !joins(slot, contract.params[index])) ||
           declaration.results.some((slot, index) => !joins(slot, contract.results[index])) ||
           !promiseContractMatches(declaration, contract.promise))
