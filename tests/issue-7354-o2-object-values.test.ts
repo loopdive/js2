@@ -156,26 +156,15 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
     expect(objects("export const n = 1;")).toEqual({
       present: false,
       functions: false,
-      nonConstructors: false,
       namesSymbol: false,
       namesErrors: false,
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
-      nonConstructors: false,
       namesSymbol: false,
       namesErrors: false,
     });
-  });
-
-  // (#7354 O2 r1) An accessor is a function value without [[Construct]]: `new` must ask the function object.
-  it("answers whether the program creates a function value that is no constructor", () => {
-    expect(objects("export const o = { get x() { return 1; } };")).toMatchObject({
-      functions: true,
-      nonConstructors: true,
-    });
-    expect(objects("export const f = function () {};")).toMatchObject({ functions: true, nonConstructors: false });
   });
 
   // (#7354 G1) An Error constructor makes objects; naming one (not as a member) admits the object kind.

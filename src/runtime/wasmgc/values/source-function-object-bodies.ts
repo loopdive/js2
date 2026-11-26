@@ -21,17 +21,21 @@ const CONSTRUCTOR_DESCRIPTOR = 0xbd;
 const PROTOTYPE_DESCRIPTOR = 0xb9;
 /** The realm `$Object`'s flags field (`ordinaryParent` reads its null-prototype bit 0x80 there). */
 const OBJECT_FLAGS_FIELD = 4;
-/** (#7354 O2) A bit of a function's bag's flags, free on the realm `$Object`: the function has no [[Construct]]. */
+/**
+ * (#7354 O2) A bit of a function's bag's flags, free on the realm `$Object`: the function has no [[Construct]]. The
+ * legacy codegen's positive `OBJ_FLAG_CONSTRUCTOR` (0x20, `builtin-callable-brand.ts`) brands its own objects, not this
+ * realm's.
+ */
 const NOT_CONSTRUCTOR = 0x40;
-/** The flags word of the bag `bag` leaves (an externref). */
-function bagFlags(kernel: BuiltinFunctionPrototypeOperands, bag: readonly Instr[]): Instr[] {
-  return [
-    ...bag,
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: kernel.objectTypeIdx },
-    { op: "struct.get", typeIdx: kernel.objectTypeIdx, fieldIdx: OBJECT_FLAGS_FIELD },
-  ];
+/** The bag the externref `bag` leaves, as the realm's `$Object`. */
+function bagObject(kernel: BuiltinFunctionPrototypeOperands, bag: readonly Instr[]): Instr[] {
+  return [...bag, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: kernel.objectTypeIdx }];
 }
+const flagsOf = (kernel: BuiltinFunctionPrototypeOperands): Instr => ({
+  op: "struct.get",
+  typeIdx: kernel.objectTypeIdx,
+  fieldIdx: OBJECT_FLAGS_FIELD,
+});
 
 /**
  * `js.object.init-function(closure, name, length, constructor)`: the bag, an ordinary object with a null
@@ -39,18 +43,16 @@ function bagFlags(kernel: BuiltinFunctionPrototypeOperands, bag: readonly Instr[
  * OrdinaryFunctionCreate's `length` and SetFunctionName's `name` (the builtin seeding); then, for a constructor (a
  * function declaration or expression; not an arrow, method or accessor), MakeConstructor's `prototype`, a fresh
  * ordinary object whose `constructor` is the closure. Own keys are therefore in the specification's order. (#7354 O2)
- * Where the program asks IsConstructor (`marksNonConstructors`), a function without [[Construct]] gets the bag's
- * {@link NOT_CONSTRUCTOR} bit; elsewhere no `new` asks, and the body is unchanged.
+ * A function without [[Construct]] gets the bag's {@link NOT_CONSTRUCTOR} bit instead, which `new` asks.
  */
 export function buildSourceFunctionInitDefinition(d: {
   readonly kernel: BuiltinFunctionPrototypeOperands;
   readonly create: SourceObjectCreateOperands;
   readonly prototypeKey: readonly Instr[];
   readonly constructorKey: readonly Instr[];
-  readonly marksNonConstructors: boolean;
 }): SourceObjectDefinition {
   const { kernel } = d;
-  const [bag, prototype] = [4, 5];
+  const [bag, prototype, object] = [4, 5, 6];
   const define = (target: number, key: readonly Instr[], value: number, descriptor: number): Instr[] => [
     get(target),
     ...structuredClone(key),
@@ -63,6 +65,7 @@ export function buildSourceFunctionInitDefinition(d: {
     locals: [
       { name: "bag", type: { kind: "externref" } },
       { name: "prototype", type: { kind: "externref" } },
+      { name: "object", type: { kind: "ref_null", typeIdx: kernel.objectTypeIdx } },
     ],
     body: [
       get(0),
@@ -82,19 +85,15 @@ export function buildSourceFunctionInitDefinition(d: {
           ...define(prototype, d.constructorKey, 0, CONSTRUCTOR_DESCRIPTOR),
           ...define(bag, d.prototypeKey, prototype, PROTOTYPE_DESCRIPTOR),
         ],
-        ...(d.marksNonConstructors
-          ? {
-              else: [
-                get(bag),
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: kernel.objectTypeIdx },
-                ...bagFlags(kernel, [get(bag)]),
-                { op: "i32.const", value: NOT_CONSTRUCTOR },
-                { op: "i32.or" },
-                { op: "struct.set", typeIdx: kernel.objectTypeIdx, fieldIdx: OBJECT_FLAGS_FIELD },
-              ] satisfies Instr[],
-            }
-          : {}),
+        else: [
+          ...bagObject(kernel, [get(bag)]),
+          { op: "local.tee", index: object },
+          { op: "local.get", index: object },
+          flagsOf(kernel),
+          { op: "i32.const", value: NOT_CONSTRUCTOR },
+          { op: "i32.or" },
+          { op: "struct.set", typeIdx: kernel.objectTypeIdx, fieldIdx: OBJECT_FLAGS_FIELD },
+        ],
       },
     ],
   };
@@ -107,7 +106,8 @@ export function buildSourceFunctionIsConstructorDefinition(
   return {
     locals: [],
     body: [
-      ...bagFlags(kernel, [get(0), { op: "call", funcIdx: kernel.bag }]),
+      ...bagObject(kernel, [get(0), { op: "call", funcIdx: kernel.bag }]),
+      flagsOf(kernel),
       { op: "i32.const", value: NOT_CONSTRUCTOR },
       { op: "i32.and" },
       { op: "i32.eqz" },

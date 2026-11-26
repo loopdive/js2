@@ -106,10 +106,9 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
  * Object.prototype; the body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`)
  * replaces the new object.
  *
- * IsConstructor is the function-kind test, and (#7354 O2) where the source creates a function value without
- * [[Construct]] (`ProgramObjects.nonConstructors`: an accessor) also the function object's own answer
- * (`js.object.is-constructor`). Declarations and function expressions are constructors; arrows, methods, generators
- * and async functions carry no all-dynamic signature, so no program calls one through a value yet.
+ * IsConstructor is the function-kind test, then (#7354 O2) the function object's own answer
+ * (`js.object.is-constructor`, the bit `init-function` sets from `isConstructorFunction`: an accessor has no
+ * [[Construct]]).
  */
 export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
@@ -153,14 +152,13 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
-  const ifConstructor = (r: IrValueId): IrInstr[] => {
+  const source = (r: IrValueId): IrInstr[] => {
     const test = b.fresh();
     return [
       realmCall("js.object.is-constructor", [callee], test),
       b.branch(test, construct, notConstructor, r, CARRIER),
     ];
   };
-  const source = b.program.objects.nonConstructors ? ifConstructor : construct;
   return [
     ...isFunction.instrs,
     b.branch(isFunction.cond, b.program.objects.functions ? source : builtin, notConstructor, result, CARRIER),

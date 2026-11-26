@@ -108,9 +108,22 @@ export function lowerTopLevelFunctionValue(
 }
 
 /**
+ * (#7354 O2) Whether a source function has [[Construct]]: a function declaration or expression (MakeConstructor in
+ * §10.2.9's callers); an arrow, a method, an accessor, a generator or an async function has none. `init-function`
+ * records the answer, which `new` asks (`dynamicConstruct`).
+ */
+function isConstructorFunction(fn: ts.FunctionLikeDeclaration): boolean {
+  return (
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    fn.asteriskToken === undefined &&
+    !fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  );
+}
+
+/**
  * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
  * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate, the §15.1.5 count the legacy metadata uses), `name`
- * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor (a function declaration or expression),
+ * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor ({@link isConstructorFunction}),
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
@@ -134,14 +147,13 @@ export function emitFunctionObjectInit(
       "the name of a function under a computed key needs the key's value",
     );
   const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
-  const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
       builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature)),
       builder.emitCoerceToExternref(builder.emitStringConst(name)),
       builder.emitConst({ kind: "f64", value: expectedArgumentCountOfParams(fn.parameters) }, irVal({ kind: "f64" })),
-      builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
+      builder.emitConst({ kind: "bool", value: isConstructorFunction(fn) }, irVal({ kind: "i32", boolean: true })),
     ],
     null,
   );

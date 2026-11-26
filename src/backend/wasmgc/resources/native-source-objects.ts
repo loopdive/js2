@@ -98,8 +98,6 @@ type Body = (
   dependencies: NativeSourceObjectDependencies,
   tx: PhysicalModuleReservations,
   helpers: Helpers,
-  /** (#7354 O2) Every contract the program calls. */
-  served: ReadonlySet<OrdinaryObjectRuntimeFeature>,
 ) => SourceObjectDefinition;
 /** (#7354 O1) The operands of the `Object` statics' bodies: the kernel's roles and the realm's layouts. */
 function objectStaticOperands(
@@ -216,14 +214,13 @@ const ROWS = {
   },
   "js.object.init-function": {
     signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
-    body: (dependencies, tx, _helpers, served) => {
+    body: (dependencies, tx) => {
       const key = literalKey(tx, dependencies);
       return buildSourceFunctionInitDefinition({
         kernel: nativeBuiltinFunctionOperands(tx, dependencies.kernel),
         create: createOperands(dependencies),
         prototypeKey: key("prototype"),
         constructorKey: key("constructor"),
-        marksNonConstructors: served.has("js.object.is-constructor"),
       });
     },
   },
@@ -400,10 +397,9 @@ export function fillNativeSourceObjectResources(
       buildToPropertyDescriptorDefinition(objectStaticOperands(owner.dependencies, tx), handles!.toBoolean),
     );
   }
-  const served = new Set(pack.served.map((row) => row.feature));
   for (const { feature, token } of pack.served) {
     const adapter = adapterOf(feature);
-    if (adapter) tx.fillFunction(token, adapter.body(owner.dependencies, tx, handles, served));
+    if (adapter) tx.fillFunction(token, adapter.body(owner.dependencies, tx, handles));
   }
   owner.filled = true;
 }
