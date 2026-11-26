@@ -46,6 +46,7 @@ import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { abortBody, owningRefusals } from "./abort-bodies.js";
+import { placeHoistedClosures, type HoistedClosurePlacement } from "./hoisted-closures.js";
 import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
 import { skipTransparentExpressions, unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import { constBindingNumber, isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
@@ -2074,7 +2075,7 @@ export function lowerFunctionAstToIr(
     bindEntryThis(scope, builder, options.ambientThisStrict);
   }
   if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
-  else lowerStatementList(stmts, cx);
+  else lowerFunctionBody(stmts, cx);
   checkLogicalVectorConsumption(cx);
   const expectedCountedStringAppends = [...(options.countedStringAppends?.values() ?? [])].filter(
     (plan) => plan.ownerUnitId === options.ownerUnitId,
@@ -2336,7 +2337,33 @@ function terminateTailFallOut(cx: LowerCtx): void {
   cx.builder.terminate({ kind: "unreachable" });
 }
 
-function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
+/** A nested declaration bound as a closure with the dynamic signature ({@link lowerFunctionBody}). */
+function isHoistedDeclaration(s: ts.Statement, cx: LowerCtx): s is ts.FunctionDeclaration {
+  return ts.isFunctionDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined;
+}
+
+/** A function body, with the closures of its hoisted nested declarations placed ({@link placeHoistedClosures}). */
+function lowerFunctionBody(stmts: readonly ts.Statement[], cx: LowerCtx): void {
+  const hoisted = stmts.filter((s) => isHoistedDeclaration(s, cx));
+  lowerStatementList(stmts, hoisted.length > 0 ? { ...cx, hoistedClosures: placeHoistedClosures(stmts, hoisted) } : cx);
+}
+
+/** Bind the closures of the hoisted declarations placed before `statement`. */
+function makeHoistedClosures(statement: ts.Statement, cx: LowerCtx): void {
+  for (const fn of cx.hoistedClosures?.get(statement) ?? []) {
+    const value = lowerClosureExpressionWithSignature(fn, cx.resolver!.dynamicClosureSignature!(fn)!, undefined, cx, {
+      writtenParameterSlots: true,
+      ...cx.resolver?.closureCodeStrictness?.(fn),
+    });
+    cx.scope.set(fn.name!.text, { kind: "local", value, type: cx.builder.typeOf(value) });
+  }
+}
+
+function lowerStatementList(list: readonly ts.Statement[], cx: LowerCtx): void {
+  // A hoisted declaration is no statement to run: the tail is the last statement that is not one.
+  let end = list.length;
+  while (end > 0 && isHoistedDeclaration(list[end - 1]!, cx)) end--;
+  const stmts = end === list.length ? list : list.slice(0, end);
   if (stmts.length < 1) {
     // #7104 — an empty dynamic-return body returns the carrier's undefined.
     if (cx.returnType?.kind === "dynamic") {
@@ -2373,11 +2400,13 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
     return;
   }
   for (let i = 0; i < stmts.length - 1; i++) {
+    makeHoistedClosures(stmts[i]!, cx);
     const done = cx.sourceMap
       ? withNodeSourceSite(cx, stmts[i]!, () => lowerStatementListPrefix(stmts, i, cx))
       : lowerStatementListPrefix(stmts, i, cx);
     if (done) return;
   }
+  makeHoistedClosures(stmts[stmts.length - 1]!, cx);
   lowerTail(stmts[stmts.length - 1]!, cx);
 }
 
@@ -2408,15 +2437,16 @@ function accumulateDenseReduction(
 
 function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx: LowerCtx): boolean {
   const s = stmts[i]!;
-  if (ts.isVariableStatement(s)) {
-    lowerVarDecl(s, cx);
-    return false;
+  // A `return` ends the list: what follows is unreachable, and its declarations were placed where they are named.
+  if (ts.isReturnStatement(s)) {
+    lowerTail(s, cx);
+    return true;
   }
   // Slice 3 (#1169c): nested function declaration. Adds a
   // `nestedFunc` scope binding and lifts the body to a top-level IR
   // function in `cx.lifted`.
   if (ts.isFunctionDeclaration(s)) {
-    lowerNestedFunctionDeclaration(s, cx);
+    if (!isHoistedDeclaration(s, cx)) lowerNestedFunctionDeclaration(s, cx);
     return false;
   }
   if (ts.isClassDeclaration(s) && s.name && cx.classShapes?.has(s.name.text)) {
@@ -2428,146 +2458,24 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
   }
   // Slice 3 (#1169c): bare call expression statement — lower the
   // call, drop the result. Lets `inc(); inc(); inc();` work.
-  //
-  // Slice 4 (#1169d): also accept `<obj>.<field> = <expr>;` — lowered
-  // as `class.set` or `object.set` based on the receiver's IrType.
-  if (ts.isExpressionStatement(s)) {
-    if (ts.isCallExpression(s.expression)) {
-      if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
-        void lowerCall(s.expression, cx, /* statementPosition */ true);
-        return false;
-      }
-      // (#2856) Method-shaped statement calls go through lowerMethodCall
-      // in STATEMENT position so void extern/console methods are legal
-      // (`host.appendChild(box);`, `console.log("…");`). Expression
-      // position keeps throwing on void — only this flag differs.
-      if (ts.isPropertyAccessExpression(s.expression.expression) && !s.expression.questionDotToken) {
-        lowerStatementMethodCall(s.expression, cx);
-        return false;
-      }
-      // The result SSA value is unused; DCE strips it if pure.
-      // closure.call and call are flagged side-effecting in dead-code
-      // so they stay live. (#2856 C4) Statement position — a VOID direct
-      // call (`quicksort(arr, lo, p - 1);`) is legal here.
+  if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression)) {
+    if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
       void lowerCall(s.expression, cx, /* statementPosition */ true);
       return false;
     }
-    // Slice 7a (#1169f): `yield <expr>;` as a top-level statement.
-    // Selected only inside `function*` (the selector enforces this
-    // at the function-claim level; if a non-generator function
-    // somehow surfaces a yield here, `lowerYield` throws).
-    if (ts.isYieldExpression(s.expression)) {
-      lowerYield(s.expression, cx);
+    // (#2856) Method-shaped statement calls go through lowerMethodCall
+    // in STATEMENT position so void extern/console methods are legal
+    // (`host.appendChild(box);`, `console.log("…");`). Expression
+    // position keeps throwing on void — only this flag differs.
+    if (ts.isPropertyAccessExpression(s.expression.expression) && !s.expression.questionDotToken) {
+      lowerStatementMethodCall(s.expression, cx);
       return false;
     }
-    // (#5163) The mutating shapes this issue adopted — chained assignment,
-    // member compound assignment, and `++`/`--`. Placed BEFORE the
-    // single-target `=` arms because a chain's outer LHS matches those arms
-    // while its RHS is itself an assignment they cannot lower.
-    if (lowerAdoptedMutatingStatement(s.expression, cx)) return false;
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(s.expression.left)
-    ) {
-      lowerIdentifierAssignment(s.expression.left, s.expression.right, cx);
-      return false;
-    }
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(s.expression.left)
-    ) {
-      lowerPropertyAssignment(s.expression, cx);
-      return false;
-    }
-    // (#2856 C2) element store `arr[i] = v;` as a non-tail statement —
-    // quicksort's post-partition swap writes live here (outside any loop).
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(s.expression.left)
-    ) {
-      lowerElementStore(s.expression.left, s.expression.right, cx);
-      return false;
-    }
-    // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
-    // `cond ? a : b;`. The expression evaluates for its effects and its
-    // SSA result is simply never consumed (a discarded ternary becomes an
-    // `if.stmt`, so only the taken arm evaluates). The selector's
-    // `isPhase1DiscardedExpr` admits exactly this set. Every MUTATING
-    // shape has a dedicated arm above and is refused by that selector arm,
-    // so one reaching here is a real selector↔builder divergence and must
-    // still surface as an unsupported shape rather than being lowered as
-    // an ordinary value.
-    if (!expressionStatementMutatesAtTopLevel(s.expression)) {
-      lowerDiscardedExpression(s.expression, cx);
-      return false;
-    }
-    if (lowerDroppedDelete(s.expression, cx)) return false;
-    demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
-  }
-  if (ts.isWithStatement(s)) {
-    lowerWithStatement(s, cx);
-    return false;
-  }
-  // Slice 6 part 2 (#1181): for-of statement (always non-tail). The
-  // body is shape-checked by `isPhase1ForOf` and lowered via a
-  // separate `lowerStmt` body-statement dispatcher (no nested
-  // closures, no nested function decls).
-  if (ts.isForOfStatement(s)) {
-    lowerForOfStatement(s, cx);
-    return false;
-  }
-  if (ts.isForInStatement(s)) {
-    lowerForInStatement(s, cx);
-    return false;
-  }
-  // Slice 12 (#1280): generic structured `while (cond) body` and
-  // `for (init; cond; update) body` loops. Both lower to a
-  // declarative `{while,for}.loop` IR instr which the lowerer
-  // emits as `block { loop { <cond>; i32.eqz; br_if 1; <body>;
-  // <update?>; br 0 } }`.
-  if (ts.isWhileStatement(s)) {
-    lowerWhileStatement(s, cx);
-    return false;
-  }
-  if (ts.isForStatement(s)) {
-    lowerForStatement(s, cx);
-    return false;
-  }
-  // #2952 slice 1: `do { body } while (cond)` (post-test loop).
-  if (ts.isDoStatement(s)) {
-    lowerDoStatement(s, cx);
-    return false;
-  }
-  // #2952 slice 3: `lbl: <loop>` as a non-tail statement.
-  if (ts.isLabeledStatement(s)) {
-    lowerLabeledStatement(s, cx);
-    return false;
-  }
-  // #2952 slice 4: `switch (...)` as a non-tail statement.
-  if (ts.isSwitchStatement(s)) {
-    lowerSwitchStatement(s, cx);
-    return false;
-  }
-  // Slice 9 (#1169h): throw / try as a non-tail statement.
-  if (ts.isThrowStatement(s)) {
-    lowerThrowStatement(s, cx);
-    return false;
-  }
-  if (ts.isTryStatement(s)) {
-    lowerTryStatement(s, cx);
-    return false;
-  }
-  // (#2856 calendar residual) A non-tail `if/else` whose arms are plain
-  // body statements is a converging statement, not a tail CFG split. Reuse
-  // the existing structured `if.stmt` lowering, then continue with the
-  // trailing statements. The selector admits exactly the body shapes this
-  // helper can lower, so returns that would need CFG termination stay on the
-  // legacy path.
-  if (ts.isIfStatement(s) && s.elseStatement) {
-    lowerIfBodyStatement(s, cx);
+    // The result SSA value is unused; DCE strips it if pure.
+    // closure.call and call are flagged side-effecting in dead-code
+    // so they stay live. (#2856 C4) Statement position — a VOID direct
+    // call (`quicksort(arr, lo, p - 1);`) is legal here.
+    void lowerCall(s.expression, cx, /* statementPosition */ true);
     return false;
   }
   // Phase 2: early-return `if` with no else + subsequent statements.
@@ -2640,11 +2548,8 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
     lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
     return true;
   }
-  demoteToLegacy(
-    "body-shape-rejected",
-    `ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`,
-  );
-
+  // Every other statement is a body statement: it falls through to the next one.
+  lowerStmt(s, cx);
   return false;
 }
 
@@ -2886,20 +2791,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   }
   if (ts.isIfStatement(stmt)) {
     if (!stmt.elseStatement) {
-      const isDynamicReturn = cx.returnType?.kind === "dynamic";
-      if (cx.returnType !== null && !isDynamicReturn) {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: non-void Phase 1 if must have an else arm in ${cx.funcName}`,
-        );
-      }
-      // #7104 — the implicit return after the guard: empty for void, the
-      // carrier's undefined for a dynamic-return function.
-      const implicitReturn = (): void =>
-        cx.builder.terminate({
-          kind: "return",
-          values: isDynamicReturn ? [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)] : [],
-        });
+      const implicitReturn = fallOutReturn(cx, "non-void Phase 1 if must have an else arm");
       if (thenArmTerminates(stmt.thenStatement)) {
         // `if (c) { …; return x; }` as the tail: lower like an if/else whose
         // else arm is the implicit return (selector: #7104 terminating-then).
@@ -2999,10 +2891,25 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     terminateTailFallOut(cx);
     return;
   }
-  demoteToLegacy(
-    "body-shape-rejected",
-    `ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
-  );
+  // Any other statement completes normally, and the function falls out of it into its implicit return.
+  const implicitReturn = fallOutReturn(cx, `unsupported tail statement ${ts.SyntaxKind[stmt.kind]}`);
+  lowerStmt(stmt, cx);
+  implicitReturn();
+}
+
+/**
+ * The implicit return of a body whose last statement completes normally (#7104): empty for void, the carrier's
+ * `undefined` for a dynamic result. A typed result has no `undefined`, so `shape`, the tail, is refused before it is
+ * lowered.
+ */
+function fallOutReturn(cx: LowerCtx, shape: string): () => void {
+  if (cx.returnType !== null && cx.returnType.kind !== "dynamic")
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: ${shape} in ${cx.funcName}`);
+  return () =>
+    cx.builder.terminate({
+      kind: "return",
+      values: cx.returnType === null ? [] : [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)],
+    });
 }
 
 /**
@@ -3144,6 +3051,8 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
+  /** The nested declarations of the body being lowered, made before the statement each is placed at. */
+  readonly hoistedClosures?: HoistedClosurePlacement;
   readonly funcName: string;
   readonly ownerUnitId: IrUnitId;
   // Slice 14 (#1228) — `null` means the enclosing function is void.
@@ -16366,6 +16275,8 @@ type IrClosureLiteral =
   | ts.MethodDeclaration
   | ts.GetAccessorDeclaration
   | ts.SetAccessorDeclaration;
+/** What a closure is lifted from: a literal, or a nested declaration bound at its body's entry. */
+type IrClosureSource = IrClosureLiteral | ts.FunctionDeclaration;
 
 function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): void {
   if (!expr.body || !ts.isBlock(expr.body) || someReturnedValue(expr.body, () => true))
@@ -16536,7 +16447,7 @@ function lowerHostVoidCallbackExpression(
 }
 
 function lowerClosureExpressionWithSignature(
-  expr: IrClosureLiteral,
+  expr: IrClosureSource,
   signature: IrClosureSignature,
   expectedReadonlyCaptures: ReadonlySet<string> | undefined,
   cx: LowerCtx,
@@ -16807,7 +16718,7 @@ function liftNestedFunction(
   if (!fn.body) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: nested function ${innerName(fn)} has no body`);
   }
-  lowerStatementList(fn.body.statements, innerCx);
+  lowerFunctionBody(fn.body.statements, innerCx);
 
   return builder.finish();
 }
@@ -16828,7 +16739,7 @@ function innerName(fn: ts.FunctionDeclaration): string {
  */
 function liftClosureBody(
   liftedIdentity: IrFunctionIdentity,
-  expr: IrClosureLiteral,
+  expr: IrClosureSource,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
@@ -16866,7 +16777,7 @@ function liftClosureBody(
   // only inside its body. Reuse the canonical closure carrier so recursive
   // calls keep the exact typed call_ref path instead of escaping through a
   // dynamic/global lookup.
-  if (ts.isFunctionExpression(expr) && expr.name) {
+  if ((ts.isFunctionExpression(expr) || ts.isFunctionDeclaration(expr)) && expr.name) {
     scope.set(expr.name.text, { kind: "local", value: selfV, type: selfType });
   }
 
@@ -17042,7 +16953,7 @@ function liftClosureBody(
         `ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[body.kind]})`,
       );
     }
-    lowerStatementList(body.statements, innerCx);
+    lowerFunctionBody(body.statements, innerCx);
   }
 
   return builder.finish(closureSubtype);

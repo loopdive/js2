@@ -151,7 +151,8 @@ export function sourceDynamicProvenance(
 
 /**
  * The source function declaration with a body that `call` calls directly, if any. (#7354 H2) A call of a rewritten
- * declaration reads its binding, which may hold any value.
+ * declaration reads its binding, which may hold any value. A declaration nested in a function is a closure of that
+ * function, not a unit with a contract of its own.
  */
 export function sourceFunctionCallee(
   checker: ts.TypeChecker,
@@ -161,6 +162,7 @@ export function sourceFunctionCallee(
   return callee !== undefined &&
     ts.isFunctionDeclaration(callee) &&
     callee.body !== undefined &&
+    ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined &&
     !preparedBindingRewritten(checker, callee.name!)
     ? callee
     : undefined;

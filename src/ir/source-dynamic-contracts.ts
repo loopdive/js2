@@ -213,13 +213,18 @@ function sourceBooleanResult(
  * signature ({@link ownedByDescriptorLiteral}).
  */
 function sourceDynamicClosureSignature(
+  checker: ts.TypeChecker,
   policy: SourcePolicy,
   expression: ts.FunctionLikeDeclaration,
 ): { readonly params: readonly IrType[]; readonly returnType: IrType } | undefined {
   const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
-    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression)) ||
+    !(
+      ts.isFunctionExpression(expression) ||
+      ts.isAccessor(expression) ||
+      hoistedNestedDeclaration(checker, expression)
+    ) ||
     (descriptorLiteral &&
       dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||
@@ -236,6 +241,22 @@ function sourceDynamicClosureSignature(
   )
     return undefined;
   return { params: expression.parameters.map(() => DYNAMIC), returnType: DYNAMIC };
+}
+
+/**
+ * A function declaration directly in a function body whose binding nothing else writes: FunctionDeclarationInstantiation
+ * (§10.2.11 step 36) makes its function object before the body's first statement, and the body's name always holds
+ * it, so from-ast binds it as that closure, made at body entry. A declaration in a nested block is Annex B's (B.3.2).
+ */
+function hoistedNestedDeclaration(checker: ts.TypeChecker, node: ts.Node): node is ts.FunctionDeclaration {
+  return (
+    ts.isFunctionDeclaration(node) &&
+    node.name !== undefined &&
+    node.body !== undefined &&
+    ts.isBlock(node.parent) &&
+    ts.isFunctionLike(node.parent.parent) &&
+    !preparedBindingRewritten(checker, node.name)
+  );
 }
 
 /**
@@ -257,7 +278,7 @@ function staticFunctionValue(
     sourceFiles.length !== 1 ||
     !initializer ||
     !ts.isFunctionExpression(initializer) ||
-    !sourceDynamicClosureSignature(policy, initializer) ||
+    !sourceDynamicClosureSignature(checker, policy, initializer) ||
     !isTopLevelStatementDeclaration(declaration) ||
     !ts.isIdentifier(name)
   )
@@ -378,7 +399,8 @@ export function programDynamicContracts(
       : { functionCodeStrict };
   };
   const bindsReceiver = (node: ts.Node): boolean =>
-    (ts.isFunctionExpression(node) && codeStrictness(node).ambientThisStrict !== undefined) ||
+    ((ts.isFunctionExpression(node) || hoistedNestedDeclaration(checker, node)) &&
+      codeStrictness(node).ambientThisStrict !== undefined) ||
     ts.forEachChild(node, bindsReceiver) === true;
   const closuresBindReceivers = functionObjects && sourceFiles.some(bindsReceiver);
   const provenance = sourceDynamicProvenance(
@@ -398,7 +420,7 @@ export function programDynamicContracts(
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
-          dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
+          dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(checker, policy, expression),
           staticFunctionValue: (declaration) =>
             !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
