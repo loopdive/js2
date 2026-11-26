@@ -124,6 +124,10 @@ interpreter and the legacy literal fold share it, and the legacy fold's template
 removed. The same leaf holds the separate-goal span check, `fitsFunctionSourceText`, which both routes use (RV7441's
 blocker). That is PR #7441, which addresses review P1.
 
+**Follow-up (lead, 2026-11-26).** Move the shared span check (`fitsFunctionSourceText`) and the assembler to a neutral
+leaf outside `src/interp`, so codegen no longer imports from the interpreter. The runtime-eval provider build keeps
+concatenating it.
+
 ## Implementation Plan
 
 ### Target structure
