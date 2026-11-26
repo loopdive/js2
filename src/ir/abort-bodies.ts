@@ -39,13 +39,11 @@ export interface AbortBodyRow {
 }
 
 /**
- * (#7486) One run-time abort site (`js.value.unsupported_at`): its program-wide id, which the trap leaves in the
- * exported global `__js_value_unsupported_site`, the function it was legalized in, and why it aborts.
+ * (#7486) One run-time abort site (`js.value.unsupported_at`), at the index of its program-wide id, which the trap
+ * leaves in the exported global `__js_value_unsupported_site`: the function it was legalized in, and why it aborts.
  */
 export interface AbortSiteRow {
-  readonly unit: IrUnitId;
   readonly name: string;
-  readonly site: number;
   readonly detail: string;
 }
 
@@ -148,9 +146,7 @@ export class AbortBodies {
 
   /** (#7486) The id of a new run-time abort site in `fn` with `reason`. */
   site(fn: IrFunction, reason: string): number {
-    const site = this.#sites.length;
-    this.#sites.push({ unit: fn.unitId, name: fn.name, site, detail: reason });
-    return site;
+    return this.#sites.push({ name: fn.name, detail: reason }) - 1;
   }
 
   /** (#7486) The run-time abort sites, by id. */

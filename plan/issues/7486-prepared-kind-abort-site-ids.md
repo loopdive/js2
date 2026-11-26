@@ -415,6 +415,31 @@ Built as planned, with these differences, each found while implementing:
    now names its id under the policy, so the test now uses a program with no
    site and says so in its title.
 
+8. **Review RV7468 (2026-11-26), all nits applied:**
+   - `AbortSiteRow` is `{ name, detail }`. The id is the row's index in
+     `sites()`, so a `site` field repeated it, and no consumer read `unit`.
+     The census tells a site row from an abort-body row by `siteFrame`.
+   - `publishNativeDynamicValues` has its sibling's guards: the filling
+     phase and one publication.
+   - Tests added: the census's merge rule (a site row wins over an abort
+     body named by the innermost frame; both mutations, dropping the site and
+     swapping the order, fail the test), and the presentation joining the
+     stdout pair (the program is still refused for its runtime demand; the
+     base presentation reported two `unjoined-physical-export` gaps for it).
+   - **The names stay spelled twice across the TS/JS line.**
+     `scripts/lib/wasm-exn-render.mjs` is imported by plain-node scripts
+     (`test262-worker.mjs`, `test262-runtime-verdict.mjs`,
+     `generate-npm-compat-report.mjs`). Node 22 strips TypeScript types, but
+     `src/` modules import their siblings with `.js` specifiers that name
+     `.ts` files. Importing `native-dynamic-values.ts` from node fails with
+     `ERR_MODULE_NOT_FOUND` on its first such import. The census
+     (`prepared-census.mts`, run by tsx) could import the TS constant, but
+     it loads the compiler from `--tree` at run time, so a static import
+     would pin the name to the census's own checkout, not the tree it
+     measures. Within TS each name is spelled once as a constant
+     (`UNSUPPORTED_SITE`); the helper name sits in `SYMBOLS` and `ROWS` like
+     every other dynamic-value helper.
+
 ### Acceptance run (2026-11-26, this branch on `claude/census-trap-frames` 00c971be)
 
 `npx tsx scripts/ir-census/prepared-census.mts --files <the 61> --out .tmp/kind61.jsonl --harness real --jobs 3`

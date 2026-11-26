@@ -42,7 +42,7 @@ const normalise = (detail = "") =>
 const trapReason = (row) =>
   row.abort === undefined
     ? `in ${row.trapFrame}`
-    : `${row.abort.site === undefined ? "abort body" : "abort site"}: ${normalise(row.abort.detail)}`;
+    : `${row.siteFrame === undefined ? "abort body" : "abort site"}: ${normalise(row.abort.detail)}`;
 
 function report(path) {
   const rows = readRows(path);

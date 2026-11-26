@@ -12,6 +12,8 @@ import {
   requiredPreparedAbortSites,
 } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import { analyzeMultiSource } from "../src/checker/index.js";
+import { prepareIrProgramPresentation } from "../src/compiler/ir-program-presentation.js";
 import { abortSiteOf, wasmErrorSite } from "../scripts/lib/wasm-exn-render.mjs";
 import { INTRINSIC_SIGNATURE_VERSION } from "../src/ir/core/intrinsics.js";
 import { asBlockId, asValueId, irUnitFuncRef, irVal, type IrFunction, type IrInstr } from "../src/ir/index.js";
@@ -23,7 +25,7 @@ const SLOW = 180_000;
 const TRIM = "member read 'trim' of a string needs String.prototype's properties";
 const STRING_DESCRIPTOR = "Object.getOwnPropertyDescriptor of a string: needs the String object's own properties";
 
-/** `source` compiled through the strict Prepared entry and run to its trap: the site row the trap left, and its frames. */
+/** `source` compiled through the strict Prepared entry and run to its trap: the site row the trap left, and the trap. */
 async function trapSite(source: string) {
   await yieldToRpc();
   const result = await compile(source, runnerOptions());
@@ -34,7 +36,7 @@ async function trapSite(source: string) {
     instance = instantiatePreparedArtifact(result).instance;
     (instance.exports.__module_init as () => void)();
   } catch (error) {
-    return { result, sites, row: abortSiteOf(instance, sites), frames: wasmErrorSite(error).frames };
+    return { result, sites, error, row: abortSiteOf(instance, sites), frames: wasmErrorSite(error).frames };
   }
   throw new Error("expected the run-time abort");
 }
@@ -45,10 +47,14 @@ describe("#7486 — a run-time abort names its site", () => {
     async () => {
       const source = 'function g(v){ return v.trim(); } g({ trim: function(){ return 1; } }); g(" a ");';
       await abortsAtRunTime(source, runnerOptions(), TRIM);
-      const { sites, row, frames } = await trapSite(source);
-      expect(sites).toHaveLength(1);
-      expect(row).toMatchObject({ site: 0, name: "g", detail: TRIM });
+      const { sites, error, row, frames } = await trapSite(source);
+      expect(sites).toEqual([{ name: "g", detail: TRIM }]);
+      expect(row).toBe(sites[0]);
       expect(frames.slice(0, 2)).toEqual(["__js_value_unsupported_at", "g"]);
+      // The census's rule: the site row wins over an abort body named by the innermost frame.
+      const body = { name: frames[0]!, code: "c", detail: "abort body" };
+      expect(wasmErrorSite(error, [body], row).aborted).toBe(row);
+      expect(wasmErrorSite(error, [body]).aborted).toBe(body);
     },
     SLOW,
   );
@@ -61,7 +67,7 @@ describe("#7486 — a run-time abort names its site", () => {
       const { row, frames } = await trapSite(source);
       // `inlineSmall` moved d's single-block body into module-init.
       expect(frames.slice(0, 2)).toEqual(["__js_value_unsupported_at", "<module-init>"]);
-      expect(row).toMatchObject({ site: 0, name: "d", detail: STRING_DESCRIPTOR });
+      expect(row).toEqual({ name: "d", detail: STRING_DESCRIPTOR });
     },
     SLOW,
   );
@@ -75,7 +81,7 @@ describe("#7486 — a run-time abort names its site", () => {
         'var f = function (v) { return v.trim(); }; var g = function (v, k) { return v[k]; }; var t = g; f(" a ");';
       const { result, sites, row } = await trapSite(source);
       expect(requiredPreparedAbortBodies(result)!.map((body) => body.name)).toEqual(["<module-init>__closure_1"]);
-      expect(sites).toEqual([{ unit: sites[0]!.unit, name: "<module-init>__closure_0", site: 0, detail: TRIM }]);
+      expect(sites).toEqual([{ name: "<module-init>__closure_0", detail: TRIM }]);
       expect(row).toBe(sites[0]);
     },
     SLOW,
@@ -111,6 +117,48 @@ describe("#7486 — a run-time abort names its site", () => {
     },
     SLOW,
   );
+});
+
+describe("#7486 — the presentation joins the exports the native runtime publishes", () => {
+  // No source on the strict path reaches console.log yet, so the stdout pair is presented from a preparation that
+  // asks for the native output projection. The presentation still refuses this program for its runtime demand; the
+  // test pins only that the pair is joined, where it used to be two `unjoined-physical-export` gaps.
+  it("joins the stdout pair (__stdout_prepare, __stdout_char)", () => {
+    const ast = analyzeMultiSource(
+      { "./entry.ts": 'export function run(): void { console.log("hi"); }' },
+      "./entry.ts",
+    );
+    const options = { target: "standalone", sourceMap: false, optimize: false, moduleName: "m" } as const;
+    const result = prepareIrProgramPresentation({
+      preparation: {
+        sourceFiles: ast.sourceFiles,
+        entrySource: ast.entryFile,
+        checker: ast.checker,
+        policy: {
+          backend: "wasmgc",
+          target: "standalone",
+          stringConst: { storage: "native" },
+          stringConcat: { concat: "native" },
+        },
+        deferTopLevelInit: false,
+        nativeStringValueProjection: "standalone-native",
+        nativeStringOutputProjection: "standalone-native",
+      },
+      backendOptions: { ...options, backend: "wasmgc", sharedExceptionTag: false, utf8Storage: false },
+      output: {
+        entryAst: { ...ast, sourceFile: ast.entryFile },
+        errors: [],
+        codegenOptions: { link: [] },
+        sourcesContent: new Map(ast.sourceFiles.map((source) => [source.fileName, source.text])),
+        diagnosticAnchor: ast.entryFile,
+        options,
+      },
+    });
+    expect(result.kind).toBe("presentation-unsupported");
+    if (result.kind !== "presentation-unsupported") return;
+    expect(result.gaps.map((gap) => gap.field)).not.toContain("exports");
+    expect(result.gaps.length).toBeGreaterThan(0);
+  });
 });
 
 describe("#7486 — a monomorphize clone keeps the site's id", () => {

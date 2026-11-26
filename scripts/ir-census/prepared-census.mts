@@ -199,7 +199,6 @@ function trapOf(
       ? {
           abort: {
             code: aborted.code,
-            site: aborted.site,
             name: aborted.name,
             detail: aborted.detail.slice(0, DETAIL_CAP),
           },

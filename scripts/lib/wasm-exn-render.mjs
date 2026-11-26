@@ -138,7 +138,7 @@ export function isWasmTrap(err) {
  * (#7486) The run-time abort site a trap fired at: the id the site-naming abort left in the module's exported global
  * `__js_value_unsupported_site` (-1 until one fires), as its row of the Prepared site table.
  *
- * @template {{ site: number }} Row
+ * @template Row
  * @param {any} instance
  * @param {readonly Row[]} [abortSites]
  * @returns {Row | undefined}

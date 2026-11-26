@@ -176,6 +176,7 @@ interface Owner {
   readonly requirements: NativeValueResourcePlan;
   readonly dependencies: NativeValueDependencies;
   filled: boolean;
+  published: boolean;
 }
 const owners = new WeakMap<NativeDynamicValueReservations, Owner>();
 function fail(detail: string): never {
@@ -220,7 +221,7 @@ export function reserveNativeDynamicValueResources(
       ? { unsupportedSite: requireNativeDeclaredReservation(records, key + ":unsupported-site", "global") }
       : {}),
   });
-  owners.set(pack, { tx, values, strings, booleans, requirements, dependencies, filled: false });
+  owners.set(pack, { tx, values, strings, booleans, requirements, dependencies, filled: false, published: false });
   return pack;
 }
 
@@ -318,9 +319,13 @@ export function fillNativeDynamicValueResources(
 
 /** (#7486) Export the site-naming abort's global, where the program has one. */
 export function publishNativeDynamicValues(tx: PhysicalModuleReservations, pack: NativeDynamicValueReservations): void {
+  if (tx.state !== "filling") fail("publication requires filling phase");
   requireCompletedNativeDynamicValues(tx, pack);
-  if (pack.unsupportedSite)
-    tx.defineExport(pack.unsupportedSite.key + ":export", UNSUPPORTED_SITE, pack.unsupportedSite);
+  if (!pack.unsupportedSite) return;
+  const owner = owners.get(pack)!;
+  if (owner.published) fail("duplicate site publication");
+  tx.defineExport(pack.unsupportedSite.key + ":export", UNSUPPORTED_SITE, pack.unsupportedSite);
+  owner.published = true;
 }
 
 export function requireCompletedNativeDynamicValues(

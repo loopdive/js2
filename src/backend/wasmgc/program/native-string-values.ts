@@ -4,7 +4,7 @@ import { closureInvocationKind } from "../../../ir/core/closure-invocation-calla
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
-import type { PhysicalNativeStringSetup } from "../../../ir/program-physical-plan.js";
+import type { NativeNumberFormatStringLayoutPlan } from "./native-number-format.js";
 import { preparedStringLenProvider } from "../../../ir/runtime/intrinsic-preparation.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
@@ -696,7 +696,9 @@ export function publishNativeStringValueOutput(
   if (pack.number?.dynamicValues) publishNativeDynamicValues(tx, pack.number.dynamicValues);
 }
 /** The exports {@link publishNativeStringValueOutput} defines for `setup`; the formatter's layout publishes none. */
-export function nativePublishedExportNames(setup: PhysicalNativeStringSetup | undefined): readonly string[] {
+export function nativePublishedExportNames(
+  setup: { readonly resources: NativeStringValuePhysicalPlan | NativeNumberFormatStringLayoutPlan } | undefined,
+): readonly string[] {
   const plan = setup?.resources;
   if (plan === undefined || plan.mode === "formatter-layout") return [];
   return [
