@@ -15,6 +15,29 @@ goal: ir-full-coverage
 depends_on: [7354]
 related: [7354, 3518, 2952, 2964]
 origin: "2026-11-19 #7354 slice O plan (O5, id reserved by ttraenkler/c-lead); assigned 2026-11-26 by the lead"
+# 2026-11-26 (implementation): growth the plan's "no growth grants" did not foresee, each reason below.
+# - src/ir/from-ast.ts +132: the for-in lowering's head, receiver and liveness arms (`forInHead`, `forInReceiver`), the
+#   identifier-write split (`identifierWriteTarget` / `storeIdentifierWrite`, which assignment and the for-in head
+#   share) and the module-init model read (`moduleInitScriptVarModel`). They sit beside the lowering they extend and use
+#   from-ast's private context (`LowerCtx`, `lowerExpr`, the scope); a module of their own would import from-ast and
+#   close an import cycle.
+# - src/ir/module-bindings.ts +23: the required script-var model threaded through the resolver's declaration helpers
+#   (one parameter line each); no logic moves.
+# - src/codegen/index.ts +2, src/ir/integration.ts +2, src/ir/program-source.ts +2, src/ir/select.ts +2: the model at
+#   each call site of a required parameter (the model has no default by design). The four functions below grow by one
+#   row; each is a pre-existing god-function whose split is outside this slice.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/module-bindings.ts
+  - src/codegen/index.ts
+  - src/ir/integration.ts
+  - src/ir/program-source.ts
+  - src/ir/select.ts
+func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
+  - src/codegen/index.ts::generateModule
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
 ---
 
 # #7377: for-in over dynamic objects on the Prepared path
@@ -260,3 +283,59 @@ Also:
 
 A fresh-context adversarial review (diff + this plan) runs before `hold` is released, and its verdict goes in the PR
 body.
+
+## Implementation notes (2026-11-26, branch `claude/7354-o5-impl` from 46ae062ad4)
+
+Built as revision 2 describes, with these deviations, each measured or ordered:
+
+- **The model is never defaulted (lead order of 2026-11-26, replacing PRV-O5's N1).** Every resolver that lowers a
+  module-init unit names its model: the ordinary integration `"statement-and-for-heads"`, the Prepared producer
+  `"with-for-in-heads"`. from-ast reads it through `moduleInitScriptVarModel`, which refuses the unit by name
+  ("module-init resolver names no script-var model") when a resolver has none. No other resolver lowers a module-init
+  unit (the linear one does not).
+- **The Prepared capability is on every Prepared lane, not only `nativeDynamicLane`'s resolver.** The producer uses
+  `"with-for-in-heads"` on every lane, so its from-ast resolver (`program-source-units.ts`) must say so on every lane;
+  on the native lane alone, the refusal above would hit every module-init of the other lanes. A for-in there still
+  refuses ("dynamic for-in runtime is unavailable"): only the native lane has the realm contracts.
+- **Liveness is typed as the contract's Boolean** (`IR_BOOL`) on both pipelines: the Prepared ABI join compares the
+  call's type with the declaration exactly. The brand is structural; ordinary bytes are unchanged (below).
+- **A concrete receiver is boxed (`forInReceiver`).** Measured: `var x = 5; for (var k in x) {}` reached the old
+  invariant ("for-in receiver lost dynamic carrier"), a compiler crash, because no selector stands in front of the
+  Prepared lowering. A boxable primitive now reaches the snapshot, which aborts; anything else refuses by name.
+- **An identifier head that names a binding other than a script var** (a block `let`, a `with` field) refuses by name
+  ("is not a script var"): the identifier-write core then only ever stores a key into a module global.
+- **Dynamic home: no code beyond the model.** `identifierWritesOf` already lists a for-in head as a `key` write, which
+  the provenance counts as possibly dynamic (`storesCarry`); the classifier only needed the model to see the head's
+  declaration (`moduleBindingDeclarations`).
+- **A third accessor, `argumentVectorEach`:** the loop the walk, the snapshot's `seen` test and descriptors-define's
+  apply pass share, beside `argumentVectorLength` / `argumentVectorElement`.
+- **descriptors-define's body changes order, not meaning:** the walk owns its `ownKeys` call, so the record vector is
+  created before it instead of after. `newVector` only allocates.
+- **N3.** A script-level `for (k in o)` without a declaration refuses ("assignment to undeclared identifier"). A
+  function's for-in refuses by the function message whatever its head, `var k; for (k in o)` included (the named
+  refusal, not a write of the declared local).
+
+Pins moved: #7372 "a for-in head var" (now stops at the array receiver: "resolver cannot register vec for array
+literal"), F0 "for-in over the global object" (now `this`), T "a dynamic for-in head" (now the function message), and
+the #3518 contract table (three rows).
+
+### Measured (2026-11-26)
+
+- **Tests:** `tests/issue-7354-o5-for-in.test.ts` 22/22. The `tests/issue-7354-*` files (str2c-dynamic-add skipped), the
+  #3518 contract and provider files, #7372, #7106 lever S and propertyHelper, #3520 class identity, #3797, #3518
+  startup and #3523: 2,555 of 2,557 pass. The two failures fail identically on the base 46ae062ad4 (#3523 "detects the
+  legacy all-statics-before-statements reordering", #7354 O "refuses what the later steps build").
+- **Mutations**, each caught: no enumerable test (2 tests fail), no `seen` (2), chain stopped at the receiver (3), the
+  binding written before `has` (1, the code-order pin), a `var` head kept in the private slot (3), an empty list for a
+  primitive (4), a walk that skips Symbols (2, the fixture's walk pin among them).
+- **Ordinary bytes:** the 13 playground examples × default and standalone, 26/26 identical to 46ae062ad4.
+- **Prepared bytes:** `scripts/prepared-byte-identity.mts`, 804/804 rows identical to 46ae062ad4. No row calls
+  `Object.defineProperties`, so descriptors-define's reordered body is not in that set.
+- **Equivalence gate** (`node scripts/equivalence-gate.mjs`, the whole directory): no new regression; 4,849 passing,
+  the 20 failures all in its baseline (2 baseline failures pass, not banked).
+- **411-row sample** (`TEST262_COMPILER_PATH=ir`, standalone; base = main bb9123f6a3, 83 pass): 91 pass, 0 lost, 8
+  gained (`Object/defineProperty` 15.2.3.6-3-46, -3-51, -3-67, -4-46, -4-355, -4-424, -4-509 and
+  `Object/defineProperties` 15.2.3.7-5-b-14). Of the 26 rows that stopped at the nested-var refusal, the 20 for-in rows
+  moved: 8 pass, 12 stop at a later wall (a built-in global or class not in scope yet, `this` at script level, or an
+  inferred `string[]`). The 6 left there are `with` rows: the 5 the Problem section counts and S13.2.2_A19_T8, a
+  `var` inside `with` that the 21 above counted as for-in.

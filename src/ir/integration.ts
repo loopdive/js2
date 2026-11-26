@@ -2441,6 +2441,7 @@ export function compileIrPathFunctions(
     // (#7105) Must agree with the selector-side option: a script `var` the
     // selector admitted is written here through the same slot classifier.
     scriptVarHome: (declaration: IrModuleBindingDeclaration) => scriptVarHome(ctx, declaration),
+    scriptVarModel: "statement-and-for-heads" as const,
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -6382,7 +6383,7 @@ function buildModuleBindingsMap(
 ): Map<string, ModuleBindingGlobal> {
   const map = new Map<string, ModuleBindingGlobal>();
   for (const stmt of population) {
-    for (const entry of moduleInitBindings(stmt)) {
+    for (const entry of moduleInitBindings(stmt, "statement-and-for-heads")) {
       if ("unmapped" in entry) {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
@@ -6511,7 +6512,7 @@ function surveyModuleBindingRefusals(
     });
   };
   for (const stmt of population) {
-    for (const entry of moduleInitBindings(stmt)) {
+    for (const entry of moduleInitBindings(stmt, "statement-and-for-heads")) {
       if ("unmapped" in entry) {
         // Same refusal `buildModuleBindingsMap` throws for, kept as a category
         // rather than a stop: a destructured top-level binding has no
@@ -7474,12 +7475,13 @@ function makeFromAstResolver(
     // runtime. Both variants snapshot keys and perform per-visit liveness.
     dynamicForInPlan() {
       return {
-        keys: "__object_keys_forin",
-        len: "__extern_length",
-        get: "__extern_get_idx",
-        has: "__extern_has",
+        keys: irRuntimeFuncRef("__object_keys_forin"),
+        len: irRuntimeFuncRef("__extern_length"),
+        get: irRuntimeFuncRef("__extern_get_idx"),
+        has: irRuntimeFuncRef("__extern_has"),
       };
     },
+    scriptVarModel: () => "statement-and-for-heads",
     // (#2856 C2) TypedArray-view receiver detection for element STORES —
     // the same checker walk as the legacy `elementAccessTypedArrayName`
     // (assignment.ts): symbol name of the receiver's TS type against the

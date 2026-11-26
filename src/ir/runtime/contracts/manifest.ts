@@ -438,6 +438,9 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.own-descriptor",
   "js.object.intrinsic",
   "js.object.has-own",
+  "js.object.for-in-keys",
+  "js.object.key-list-length",
+  "js.object.key-list-get",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -461,6 +464,9 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.own-descriptor",
   "native.js.object.intrinsic",
   "native.js.object.has-own",
+  "native.js.object.for-in-keys",
+  "native.js.object.key-list-length",
+  "native.js.object.key-list-get",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

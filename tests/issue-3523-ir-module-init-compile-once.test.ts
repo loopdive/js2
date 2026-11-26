@@ -38,6 +38,7 @@ function buildPlan(
       identityContext,
       target,
       deferTopLevelInit,
+      scriptVarModel: "statement-and-for-heads",
     }),
   };
 }

@@ -7236,7 +7236,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
 
 /** (#7106 S5, lever L) A `<module-init>` `var` list: its names are script `var`s in their `__mod_<name>` slots. */
 function isScriptVarList(list: ts.Node): boolean {
-  return currentSubjectIsModuleInit && isModuleInitVarList(list);
+  return currentSubjectIsModuleInit && isModuleInitVarList(list, "statement-and-for-heads");
 }
 
 /**
@@ -13899,7 +13899,7 @@ function isDynamicHomeOpenCarrier(value: EmptyObjectExpression): boolean {
 function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): boolean {
   return (
     ts.isIdentifier(decl.name) &&
-    isModuleInitVarList(decl.parent) &&
+    isModuleInitVarList(decl.parent, "statement-and-for-heads") &&
     currentModuleBindingResolver?.(decl.name)?.valueKind.kind === "dynamic" &&
     currentSelectionOptions?.isOpenObjectBinding?.(decl) === true
   );
@@ -14198,7 +14198,9 @@ export function assessModuleInit(
   };
   findDynamicModuleUpdate(sourceFile);
   currentIrSafeVarDeclarationLists =
-    scriptVarGate || hasDynamicModuleUpdate ? collectIrSafeModuleVarDeclarationLists(population) : new Set();
+    scriptVarGate || hasDynamicModuleUpdate
+      ? collectIrSafeModuleVarDeclarationLists(population, "statement-and-for-heads")
+      : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();

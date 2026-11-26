@@ -122,19 +122,6 @@ export const CREATE_DATA_PROPERTY =
   flags.configurableSpecified |
   flags.hasValue;
 
-/**
- * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's own-property find
- * and lookup, the walk `get` takes. (#7354 F1b) An own writable data property of the receiver is updated with
- * `{ [[Value]] }` alone, so its attributes stay (a function's non-enumerable `prototype`, a prototype's
- * `constructor`); an inherited writable data property, or none (absent, or a miss at the realm's Object.prototype,
- * which every caller's key refusal makes a true miss), is CreateDataProperty on the receiver. A function's own
- * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
- * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
- * or a setter-less accessor answers `false`; (#7354 O2) an accessor's setter is called with the receiver and the
- * value (`buildAccessorCall`), answering `true`. Without `accessorCalls` no source closure can be a setter and a
- * setter call traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
- * (`Object.preventExtensions`, slice O3).
- */
 /** The kernel operands OrdinarySet reads: its walk, its define, and (#7354 O2) the accessor call's dispatch. */
 type SourceObjectSetOperands = Pick<
   BuiltinFunctionPrototypeOperands,
@@ -148,6 +135,19 @@ type SourceObjectSetOperands = Pick<
   | "match"
   | "entries"
 >;
+/**
+ * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's own-property find
+ * and lookup, the walk `get` takes. (#7354 F1b) An own writable data property of the receiver is updated with
+ * `{ [[Value]] }` alone, so its attributes stay (a function's non-enumerable `prototype`, a prototype's
+ * `constructor`); an inherited writable data property, or none (absent, or a miss at the realm's Object.prototype,
+ * which every caller's key refusal makes a true miss), is CreateDataProperty on the receiver. A function's own
+ * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
+ * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
+ * or a setter-less accessor answers `false`; (#7354 O2) an accessor's setter is called with the receiver and the
+ * value (`buildAccessorCall`), answering `true`. Without `accessorCalls` no source closure can be a setter and a
+ * setter call traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
+ * (`Object.preventExtensions`, slice O3).
+ */
 export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): SourceObjectDefinition {
   const [status, entry, storage, setter] = [4, 5, 6, 7];
   const calls = d.accessorCalls;

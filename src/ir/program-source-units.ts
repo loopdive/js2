@@ -116,6 +116,7 @@ function lowerUnitOnce(
     sourceClosureInvocation: (expression) => lowering.closureInvocations.get(expression),
     sourceClosureCallableParameter: (node) => lowering.closureCallableParameters.has(node),
     resolveModuleBinding: resolveBinding,
+    scriptVarModel: () => "with-for-in-heads",
     moduleInitFunctionValues: () => lowering.functionValues,
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
