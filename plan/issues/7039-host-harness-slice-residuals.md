@@ -38,9 +38,10 @@ Each item was measured on upstream/main 0727e2985b; none is a harness gap.
    shared `instantiateWithRuntime` harness): `tests/issue-1755.test.ts`
    ("erases the generic argument in param, return, variable, and field
    positions": a `Uint8Array<ArrayBuffer>` export param) and
-   `tests/union-narrowing.test.ts` ("typeof narrowing: number branch": a JS
-   `42` passed to a `number | string` param), both "type incompatibility when
-   transforming from/to JS".
+   `tests/union-narrowing.test.ts` ("typeof narrowing: number branch" and
+   "string branch": a JS `42` or `"hello"` passed to a `number | string`
+   param), all "type incompatibility when transforming from/to JS", with the
+   raw and the shared harness alike.
 3. **`tests/issue-4628-temporal-global.test.ts` (2 red).** `Intl` closure denial
    count is 2 not 0, and an ambient `declare const Temporal` capture fails with
    `Cannot access property on null or undefined at 5:48`.
