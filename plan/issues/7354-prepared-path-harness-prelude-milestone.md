@@ -7131,3 +7131,86 @@ literal 2, loose equality 2, `<` / `<=` on dynamic values 2, implicit dynamic fl
 ### Not verified
 
 Node 25; the full 3518/7354 suites beyond the files above; `check:prepared-bytes`; no adversarial review agent run.
+
+## Slice W2 review r1 (2026-11-26, PR 7515 review; `origin/main` a9cdc8857a merged)
+
+The result section above is superseded where it names `realmConstructorsRead`, `primitive-data`, `wrapper-this`,
+`wrapper-to-string` and `dynamic-wrapper-methods.ts`.
+
+### Blocker: the held constructors were a fact of one legalization group
+
+- Cause: each group computed the constructors its own functions read. A function whose group named none
+  (`function f(x){ return x.message; }` beside `new TypeError("m")` at top level) admitted neither the object nor the
+  function kind, so an error reached the chain's last, untested arm (null / primitive), which threw the realm's
+  TypeError: the uncaught exception of the G1 regression. A primitive's member read in such a function took the
+  "no prototype is obtainable" route and answered `undefined` for a key the program had put on String/Object/Number
+  .prototype (the wrong values).
+- Fix: `programObjects` (`source-plain-objects.ts`) walks every source file once and records `constructors`;
+  `programDynamicContracts` builds one frozen `LegalizationProgram { objects, catches }` and hands it to every
+  group. `holdsErrors`, `heldWrappers`, `obtainsPrototypes` and `admittedKinds` read only it, so no group can
+  disagree with another. The walk over-approximates (a family no code reads costs bytes, not an answer); it skips
+  only the call forms the front end lowers from their shape, by the predicates the lowering uses
+  (`realm-constructor-forms.ts`: `String(v)`, `Object.prototype.toString.call(v)`; the borrow; `Object` as the
+  receiver of a native static). That last skip first matched any member access that is a direct argument of the
+  call, so `Object.defineProperty(String.prototype, …)` did not name String — fixed, and pinned in o2-object-values.
+- Tests: o2-object-values' whole-program test is back ("answers which realm constructors the whole program names");
+  `issue-7354-w2-wrappers.test.ts` has 12 function-body programs (String/Object/Number.prototype data, getter and
+  method keys read in a function; G1's message/concat/String/tag through a function; a wrapper passed into a function
+  and converted) against node with a wrong twin, and 5 of them through the harness prelude.
+
+### Quality items
+
+- a–d: `undefinedValue` deleted; the String index key is `buildStringIndexKeyDefinition`
+  (`string-index-key-body.ts`); `builtinMethodChain` / `identityTest` / `wrapperMethodTest`
+  (`dynamic-builtin-methods.ts`, renamed from `dynamic-wrapper-methods.ts`) serve ToPrimitive and P1's method call;
+  `BuiltinMethodBuilders` is a `Pick<ChainBuilders, …>`, `carried` is defined once (`dynamic-value-types.ts`).
+- e–k, all done: `WRAPPER_OF_PRIMITIVE` (catalog, read by the IR through `builtin-prototype-keys.ts`); one `SLOT`
+  table per kind in `realm-wrapper-bodies.ts`; two rows, `js.object.create-wrapper` and `js.object.wrapper-data`
+  (selector `WRAPPER_DATA = { slot, valueOf, toString }`) replace four; `dynamic-realm-constructors.ts` uses a
+  `CONVERSION` table; the extensible check accepts only when every wrapper type's supertype is `$Object`
+  (`wrapperSubtypes`); `dynamic-object-tag.ts` holds the tag and the toString-replaced guard; `CARRIER`/`F64`/
+  `BOOLEAN` and friends live in `dynamic-value-types.ts`.
+- `Number(null)` (in the W2 test since the first commit) had become a physical-setup error when dc79a7459c narrowed
+  `preparedToNumber` to dynamic/string operands: it is +0 now (§7.1.4); other external operands keep their path
+  (boxing them changed 3518's typed `Number({})`).
+
+### Known limits (each aborts or refuses; were refusals on main)
+
+A closure writing a script `var`; `var t = Object.prototype.toString; t.call(v)` (the realm's toString is not
+populated); unheld statics and methods (`Object.keys`, `"a".charAt`); a string's own `length` / index keys (#7352);
+writing a key found on a primitive's prototype; a method aliased to another name; `String.prototype` not held while a
+string's `toString()` runs; `typeof this` in a getter called on a primitive; `"" + o.toString` (a function's
+ToString). The earlier unexplained abort (`Object.create(Number.prototype)` with the Error family held, then `String(o)`)
+was the static-argument walk bug above and now answers.
+
+### Proof (local node 22)
+
+| Set | OK | Refused | Abort | Wrong | EXC | Twin failures |
+|---|---:|---:|---:|---:|---:|---:|
+| Reviewer batches p1/p3/p4/p5 (248; node answers in a fresh context) | 144 | 87 | 16 | 0 | 0 | 0 |
+| My probes (132) | 94 | 32 | 6 | 0 | 0 | 0 |
+| Blocker programs (12) | 12 | 0 | 0 | 0 | 0 | 0 |
+
+One reviewer program throws in node itself. 10 programs per process.
+
+- Tests (each alone, one fork, under 9 min): w2-wrappers 41 (three parts), w2-jsdoc 7, g1-error-values 14,
+  g1-refusals-and-aborts 14, g1-spelled-names 17, g1-assert-throws 5, c2-constructors 19, c2-this 18,
+  p1-method-values 19, p1-own-property 18, o1-define-property 30, o1-create-and-define-properties 14, o2-accessors 43
+  (two parts), o2-object-values 13, o2b-to-primitive 15, m-refusals 43, m-prototype-premise 18, t2-typeof 16, ty 57,
+  u-prelude 3; 3518 realm-requirements 25, object-realm-declarations 21, realm-wrapper-storage 24, primitive-wrapper
+  layouts 71 / storage 178 / bodies 185, object-realm-algorithm-bodies 214, to-primitive-wrapper-forward 71: all pass.
+  3518 native-realm-object-layouts (4 "genuine source state") and native-realm-source-integration (3) fail identically
+  on `origin/main` a9cdc8857a.
+- Sample (59 rows, real runner): 22 pass, unchanged; the 22 passes' mutated twins (the last assertion naming a
+  wrapper, else the last assertion, inverted) all fail; twin files deleted, directory mtimes restored.
+- Ordinary pipeline: 12 files × gc + standalone byte-identical to the base.
+- Gates (bare chain, exit 0): typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles,
+  compiler-boundaries inventory. The merge-base is `origin/main`, so `LOC_GATE_BASE=origin/main` is the same base.
+  from-ast: no growth.
+
+### Cost
+
+Prelude + `assert.sameValue(1, 1)`: 81,432 B / 5.7–7.3 s on the base, 95,918 B / 7.1–8.8 s on head. The cause is
+harness code, not the tests: `compareArray.format` in assert.js reads `String` as a value
+(`Array.prototype.map.call(arrayLike, String)`), so every prelude program holds the String family and Object.prototype's route.
+That function aborts on this path anyway, but the source fact cannot know it.
