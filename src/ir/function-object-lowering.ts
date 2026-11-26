@@ -250,17 +250,19 @@ export function dynamicStoreOperand(
 
 /**
  * (#7354 T, W2) `Number(v)`'s ToNumber on the Prepared lane, which binds no `js.number.from-value`: the carrier's
- * legalized ToNumber of a dynamic, a string or an external (`Number(null)`) operand; `undefined` for any other operand
- * or lane.
+ * legalized ToNumber of a dynamic or a string operand, and +0 for a `null` literal (§7.1.4); `undefined` for any
+ * other operand or lane.
  */
 export function preparedToNumber(
   value: IrValueId,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
 ): IrValueId | undefined {
-  const type = cx.builder.typeOf(value);
-  const carried = type.kind === "dynamic" || type.kind === "string" || asVal(type)?.kind === "externref";
-  if (!createsFunctionObjects(cx) || !carried) return undefined;
+  const kind = cx.builder.typeOf(value).kind;
+  if (!createsFunctionObjects(cx)) return undefined;
+  if (skipOuterExpressions(source).kind === ts.SyntaxKind.NullKeyword)
+    return cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
+  if (kind !== "dynamic" && kind !== "string") return undefined;
   return cx.builder.emitDynToNumber(dynamicStoreOperand(value, source, cx, "Number argument"));
 }
 
