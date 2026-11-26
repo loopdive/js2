@@ -7680,3 +7680,89 @@ numeric tests as the number 0/1: `var b = true; switch (b) { case 1: … }` chos
   type, which `direct-call-arity.ts` shares.
 - `AdditivePlan` is a union: the carrier plan carries no proofs.
 - `check:prepared-bytes` identical to round 1; l0a/l0b test files pass; gates exit 0.
+
+## Slice L0c plan (2026-11-26, branch `claude/7354-l0c` from `claude/7354-l0b` 73576740a0)
+
+Function declarations inside functions and blocks, closures that write captured or module bindings, and the cheap
+`var` leftovers. Every arm is gated on `onPreparedDynamicLane`; `from-ast.ts` (17172 at the base) must not grow.
+
+### Measured (L0b head results: the 197 targeted rows and the 411 sample; 27 probes, `.tmp/l0c.json`)
+
+- **First blocker on 90 runner rows** (targeted + sample):
+
+  | blocker | rows | mostly |
+  |---|---:|---|
+  | `identifier "f"/"x"/… is not in scope` | 37 | annex B function-in-block (`f` read before or outside its block) |
+  | `unsupported body statement FunctionDeclaration` | 25 | annex B, and `function g(){}` inside a function |
+  | `nested func must have a return type annotation` / params annotated | 8 | function declarations inside functions |
+  | `redeclaration of 'f'` | 5 | annex B `var f` beside `function f` |
+  | `assignment to undeclared identifier` | 10 | sloppy implicit globals (`y = 1`): out of scope (needs the global object) |
+  | `compound assign … has no numeric carrier` / `LabeledStatement` / `Block` | 5 | leftovers |
+
+  54 of the 90 are `annexB/` (B.3.3 function-in-block). "What is next behind them" is measured once M1–M4 exist; the
+  probes below show the first layer.
+- **Probes** (27, base = L0b head, all fail today): 12 function-declaration shapes (abort: annotations, `no exact
+  AST-site plan`, `not in scope`), 10 captured-write shapes, 5 leftovers.
+- **Diagnosis of the captured-write refusal** (`nondefaultable reference widening needs a separately authenticated
+  physical post-state`, `ir-program-presentation.ts` `referenceDemand`): the program DOES use the Prepared native ref
+  cells (`native-ref-cell-requirements.ts` → `native-ref-cells.ts`, reserved by the source-closure setup and resolved
+  by `resolveNativeSourceRefCell`). Only the presentation's authenticated native slots
+  (`requireCompletedNativeRealmSlots`) list the source-closure shapes and closure types but not the ref-cell types,
+  so the `__ref_cell_f64` local reads as an unauthenticated reference. Measured with the cell types added there
+  (uncommitted): `x = …`, `x++`, a returned counter, two closures sharing one variable and a write from a nested
+  closure all give node's answer.
+- **Module bindings from a function.** `log = log + v` works; `log += v` and `n++` abort with `undeclared`:
+  `lowerIdentifierAssignment` resolves a script binding through `resolveModuleBinding` when the scope misses it, the
+  compound and update paths do not.
+
+### Mechanism (reuse; no second one)
+
+- **M1 — ref cells are authenticated.** `requireCompletedNativeRealmSlots` (`native-realm.ts`) also lists the
+  source-closure setup's ref-cell types, through one accessor beside `resolveNativeSourceRefCell`
+  (`native-source-closures.ts`). The cells, their reservation and their resolution are the existing ones.
+  - Then: a captured string written in a closure (`mutable closure capture "s" must be a primitive`) takes a cell of
+    the carrier (`externref` inner, already a native cell inner) when the local is the dynamic value on the lane.
+- **M2 — module-binding writes from functions.** One helper that answers the scope binding or, when the scope has
+  none, the resolver's module binding as a `moduleGlobal` binding (with its TDZ check). Plain, compound and update
+  assignment all use it; the plain path's inline copy moves into it. Lives in from-ast beside the write arms (net
+  shrink: the inline copy goes).
+- **M3 — function-level `var` hoisting on the lane, only where needed.** A new module
+  (`src/ir/function-var-hoisting.ts`) answers, per function body, the `var` names (VarDeclaredNames, §10.2.11 step 27)
+  that must exist before their declaration is lowered: declared in a nested statement (`case`, block, `for (var …)`)
+  and used outside it, read before the declaration, or bound to a hoisted function declaration (M4). Each gets the
+  existing uninitialized-`var` slot (`lowerUninitializedVar`: the carrier's `undefined`) at function entry; its
+  declarations become writes. The provenance must agree (`localNeedsDynamicCarrier`, as L0b's string local): a hoisted
+  name is the dynamic value. Any other `var` keeps today's lowering and bytes.
+- **M4 — function declarations in a function body.** Each is hoisted (§10.2.11 step 36): at function entry, in source
+  order, its binding (M3) is assigned the function value of the declaration lowered like a function expression with
+  the declaration's name (the existing closure / function-object path, `dynamicClosureSignature`), so a later
+  declaration of the same name wins. A reference inside any of them to a sibling or to itself reads the binding,
+  which is written after the closures are created, so the capture is a cell (M1); mutual recursion and a call before
+  the declaration therefore see the function.
+  - **Annex B.3.3** (sloppy, as node runs it): a declaration in a block or `case` binds the var name to `undefined`
+    at function entry (M3) and, when the declaration is evaluated, copies the block's function into it; inside the
+    block the name is the block's function, created at block entry. Needs Block statements in a function body
+    (leftover), which this slice adds in the same scope shape the `if` arms use.
+  - The ordinary pipeline's `lowerNestedFunctionDeclaration` (annotated, direct-call) is unchanged off the lane.
+- **Leftovers that fall out:** `var` in a `case` read after the switch and `i` after `for (var i…)` (M3); `{ ; }` and
+  `{ x = 2; }` in a function (the Block arm); a string local from a literal union reassigned (the L0b provenance rule
+  also takes a string-union initializer); nested ternaries whose result has no Prepared contract (the result contract
+  takes the dynamic value when every arm is a primitive; measured separately, may stay out).
+
+### Still refused / aborting (by design)
+
+- Implicit global creation (`y = 1` with no declaration), `with`, `eval`, `arguments` with extra arguments, arrays (A1),
+  wrappers (W2), for-in/`delete` (E1), strict-mode block functions (lexical only; refused by name if met).
+
+### Order, tests, proof
+
+1. M1 + M2 (small, measured above), 2. M3, 3. M4 inside function bodies, 4. annex B blocks, 5. leftovers.
+- Tests `tests/issue-7354-l0c-*.test.ts`: node agreement with a wrong twin, top level and in a function: hoisting,
+  captures, self and mutual recursion, redeclaration, returned functions, `if`/`switch`/block declarations; closure
+  writes (`=`, `+=`, `++`, shared, returned, nested, strings, loop closures with `var`); module-binding `+=`/`++`.
+- Probes base → head (≤ 10 per process): `.tmp/l0c.json` plus the L0a/L0b sets; nothing right may change, 0 wrong.
+- Ordinary bytes identical; `check:prepared-bytes` with every difference explained; runner sample + targeted with
+  twins for every new pass.
+- **Quality criterion:** one ref-cell mechanism (the native cells), one module-binding write lookup, one hoisting
+  predicate module; function declarations are lowered by the closure path, not a second lifting path; `from-ast.ts`
+  does not grow; no `func-budget-allow`.
