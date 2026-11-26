@@ -1,10 +1,11 @@
 ---
 id: 7465
 title: "Array HOF callback `arguments` extras are null instead of the index when `__box_number` is registered after the call site"
-status: ready
+status: done
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 feasibility: easy
@@ -83,3 +84,31 @@ that pattern instead of adding a new one.
 - The equivalence gate passes, including `issue-7165-string-vec-sort-undefined`.
 - Code quality: one registration point shared by both arms, and no new
   wrapper.
+
+## Resolution (2026-11-26)
+
+Reproduced on main 6694a8b839: six of the seven rows of
+`tests/equivalence/issue-7465-array-hof-arguments-box.test.ts` failed on gc. The control row, with the callback
+declared before its call site, passed.
+
+The fix registers the helper in one place, `registerCallbackBoxNumber` (new module
+`src/codegen/array-callback-box-number.ts`). `setupArrayCallback` calls it after the callback and `thisArg` are
+compiled, so before any loop body is built. It runs `ensureLateImport` and then `flushLateImportShifts`, and only
+when the loop will box a number:
+
+- a closure that keeps the call-site arity protocol and has fewer than two formals (its extras hold the index, or a
+  numeric element);
+- the externref host bridge.
+
+Shifting the index space at that point is safe: the setup has captured only type indices, locals, and the bridge's
+own import index, and an appended import does not move that index.
+
+Both arms, the index push in `emitArrayCallbackArgsPlumbing` and `emitElemBoxToExternref`, now look the helper up with
+#7347's `requireHelper`. The null fallbacks are gone, apart from the unboxable i64/v128 placeholder.
+
+The new module keeps `array-methods.ts` under its LOC ceiling (net −11 there).
+
+**JS-environment bytes.** 52 programs were compiled on gc before and after the change: the playground example plus
+eight HOF methods × six callback shapes, and three late/early `arguments` programs. Only the bug program changed
+(`str-map-late`, which now imports `__box_number`). A callback with two formals declared late, or one declared early,
+is byte-identical.

@@ -16496,6 +16496,14 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/codegen/array-callback-box-number.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Registers one late import on CodegenContext/FunctionContext; it moves with array-callback-dyn-invoke.ts once callback loops resolve helper indices in the backend."
+    },
+    {
       "path": "src/codegen/array-callback-dyn-invoke.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
