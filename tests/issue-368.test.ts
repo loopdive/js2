@@ -1,16 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
-import { instantiateWithRuntime } from "./equivalence/helpers.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  const instance = await instantiateWithRuntime(result);
-  return (instance.exports as any)[fn](...args);
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("issue-368: global/arrow this reference", () => {
