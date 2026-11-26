@@ -175,5 +175,7 @@ change their first refusal label to the new code; the PR reports a before/after 
 
 ### Out of scope (found by PRV-7488, for separate issues)
 
-- `class NaN {}` and `let NaN` return where node throws SyntaxError.
-- A plain `export class C {}` crashes today ("alias … targets unplanned binding").
+- [#7499](7499-prepared-path-restricted-global-lexical-declarations.md): `class NaN {}`, `let NaN`,
+  `class undefined {}` return where node throws SyntaxError.
+- [#7500](7500-prepared-path-export-class-crash.md): a plain `export class C {}` crashes ("alias … targets unplanned
+  binding").
