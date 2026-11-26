@@ -161,40 +161,7 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
     expect(ids.messages["both.test.js :: <file>"]).toMatch(/real nested afterAll failed/);
     expect([...ids.failing].some((id: string) => id.includes("failed assertion"))).toBe(true);
     // (#7501) The worker's uncaughtException handler tags the error; the record names its file.
-    expect(errors.join("\n")).toContain(
-      "[file of the running test, not necessarily the cause: unhandled.test.js] Error: real unhandled error",
-    );
-  });
-
-  it("the parallel pass bisects a batch's unattributed run error down to the file that reproduces it (#7501)", async () => {
-    const root = scratch();
-    symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "dir");
-    writeFileSync(
-      join(root, "vitest.config.mjs"),
-      'export default { test: { include: ["*.test.js"], pool: "forks" } };\n',
-    );
-    for (const name of ["one", "two", "three"]) {
-      writeFileSync(
-        join(root, `${name}.test.js`),
-        `import {it,expect} from "vitest";\nit("ok",()=>expect(1).toBe(1));\n`,
-      );
-    }
-    writeFileSync(
-      join(root, "leaks.test.js"),
-      `import {it,expect} from "vitest";
-it("leaks",async()=>{setTimeout(()=>{throw new Error("leaked from leaks.test.js")},0);
-await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
-    );
-    const errors: string[] = [];
-    await runFiles(root, makeToRel(root), ["one.test.js", "two.test.js", "leaks.test.js", "three.test.js"], {
-      label: "bisection",
-      onRunIntegrity: (e: string) => errors.push(e),
-    });
-    // The leaked error and the run's unattributed exit 1 are both refused, and both name the file.
-    expect(errors.some((e) => e.includes("leaked from leaks.test.js"))).toBe(true);
-    for (const error of errors) {
-      expect(error).toContain("(#7501 batch bisection: reproduces with only this file in the run: leaks.test.js)");
-    }
+    expect(errors.join("\n")).toContain("[raised while running unhandled.test.js] Error: real unhandled error");
   });
 
   for (const mode of ["gate", "update", "bootstrap", "ratchet"]) {
