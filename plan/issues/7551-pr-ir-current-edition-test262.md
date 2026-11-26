@@ -531,9 +531,9 @@ Other decisions:
 
 **Rollback verification (2026-11-26).**
 
-- Setup: a scratch copy of the Part B head `d4b7bf66ac` (via `git archive`,
+- Setup: a scratch copy of the Part B head `d4b7bf66ac` (files from `dff600c97f`), repeated on `1e019ac579` (via `git archive`,
   because the worktree guards forbid a second worktree), with the rollback
-  files restored from `39ef7afe08`.
+  files restored from the then-last Part A commit (`39ef7afe08` the second time); same results both times.
 - Results:
   - `test262-ir-pages-artifacts.test.mjs`: 57/57.
   - Auto-park self-check: OK.
