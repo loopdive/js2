@@ -2,20 +2,17 @@
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
-  assertNativePromiseSourceCensusCurrent,
+  assertNativePromiseSourceCensusIssued,
   type NativePromiseSourceCensus,
   type CarrierEvidence,
   type PromiseLookupFacts,
   type ConstructionOp,
 } from "../../../ir/program/native-promise-inventory.js";
 import { assertNativeValueResourcePlanFor } from "../../../ir/program/native-value-resources.js";
+import { assertNativeStringOutputRequirementsCurrent } from "../../../ir/program/native-string-output-requirements.js";
 import {
-  assertNativeStringOutputRequirementsCurrent,
-  deriveNativeStringOutputRequirements,
-} from "../../../ir/program/native-string-output-requirements.js";
-import {
+  assertNativeStringValuePlanIssued,
   assertNativeStringValueReservationInput,
-  planNativeStringValuePhysical,
   type NativeStringValueReservationInput,
 } from "../program/native-string-values.js";
 import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
@@ -100,7 +97,7 @@ export function observeNativeStringValueProducer(
   source: NativePromiseSourceCensus,
   input: NativeStringValueReservationInput,
 ): NativeCarrierProducerObservation {
-  assertNativePromiseSourceCensusCurrent(source);
+  assertNativePromiseSourceCensusIssued(source);
   const { program, projection, options } = source;
   const demands = input.demands,
     fresh = source.demands;
@@ -133,31 +130,15 @@ export function observeNativeStringValueProducer(
       invalid("detached literal metadata");
   });
   assertNativeStringValueReservationInput(input);
-  const current = planNativeStringValuePhysical(
-    fresh,
-    {
-      representation: "native-string",
-      utf8Storage: options.utf8Storage === true,
-      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
-    },
-    input.invocationRequirements,
-    input.realmRequirements,
-  );
-  if (current.kind !== "planned") invalid("string declaration input has no current planned producer");
-  same(input.plan, current.plan, "changed native string declaration recipe");
-  if (current.plan.mode !== "literals") {
+  assertNativeStringValuePlanIssued(input, options);
+  if (input.plan.mode !== "literals") {
     if (!input.valueRequirements) invalid("missing value requirements");
     assertNativeValueResourcePlanFor(input.valueRequirements, program, projection, "native-string");
   } else if (input.valueRequirements !== undefined) invalid("unexpected native value requirements for literals mode");
-  if (current.plan.output) {
+  if (input.plan.output) {
     if (!input.outputRequirements) invalid("missing output requirements");
     assertNativeStringOutputRequirementsCurrent(input.outputRequirements);
     if (input.outputRequirements.demands !== demands) invalid("detached output demand association");
-    same(
-      input.outputRequirements,
-      deriveNativeStringOutputRequirements(fresh, current.plan.output.options),
-      "changed output requirements",
-    );
   } else if (input.outputRequirements !== undefined) invalid("unexpected output requirements");
   const carriers: CarrierRow[] = [];
   const keys = new Set<string>();

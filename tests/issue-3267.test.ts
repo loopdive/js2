@@ -14,7 +14,7 @@
  *   - reflective `Math["PI"]`           → tryEmitBuiltinNamespaceConstantValue
  *   - `<TypedArray>.BYTES_PER_ELEMENT`  → TYPED_ARRAY_BYTES_PER_ELEMENT
  *   - typed-array element signedness    → typedArrayViewSignedness
- *   - `Symbol.iterator`                 → getWellKnownSymbolId / WELL_KNOWN_SYMBOLS
+ *   - `Symbol.iterator`                 → wellKnownSymbolId / WELL_KNOWN_SYMBOL_IDS
  *   - `<Builtin>.prototype.<member>`    → tryCompileStandaloneBuiltinProtoMemberRead,
  *                                          tryEnsureNativeProtoBrand
  *   - `Array.isArray` as a value        → ensureStandaloneBuiltinStaticMethodClosure,

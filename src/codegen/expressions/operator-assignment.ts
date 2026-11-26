@@ -10,6 +10,7 @@
 import type { StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import { refuseForeignVecCarrierCompound, tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts, forEachChild } from "../../ts-api.js";
+import { emitIsUndefF64, f64MayHoldUndefined } from "../value-tags.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
@@ -60,7 +61,7 @@ import {
   emitNullGuardedStructGet,
   getCapturedBoxGlobal,
 } from "../property-access.js";
-import { coerceType, compileExpression } from "../shared.js";
+import { coerceType, compileExpression, skipTransparentExpressions } from "../shared.js";
 import { tryEmitNativeStringFieldAppend, tryEmitNativeStringGlobalAppend } from "./string-field-append.js";
 import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
@@ -76,11 +77,12 @@ import {
 import {
   emitAnyStrToExternrefSlot,
   emitExternrefSlotToAnyStr,
+  emitNonStringRefToAnyStr,
   slotNeedsExternrefBridge,
 } from "../native-string-slot-bridge.js";
 import { compileComputedMemberKeyAfterBaseGuard, emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } from "./late-imports.js";
-import { emitMappedArgParamSync } from "./logical-ops.js";
+import { emitMappedArgParamSync, emitRefIsNullish } from "./logical-ops.js";
 import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalCompoundAssign } from "./implicit-global-binding.js"; // (#4640 D3)
 import { resolveStructNameForExpr } from "./misc.js";
 import { compileStringBuilderAppend, emitStringBuilderAppendCodeUnit, getBuilderInfo } from "../string-builder.js";
@@ -113,17 +115,20 @@ export function compileLogicalAssignment(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // (#7360) `(x) ??= v` and `x! ??= v` assign to `x`: a wrapper that emits nothing does not change the reference.
+  const target = skipTransparentExpressions(expr.left);
+
   // Handle property access logical assignment: obj.prop ??= default
-  if (ts.isPropertyAccessExpression(expr.left)) {
-    return compilePropertyLogicalAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (ts.isPropertyAccessExpression(target)) {
+    return compilePropertyLogicalAssignment(ctx, fctx, target, expr.right, op);
   }
 
   // Handle element access logical assignment: arr[i] ||= default
-  if (ts.isElementAccessExpression(expr.left)) {
-    return compileElementLogicalAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (ts.isElementAccessExpression(target)) {
+    return compileElementLogicalAssignment(ctx, fctx, target, expr.right, op);
   }
 
-  if (!ts.isIdentifier(expr.left)) {
+  if (!ts.isIdentifier(target)) {
     reportError(
       ctx,
       expr,
@@ -132,7 +137,7 @@ export function compileLogicalAssignment(
     return null;
   }
 
-  const name = expr.left.text;
+  const name = target.text;
 
   // Resolve the variable storage location
   let storage:
@@ -275,28 +280,21 @@ export function compileLogicalAssignment(
 
   if (op === ts.SyntaxKind.QuestionQuestionEqualsToken) {
     // a ??= b  →  if (a is null/undefined) { a = b }; result = a
-    // For value types (i32, i64, f32, f64, etc.), values can never be null/undefined,
+    // Other value types (i32, i64, f32, plain-number f64) can never be null/undefined,
     // so just return the current value without evaluating RHS (short-circuit).
-    if (!isRefType(varType)) {
+    const undefinedF64 = f64MayHoldUndefined(ctx, target, varType);
+    if (!isRefType(varType) && !undefinedF64) {
       emitGet();
       return varType;
     }
     emitGet();
-    // Check null or undefined (JS ??= triggers for both)
-    const qqeTmp = allocTempLocal(fctx, varType);
-    fctx.body.push({ op: "local.tee", index: qqeTmp });
-    fctx.body.push({ op: "ref.is_null" });
-    const qqeUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (qqeUndefIdx !== undefined) {
-      fctx.body.push({ op: "local.get", index: qqeTmp });
-      if (varType.kind !== "externref") {
-        fctx.body.push({ op: "extern.convert_any" });
-      }
-      fctx.body.push({ op: "call", funcIdx: qqeUndefIdx });
-      fctx.body.push({ op: "i32.or" });
+    if (undefinedF64) emitIsUndefF64(fctx.body);
+    else {
+      const qqeTmp = allocTempLocal(fctx, varType);
+      fctx.body.push({ op: "local.tee", index: qqeTmp });
+      emitRefIsNullish(ctx, fctx, varType, qqeTmp);
+      releaseTempLocal(fctx, qqeTmp);
     }
-    releaseTempLocal(fctx, qqeTmp);
 
     // Compile the RHS in a separate body
     const savedBody = pushBody(fctx);
@@ -446,7 +444,7 @@ function compilePropertyLogicalAssignment(
         fctx.body.push({ op: "local.get", index: tmpVal });
       };
 
-      return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, fieldType, emitFieldGet, emitFieldSet);
+      return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, fieldType, emitFieldGet, emitFieldSet);
     }
   }
 
@@ -489,7 +487,7 @@ function compilePropertyLogicalAssignment(
     fctx.body.push({ op: "local.get", index: tmpVal });
   };
 
-  return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, fieldType, emitFieldGet, emitFieldSet);
+  return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, fieldType, emitFieldGet, emitFieldSet);
 }
 
 /**
@@ -560,7 +558,7 @@ function compilePropertyLogicalAssignmentExternref(
               fctx.body.push({ op: "call", funcIdx: setMemberIdx });
               fctx.body.push({ op: "local.get", index: valueTmp });
             };
-            return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, { kind: "externref" }, emitGet, emitSet);
+            return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, { kind: "externref" }, emitGet, emitSet);
           }
         }
 
@@ -611,7 +609,7 @@ function compilePropertyLogicalAssignmentExternref(
             fctx.body.push({ op: "local.get", index: tmpVal });
           };
 
-          return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, fieldType, emitGet, emitSet);
+          return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, fieldType, emitGet, emitSet);
         }
       }
     }
@@ -719,7 +717,7 @@ function compilePropertyLogicalAssignmentExternref(
     fctx.body.push({ op: "local.get", index: tmpVal });
   };
 
-  return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, varType, emitGet, emitSet);
+  return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, varType, emitGet, emitSet);
 }
 
 /**
@@ -790,7 +788,7 @@ function compileElementLogicalAssignment(
             fctx.body.push({ op: "local.get", index: tmpVal });
           };
 
-          return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, fieldType, emitFieldGet, emitFieldSet);
+          return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, fieldType, emitFieldGet, emitFieldSet);
         }
       }
     }
@@ -850,7 +848,7 @@ function compileElementLogicalAssignment(
         fctx.body.push({ op: "local.get", index: tmpVal });
       };
 
-      return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, elemType, emitElemGet, emitElemSet);
+      return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, elemType, emitElemGet, emitElemSet);
     }
   }
 
@@ -982,7 +980,7 @@ function compileElementLogicalAssignmentExternref(
     fctx.body.push({ op: "local.get", index: valLocal });
   };
 
-  return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, { kind: "externref" }, emitGet, emitSet);
+  return emitLogicalAssignmentPattern(ctx, fctx, target, rhs, op, { kind: "externref" }, emitGet, emitSet);
 }
 
 /**
@@ -1007,6 +1005,7 @@ function isRefType(t: ValType): boolean {
 function emitLogicalAssignmentPattern(
   ctx: CodegenContext,
   fctx: FunctionContext,
+  target: ts.Expression,
   rhs: ts.Expression,
   op: ts.SyntaxKind,
   varType: ValType,
@@ -1015,9 +1014,10 @@ function emitLogicalAssignmentPattern(
 ): ValType | null {
   if (op === ts.SyntaxKind.QuestionQuestionEqualsToken) {
     // target ??= rhs  →  if (target is null/undefined) { target = rhs }; result = target
-    // For value types (i32, i64, f32, f64, etc.), values can never be null/undefined,
+    // Other value types (i32, i64, f32, plain-number f64) can never be null/undefined,
     // so just return the current value without evaluating RHS (short-circuit).
-    if (!isRefType(varType)) {
+    const undefinedF64 = f64MayHoldUndefined(ctx, target, varType);
+    if (!isRefType(varType) && !undefinedF64) {
       emitGet();
       return varType;
     }
@@ -1033,7 +1033,8 @@ function emitLogicalAssignmentPattern(
     emitGet();
     const tmpKeep = allocTempLocal(fctx, varType);
     fctx.body.push({ op: "local.tee", index: tmpKeep });
-    fctx.body.push({ op: "ref.is_null" });
+    if (undefinedF64) emitIsUndefF64(fctx.body);
+    else fctx.body.push({ op: "ref.is_null" });
     if (varType.kind === "externref") {
       const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       flushLateImportShifts(ctx, fctx);
@@ -1479,17 +1480,14 @@ function compileNativeStringCompoundAssignment(
   }
 
   // Compile RHS
-  const rhsType = compileExpression(ctx, fctx, expr.right);
+  let rhsType = compileExpression(ctx, fctx, expr.right);
   if (!rhsType) {
     reportError(ctx, expr, "Failed to compile string += RHS");
     return null;
   }
-  // Coerce RHS to ref $AnyString.
-  if (rhsType.kind === "ref" || rhsType.kind === "ref_null") {
-    // Already a ref. Assume it's an AnyString-compatible type; if not,
-    // ref.cast at __str_concat boundary will trap. Common case: native
-    // string method calls return ref $AnyString already.
-  } else if (rhsType.kind === "f64" || rhsType.kind === "i32") {
+  // Coerce RHS to ref $AnyString; a native string ref is used as-is.
+  rhsType = emitNonStringRefToAnyStr(ctx, fctx, rhsType) ?? rhsType;
+  if (rhsType.kind === "f64" || rhsType.kind === "i32") {
     const rhsTsType = ctx.checker.getTypeAtLocation(expr.right);
     if (isBooleanType(rhsTsType) && rhsType.kind === "i32") {
       emitBoolToAnyStr(ctx, fctx);
@@ -1590,8 +1588,9 @@ function compileNativeStringCompoundAssignment(
  */
 function compileAndCoerceToAnyStr(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): ValType | null {
   const anyStrType: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
-  const rhsType = compileExpression(ctx, fctx, expr);
-  if (!rhsType) return null;
+  const compiled = compileExpression(ctx, fctx, expr);
+  if (!compiled) return null;
+  const rhsType = emitNonStringRefToAnyStr(ctx, fctx, compiled) ?? compiled;
 
   if (rhsType.kind === "ref" || rhsType.kind === "ref_null") {
     // Already a ref to a string-like type. If nullable, force non-null —
@@ -1851,44 +1850,43 @@ export function compileCompoundAssignment(
   if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.left)) {
     return { kind: "f64" };
   }
-  // Handle property access compound assignment: obj.prop += value
-  if (ts.isPropertyAccessExpression(expr.left)) {
-    return compilePropertyCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  // (#7394) `(x) += v` and `x! += v` update `x`: a wrapper that emits nothing does not change the reference.
+  const target = skipTransparentExpressions(expr.left);
+  if (ts.isPropertyAccessExpression(target)) {
+    return compilePropertyCompoundAssignment(ctx, fctx, target, expr.right, op);
   }
-
-  // Handle element access compound assignment: arr[i] += value
-  if (ts.isElementAccessExpression(expr.left)) {
+  if (ts.isElementAccessExpression(target)) {
     // (#2709) `super[super()] += v` — SuperProperty compound assignment whose key
     // contains super(). §13.3.7.1 resolves the reference (GetThisBinding) BEFORE
     // the key, so this always throws a ReferenceError; emit it and stop, before the
     // inner super() / RHS run. No-op for every other shape.
     if (
-      expr.left.expression.kind === ts.SyntaxKind.SuperKeyword &&
-      emitSuperUninitializedThisGuard(ctx, fctx, expr.left.argumentExpression)
+      target.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      emitSuperUninitializedThisGuard(ctx, fctx, target.argumentExpression)
     ) {
       return { kind: "f64" };
     }
-    return compileElementCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+    return compileElementCompoundAssignment(ctx, fctx, target, expr.right, op);
   }
 
-  if (!ts.isIdentifier(expr.left)) {
+  if (!ts.isIdentifier(target)) {
     reportError(ctx, expr, "Compound assignment only supported for simple identifiers");
     return null;
   }
 
-  const name = expr.left.text;
+  const name = target.text;
 
   // (#2663 Slice 3) An Object Environment Record pushed by `with` is consulted
   // BEFORE the surrounding function/global environment, so this must precede the
   // const / boxed-capture / local paths below. Declines (returns undefined) when
   // no `with` scope binds the name — then the pre-existing lowering runs.
-  const withCompound = compileWithCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  const withCompound = compileWithCompoundAssignment(ctx, fctx, target, expr.right, op);
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
+  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, target, expr.right)) return { kind: "f64" };
 
-  const implicitGlobal = compileImplicitGlobalCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  const implicitGlobal = compileImplicitGlobalCompoundAssignment(ctx, fctx, target, expr.right, op);
   if (implicitGlobal !== undefined) return implicitGlobal;
 
   // (#3039) Boxed captured global compound-assign (`c += 1` in a method-
@@ -1971,7 +1969,7 @@ export function compileCompoundAssignment(
   // pass the `(struct (mut externref))` ref cell straight into js-string concat
   // (→ illegal cast / invalid wasm). #1999.
   const plusEqualsUnboxed = op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name);
-  const plusLeftTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(expr.left) : undefined;
+  const plusLeftTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(target) : undefined;
   const plusRightTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(expr.right) : undefined;
   if (plusEqualsUnboxed && plusLeftTsType && plusRightTsType) {
     let isStr = isStringType(plusLeftTsType);
@@ -2094,7 +2092,7 @@ export function compileCompoundAssignment(
     // `x += 1` with no `x` in scope) — throw rather than silently
     // auto-allocating a zero local. Names with a symbol (hoisted `var`,
     // outer-scope bindings, builtins) keep the graceful auto-allocate path.
-    const lhsSym = ctx.checker.getSymbolAtLocation(expr.left);
+    const lhsSym = ctx.checker.getSymbolAtLocation(target);
     if (lhsSym === undefined && !ctx.moduleGlobals.has(name) && ctx.capturedGlobals.get(name) === undefined) {
       emitThrowReferenceError(ctx, fctx, `${name} is not defined`);
       // After throw the stack is polymorphic; push a sentinel so callers that
@@ -2105,7 +2103,7 @@ export function compileCompoundAssignment(
     // Graceful fallback: auto-allocate a local for the unknown identifier
     // so compound assignments work correctly (the variable is initialized
     // to the appropriate zero value).
-    const tsType = ctx.checker.getTypeAtLocation(expr.left);
+    const tsType = ctx.checker.getTypeAtLocation(target);
     const wasmType = resolveWasmType(ctx, tsType);
     localIdx = allocLocal(fctx, name, wasmType);
   }
@@ -2135,7 +2133,7 @@ export function compileCompoundAssignment(
       // A statically string-typed LHS (`let acc = ""` / `let acc: string`) must
       // concat even when the RHS is numeric (`acc += x`) — JS coerces x to
       // string. #1999.
-      const lhsIsString = isStringType(ctx.checker.getTypeAtLocation(expr.left));
+      const lhsIsString = isStringType(ctx.checker.getTypeAtLocation(target));
       // Also check if the variable was assigned a string in any enclosing scope
       const varHasStringAssign = hasStringAssignment(name, expr) || hasStringAssignmentInParentScopes(name, expr);
       if (rhsIsString || lhsIsString || varHasStringAssign) {
@@ -2198,7 +2196,7 @@ export function compileCompoundAssignment(
       // StringLiteral; the String wrapper object (`new String("x")`)
       // classifies as builtin "String" — same coverage as isStringType.
       const rhsFactN = ctx.oracle.typeFactOf(expr.right);
-      const lhsFactN = ctx.oracle.typeFactOf(expr.left);
+      const lhsFactN = ctx.oracle.typeFactOf(target);
       const rhsIsStringN = rhsFactN.kind === "string" || (rhsFactN.kind === "builtin" && rhsFactN.name === "String");
       const lhsIsStringN = lhsFactN.kind === "string" || (lhsFactN.kind === "builtin" && lhsFactN.name === "String");
       const varHasStringAssignN = hasStringAssignment(name, expr) || hasStringAssignmentInParentScopes(name, expr);

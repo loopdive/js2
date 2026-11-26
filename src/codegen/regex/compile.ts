@@ -22,16 +22,8 @@
  * modifier groups `(?ims-ims:…)` are a pure compile-time flag-scope: the
  * emitter's i/m/s state nests with the group.
  */
-import {
-  INSTR_WIDTH,
-  ReOp,
-  RE_FLAG_I,
-  RE_FLAG_M,
-  RE_FLAG_S,
-  RE_FLAG_U,
-  RE_FLAG_V,
-  type CompiledRegex,
-} from "./bytecode.js";
+import { INSTR_WIDTH, ReOp } from "../../runtime/contracts/regexp-bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V, type CompiledRegex } from "./bytecode.js";
 import { parsePattern, type ParsedRegex, type ReNode } from "./parse.js";
 import { foldCharUnitsLegacy, foldClassRangesLegacy, unitsToRanges } from "./casefold.js";
 import { dotCpRanges } from "./unicode.js";
@@ -470,7 +462,8 @@ class Emitter {
   /** Expand `{min,max}` into mandatory copies + optional/star tail. */
   private compileRepeat(node: ReNode & { kind: "repeat" }): void {
     const { min, max, greedy } = node;
-    if (max !== -1 && (max > MAX_REPEAT_EXPANSION || min > MAX_REPEAT_EXPANSION)) {
+    // (#7409) `min` mandatory copies are expanded for `{min,}` too, so the cap reads `min` whatever `max` is.
+    if (min > MAX_REPEAT_EXPANSION || (max !== -1 && max > MAX_REPEAT_EXPANSION)) {
       throw new RepeatTooLargeError(`{${min},${max === -1 ? "" : max}} exceeds expansion cap`);
     }
     // Mandatory copies: node repeated `min` times.

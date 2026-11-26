@@ -11,10 +11,7 @@ import { irUnitCallableBindingId } from "../src/ir/core/callable-bindings.js";
 import { assertPreparedIrProgramPopulation } from "../src/ir/program/population.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { deriveNativeStringOutputRequirements } from "../src/ir/program/native-string-output-requirements.js";
-import {
-  planNativeSourceClosureRequirements,
-  assertNativeSourceClosureRequirementsCurrent,
-} from "../src/ir/program/native-source-closure-requirements.js";
+import { planNativeSourceClosureRequirements } from "../src/ir/program/native-source-closure-requirements.js";
 import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
 import { sourceInput, requireProgram } from "./helpers/typed-program-fixtures.js";
 
@@ -48,7 +45,6 @@ afterEach(async () => new Promise<void>((resolve) => setImmediate(resolve)));
 function requirements(program: PreparedIrProgram) {
   const result = planNativeSourceClosureRequirements(program, program.runtime[0]!);
   if (!result) throw new Error("real capturing source lost its closure requirements");
-  assertNativeSourceClosureRequirementsCurrent(result);
   return result;
 }
 function output(program: PreparedIrProgram) {
@@ -337,25 +333,20 @@ describe("complete source closure requirements and output owner reconciliation",
     ]);
   });
 
-  it.each(["copied-requirements", "changed-nonclosure", "removed-nonclosure", "removed-buffer"] as const)(
-    "rejects %s after issuing a current real source plan",
-    (mutation) => {
-      const data = editable(),
-        [fn] = makeFunctions(data);
-      if (mutation === "copied-requirements") {
-        expect(() => assertNativeSourceClosureRequirementsCurrent({ ...data.positive })).toThrow("unissued");
-        return;
-      }
-      const block = fn.blocks[0]!;
-      const index = block.instrs.findIndex((instruction) => instruction.kind === "binary");
-      expect(index).toBeGreaterThanOrEqual(0);
-      if (mutation === "changed-nonclosure") Object.assign(block.instrs[index]!, { op: "f64.div" });
-      if (mutation === "removed-nonclosure")
-        Object.assign(block, { instrs: block.instrs.filter((_, i) => i !== index) });
-      if (mutation === "removed-buffer") Object.assign(fn, { blocks: fn.blocks.slice(1) });
-      expect(() => assertNativeSourceClosureRequirementsCurrent(data.positive)).toThrow(
-        /changed after selection|identities changed/,
-      );
-    },
-  );
+  it("issues requirements that no later step can change: they and the prepared program are frozen whole", () => {
+    // (#7354 Perf3) No consumer re-derives the requirements to check their currency; this is why it need not.
+    const plan = requirements(original);
+    const unfrozen: string[] = [];
+    const seen = new Set<object>();
+    const visit = (value: unknown, path: string): void => {
+      if (value === null || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      if (!Object.isFrozen(value)) unfrozen.push(path);
+      for (const key of Reflect.ownKeys(value))
+        visit((value as Record<PropertyKey, unknown>)[key], `${path}.${String(key)}`);
+    };
+    visit(plan, "requirements");
+    expect(unfrozen).toEqual([]);
+    expect(() => Object.assign(plan.units[0]!, { shapeId: "shape:99" })).toThrow(TypeError);
+  });
 });

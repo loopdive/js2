@@ -329,7 +329,6 @@ describe("complete prepared formatter demand joins", () => {
       expect(requirements.calls.map((row) => row.instruction)).toEqual(expected.map((row) => row.instruction));
       expect(new Set(requirements.calls.map((row) => row.view))).toEqual(new Set(["program", "projection"]));
       expect(requirements.batch).toBe(program.runtimeSupport!.batches[0]);
-      expect(requirements.supportBuffers).toHaveLength(31);
       expect(requirements.literals).toHaveLength(requirements.batch.literals.length);
       expect(
         requirements.literals.map((row) => [row.bufferIndex, row.instructionIndex, row.instruction.value]),

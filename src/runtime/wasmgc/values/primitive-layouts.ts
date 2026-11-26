@@ -71,6 +71,26 @@ export function buildIsUndefinedBody(
   ];
 }
 
+/**
+ * `(externref) -> i32`: whether parameter 0 is a reference of the struct type `typeIdx`. The null probe comes
+ * first because `any.convert_extern` of null is null, which `ref.test` already rejects; the shape is shared by the
+ * `typeof` predicates of the reference-carried primitives (BigInt, native string).
+ */
+export function buildExternRefTestBody(typeIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: 0 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    },
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+  ];
+}
+
 /** Canonical non-null undefined: tag 1, zero, NaN, null eq, null extern. */
 export function buildUndefinedInitializer(anyTypeIdx: number): Instr[] {
   const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type

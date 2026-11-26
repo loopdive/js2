@@ -283,7 +283,7 @@ describe("issued canonical BigInt-to-number owner", () => {
       return;
     }
     target.push({ op: "nop" });
-    expect(() => completed(f)).toThrow("altered completed function");
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 
   it("refuses a same-signature replacement allocator object", () => {
@@ -291,14 +291,14 @@ describe("issued canonical BigInt-to-number owner", () => {
     completed(f);
     const index = f.module.functions.indexOf(f.pack.number.object);
     f.module.functions[index] = { ...f.pack.number.object };
-    expect(() => completed(f)).toThrow("substituted or reordered functions");
+    expect(() => f.tx.seal()).toThrow("substituted or reordered functions");
   });
 
   it("refuses a changed conversion signature at its original slot", () => {
     const f = complete();
     completed(f);
     f.pack.number.object.typeIdx = f.bigint.box.object.typeIdx;
-    expect(() => completed(f)).toThrow("altered function descriptor");
+    expect(() => f.tx.seal()).toThrow("altered function descriptor");
   });
 
   it("refuses a changed wide carrier field after completion", () => {

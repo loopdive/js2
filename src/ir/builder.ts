@@ -904,7 +904,7 @@ export class IrFunctionBuilder {
 
   /**
    * Emit `dyn.eq{lhs, rhs, loose, negate}` — strict/loose equality between two
-   * boxed-any carriers, result `i32` (0/1) (#2949 S5.2).
+   * boxed-any carriers, result the boolean-branded `i32` (#2949 S5.2; branded since #7354 W).
    *
    * BOTH operands MUST be `dynamic`. The producer boxes any concrete operand
    * into the carrier first (`emitBox(v, irDynamic(...))`), leaving the dyn side
@@ -929,7 +929,7 @@ export class IrFunctionBuilder {
         );
       }
     }
-    const resultType = irVal({ kind: "i32" });
+    const resultType: IrType = irVal({ kind: "i32", boolean: true });
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "dyn.eq", lhs, rhs, loose: opts.loose, negate: opts.negate, result, resultType });

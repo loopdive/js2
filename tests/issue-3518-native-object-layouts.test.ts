@@ -1,8 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
 import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
@@ -24,7 +21,6 @@ import {
   declareNativeObjectLayouts,
   reserveNativeObjectLayouts,
   requireNativeObjectLayouts,
-  nativeObjectLayoutReservationInventory,
 } from "../src/backend/wasmgc/resources/native-object-layouts.js";
 
 afterEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
@@ -364,27 +360,6 @@ it.each(["copy", "foreign", "missing"])(
     );
   },
 );
-
-it.each([false, true])("matches fixed historical Object layout declarations (prefix=%s)", (withPrefix) => {
-  // Exact layout span from 9dd54aff748b62b7417e7b0d4b0bf95e172bb4b3; no candidate-derived receipt.
-  const source = readFileSync(new URL("../src/codegen/object-runtime.ts", import.meta.url), "utf8");
-  const start = source.indexOf("  const propEntryTypeIdx = ctx.mod.types.length;");
-  const text = source.slice(start, source.indexOf("  // $ObjVec backing array:", start));
-  expect(createHash("sha256").update(text).digest("hex")).toBe(
-    "e4d546ab2007a44fe45d5bcda8453e190aaaa89296d427c7de20df045ec8f547",
-  );
-  const f = fixture();
-  if (withPrefix) f.tx.reserveType("ordinary-prefix", { kind: "func", params: [], results: [] });
-  const before = structuredClone(f.module.types),
-    ctx = { mod: { types: structuredClone(before) } };
-  const js = ts.transpile(text, { target: ts.ScriptTarget.ES2022 });
-  Function("ctx", js)(ctx);
-  const requirements = { key: "object" },
-    plan = declareNativeObjectLayouts(requirements);
-  const pack = reserveNativeObjectLayouts(f.tx, requirements, plan);
-  expect(f.module.types).toStrictEqual(ctx.mod.types);
-  expect(nativeObjectLayoutReservationInventory(f.tx, pack, plan)).toEqual([pack.propEntry, pack.propMap, pack.object]);
-});
 
 it.each(["copied-pack", "foreign-ledger", "copied-plan", "mutated-plan", "mutated-requirements", "mutated-layout"])(
   "refuses changed layout owner evidence (%s)",

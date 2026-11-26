@@ -20,13 +20,13 @@
  * allocation chose (including legacy's own zero for an unwritten typed slot),
  * so a common core would either change legacy's answer or inherit its zero.
  */
-import { isMemberWriteDeclaration } from "../shared/binding-writes.js";
+import { GLOBAL_CONSTANTS } from "../shared/ambient-intrinsics.js";
+import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
-import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
-
-/** The global object's non-writable value properties: a script `var` of one of these names never stores. */
-const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+import { type IrModuleBindingDeclaration, type IrScriptVarHome, moduleBindingDeclarations } from "./module-bindings.js";
+import { IrUnsupportedError } from "./outcomes.js";
+import { moduleDeclares } from "./select-planned-closure-operands.js";
 
 /**
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
@@ -49,14 +49,24 @@ export function irOwnedScriptVarHome(
     // top-level variable, and a lexical or ES-module global is typed by the resolver.
     if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
       return undefined;
-    if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
-    // The startup plan gives every declarator its own binding, so a repeated `var` has no single global yet. A JS
-    // member write on the binding (`o.p = v`) declares no second binding. `Object.defineProperty(o, …)` still counts
-    // as one: the Prepared path admits no `Object` static yet (slice O), and from-ast takes an unadmitted one for
-    // selector drift, so the binding must stay without a home and refuse by name.
+    // (#7354 Fa, N1) The var's home would not hold the hoisted function, and a direct call of the name binds the
+    // declaration: a script var sharing its name with a function declaration has no sound home.
+    if (moduleDeclares(declaration.getSourceFile(), declaration.name.text, true))
+      throw new IrUnsupportedError(
+        "type-resolution-unsupported",
+        "build",
+        `script var ${declaration.name.text} shares its binding with a function declaration`,
+      );
+    // A script `var` of a non-writable global value property never stores.
+    if (declaration.getSourceFile() !== soleSource || GLOBAL_CONSTANTS.has(declaration.name.text)) return undefined;
+    // (#7372 1b) A repeated `var` is one binding: the home is its first declarator's (the resolver's canonical one),
+    // each later one a write. A JS property declaration on the binding (`o.p = v`, `Object.defineProperty(o, …)`)
+    // declares no binding; the call itself is refused by name where from-ast meets it (#7364).
+    const declarators = moduleBindingDeclarations(declaration.name, checker);
     const declarations = checker.getSymbolAtLocation(declaration.name)?.declarations ?? [];
-    const own = (other: ts.Declaration) => !other.getSourceFile().isDeclarationFile && !isMemberWriteDeclaration(other);
-    if (declarations.filter(own).length !== 1) return undefined;
+    const own = (other: ts.Declaration) =>
+      !other.getSourceFile().isDeclarationFile && !isJsPropertyDeclarationTarget(other);
+    if (declarators[0] !== declaration || declarations.filter(own).length !== declarators.length) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
     // A TypeScript annotation other than `any` is the binding's contract: the binding gets the typed home or none,
     // never the dynamic one. A store of a value the checker types `any` into it is then refused by the resolver's
@@ -68,7 +78,7 @@ export function irOwnedScriptVarHome(
       (annotated || !storesDynamic?.(declaration))
     )
       return "typed";
-    // A nested `var` answered here stays a module-init local: the producer gives globals to top-level statements only.
+    // (#7372) A `var` nested in top-level code has the same global; its reads never follow a proven initializer.
     return storesDynamic && !annotated ? "dynamic" : undefined;
   };
 }
