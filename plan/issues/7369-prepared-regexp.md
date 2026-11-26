@@ -207,7 +207,8 @@ number below was measured on that head unless it is labelled **estimate**.
 | Step | Content | Gate |
 | --- | --- | --- |
 | R1a | **Move + merge**: the compiler into `regexp-compiler`; one static-pair predicate; one i32-array builder; the Prepared mode of `byte-diff-corpus` | — |
-| R1 | Realm RegExp object, creation, `RegExp.prototype.test`, `lastIndex`; the refusal disappears | R1a |
+| R1e | **Behaviour change, its own PR**: the early-error rule (`node-checks.ts:1310`) takes its verdict from `staticRegExpPairSyntaxError` instead of the host engine | R1a; every parser/node difference in the verdict table is reviewed as a behaviour change |
+| R1 | Realm RegExp object, creation, `RegExp.prototype.test`, `lastIndex`; the refusal disappears | R1a (not R1e: R1's per-source outcomes hold under either verdict source) |
 | R1b | `%RegExp.prototype%` accessors (`source`, `flags`, `global`, `ignoreCase`, `multiline`) and `toString`, which covers ToPrimitive and `+` (the old "R3") | R1 |
 | R2 | `RegExp.prototype.exec` | **Parked** until Prepared arrays reach `main`. It is not stacked on S13's suspended branch. |
 
@@ -229,7 +230,8 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
   - `regex-runtime/unicode.ts` and about 10 `tests/*regex*` imports are repointed, with no re-export shim (RV7337).
 - **Merge 1: one static-pair predicate.**
   - `src/regexp-compiler/static-pair.ts` exports `staticRegExpPairCompiles` and `staticRegExpPairSyntaxError`.
-  - It replaces `standaloneStaticRegExpCompiles`, `isSupportedStaticRegExpCandidate`, `hostRegExpSyntaxErrorMessage` and `SUPPORTED_STANDALONE_FLAGS` in `regexp-standalone.ts`, and the host-`new RegExp` check in the early-error rule `src/compiler/early-errors/node-checks.ts:1310`.
+  - It replaces `standaloneStaticRegExpCompiles`, `isSupportedStaticRegExpCandidate`, `hostRegExpSyntaxErrorMessage` and `SUPPORTED_STANDALONE_FLAGS` in `regexp-standalone.ts`.
+  - **The early-error rule `src/compiler/early-errors/node-checks.ts:1310` is not touched in R1a** (PRV-7369 condition, option b). It keeps its host-`new RegExp` check, because it runs on every target, and a verdict change there is a behaviour change on the JS-environment lane too. Switching it is step R1e.
   - The syntax verdict comes from the in-module parser. Today the parser throws one class, `RegexUnsupportedError`, for both "invalid" and "unsupported", so R1a splits it:
     - `RegexSyntaxError` for "nothing to repeat", an unterminated group, a duplicate flag, …;
     - `RegexUnsupportedError` stays for valid patterns the engine lacks.
@@ -243,13 +245,18 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
   - Its inputs are `plan/samples/7354-o411.txt` plus `plan/samples/7369-es5-regexp-606.txt`.
   - The census's `loadToolchain`, `realAssembly` and `options` move into one exported module, `scripts/ir-census/prepared-toolchain.mts`, which both scripts import. There is no copy.
 - **Pins.**
-  - The early-error verdict:
-    - The 132 negative `language/literals/regexp` tests stay at 131 pass. That is the 2026-11-26 measurement on the Prepared lane; the one failure, `S7.8.5_A2.2_T2`, is a TypeScript "Expression expected." parse error, not a RegExp one.
-    - A unit table (`tests/issue-7369-static-pair-verdict.test.ts`) checks, for every RegExp literal in `byte-diff-corpus`'s regexp corpus, that the parser verdict equals node's. Any difference must be listed.
+  - The 132 negative `language/literals/regexp` tests stay at 131 pass (the 2026-11-26 measurement on the Prepared lane; the one failure, `S7.8.5_A2.2_T2`, is a TypeScript "Expression expected." parse error, not a RegExp one). R1a does not change the rule, so this is a no-change check.
   - Bytes:
     - `byte-diff-corpus --corpus regexp` (default, `standalone`, `wasi`): 0 differences.
     - `--corpus prepared`: 0 differences.
   - Gates: `check:ir-layering` and `check:compiler-boundaries` green; the 66 `tests/*regex*` files show the same failure set as on main.
+
+#### R1e — the early-error verdict from the parser (behaviour change)
+
+- `node-checks.ts:1310` asks `staticRegExpPairSyntaxError` (R1a); the host engine stays the fallback for `u` / `v` patterns only (Q4).
+- **The verdict table is the review object.** A unit table (`tests/issue-7369-static-pair-verdict.test.ts`) checks, for every RegExp literal in `byte-diff-corpus`'s regexp corpus and the 132 negative literal tests, that the parser verdict equals node's. Every difference is listed in the PR body and reviewed as a behaviour change; each one is either fixed in the parser or kept with a reason.
+- **Bytes.** `byte-diff-corpus --corpus regexp` (default, `standalone`, `wasi`) reports every row whose status changes, and each must be one of the listed differences. The 131 negative-test passes stay passing.
+- If the table shows zero differences, R1e is a one-line rule change plus the table.
 
 #### R1 — the provider (create, `test`, `lastIndex`)
 
@@ -269,7 +276,7 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
   | Lane answers | `src/ir/source-dynamic-contracts.ts`, `resolver` block | On the native lane with i16 native string storage: `supportsBackendCapability` (`native-regexp`, `native-regexp-object`), `nativeRegExpCompiles: staticRegExpPairCompiles`, `isLibOnlyBinding: isPristineBuiltinGlobal`. `from-ast.ts` is unchanged: `regExpLiteralBuilt` stays its only gate. |
   | Program fact | `src/ir/source-plain-objects.ts` | A static construction is an object producer (`objects.present`). The same walk yields the literal table: distinct pairs in source order. |
   | Literal table | `src/ir/program/runtime-support.ts` | A batch `regexp-literals` beside the number-format radix batches: the pairs, and every `create-regexp` occurrence with its `k`. It is re-derived and checked by the existing canonical walk. The realm reads the pairs from it; a program without a RegExp has no batch. |
-  | Legalization | `src/ir/program/dynamic-regexp-methods.ts` (new; shaped like `dynamic-prototype-methods.ts`) | (a) Rewrites `extern.regex` into `create-regexp(k)`. (b) Writes `test` in spec order (below). (c) Turns a method call whose callee is the [[Get]] of `exec`, in a program that holds RegExps, into a **build-time** named refusal `RegExp.prototype.exec has no Prepared provider (#7369 R2)`, so the 269 `.exec` files stay census signal instead of run-time aborts (an own `exec` on a user object is refused too, on purpose). One dispatch arm in `dynamic-value-legalization.ts`. |
+  | Legalization | `src/ir/program/dynamic-regexp-methods.ts` (new; shaped like `dynamic-prototype-methods.ts`) | (a) Rewrites `extern.regex` into `create-regexp(k)`. (b) Writes `test` in spec order (below). (c) Turns a method call whose callee is the [[Get]] of `exec`, in a program that holds RegExps, into a **build-time** named refusal `RegExp.prototype.exec has no Prepared provider (#7369 R2)`, so the 269 `.exec` files stay census signal instead of run-time aborts (an own `exec` on a user object is refused too, on purpose: conservative, a refusal and never a withdrawn claim; the module doc says so, and the refusal is lifted together with R2's unparking). One dispatch arm in `dynamic-value-legalization.ts`. |
   | Realm family | `src/runtime/contracts/native-realm-catalog.ts` | Rows `%RegExp%` (constructor `unavailable`) and `%RegExp.prototype%` with `exec`, `test` and `toString`. `NATIVE_MEMBERS["RegExp.prototype"] = ["test"]`. `exec` and `toString` are present as `unavailable` rows, so a lookup never falls through to `Object.prototype.toString`. The family is held when the table is non-empty, as `heldErrorConstructors` decides for the Error family. |
   | Layout | `src/runtime/wasmgc/values/regexp-carrier-layouts.ts` | `declareNativeRegExpType` and the frame types (ledger keys, as in `bigint-carrier-layouts.ts`), plus `createRegExpObjectDeclaration(keys)`, written after `createPrimitiveWrapperDeclaration`. |
   | Bodies | `src/runtime/wasmgc/values/regexp-object-bodies.ts` (new) | `buildRegExpCreateDefinition`: a chain over `k`, as `buildSourceObjectIntrinsicDefinition` does. Each arm builds the matcher and the object, then defines `lastIndex` = +0. `buildIsRegExpDefinition`: `ref.test`. `buildRegExpExecIndexDefinition`: steps 3–11 below. No body runs user code. |
@@ -395,4 +402,5 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
 | Q6 | R1 → R1b → R2; R2 is gated on arrays on `main`. |
 
 - **Risk — the `'+'` stop.** 81 of the 606 stop at `'+' operands not provably …` before any RegExp. R1 does not change that count; it belongs to #7354's dynamic `+` work.
-- **Risk — the early-error rule.** Moving `node-checks.ts`'s rule to the parser verdict changes build verdicts wherever the parser and the host disagree. The verdict table must list every such difference before R1a merges.
+- **Risk — the early-error rule.** Moving `node-checks.ts`'s rule to the parser verdict changes build verdicts, and bytes on every lane, wherever the parser and the host disagree. It is therefore its own PR, R1e, whose listed differences are reviewed as a behaviour change; R1a leaves the rule alone.
+- **Pins marked "(run by R2)"** pin nothing in R1. R1's unit file (`tests/issue-7369-test-lastindex.test.ts`) carries those cases until R2 lands.
