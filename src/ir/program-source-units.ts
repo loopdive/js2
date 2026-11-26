@@ -193,7 +193,11 @@ function lowerUnitOnce(
   const functions = dynamicContracts.legalize(
     sourceRoots,
     [lowered.main, ...lowered.lifted],
-    { declarationOf: (id) => identity.declarationByUnitId.get(id), aborted: (fn) => abortBodies?.has(fn) === true },
+    {
+      declarationOf: (id) => identity.declarationByUnitId.get(id),
+      aborted: (fn) => abortBodies?.has(fn) === true,
+      abortSite: (fn, reason) => abortBodies?.site(fn, reason),
+    },
     (call) => resolver.preparedIsNaNCall?.(call) === true,
   );
   return { lowered, functions };

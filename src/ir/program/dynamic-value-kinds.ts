@@ -29,6 +29,8 @@ export const TYPEOF_NAME = {
   object: "object",
 } as const;
 export type CarrierKind = keyof typeof TYPEOF_NAME;
+/** "a number", "an object": the kind as a refusal names a value of it. */
+export const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
 /** The kinds each `typeof` answer stands for: `TYPEOF_NAME` read backwards. */
 export const KINDS_OF_TYPEOF: ReadonlyMap<string, readonly CarrierKind[]> = new Map(
   [...new Set(Object.values(TYPEOF_NAME))].map((answer) => [

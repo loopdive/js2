@@ -44,6 +44,7 @@ import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "
 import { preparedIrDataMismatch } from "./program/data.js";
 import {
   assertNativeStringValuePlanIssued,
+  nativePublishedExportNames,
   planNativeStringValuePhysical,
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
@@ -1383,11 +1384,9 @@ export function planPhysicalSetup(
   }
   appendPhysicalImports(hostNumberBoundary?.imports ?? [], importedFunctions);
   appendAsyncPhysicalResources(asyncFrames, importedFunctions, exports);
-  const exportNames = new Set<string>(native?.plan.output?.stdout ? ["__stdout_prepare", "__stdout_char"] : []);
-  for (const exported of exports) {
-    if (exportNames.has(exported.externalName)) gaps.add(`export ${exported.externalName} is declared twice`);
-    exportNames.add(exported.externalName);
-  }
+  const exportNames = new Set<string>(nativePublishedExportNames(nativeStrings));
+  for (const { externalName: name } of exports)
+    if (exportNames.size === exportNames.add(name).size) gaps.add(`export ${name} is declared twice`);
 
   // 3. Bodies may only reference what the plan reserves; exception use is a reserved resource too.
   const reserved = new Set<string>([

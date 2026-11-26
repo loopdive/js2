@@ -16,7 +16,7 @@ import {
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
-import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, article, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
@@ -29,8 +29,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
     args: readonly IrValueId[],
     result?: IrValueId | null,
   ) => IrInstr;
-  /** (#7354 C2) The run-time abort, a carrier answer. */
-  readonly abort: (instr: IrInstr, result: IrValueId) => IrInstr[];
+  /** (#7354 C2) The run-time abort with its (#7486) reason, a carrier answer. */
+  readonly abort: (instr: IrInstr, reason: string, result: IrValueId) => IrInstr[];
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
   readonly admitted: readonly CarrierKind[];
   /** (#7354 P1, G1) The realm's built-in function object `id` into `result`. */
@@ -59,8 +59,8 @@ type MemberSet = Extract<IrInstr, { kind: "dyn.member_set" }>;
 
 /** A thrown TypeError with `message` (`typeError`), the arm's unread answer into `result`. */
 type ThrowTypeError = (message: string, result: IrValueId) => IrInstr[];
-/** The run-time abort into `result`, a carrier answer. */
-type Abort = (result: IrValueId) => IrInstr[];
+/** The run-time abort with its (#7486) reason into `result`, a carrier answer. */
+type Abort = (reason: string, result: IrValueId) => IrInstr[];
 
 /** What sets a read and a write apart past the receiver chain they share. */
 interface Access {
@@ -92,8 +92,15 @@ function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): str
   return constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
 }
 
-/** "a number", "an object". */
-const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
+/**
+ * The access a receiver of one of `kinds` cannot have, and what the realm lacks for it: "member read 'toFixed' of a
+ * value that may be a number or a string needs Number.prototype's properties and String.prototype's properties".
+ */
+function refusal(access: Access, kinds: readonly CarrierKind[]): string {
+  const receiver = kinds.length === 1 ? article(kinds[0]!) : `a value that may be ${kinds.map(article).join(" or ")}`;
+  const missing = [...new Set(kinds.map((kind) => access.missing(kind)!))].join(" and ");
+  return `${access.operation} of ${receiver} needs ${missing}`;
+}
 const WRAPPER: Readonly<Partial<Record<CarrierKind, string>>> = {
   number: "Number",
   boolean: "Boolean",
@@ -116,16 +123,12 @@ function memberAccess(
 ): IrInstr[] {
   const kinds = b.kindsOf(instr.recv);
   const refused = kinds.filter((kind) => access.missing(kind) !== undefined);
-  if (refused.length === kinds.length) {
-    const receiver = kinds.length === 1 ? article(kinds[0]!) : `a value that may be ${kinds.map(article).join(" or ")}`;
-    const missing = [...new Set(refused.map((kind) => access.missing(kind)!))].join(" and ");
-    gap(`${access.operation} of ${receiver} needs ${missing}`);
-  }
+  if (refused.length === kinds.length) gap(refusal(access, kinds));
   // The TypeError does not complete; the access's unread answer only gives the arm its value.
   const throwTypeError: ThrowTypeError = (message, r) => typeErrorThen(b, message, access.unread(r));
-  const abort: Abort = (r) => b.abort(instr, r);
+  const abort: Abort = (reason, r) => b.abort(instr, reason, r);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
-    if (refused.includes(kind)) return abort(r);
+    if (refused.includes(kind)) return abort(refusal(access, [kind]), r);
     switch (MEMBER_ACCESS_ARM[kind]) {
       case "type-error":
         return throwTypeError(access.nullishMessage(kind), r);
@@ -197,7 +200,9 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       const get = (s: IrValueId) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s)];
       if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
       const found = b.fresh();
-      return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
+      const absent = (s: IrValueId) =>
+        abort(`member read '${name}' of an object without it: Object.prototype's own, which the realm lacks`, s);
+      return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, absent, r, b.carrier)];
     },
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
     primitive: (_kind, r) => inherited(r),

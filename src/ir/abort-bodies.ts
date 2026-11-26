@@ -38,6 +38,17 @@ export interface AbortBodyRow {
   readonly detail: string;
 }
 
+/**
+ * (#7486) One run-time abort site (`js.value.unsupported_at`): its program-wide id, which the trap leaves in the
+ * exported global `__js_value_unsupported_site`, the function it was legalized in, and why it aborts.
+ */
+export interface AbortSiteRow {
+  readonly unit: IrUnitId;
+  readonly name: string;
+  readonly site: number;
+  readonly detail: string;
+}
+
 /** The function that owns a refusal raised at `node` (see the header), if any. */
 function ordinaryOwner(node: ts.Node): OrdinaryFunction | undefined {
   // A transform may hand the lowering a clone; ownership is the original node's, so a retry meets the same owner.
@@ -78,12 +89,14 @@ export function abortBody(builder: IrFunctionBuilder, closureSubtype?: IrFunctio
 }
 
 /**
- * The policy `unlowerableBodies: "abort"`, and its record: which functions got the abort body. The caller that
- * switches it on reads the rows after the compile.
+ * The policy `unlowerableBodies: "abort"`, and its record, which has two roles: the abort bodies (which functions got
+ * the abort body, `rows`) and (#7486) the site diagnostics (why each run-time abort site aborts, `sites`, whose ids
+ * only a build with this record emits). The caller that switches it on reads both after the compile.
  */
 export class AbortBodies {
   readonly #refusals = new Map<OrdinaryFunction, IrUnsupportedError>();
   readonly #rows = new Map<OrdinaryFunction, AbortBodyRow>();
+  readonly #sites: AbortSiteRow[] = [];
 
   /** `node` gets the abort body. */
   has(node: ts.Node): boolean {
@@ -93,13 +106,14 @@ export class AbortBodies {
   /**
    * `lower()` (one unit's lowering), repeated once per function that turns out to own a refusal, which then gets the
    * abort body. Deciding first and lowering again means the accepted lowering is one clean pass: no half-lowered
-   * state of a refused body survives, only the allocation sites it minted, which are dropped. A refusal no function
-   * owns (`unitDeclaration` is the unit's own, absent for top-level code), or owned by a function that has the abort
-   * body already (its signature, not its body, refused), stays the program's.
+   * state of a refused body survives, only the allocation sites and (#7486) abort sites it minted, which are dropped.
+   * A refusal no function owns (`unitDeclaration` is the unit's own, absent for top-level code), or owned by a
+   * function that has the abort body already (its signature, not its body, refused), stays the program's.
    */
   lower<T>(allocations: AllocSiteRegistry, unitDeclaration: ts.Node | undefined, lower: () => T): T {
     for (;;) {
       const mark = allocations.size;
+      const sites = this.#sites.length;
       try {
         return lower();
       } catch (error) {
@@ -108,6 +122,7 @@ export class AbortBodies {
         if (owner === undefined || this.#refusals.has(owner)) throw error;
         this.#refusals.set(owner, error);
         allocations.truncate(mark);
+        this.#sites.length = sites;
       }
     }
   }
@@ -129,6 +144,18 @@ export class AbortBodies {
         detail: refusal.message,
       });
     }
+  }
+
+  /** (#7486) The id of a new run-time abort site in `fn` with `reason`. */
+  site(fn: IrFunction, reason: string): number {
+    const site = this.#sites.length;
+    this.#sites.push({ unit: fn.unitId, name: fn.name, site, detail: reason });
+    return site;
+  }
+
+  /** (#7486) The run-time abort sites, by id. */
+  sites(): readonly AbortSiteRow[] {
+    return [...this.#sites];
   }
 
   /** The functions that got the abort body, in source order. */

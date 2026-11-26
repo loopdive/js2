@@ -135,15 +135,32 @@ export function isWasmTrap(err) {
 }
 
 /**
- * The Wasm frames of `err`'s stack, innermost first, and, for a trap whose innermost frame is a Prepared function
- * with an abort body (#7354 U: its body could not be lowered, so the abort is its whole body), that function's row.
+ * (#7486) The run-time abort site a trap fired at: the id the site-naming abort left in the module's exported global
+ * `__js_value_unsupported_site` (-1 until one fires), as its row of the Prepared site table.
+ *
+ * @template {{ site: number }} Row
+ * @param {any} instance
+ * @param {readonly Row[]} [abortSites]
+ * @returns {Row | undefined}
+ */
+export function abortSiteOf(instance, abortSites = []) {
+  const site = instance?.exports.__js_value_unsupported_site?.value;
+  return site >= 0 ? abortSites[site] : undefined;
+}
+
+/**
+ * The Wasm frames of `err`'s stack, innermost first, and, for a trap, the abort it was: (#7486) the run-time abort
+ * site it fired at (`abortSiteOf`), or else, where its innermost frame is a Prepared function with an abort body
+ * (#7354 U: its body could not be lowered, so the abort is its whole body), that function's row.
  *
  * @param {any} err
  * @param {readonly { name: string }[]} [abortBodies]
+ * @param {{ name: string }} [abortSite]
  */
-export function wasmErrorSite(err, abortBodies = []) {
+export function wasmErrorSite(err, abortBodies = [], abortSite) {
   const frames = [...String(err?.stack ?? "").matchAll(/at\s+(\S+)\s+\(wasm:\/\//g)].map((m) => m[1]);
-  const aborted = isWasmTrap(err) && frames.length > 0 ? abortBodies.find((row) => row.name === frames[0]) : undefined;
+  const aborted =
+    isWasmTrap(err) && frames.length > 0 ? (abortSite ?? abortBodies.find((row) => row.name === frames[0])) : undefined;
   return { frames, aborted };
 }
 

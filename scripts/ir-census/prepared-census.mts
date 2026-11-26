@@ -27,13 +27,15 @@ import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { isWasmTrap, wasmErrorSite } from "../lib/wasm-exn-render.mjs";
+import { abortSiteOf, isWasmTrap, wasmErrorSite } from "../lib/wasm-exn-render.mjs";
 import { childLoop, errorText, runPool } from "./pool.mts";
 import { assembleStandIn } from "./stand-in-harness.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SELF), "../..");
 const DETAIL_CAP = 600;
+/** (#7486) The site-naming run-time abort's helper: the innermost frame of every trap at a site. */
+const SITE_HELPER = "__js_value_unsupported_at";
 
 type Entry = typeof import("../../src/test262/test262-prepared-entry.ts");
 type Runtime = typeof import("../../src/test262/test262-prepared-runtime.ts");
@@ -153,7 +155,10 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
   const flags = { ...(assembly.unmodelled ? { unmodelled: true } : {}) };
   let result: Awaited<ReturnType<Entry["compile"]>>;
   try {
-    result = await tools.entry.compile(assembly.source, options(!meta.flags?.includes("module") && !meta.flags?.includes("raw")));
+    result = await tools.entry.compile(
+      assembly.source,
+      options(!meta.flags?.includes("module") && !meta.flags?.includes("raw")),
+    );
   } catch (error) {
     return { file, status: "crash", ...flags, detail: errorText(error) };
   }
@@ -161,27 +166,45 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
     return { file, status: "compile_error", ...flags, ...gapRow(tools, result, assembly) };
   }
   if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags };
+  let instance: WebAssembly.Instance | undefined;
   try {
-    const { instance } = tools.runtime.instantiatePreparedArtifact(result);
+    instance = tools.runtime.instantiatePreparedArtifact(result).instance;
     (instance.exports.__module_init as (() => void) | undefined)?.();
     return { file, status: "pass", ...flags };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, error) };
+    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, instance, error) };
   }
 }
 
 /**
- * Where a run-time trap fired: the innermost Wasm frame's function name and, when that function got an abort
- * body (#7354 U), the refusal the abort stands for. Only a Wasm trap counts; a host error (a stack-overflow
- * `RangeError`) is not attributed to the frame it happened in.
+ * Where a run-time trap fired: the innermost Wasm frame's function name and the abort it was: (#7486) a run-time
+ * abort site, with the function it was legalized in and the first frame past the abort's helper (`siteFrame`: that
+ * function, or a copy the middle end made of it), or the abort body (#7354 U) of the innermost frame's function. Only
+ * a Wasm trap counts; a host error (a stack-overflow `RangeError`) is not attributed to the frame it happened in.
  */
-function trapOf(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>, error: unknown) {
+function trapOf(
+  tools: Toolchain,
+  result: Awaited<ReturnType<Entry["compile"]>>,
+  instance: WebAssembly.Instance | undefined,
+  error: unknown,
+) {
   if (!isWasmTrap(error)) return {};
-  const { frames, aborted } = wasmErrorSite(error, tools.entry.requiredPreparedAbortBodies?.(result) ?? []);
+  const site = abortSiteOf(instance, tools.entry.requiredPreparedAbortSites?.(result));
+  const { frames, aborted } = wasmErrorSite(error, tools.entry.requiredPreparedAbortBodies?.(result) ?? [], site);
   if (frames.length === 0) return {};
   return {
     trapFrame: frames[0],
-    ...(aborted ? { abort: { code: aborted.code, detail: aborted.detail.slice(0, DETAIL_CAP) } } : {}),
+    ...(site ? { siteFrame: frames.find((frame) => frame !== SITE_HELPER) } : {}),
+    ...(aborted
+      ? {
+          abort: {
+            code: aborted.code,
+            site: aborted.site,
+            name: aborted.name,
+            detail: aborted.detail.slice(0, DETAIL_CAP),
+          },
+        }
+      : {}),
   };
 }
 
@@ -195,7 +218,8 @@ if (argv[0] === "--child") {
     return index >= 0 ? argv[index + 1] : fallback;
   };
   const harness = value("--harness", "real")!;
-  if (harness !== "real" && harness !== "stand-in") throw new Error(`--harness must be real or stand-in, got ${harness}`);
+  if (harness !== "real" && harness !== "stand-in")
+    throw new Error(`--harness must be real or stand-in, got ${harness}`);
   const tree = resolve(value("--tree", REPO_ROOT)!);
   await runPool({
     files: resolve(value("--files")!),

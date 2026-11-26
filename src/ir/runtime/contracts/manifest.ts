@@ -136,6 +136,7 @@ export const DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.value.to_boolean",
   "native.js.value.undefined",
   "native.js.value.unsupported",
+  "native.js.value.unsupported_at",
 ] as const);
 
 export type DynamicValueRuntimeProviderId = (typeof DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS)[number];

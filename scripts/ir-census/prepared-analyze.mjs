@@ -5,9 +5,10 @@
  *   node scripts/ir-census/prepared-analyze.mjs --rows <prepared.jsonl> [--rows <other.jsonl> …]
  *
  * For each rows file: outcomes (pass / fail / compile error / crash / skipped),
- * where the first gap lies (harness file, stand-in, test body), the first gaps
- * by detail, and the first gaps of test bodies by mechanism with their slice
- * and issue (prepared-mechanisms.mjs). The Prepared path stops at its first
+ * (#7486) the run-time traps by the abort they were, where the first gap lies
+ * (harness file, stand-in, test body), the first gaps by detail, and the first
+ * gaps of test bodies by mechanism with their slice and issue
+ * (prepared-mechanisms.mjs). The Prepared path stops at its first
  * gap, so every count is a first-gap count: a file is charged to one
  * mechanism, and nothing behind that gap is seen.
  */
@@ -37,6 +38,12 @@ const normalise = (detail = "") =>
     .slice(0, 110)
     .trim();
 
+/** (#7486) The abort a trap was: a run-time abort site's or an abort body's reason, else the frame it fired in. */
+const trapReason = (row) =>
+  row.abort === undefined
+    ? `in ${row.trapFrame}`
+    : `${row.abort.site === undefined ? "abort body" : "abort site"}: ${normalise(row.abort.detail)}`;
+
 function report(path) {
   const rows = readRows(path);
   const positive = rows.filter((row) => row.status !== "skip");
@@ -46,6 +53,14 @@ function report(path) {
     table(
       ["outcome", "files"],
       [["positive files", positive.length], ...count(positive.map((row) => row.status))].map((r) => r.map(String)),
+    ),
+  );
+  out.push(
+    table(
+      ["#", "run-time trap (normalised)", "files"],
+      count(positive.filter((row) => row.trapFrame !== undefined).map(trapReason))
+        .slice(0, 25)
+        .map(([reason, n], i) => [String(i + 1), `\`${reason}\``, String(n)]),
     ),
   );
   const unmodelled = positive.filter((row) => row.unmodelled).length;

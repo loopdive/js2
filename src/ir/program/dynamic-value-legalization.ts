@@ -41,7 +41,14 @@ import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-stat
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
 import { dynamicErrorConstruction, errorConstructorOf } from "./dynamic-error-constructors.js";
 import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
-import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
+import {
+  CARRIER,
+  additionBuilder,
+  chainBuilders,
+  conversionBuilders,
+  knownKinds,
+  type AbortSite,
+} from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
   IS_OBJECT,
@@ -84,19 +91,21 @@ function unadmittedValue(
 
 /**
  * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
- * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
+ * registry: (#7354 Str2) ToString's literal arms are string allocation sites. (#7486) `abortSite` mints the id of each
+ * run-time abort site, where the build records them.
  */
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
   program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
+  abortSite: AbortSite = () => undefined,
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
   const definitions = valueDefinitions(fn);
   const admitted = admittedKinds(program);
   const kinds = knownKinds(fn, types, definitions, admitted);
-  const builders = chainBuilders(fn, allocations, kinds, admitted);
+  const builders = chainBuilders(fn, allocations, kinds, admitted, abortSite);
   const { intrinsic, fresh, kindTest, anyKind, text, kindChain } = builders;
   const errors = holdsErrors(program);
   const conversions = conversionBuilders(builders, program);
