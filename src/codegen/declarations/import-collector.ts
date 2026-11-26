@@ -300,7 +300,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
     const prop = node.expression;
     const methodName = prop.name.text;
-    const receiverType = collectorReceiverType(ctx, ctx.checker.getTypeAtLocation(prop.expression), methodName);
+    const receiverType = collectorReceiverType(prop, ctx.checker.getTypeAtLocation(prop.expression));
     // #1215: Array<number>.join() / Array<number>.toString() must coerce each
     // element to a string before concatenation. Without `number_toString` registered,
     // compileArrayJoin silently drops the f64→externref conversion and emits a Wasm

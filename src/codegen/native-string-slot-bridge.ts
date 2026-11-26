@@ -28,6 +28,8 @@
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { isAnyStringSubtype } from "./native-strings-shared.js";
+import { coerceType } from "./type-coercion.js";
 
 /**
  * True when this slot needs the externref bridge: no JS host available AND the
@@ -61,6 +63,23 @@ export function emitExternrefSlotToAnyStr(ctx: CodegenContext, fctx: FunctionCon
   // externref → ref $AnyString (mirrors emitNativeStringRefFromExternref).
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+}
+
+/**
+ * (#7389) A GC ref that is not a string — the `$AnyValue` join of
+ * `s += c ? 'a' : 1` — is not a valid `__str_concat` operand: box it to
+ * `externref` and take the inbound ToString above. Returns `ref $AnyString`,
+ * or undefined (emitting nothing) for any other type.
+ */
+export function emitNonStringRefToAnyStr(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  type: ValType,
+): ValType | undefined {
+  if ((type.kind !== "ref" && type.kind !== "ref_null") || isAnyStringSubtype(ctx, type.typeIdx)) return undefined;
+  coerceType(ctx, fctx, type, { kind: "externref" });
+  emitExternrefSlotToAnyStr(ctx, fctx);
+  return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
 }
 
 /**

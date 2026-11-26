@@ -20,7 +20,6 @@ import {
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { subscribePreparedIrProgram, type PreparedIrProgramObservation } from "../src/ir/program-observation.js";
-import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { replayOptions, replayProgram } from "./helpers/ir-whole-program-replay.js";
 
@@ -218,7 +217,9 @@ describe("recovered A/C dependency controls — never public-route credit", () =
     }
   });
 
-  it("keeps typed async refusal before acceptance/emission with its original denominator", () => {
+  // This program was refused at acceptance when the test was written; the wasmgc host lane has since admitted
+  // typed async functions. The test now checks the accepted program's answer against JavaScript's (#7380 PR 2b).
+  it("accepts typed async on the wasmgc host lane, runs it, and keeps its denominator", async () => {
     const events: PreparedIrProgramObservation[] = [];
     const unsubscribe = subscribePreparedIrProgram((e) => events.push(e));
     try {
@@ -230,13 +231,13 @@ describe("recovered A/C dependency controls — never public-route credit", () =
       if (result.kind !== "prepared") throw new Error(result.detail);
       const count = result.program.inventory.terminalUnits.length;
       expect(count).toBe(1);
-      const refused = acceptPreparedIrProgram(result.program, replayOptions("wasmgc"));
-      expect(refused.kind).toBe("unsupported");
-      if (refused.kind !== "unsupported") throw new Error("expected located async capability refusal");
-      expect(refused.sourceFile).toBe("entry.ts");
-      expect(refused.unitId).toBe(result.program.inventory.terminalUnits[0]!.id);
-      expect(refused.detail).toMatch(/async|physical/);
-      expect(events.map((e) => e.phase)).toEqual(["prepared"]);
+      const run = await replayProgram(result.program, replayOptions("wasmgc"));
+      if (run.kind !== "ran") throw new Error(JSON.stringify(run));
+      expect(events.map((e) => e.phase)).toEqual(["prepared", "accepted", "emission-started", "emitted"]);
+      expect(phaseProblems(events)).toEqual([]);
+      const asyncRun = run.run.exports.run as (x: number) => Promise<number>;
+      await expect(asyncRun(5)).resolves.toBe(8);
+      await expect(asyncRun(-3)).resolves.toBe(0);
       expect(result.program.inventory.terminalUnits).toHaveLength(count);
     } finally {
       unsubscribe();

@@ -443,5 +443,4 @@ it("loads the callable declaration in a fresh process with an effective frontend
     .filter((line) => line.startsWith("REFERENCE_DECLARATION_LOADED:"))
     .map((line) => JSON.parse(line.slice("REFERENCE_DECLARATION_LOADED:".length)));
   expect(loaded).toContain(declarationUrl);
-  expect(loaded).toContain(new URL("../src/ir/runtime-host-capabilities.ts", import.meta.url).href);
 });

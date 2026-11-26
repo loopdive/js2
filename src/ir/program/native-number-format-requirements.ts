@@ -8,7 +8,7 @@ import {
   type IrInstrStringConst,
 } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
-import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
+import { preparedAllocationSites } from "./prepared-allocations.js";
 import type { AllocRegistryMetadataSnapshot } from "../analysis/contracts/allocations.js";
 import {
   irNativeAsyncCallableDeclaration,
@@ -24,6 +24,7 @@ import {
 import { assertIrRuntimeSupport, type IrNumberFormatRadixSupport } from "./runtime-support.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { settledChecks } from "./settled-verdict.js";
 
 export interface NativeNumberFormatRequirementInput {
   readonly program: PreparedIrProgram;
@@ -77,7 +78,7 @@ function supportEvidence(
   supportBuffers: readonly NativeNumberFormatSupportBuffer[];
   literals: readonly NativeNumberFormatLiteralUse[];
 } {
-  const registry = AllocSiteRegistry.fromSnapshot(program.allocations);
+  const registry = preparedAllocationSites(program.allocations);
   const metadata = new Map(program.allocations.metadata.map((row) => [row.id, row]));
   const supportBuffers: NativeNumberFormatSupportBuffer[] = [];
   const literals: NativeNumberFormatLiteralUse[] = [];
@@ -198,7 +199,14 @@ export function assertNativeNumberFormatRequirementsCurrent(
 ): void {
   if (requirements.program !== input.program || requirements.projection !== input.projection)
     fail("foreign borrowed program or projection");
-  const current = deriveNativeNumberFormatRequirements(input);
+  if (input.integerBeforeScratch !== requirements.integerBeforeScratch) fail("stale formatter batch or option");
+  // The re-derivation reads only the three input fields the requirements carry and equal, so it is a function of
+  // the requirements alone.
+  currentRequirements.check(requirements, () => checkCurrent(requirements));
+}
+const currentRequirements = settledChecks<NativeNumberFormatRequirements>();
+function checkCurrent(requirements: NativeNumberFormatRequirements): void {
+  const current = deriveNativeNumberFormatRequirements(requirements);
   if (
     !current ||
     current.batch !== requirements.batch ||

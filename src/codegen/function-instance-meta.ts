@@ -68,7 +68,8 @@
 import type { FieldDef, GlobalDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
-import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
+import { expectedArgumentCountOfParams } from "../shared/function-expected-argument-count.js";
+import { functionInstanceName } from "../shared/named-evaluation.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
 
@@ -350,168 +351,19 @@ function isSynthesizedEvalDeclaration(decl: ts.Node): boolean {
 }
 
 /**
- * (#5149 cluster B) §10.2.9 step 1: when the property key is a SYMBOL, the
- * function's `name` is the symbol's description wrapped in brackets —
- * `{ [Symbol('test262')]() {} }` is named `"[test262]"`, and a symbol with NO
- * description is named `""` (not `"[]"`, not the compiler's internal
- * `"__computed"`).
- *
- * Only the two statically decidable spellings are answered here:
- *   • a well-known `Symbol.foo` key                → `"[Symbol.foo]"`
- *   • an identifier bound ONCE to `Symbol("desc")` → `"[desc]"` / `""`
- *
- * The binding walk is syntactic on purpose — the question ("which literal built
- * this symbol") is about SYNTAX, not about a type, so no type query belongs
- * here at all. It is deliberately conservative:
- * more than one declaration of the name, any later assignment to it, or a
- * non-literal description all decline, and declining leaves the pre-existing
- * answer untouched.
- *
- * Returns `undefined` when the key is not a statically decidable symbol.
- */
-export function symbolComputedKeyFunctionName(key: ts.Expression): string | undefined {
-  let expr = key;
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
-  // `[Symbol.iterator]() {}` → "[Symbol.iterator]".
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "Symbol" &&
-    ts.isIdentifier(expr.name)
-  ) {
-    return `[Symbol.${expr.name.text}]`;
-  }
-  if (!ts.isIdentifier(expr)) return undefined;
-  const name = expr.text;
-  const file = expr.getSourceFile?.();
-  if (file === undefined) return undefined;
-  let decls = 0;
-  let initializer: ts.Expression | undefined;
-  let reassigned = false;
-  const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-      decls++;
-      initializer = node.initializer;
-    } else if (
-      ts.isBinaryExpression(node) &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    ) {
-      reassigned = true;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  if (decls !== 1 || reassigned || initializer === undefined) return undefined;
-  let init: ts.Expression = initializer;
-  while (ts.isParenthesizedExpression(init)) init = init.expression;
-  if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression) || init.expression.text !== "Symbol") {
-    return undefined;
-  }
-  const arg = init.arguments[0];
-  // §20.4.1.1: an absent or `undefined` description leaves [[Description]]
-  // undefined, and §10.2.9 then names the function `""`.
-  if (arg === undefined || (ts.isIdentifier(arg) && arg.text === "undefined")) return "";
-  if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) return `[${arg.text}]`;
-  return undefined;
-}
-
-/**
- * §10.2.9 SetFunctionName for a function-like declaration, as far as it is
- * statically decidable at the closure's mint site.
- *
- * A named declaration/expression uses its own name. An ANONYMOUS function or
- * arrow inherits the binding it is being defined into (NamedEvaluation) — the
- * variable, property, binding element or simple assignment target. Anything
- * else answers `""`, which is also the spec answer for a genuinely anonymous
- * function value, so a miss here is a correct-but-imprecise `""` rather than a
- * wrong name.
+ * §10.2.9 SetFunctionName at the closure's mint site (`functionInstanceName`), with `""` for an undecidable computed
+ * key. §20.2.1.1.1: a function built by `new Function(…)` is named `"anonymous"`: `eval-inline.ts` splices one in as a
+ * real parsed declaration under a SYNTHESIZED name (`__new_function_<n>`), which must not become observable —
+ * measured on `built-ins/Function/instance-name.js`.
  */
 export function fnInstanceNameOf(decl: ts.Node): string {
   if (
     (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl) || ts.isClassDeclaration(decl)) &&
-    decl.name !== undefined
-  ) {
-    // §20.2.1.1.1: a function built by `new Function(…)` is named `"anonymous"`.
-    // `eval-inline.ts` splices one in as a real parsed declaration under a
-    // SYNTHESIZED name (`__new_function_<n>`, unique per site), so reading
-    // `decl.name.text` here would publish a compiler-internal identifier as an
-    // observable property value — measured on `built-ins/Function/instance-name.js`,
-    // which went from reporting `undefined` to reporting `__new_function_474`.
-    if (isSynthesizedEvalDeclaration(decl)) return "anonymous";
-    return decl.name.text;
-  }
-  if (ts.isClassExpression(decl) && decl.name !== undefined) return decl.name.text;
-  if (
-    ts.isFunctionDeclaration(decl) &&
-    decl.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)
-  ) {
-    return "default";
-  }
-
-  // NamedEvaluation: the anonymous definition takes the name of what it is
-  // being bound to. Only the syntactic forms that carry an identifier/literal
-  // key are resolvable here; computed keys are runtime values. Private names
-  // are syntactic keys too, and their `#` spelling is the observable function
-  // name (the class-field layout's `__priv_` spelling must not leak here).
-  //
-  // Parentheses are TRANSPARENT to NamedEvaluation — the CoverParenthesized
-  // production keeps `var cover = (function () {});` anonymous, so the binding
-  // name still applies (`language/*/fn-name-cover.js`). A COMMA expression is
-  // not: `var xCover = (0, function () {});` is not an anonymous function
-  // DEFINITION, and those files assert the name is NOT taken. Walking only
-  // through `ParenthesizedExpression` keeps the two apart.
-  let node: ts.Node = decl;
-  while (node.parent !== undefined && ts.isParenthesizedExpression(node.parent)) node = node.parent;
-  const parent = node.parent as ts.Node | undefined;
-  if (parent === undefined) return "";
-  if (
-    (ts.isFunctionExpression(decl) || ts.isArrowFunction(decl)) &&
-    ts.isExportAssignment(parent) &&
-    !parent.isExportEquals &&
-    parent.expression === node
-  ) {
-    return "default";
-  }
-  if ((ts.isVariableDeclaration(parent) || ts.isBindingElement(parent)) && parent.initializer === node) {
-    return ts.isIdentifier(parent.name) ? parent.name.text : "";
-  }
-  // (#5144 cluster F) Shorthand DEFAULT in an object ASSIGNMENT pattern —
-  // `for ({ fn = function () {} } of [{}])`. §13.15.5.4 step 6.d applies
-  // NamedEvaluation with the property key, which is also the shorthand's own
-  // identifier. (The binding-pattern twin arrives as a BindingElement above.)
-  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
-    return parent.name.text;
-  }
-  if (ts.isPropertyAssignment(parent) && parent.initializer === node) {
-    const key = parent.name;
-    if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
-    // (#5149 cluster B) A symbol-keyed property names its anonymous function
-    // value after the symbol's description: `{ [Symbol('test262')]: () => {} }`
-    // is `"[test262]"`. Undecidable computed keys keep the `""` answer.
-    if (ts.isComputedPropertyName(key)) return symbolComputedKeyFunctionName(key.expression) ?? "";
-    return "";
-  }
-  // (#5146 cluster E) `({ x = function () {} } = {})` — the shorthand
-  // property's assignment initializer is an AssignmentElement default, and
-  // §13.15.5.5 applies NamedEvaluation with the shorthand's own name.
-  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
-    return parent.name.text;
-  }
-  if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
-    const key = parent.name;
-    return ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
-  }
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    parent.right === node &&
-    ts.isIdentifier(parent.left)
-  ) {
-    return parent.left.text;
-  }
-  return "";
+    decl.name !== undefined &&
+    isSynthesizedEvalDeclaration(decl)
+  )
+    return "anonymous";
+  return functionInstanceName(decl) ?? "";
 }
 
 /**

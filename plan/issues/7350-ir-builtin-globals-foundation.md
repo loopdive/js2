@@ -202,6 +202,48 @@ Code quality:
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
 
+## Slice B2c-1 plan — `parseFloat` / `parseInt` bodies move to the native runtime (2026-11-19)
+
+Lead decision 2026-11-19: before B2b's realm rows can bind the native implementations, move the pure body
+builders out of codegen into `src/runtime/wasmgc/values/`, one PR per surface, bytes identical. Inventory of
+the surfaces (codegen vs runtime, standalone): the Object constructor and the primitive wrappers already have
+realm builders (`object-constructor-body.ts`, `to-object-body.ts`, `primitive-wrapper-bodies.ts`; the legacy
+`__new_Number/String/Boolean` store a different representation, so there is nothing to move); `isNaN` /
+`isFinite` are single inline operations; the Error constructor body is already shared (`error-bodies.ts`);
+Math's transcendental functions are self-hosted from `src/stdlib/math.ts`. `parseFloat` and `parseInt` are the
+first surface with real bodies still in codegen.
+
+**Target structure.** `src/runtime/wasmgc/values/parse-number-bodies.ts`, beside `string-number-bodies.ts` and
+`decimal-scale-bodies.ts`, which `__str_to_number` already uses: `buildParseFloatDefinition` and
+`buildParseIntDefinition`, each `(bindings) → { locals, body }`. Bindings: the native string types, the decimal
+power table (`DecimalPowerResources`, parseFloat only) and the argument prologue (`flatString(argLocal)`: the
+instructions that leave a flat native string, which codegen supplies with its finalize-filled ToString arm).
+`src/codegen/parse-number-native.ts` keeps only what touches the module: the function type, the handle, the
+`funcMap` row, the pow10 global and the prologue's pending ToString arm.
+
+**What it removes.** (Corrected after review RV7323b.) The parseFloat digit loops duplicated
+`buildDecimalMantissa` (`string-number-bodies.ts`, `__str_to_number`'s) except for local indices and a 4-instruction
+`mant = 0; sawDigit = 0` init: they are one exported builder now, taking a locals record, with the init left to
+the caller; its dead `strDataTypeIdx` parameter goes. The move itself makes the two bodies bindable by the realm
+without a second implementation.
+
+**Acceptance.** Bytes identical on every test262 file whose source names `parseInt` or `parseFloat`, on the
+default, standalone and linear targets (measured with a scratch hashing script; review RV7323b asked not to
+commit a third byte-identity tool beside `prove-emit-identity.mjs` and `byte-diff-corpus.mts`, and to count
+rows that fail on both trees separately from identical binaries);
+`parse-number-native.ts` shrinks; the new file joins the `native-runtime` layer. Quality: the builders read
+no context, only their bindings.
+
+**B2c-1 measured (2026-11-19, main `89e4748241`).** A scratch hashing script over the 216 test262
+files whose source names `parseInt` / `parseFloat` plus a 103-file random control sample (317 files, 925
+rows): 0 rows differ. Binaries compared: 291 default and 291 standalone (13 files compile on neither tree, 13
+are runner skips). The linear target compiles none of these harness-wrapped files on either tree (the linear
+backend has no `try` / `catch`), and nothing under `src/codegen-linear/` imports the moved code, so linear is
+unaffected by construction. `buildParseFloatDefinition` stays under the 300-line budget by calling the shared
+`buildDecimalMantissa`; the codegen side has an `emitParseFloat` beside `emitParseInt` and `emitStrToNumber`.
+`tests/issue-1663.test.ts` (1 row) and `tests/issue-6969-parse-number-tostring.test.ts` (8 parseFloat rows)
+fail identically on main `89e4748241`; `issue-2654` and `parseint-edge` pass.
+
 ## Slice B2c-2 plan — Error message slot and JSON quote / parse-primitive bodies move to the native runtime (2026-11-19)
 
 Second surface of the B2c move (B2c-1: `parseFloat` / `parseInt`, PR #7323): pure body builders leave codegen

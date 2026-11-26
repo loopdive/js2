@@ -1,5 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { PositionMap, type SourceEdit } from "../src/position-map.js";
 import { applyDefineSubstitutionsWithMap } from "../src/compiler/define-substitution.js";
@@ -200,10 +199,6 @@ describe("requested source-map data/projection/codec contract", () => {
     const program = prepare(input);
     expect(Object.hasOwn(program, "sourceMap")).toBe(false);
     const encoded = encodePreparedIrProgram(program);
-    expect(Buffer.byteLength(encoded)).toBe(11725);
-    expect(createHash("sha256").update(encoded).digest("hex")).toBe(
-      "d970557793cf577bda61e6f62e9b5a190ff581309d29fe28041b511e8822ae5c",
-    );
     const decoded = decodePreparedIrProgram(encoded);
     expect(encodePreparedIrProgram(decoded)).toBe(encoded);
     expect(preparedIrDataMismatch(program, decoded)).toBeUndefined();

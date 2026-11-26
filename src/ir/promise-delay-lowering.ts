@@ -67,6 +67,12 @@ export interface ExactClosureLoweringOptions {
   readonly hostOneShot?: boolean;
   /** Exact reusable callback admitted only by the standalone DOM authority. */
   readonly domCallbackAuthority?: IrDomCallbackAuthority;
+  /** (#7354 Fa) A parameter the body writes reads through a slot, as a planned member closure's always does. */
+  readonly writtenParameterSlots?: boolean;
+  /** (#7354 C2) The closure's code strictness: a dynamic PutValue's failure rule. Absent → unknown. */
+  readonly functionCodeStrict?: boolean;
+  /** (#7106 Stage 4, #7354 C2) The closure reads its own `this`, bound at entry with this strictness. */
+  readonly ambientThisStrict?: boolean;
 }
 
 type PromiseDelayBuilder = Pick<IrFunctionBuilder, "emitCall" | "emitCallablePack" | "typeOf">;

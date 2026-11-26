@@ -397,6 +397,20 @@ export function requireNativeStringLiteral(
   return binding;
 }
 
+/** The instructions that push `text`'s native string: its global, or the function that builds an oversized one. */
+export function nativeStringLiteralInstrs(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralReservations,
+  text: string,
+): Instr[] {
+  const token = requireNativeStringLiteral(tx, pack, text);
+  return [
+    token.kind === "global"
+      ? { op: "global.get", index: tx.physicalIndex(token.global) }
+      : { op: "call", funcIdx: token.function.handle },
+  ];
+}
+
 /** Attest actual canonical fills through this owner's existing ledger, not a body-name heuristic. */
 export function requireCompletedNativeStringLiterals(
   tx: PhysicalModuleReservations,

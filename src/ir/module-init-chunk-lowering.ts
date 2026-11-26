@@ -17,6 +17,7 @@ import type { ts } from "../ts-api.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { IrFunctionBuilder } from "./builder.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
+import { emitFunctionDeclarationValues, type FunctionDeclarationValue } from "./function-declaration-values.js";
 import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
@@ -38,20 +39,27 @@ export interface ModuleInitChunkHost {
   readonly lifted: IrFunction[];
   readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   readonly allocRegistry?: AllocSiteRegistry;
-  /** Reserves each chunk's Wasm name in the module being built (absent: the name as planned). */
-  readonly resolver?: { moduleInitChunkName?(preferred: string): string };
+  /**
+   * Reserves each chunk's Wasm name in the module being built (absent: the name as planned); (#7354 F1b) the
+   * function declarations the script reads as values.
+   */
+  readonly resolver?: {
+    moduleInitChunkName?(preferred: string): string;
+    moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
+  };
 }
 
 /**
  * Lower the initializer's statements with `lowerStatement`: in place when they
  * fit one chunk, else one derived function per planned chunk plus the dispatch
- * calls.
+ * calls. (#7354 F1b) The function declarations read as values are made first.
  */
 export function lowerModuleInitStatements<C extends ModuleInitChunkHost>(
   statements: readonly ts.Statement[],
   cx: C,
   lowerStatement: (statement: ts.Statement, cx: C) => void,
 ): void {
+  emitFunctionDeclarationValues(cx, cx.resolver?.moduleInitFunctionValues?.() ?? []);
   const chunks = planModuleInitChunks(statements.map((node) => ({ node })));
   if (chunks.length <= 1) {
     for (const statement of statements) lowerStatement(statement, cx);

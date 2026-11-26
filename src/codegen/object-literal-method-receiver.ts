@@ -104,7 +104,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../shared/body-references-own-this.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { innerResultValType } from "./closure-receiver-install.js";
 

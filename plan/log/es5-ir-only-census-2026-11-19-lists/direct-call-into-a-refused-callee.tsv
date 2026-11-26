@@ -1,0 +1,10 @@
+annexB/language/global-code/if-decl-else-decl-a-global-existing-fn-no-init.js	ir/from-ast: direct call to "f" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-decl-b-global-existing-fn-no-init.js	ir/from-ast: direct call to "f" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-stmt-global-existing-fn-no-init.js	ir/from-ast: direct call to "f" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-no-else-global-existing-fn-no-init.js	ir/from-ast: direct call to "f" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-existing-fn-no-init.js	ir/from-ast: direct call to "f" has no exact AST-site plan in <module-init>
+language/expressions/call/S11.2.3_A2.js	ir/from-ast: direct call to "x" has no exact AST-site plan in <module-init>
+language/statements/function/S13_A6_T2.js	ir/from-ast: direct call to "__func" has no exact AST-site plan in <module-init>
+language/statements/function/S14_A5_T1.js	ir/from-ast: direct call to "__func" has no exact AST-site plan in <module-init>
+language/statements/function/S14_A5_T2.js	ir/from-ast: direct call to "__func" has no exact AST-site plan in <module-init>
+language/types/undefined/S8.1_A1_T2.js	ir/from-ast: direct call to "ERROR" has no exact AST-site plan in <module-init>
