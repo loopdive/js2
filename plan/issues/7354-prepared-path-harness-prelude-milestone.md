@@ -7627,3 +7627,45 @@ compiler boundaries (`--mode inventory`; both new modules mixed-needs-split like
 
 - The full vitest suite (only the files above).
 - Node 25 (Node 22 here).
+
+### L0b review round 1 (PR 7516)
+
+**Wrong value, fixed** (on main already; the decision now lives in `switch-dispatch.ts`). A Boolean discriminant met
+numeric tests as the number 0/1: `var b = true; switch (b) { case 1: … }` chose `case 1`, as did `switch (1 > 2)
+{ case 0: … }` and the function-local form.
+- **Cause.** The numeric ladder took any `i32` discriminant, and a Boolean is an `i32`.
+- **Fix.** On the Prepared lane the ladder takes only an `f64` discriminant. An `i32` one takes the carrier dispatch,
+  whose strict equality never equates a Boolean with a number. An `i32` the carrier cannot box (a Boolean local without
+  the brand, `var b = x > 0`) is the refusal, never the ladder. Off the lane nothing changes.
+- **Mirrors.** `switch (1) { case true: }` and Boolean tests against a Boolean discriminant were refused on main
+  (non-literal tests) and are node's answer on head.
+- **Ordinary pipeline: the same bug, left alone** (its bytes must not change here). `var b = true; switch (b as any)
+  { case 1: return 1; default: return 2; }` returns 1 on the default and standalone targets; JS returns 2.
+  **Follow-up issue to file:** the ordinary pipeline's switch ladder compares a Boolean discriminant as 0/1.
+- Test: `never equates a Boolean discriminant with a number, nor a number with a Boolean test` (top level and in a
+  function, wrong twins). On main these programs give the wrong value.
+
+**Quality.**
+1. One lane predicate, `onPreparedDynamicLane` (`src/ir/prepared-dynamic-lane.ts`), over a resolver member
+   `preparedDynamicLane` next to `createsFunctionObjects` in the lane resolver. The host carries it as
+   `onPreparedDynamicLane()`. Every L0a/L0b lane site uses it, including the comparison lowering, the switch dispatch
+   and the arity plan (which now takes the resolver, not a flag). `from-ast.ts` is back to main's six
+   `createsFunctionObjects(cx.resolver)` sites, all of which ask about function objects.
+2. `conditionalJoinArmFamily` takes `null` (`nullish`) and an optional `typed` fallback. `laneMixedConditional`
+   asks it and `conditionalJoinFamily` (`unknown` = arms of different kinds); its local classifier is gone. A `null`
+   arm still has no dynamic join for the existing callers (`conditionalJoinFamily("dynamic", "nullish")` is
+   `unknown`, as `null` was).
+3. The update docs: `lowerValueUpdate`'s doc, then `UpdatedValues`, then `lowerIncrementDecrement`'s own doc.
+4. Nits: prefix and postfix updates both go through `lowerValueUpdate` in `lowerExpr` (the prefix refusal is back to
+   main's text); `provenAdditiveOperands` answers an `AdditivePlan` (`proofs`, `carrier`); `switchDiscriminant`
+   computes its tests; the arity plan's admission is two plain conditions.
+
+**Proof (round 1).**
+- Probes, ≤ 10 per process, 394 programs (51 L0b + 343 L0a/reviewer) plus the 10 Boolean-switch programs: against
+  the round-0 head, one change (`null-eq@fn` abort → right, the round-0 fix landed after that capture); nothing right
+  changed; 0 wrong/invalid/exceptions. The Boolean programs: 4 wrong on main → right; 4 refused/aborted on main → 3
+  right and 1 abort (the unbranded Boolean local above); the 2 integer switches unchanged.
+- Ordinary bytes identical, main vs head: 24 probe programs × default/standalone, 5 of them Boolean switches.
+- `check:prepared-bytes` identical to the round-0 head.
+- Tests: l0b-statements 7, l0b-expressions 6, l0a-relational 9, l0a-loose-equality 5, ty 61.
+- Gates exit 0, also with `LOC_GATE_BASE` = origin/main (a9cdc8857a). `from-ast.ts` 17175.

@@ -30,6 +30,16 @@ describe("#7354 L0b — statement shapes", () => {
     );
   });
 
+  // A Boolean discriminant was compared with numeric tests as the number 0/1 (`switch (true) { case 1: }` chose `1`).
+  it("never equates a Boolean discriminant with a number, nor a number with a Boolean test", async () => {
+    await agrees(
+      'var out = ""; var b = true;\nswitch (b) { case 1: out = "one"; break; default: out = "d"; }\nswitch (1 > 2) { case 0: out += "zero"; break; default: out += "d"; }\nswitch (1) { case true: out += "t"; break; default: out += "d"; }\nvar c = 1 < 2; switch (c) { case false: out += "f"; break; case true: out += "t"; }',
+    );
+    await agrees(
+      'function t() { var b = true; switch (b) { case 1: return "one"; default: return "d"; } }\nfunction u(x) { switch (x > 1) { case 1: return "one"; case 0: return "zero"; } return "d"; }\nfunction v(n) { switch (n) { case true: return "t"; case false: return "f"; case 1: return "1"; } return "d"; }\nvar out = t() + u(2) + u(0) + v(1) + v(0) + v(true);',
+    );
+  });
+
   it("falls through and keeps default's place, and takes the first of duplicate tests", async () => {
     await agrees(
       'function f(v) { var r = ""; switch (v) { default: r = r + "d"; case 1: r = r + "1"; break; case "2": r = r + "2"; case "k": r = r + "k"; } return r; }\nvar out = f(1) + "|" + f("2") + "|" + f(3) + "|" + f("k");',
