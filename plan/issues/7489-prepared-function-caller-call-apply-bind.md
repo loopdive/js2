@@ -285,3 +285,35 @@ console.log(hit.length, by);'
 - The reviewer's 132-file "family" set (89 fail, 41 CE, 2 pass) is a
   different selection; the 72 are the fails of `candidates.txt` whose trap
   frame is this refusal.
+
+## Slice A result (2026-11-26)
+
+Branch `claude/s20-fn-members`, measured against main `c3b7be66`.
+
+- **Census** (the Measurement commands, `candidates.txt`): 1 pass / 142 fail /
+  409 CE before, 43 pass / 100 fail / 409 CE after: 42 files fail → pass,
+  none pass → fail. 40 of the 42 are in `cluster.txt` (all 38 `caller` reads and
+  both `caller` writes; the estimate held). The 32 cluster files left fail on
+  `call` 10, `apply` 12, `bind` 10, slice B's and C's.
+- **Bytes**: ordinary-pipeline output (JS target and `--target standalone`) of
+  the 13 playground examples and the 72 cluster files, 170 compiles, hashes to
+  the same digest on the branch and on main.
+- **Tests**: `tests/issue-7489-function-caller.test.ts` (11; the node-agreement
+  and `arguments` pins fail on main, the generator / async pins pass there and
+  hold the §17.1 exclusion); G1's `caller`-write pin moved to `arguments`.
+  `tests/issue-7354-*`, `issue-7106-function-object*`, `issue-3518-native-realm*`:
+  2167 pass; the 4 failures (`issue-3518-native-realm-object-layouts` ×4 …
+  `issue-7354-o-objects` "refuses what the later steps build") fail identically
+  on main `c3b7be66`.
+- **One step beyond the plan**: the kernel's [[Set]] trapped on any setter when
+  the program holds no source accessor (`source-object-bodies.ts`, "a setter
+  call traps"), so `strictFn.caller = 1` hit `unreachable`. It now calls a
+  built-in setter the way [[Get]] already called a built-in getter: the
+  getter's helper became `builtinAccessorCall`, shared by both halves, and a
+  setter that is not a built-in still traps.
+- **Where the plan's A.2 landed**: no Function.prototype-specific seeding code.
+  `familyProperties` (`native-realm-families.ts`) seeds every catalog property
+  of a held row whose intrinsics the realm holds, accessors included, so
+  %Function.prototype%'s `caller` / `arguments` come from its catalog rows; the
+  Error family rows reference only held intrinsics, so their seeding is
+  unchanged.
