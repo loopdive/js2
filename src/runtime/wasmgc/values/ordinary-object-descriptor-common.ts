@@ -1,7 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncHandle, Instr, TypeHandle } from "../../../wasm/model/instructions.js";
 
-/** Existing descriptor encoding. Presence bits do not encode an operand value. */
+/**
+ * The ordinary object's encodings, in one table: a property entry's flags (`writable` … `tombstone`), the object's own
+ * flags (`nonExtensible` … `nullPrototype`, then the realm's brands (#7354 G1) [[ErrorData]] and (A1) the Array exotic
+ * object, bits no legacy object flag uses: those stop at 0x400), and a descriptor word (`writableSpecified` …
+ * `setterSpecified`). Presence bits do not encode an operand value.
+ */
 export const ORDINARY_OBJECT_DESCRIPTOR_ENCODING = Object.freeze({
   writable: 1,
   enumerable: 2,
@@ -12,6 +17,8 @@ export const ORDINARY_OBJECT_DESCRIPTOR_ENCODING = Object.freeze({
   sealed: 2,
   frozen: 4,
   nullPrototype: 128,
+  errorData: 0x800,
+  arrayExotic: 0x1000,
   noneHeap: -18,
   writableSpecified: 8,
   enumerableSpecified: 16,

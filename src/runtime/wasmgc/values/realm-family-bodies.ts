@@ -9,10 +9,11 @@
  * `Object.prototype.toString` reads (§20.1.3.6 step 9).
  */
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
-import type { NativeRealmPrimitive } from "../../contracts/native-realm-catalog.js";
+import { REALM_BRAND, type NativeRealmPrimitive } from "../../contracts/native-realm-catalog.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
+import { markArray } from "./realm-array-bodies.js";
 
 /** A family property: a string, (#7354 W2) a number, or a realm entry or object by catalog id. */
 export interface RealmFamilyProperty {
@@ -46,6 +47,8 @@ export interface RealmFamilyOperands {
     readonly prototype: string;
     /** (#7354 W2) A wrapper prototype's primitive slot. */
     readonly primitive?: NativeRealmPrimitive;
+    /** (#7354 A1) %Array.prototype%, itself an array. */
+    readonly array?: true;
     readonly properties: readonly RealmFamilyProperty[];
   }[];
   /** (#7354 W2) Where the realm holds wrappers: the wrapper of `primitive` with the prototype `prototype` leaves. */
@@ -85,7 +88,11 @@ export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
     const created = object.primitive
       ? d.wrapperAllocation!(object.primitive, prototype)
       : [...prototype, ...asObject(d), { op: "call", funcIdx: d.createWithPrototype } as Instr];
-    return [...created, { op: "global.set", index: object.global }];
+    return [
+      ...created,
+      { op: "global.set", index: object.global },
+      ...(object.array ? markArray(d.objectTypeIdx, [global(object.global)]) : []),
+    ];
   });
 }
 
@@ -127,9 +134,6 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
   ];
 }
 
-/** The [[ErrorData]] bit of an ordinary object's flags; no legacy flag uses it. */
-export const ERROR_DATA_FLAG = 0x800;
-
 export interface ErrorCreateOperands extends RealmFamilyOperands {
   readonly initializer: FuncHandle;
   /** Each held constructor's prototype object, by its selector (`NATIVE_ERROR_CONSTRUCTORS` order). */
@@ -169,7 +173,7 @@ export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: Lo
       { op: "local.get", index: error },
       ...asObject(d),
       { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: flagsField },
-      { op: "i32.const", value: ERROR_DATA_FLAG },
+      { op: "i32.const", value: flags.errorData },
       { op: "i32.or" },
       { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: flagsField },
       { op: "local.get", index: 0 },
@@ -192,15 +196,26 @@ export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: Lo
   };
 }
 
-/** `js.object.is-error(object) -> i32`: the [[ErrorData]] bit of an ordinary object (the caller tests the kind). */
-export function buildIsErrorDefinition(d: { readonly objectTypeIdx: number }): { locals: LocalDef[]; body: Instr[] } {
+/**
+ * `js.object.has-brand(object, selector) -> i32`: the realm brand `selector` (`REALM_BRAND`: [[ErrorData]], (#7354 A1)
+ * the Array exotic object) in an ordinary object's flags (the caller tests the kind).
+ */
+export function buildHasBrandDefinition(d: { readonly objectTypeIdx: number }): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [],
     body: [
       { op: "local.get", index: 0 },
       ...asObject(d),
       { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-      { op: "i32.const", value: ERROR_DATA_FLAG },
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: REALM_BRAND.array },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: flags.arrayExotic }],
+        else: [{ op: "i32.const", value: flags.errorData }],
+      },
       { op: "i32.and" },
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },

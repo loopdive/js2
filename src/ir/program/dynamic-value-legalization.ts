@@ -109,6 +109,8 @@ export function legalizeDynamicValues(
     definitions,
     kindsOf: kinds.kindsOf,
     staticKeys: unheldStaticKeys(program.objects.constructors),
+    stringOf,
+    toNumber,
   };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objectKinds: admitted.filter((kind) => IS_OBJECT[kind]) };

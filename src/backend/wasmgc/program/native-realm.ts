@@ -42,6 +42,11 @@ import {
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
 import { familyObjects, familyProperties } from "./native-realm-families.js";
 import {
+  fillNativeRealmArrays,
+  nativeRealmArrayInventory,
+  reserveNativeRealmArrays,
+} from "../resources/native-realm-arrays.js";
+import {
   fillNativeRealmWrappers,
   heldWrapperKinds,
   nativeRealmWrapperInventory,
@@ -428,7 +433,10 @@ function reserveKernelResources(
     bigints = reserveNativeBigIntResources(tx, key + ":bigints", bigintPlan);
   const symbols = reserveNativeSymbolCarrierResources(tx, key + ":symbols", strings);
   // (#7354 W2) The wrappers are subtypes of the ordinary object: it is extensible only where the realm holds them.
-  const wrapperKinds = heldWrapperKinds(heldCatalogRows(pack.requirements.description));
+  const heldRows = heldCatalogRows(pack.requirements.description);
+  const wrapperKinds = heldWrapperKinds(heldRows);
+  // (#7354 A1) Before the descriptor pack, whose defines of an array go through the array define.
+  const arrays = heldRows.some((row) => row.array) ? reserveNativeRealmArrays(tx, key) : undefined;
   const layoutRequirements = { key: key + ":objects", ...(wrapperKinds.length ? { extensible: true as const } : {}) },
     layoutPlan = declareNativeObjectLayouts(layoutRequirements);
   const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
@@ -480,6 +488,7 @@ function reserveKernelResources(
     errorRequirements: pack.substrate.errorRequirements,
     errorDependencies: pack.substrate.errorDependencies,
     closures: population.closures,
+    ...(arrays ? { arrayDefine: arrays.define } : {}),
   };
   const descriptors = reserveNativeObjectDescriptorResources(
     tx,
@@ -511,6 +520,7 @@ function reserveKernelResources(
       kernel,
       errors: pack.substrate.errors,
       ...(wrappers ? { wrappers: { ...wrappers, flatten } } : {}),
+      ...(arrays ? { arrays } : {}),
     },
   );
   return {
@@ -523,6 +533,7 @@ function reserveKernelResources(
     layoutPlan,
     layouts,
     wrappers,
+    arrays,
     lookup,
     storage,
     sameValue,
@@ -591,6 +602,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...kernel.functions,
     ...nativeSourceObjectReservationInventory(tx, k.sourceObjects),
     ...(k.wrappers ? nativeRealmWrapperInventory(tx, k.wrappers).functions : []),
+    ...(k.arrays ? nativeRealmArrayInventory(k.arrays) : []),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,
@@ -648,6 +660,13 @@ export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: N
     fillNativeObjectSameValueResources(tx, k.sameValue);
     fillNativeObjectDescriptorResources(tx, k.descriptors, k.kernel.exception);
     fillNativeBuiltinFunctionResources(tx, k.kernel);
+    if (k.arrays)
+      fillNativeRealmArrays(tx, k.arrays, {
+        kernel: k.kernel,
+        values: pack.strings.number!.values,
+        defineAccessorBody: nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies)
+          .functions[1]!,
+      });
     fillNativeSourceObjectResources(tx, k.sourceObjects);
     owner.phase = "complete";
   } catch (error) {

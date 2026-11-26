@@ -14,7 +14,7 @@ import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
-import { errorConstructorSelector, WRAPPER_IDS } from "./builtin-prototype-keys.js";
+import { ARRAY_ID, errorConstructorSelector, WRAPPER_IDS } from "./builtin-prototype-keys.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
@@ -211,13 +211,24 @@ export interface ProgramFamilies {
    * constructor, so it can change one; a primitive's member access then reads through the realm's prototype objects.
    */
   readonly prototypes: boolean;
+  /** (A1) A value may be an array: the program names `Array` or writes an array literal. */
+  readonly arrays: boolean;
 }
 
 export function programFamilies(program: LegalizationProgram): ProgramFamilies {
   const named = program.objects.constructors;
   const wrappers = new Set(WRAPPER_IDS.filter((id) => named.has(id) || named.has("%Object%")));
-  return { errors: holdsErrors(program), wrappers, prototypes: named.has("%Object%") || wrappers.size > 0 };
+  return {
+    errors: holdsErrors(program),
+    wrappers,
+    prototypes: named.has("%Object%") || wrappers.size > 0,
+    arrays: named.has(ARRAY_ID),
+  };
 }
+
+/** (#7354 W2, A1) The families (constructor ids) whose objects a value may be: the wrappers', and Array's. */
+export const objectFamilies = (families: ProgramFamilies): ReadonlySet<string> =>
+  families.arrays ? new Set([...families.wrappers, ARRAY_ID]) : families.wrappers;
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
@@ -240,8 +251,8 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
  * carrier form (the coercion and throw rules); with it, `value` is the operand of a box to the dynamic value with that
  * tag refinement (the box arm, and the kind a box proves to the chains). The rules, in order: a Boolean (its tag or
  * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), the dynamic value itself, a
- * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2) the ordinary object
- * `js.object.create-default` answered (whatever its tag: a function-local object's member access boxes the externref
+ * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2, A1) the ordinary object or array
+ * `js.object.create-default` / `create-array` answered (whatever its tag: a function-local object's member access boxes the externref
  * it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
  * tag a declaration's home holds), or, through a coercion or the function-value projection, its operand's kind. Any
  * other value has none.
@@ -261,11 +272,8 @@ export function carrierKindOf(
   if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";
   if ((type?.kind === "val" && type.val.kind === "f64") || produced("js.number.box")) return "number";
-  if (
-    definition?.kind === "call" &&
-    irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
-  )
-    return "object";
+  const created = definition?.kind === "call" ? irOrdinaryObjectCallableDeclaration(definition.target)?.feature : "";
+  if (created === "js.object.create-default" || created === "js.object.create-array") return "object";
   const projected = functionValueOperand(definition);
   if (projected !== undefined) return carrierKindOf(projected, types, definitions);
   return definition?.kind === "coerce.to_externref" ? carrierKindOf(definition.value, types, definitions) : undefined;

@@ -42,6 +42,8 @@ export interface NativeRealmIntrinsic {
   readonly properties: readonly NativeRealmProperty[];
   /** (#7354 W2) A non-callable row's [[StringData]] / [[NumberData]] / [[BooleanData]]: a wrapper prototype's. */
   readonly primitive?: NativeRealmPrimitive;
+  /** (#7354 A1) An Array exotic object: %Array.prototype% is itself an array (§23.1.3). */
+  readonly array?: true;
   readonly callable?: {
     readonly initialName: string;
     readonly length: number;
@@ -177,11 +179,15 @@ export const WRAPPER_OF_PRIMITIVE = Object.freeze({
 } as const satisfies Record<string, NativeWrapperConstructor>);
 /** (#7354 W2) The questions `js.object.wrapper-data` answers (its selector): a slot, or a wrapper method's thisXValue. */
 export const WRAPPER_DATA = Object.freeze({ slot: 0, valueOf: 1, toString: 2 } as const);
+/** (#7354 G1, A1) The brands `js.object.has-brand` tests (its selector): [[ErrorData]], an Array exotic object. */
+export const REALM_BRAND = Object.freeze({ error: 0, array: 1 } as const);
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
   "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
   "Error.prototype": ["toString"],
+  // (#7354 A1) Array's methods come with A1b; IsArray is the realm's brand test.
+  Array: ["isArray"],
   ...Object.fromEntries(NATIVE_WRAPPER_CONSTRUCTORS.map((name) => [name + ".prototype", ["toString", "valueOf"]])),
 };
 const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
@@ -247,6 +253,10 @@ export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ),
   objectPrototype,
   ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}.prototype%`),
+  // (#7354 A1) Appended, so every earlier selector stays.
+  "%Array%",
+  realmMethodId("Array", "isArray"),
+  "%Array.prototype%",
 ]);
 /** An intrinsic family (#7354 G1, W2): a constructor, its prototype object, and the members both own. */
 interface Family {
@@ -261,6 +271,8 @@ interface Family {
   readonly methods: readonly Method[];
   /** The prototype object's own primitive slot (a wrapper prototype is itself a wrapper, §22.1.3 …). */
   readonly primitive?: NativeRealmPrimitive;
+  /** (#7354 A1) The prototype object is itself an Array exotic object (§23.1.3). */
+  readonly array?: true;
 }
 /**
  * A family's rows, each `heldWith` its constructor: the constructor (length 1, own `prototype` read only), its statics,
@@ -297,6 +309,7 @@ function familyRows(family: Family): NativeRealmIntrinsic[] {
       normativeOptional: false,
       legacy: false,
       ...(family.primitive ? { primitive: family.primitive } : {}),
+      ...(family.array ? { array: true as const } : {}),
       properties: [
         reference("constructor", id),
         ...family.prototypeData,
@@ -437,6 +450,64 @@ const WRAPPER_FAMILIES: Readonly<Record<NativeWrapperConstructor, Family>> = {
     ],
   },
 };
+/**
+ * (#7354 A1) §23.1: the Array family. %Array.prototype% is itself an array (its own `length` 0, writable, not
+ * configurable); its methods (`@@iterator` and `@@unscopables` aside) and the statics but `isArray` are `unavailable`.
+ */
+const ARRAY_FAMILY: Family = {
+  name: "Array",
+  requires: ["ArrayCreate", "GetPrototypeFromConstructor", "CreateDataPropertyOrThrow"],
+  statics: [
+    ["from", 1, ["IteratorToList", "CreateDataPropertyOrThrow"]],
+    ["isArray", 1, ["IsArray"]],
+    ["of", 0, ["CreateDataPropertyOrThrow"]],
+  ],
+  prototypeParent: objectPrototype,
+  prototypeData: [data("length", { kind: "number", value: 0 }, true, false)],
+  array: true,
+  methods: (
+    [
+      ["at", 1],
+      ["concat", 1],
+      ["copyWithin", 2],
+      ["entries", 0],
+      ["every", 1],
+      ["fill", 1],
+      ["filter", 1],
+      ["find", 1],
+      ["findIndex", 1],
+      ["findLast", 1],
+      ["findLastIndex", 1],
+      ["flat", 0],
+      ["flatMap", 1],
+      ["forEach", 1],
+      ["includes", 1],
+      ["indexOf", 1],
+      ["join", 1],
+      ["keys", 0],
+      ["lastIndexOf", 1],
+      ["map", 1],
+      ["pop", 0],
+      ["push", 1],
+      ["reduce", 1],
+      ["reduceRight", 1],
+      ["reverse", 0],
+      ["shift", 0],
+      ["slice", 2],
+      ["some", 1],
+      ["sort", 1],
+      ["splice", 2],
+      ["toLocaleString", 0],
+      ["toReversed", 0],
+      ["toSorted", 1],
+      ["toSpliced", 2],
+      ["toString", 0],
+      ["unshift", 1],
+      ["values", 0],
+      ["with", 2],
+    ] as const
+  ).map(([name, length]): Method => [name, length, ["ToObject", "LengthOfArrayLike"]]),
+};
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);
@@ -545,6 +616,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ]),
     ...NATIVE_ERROR_CONSTRUCTORS.map(errorFamily).flatMap(familyRows),
     ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => WRAPPER_FAMILIES[name]).flatMap(familyRows),
+    ...familyRows(ARRAY_FAMILY),
   ];
   return rows.map((row) => ({
     ...row,
@@ -572,10 +644,10 @@ function catalog(): readonly NativeRealmIntrinsic[] {
 }
 /**
  * Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error
- * family; (W2) the String, Number and Boolean families.
+ * family; (W2) the String, Number and Boolean families; (A1) the Array family.
  */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function+Error+wrappers:v3" as const,
+  version: "ecma262-2026:Object+Function+Error+wrappers+Array:v4" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [

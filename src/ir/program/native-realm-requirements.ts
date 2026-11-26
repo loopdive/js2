@@ -5,6 +5,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  realmMethodId,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
@@ -118,7 +119,10 @@ const intrinsicOf = (use: Use): string | undefined =>
     : undefined;
 const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
 /** `Error.prototype.toString`'s id, and the family's: the Error constructors' and it. */
-const ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)!;
+const ERROR_TO_STRING = realmMethodId("Error.prototype", "toString");
+/** (#7354 A1) The Array family, and the RangeError its arrays throw. */
+const ARRAY_ID = "%Array%",
+  RANGE_ERROR_ID = "%RangeError%";
 const FAMILY_IDS: readonly string[] = [...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`), ERROR_TO_STRING];
 /** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
 const readsPrototypeMethod = (use: Use): boolean =>
@@ -155,15 +159,21 @@ const familyOf = (id: string): string => FAMILY_OF.get(id) ?? id;
 function heldFamilyMembers(uses: readonly Use[], program: PreparedIrProgram): ReadonlySet<string> {
   const named = new Set(uses.map(intrinsicOf).filter((id): id is string => id !== undefined));
   const families = new Set([...named].map(familyOf));
-  for (const use of uses)
+  for (const use of uses) {
     if (use.feature === "js.object.create-wrapper" && use.selector !== undefined)
       families.add(`%${NATIVE_WRAPPER_CONSTRUCTORS[use.selector]}%`);
+    if (use.feature === "js.object.create-array") families.add(ARRAY_ID);
+  }
   const errors =
     [...named].some((id) => FAMILY_IDS.includes(id)) ||
     uses.some((use) => ERROR_FEATURES.has(use.feature)) ||
     bindsCaughtValue(program);
+  // (#7354 A1) An array's `length` throws the realm's RangeError (ArraySetLength), which a caught value can be.
+  const thrown = families.has(ARRAY_ID) ? [RANGE_ERROR_ID] : [];
   return new Set([
-    ...(errors ? ["%Error%", "%TypeError%", ERROR_TO_STRING, ...FAMILY_IDS.filter((id) => named.has(id))] : []),
+    ...(errors
+      ? ["%Error%", "%TypeError%", ERROR_TO_STRING, ...FAMILY_IDS.filter((id) => named.has(id) || thrown.includes(id))]
+      : []),
     ...VALUE_IDS.filter((id) => !FAMILY_IDS.includes(id) && families.has(familyOf(id))),
   ]);
 }

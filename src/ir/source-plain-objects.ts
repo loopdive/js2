@@ -16,7 +16,7 @@
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { realmConstructorId } from "./program/builtin-prototype-keys.js";
+import { ARRAY_ID, realmConstructorId } from "./program/builtin-prototype-keys.js";
 import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
 import { stringPrototypeBorrowShape } from "./array-prototype-borrow-call.js";
 
@@ -42,6 +42,8 @@ export function programObjects(
   const visit = (node: ts.Node): void => {
     const id = ts.isIdentifier(node) ? realmConstructorId(node.text) : undefined;
     if (id !== undefined && readsConstructor(node as ts.Identifier, isPristineGlobal)) constructors.add(id);
+    // (#7354 A1) An array literal is an array, whose `constructor` is %Array%.
+    if (ts.isArrayLiteralExpression(node)) constructors.add(ARRAY_ID);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||

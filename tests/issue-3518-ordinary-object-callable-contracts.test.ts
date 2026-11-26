@@ -23,9 +23,9 @@ const CONTRACTS = [
   ["js.object.create-type-error", [REF], [REF]],
   // (#7354 O3) OrdinarySet, its original receiver beside the object, as Get's
   ["js.object.set", [REF, REF, REF, REF], [BOOL]],
-  // (#7354 G1) [[ErrorData]] of an object, an error's creation (message, constructor selector), and
+  // (#7354 G1, A1) a realm brand of an object ([[ErrorData]], an array), an error's creation (message, constructor selector), and
   // Error.prototype.toString; a built-in function object by its selector
-  ["js.object.is-error", [REF], [BOOL]],
+  ["js.object.has-brand", [REF, { kind: "val", val: { kind: "i32" } }], [BOOL]],
   ["js.object.create-error", [REF, { kind: "val", val: { kind: "i32" } }], [REF]],
   ["js.object.error-to-string", [REF], [REF]],
   ["js.object.intrinsic", [{ kind: "val", val: { kind: "i32" } }], [REF]],
@@ -68,7 +68,7 @@ describe("ordinary object semantic contracts", () => {
 
   // On standalone WasmGC each contract has one provider, its native one: the manifest lists all of them
   // (`ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS`). Selecting a provider is not serving it: since #7354 O1 the native
-  // realm serves create-default, define-data and get; (#7354 O4, O3, O2b) create-type-error, set and has; (#7354 G1) is-error, create-error, error-to-string and intrinsic.
+  // realm serves create-default, define-data and get; (#7354 O4, O3, O2b) create-type-error, set and has; (#7354 G1) has-brand, create-error, error-to-string and intrinsic.
   it.each(CONTRACTS)("selects the native provider for %s on standalone WasmGC", (name) => {
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature(name);

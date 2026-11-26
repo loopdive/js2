@@ -36,12 +36,13 @@ export type NativeBuiltinFunctionBehavior =
 export type NativeBuiltinProperty = RealmFamilyProperty;
 /**
  * (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one;
- * (W2) a wrapper prototype's primitive slot.
+ * (W2) a wrapper prototype's primitive slot; (#7354 A1) %Array.prototype%'s array brand.
  */
 export interface NativeBuiltinObject {
   readonly id: string;
   readonly prototype: string;
   readonly primitive?: NativeRealmPrimitive;
+  readonly array?: true;
   readonly properties: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequirement {

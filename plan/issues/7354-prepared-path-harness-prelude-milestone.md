@@ -7319,3 +7319,34 @@ Nobody owns them today.
 - Risk: `assert.js`'s `compareArray.format` reads `Array`, so every prelude program would hold the family. W2 paid
   the same cost for `String` (+14 KB, about +1.5 s). A1a measures it, and only when the cost matters does A1a
   narrow the "held" rule to functions that are not abort bodies.
+
+### A1a design, after the lead's GO (2026-11-26; #7352 is now claimed for this lane: `ttraenkler/ir-lane-a1`, branch `claude/7354-a1`)
+
+- **The hook.** One realm function, `array-define(o, key, value, get, set, word, throw) -> i32` (§10.4.2.1 with
+  §10.4.2.4 inside), reserved only where the realm holds the Array family. It has two callers:
+  - The descriptor pack's two boundary defines (`define-data`, `define-accessor`; `define-attributes` goes through
+    `define-data`) call it after their preflight when the target carries the array bit, with `throw` 1. A rejection
+    is the pack's TypeError.
+  - OrdinarySet (`js.object.set`) calls it with `throw` 0 for an array receiver and answers its boolean, so a sloppy
+    `a[5] = 1` on a read-only `length` is silent and a strict one throws at the site (O1's PutValue).
+
+  Kernel seeding (`defineDataBody`: function `length` / `name`, family objects, wrapper indices, error `message`)
+  never targets an array. It deliberately bypasses the hook when it seeds %Array.prototype%'s own `length`.
+- **ToNumber of a `length` value inside the realm.** A number, boolean, `undefined` or `null` is converted in the
+  realm. A string or an object is the named run-time abort: the realm has no string parser or ToPrimitive.
+- **RangeError.** Where the realm holds the Error family, holding the Array family also holds %RangeError%, and the
+  realm throws a real RangeError. Elsewhere no code can read a thrown value, so it throws the substrate's error.
+- **Computed keys, the subset arrays need.** This overlaps L0c item 7; L0c's general rule replaces it later.
+  - Keys:
+    - A string key reads `has ? get : abort`: a miss could be a built-in key the realm does not hold.
+    - Any other primitive key goes through ToString (the program's `stringOf`; a canonical number string is never a
+      built-in key), then [[Get]].
+    - An object key is the abort: its `toString` order is observable.
+  - Receivers:
+    - An object receiver's write aborts on `"__proto__"`, and otherwise goes through OrdinarySet.
+    - A function or primitive receiver aborts.
+    - A nullish receiver throws a TypeError.
+- **Not in A1a.** Array.prototype methods (`push`, `join`, `toString` and the rest) stay `unavailable` rows.
+  - A constant-key read of one refuses or aborts through W2's unheld-key rule, generalised from wrappers to families.
+  - ToPrimitive of an array aborts.
+  - They come with A1b, because the harness calls them through bound values.

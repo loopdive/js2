@@ -15,7 +15,13 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
-import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
+import {
+  ERROR_TO_STRING_ID,
+  IS_ARRAY_ID,
+  REALM_BRAND,
+  nativeObjectPrototypeMethod,
+  objectPrototypeMethodId,
+} from "./builtin-prototype-keys.js";
 import {
   builtinMethodChain,
   identityTest,
@@ -55,6 +61,7 @@ export function prototypeMethodOfCall(
   const ids = [
     ...(objectMethod ? [objectPrototypeMethodId(objectMethod)] : []),
     ...(name === "toString" && families.errors ? [ERROR_TO_STRING_ID] : []),
+    ...(name === "isArray" && families.arrays ? [IS_ARRAY_ID] : []),
   ];
   const wrapper = families.wrappers.size > 0 && (name === "valueOf" || name === "toString") ? name : undefined;
   return ids.length === 0 && wrapper === undefined ? undefined : { ids, wrapper };
@@ -123,6 +130,22 @@ function prototypeOf(b: ConvertingBuilders, instr: Call, result: IrValueId): IrI
   return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
 }
 
+/** (#7354 A1) §23.1.2.2 IsArray(arg): the realm's array brand of an object, `false` for any other value. */
+function isArray(b: ConvertingBuilders, instr: Call, result: IrValueId): IrInstr[] {
+  const argument = instr.args[2];
+  if (argument === undefined) return boxed(b, instr, constant(false), result);
+  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
+    boxed(
+      b,
+      instr,
+      isOrdinaryObject(kind)
+        ? (s) => b.selectorCall("js.object.has-brand", [argument], REALM_BRAND.array, s)
+        : constant(false),
+      r,
+    );
+  return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
+}
+
 /**
  * The legalized call: the algorithm of the realm's own method the callee is, tested in turn, else the call as it was.
  * (#7354 G1) Error.prototype.toString is the realm's own (§20.5.3.4, `js.object.error-to-string`): its receiver is the
@@ -141,6 +164,7 @@ export function dynamicPrototypeMethodCall(
     (r: IrValueId): IrInstr[] => {
       if (id === ERROR_TO_STRING_ID) return [realmCall("js.object.error-to-string", [receiver], r)];
       if (id === objectPrototypeMethodId("isPrototypeOf")) return prototypeOf(b, instr, r);
+      if (id === IS_ARRAY_ID) return isArray(b, instr, r);
       return ownProperty(b, instr, id === objectPrototypeMethodId("propertyIsEnumerable"), r);
     };
   const tests = [

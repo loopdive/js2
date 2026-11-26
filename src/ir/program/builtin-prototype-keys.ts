@@ -14,6 +14,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  REALM_BRAND,
   WRAPPER_DATA,
   WRAPPER_OF_PRIMITIVE,
   realmMethodId,
@@ -73,18 +74,27 @@ export const errorConstructorId = (name: string): string | undefined =>
 
 /**
  * (#7354 W2) The catalog id of the realm constructor the global `name` names, if it names one: an Error constructor,
- * a wrapper constructor (`NATIVE_WRAPPER_CONSTRUCTORS`), or `Object`. The IR's one read of which global names read
+ * a wrapper constructor (`NATIVE_WRAPPER_CONSTRUCTORS`), `Object` or (#7354 A1) `Array`. The IR's one read of which global names read
  * realm constructors (`identifier-read.ts`).
  */
 export const realmConstructorId = (name: string): string | undefined =>
   errorConstructorId(name) ??
-  (name === "Object" || (NATIVE_WRAPPER_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined);
+  (name === "Object" || name === "Array" || (NATIVE_WRAPPER_CONSTRUCTORS as readonly string[]).includes(name)
+    ? `%${name}%`
+    : undefined);
+
+/** (#7354 A1) The catalog ids of `%Array%` and `Array.isArray`. */
+export const ARRAY_ID = "%Array%";
+export const IS_ARRAY_ID = realmMethodId("Array", "isArray");
+
+/** (#7354 A1) Whether the realm holds the static `path` (`"Array.isArray"`) as a function value. */
+export const realmHoldsStatic = (path: string): boolean => NATIVE_VALUE_INTRINSICS.includes(`%${path}%`);
 
 /**
  * (#7354 W2) The catalog's wrapper tables, for every IR reader (this module is the IR's one reader of the catalog): the
  * wrapper of each primitive kind, the wrapper constructors in selector order, and `js.object.wrapper-data`'s questions.
  */
-export { NATIVE_WRAPPER_CONSTRUCTORS, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE };
+export { NATIVE_WRAPPER_CONSTRUCTORS, REALM_BRAND, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE };
 
 /** (#7354 W2) The wrapper constructors' catalog ids, in selector order. */
 export const WRAPPER_IDS: readonly string[] = NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`);
@@ -152,28 +162,31 @@ function holdableKeys(id: string): ReadonlySet<string> {
   );
 }
 
+/** (#7354 W2, A1) The families whose objects have a prototype of the catalog's: the wrappers and Array. */
+const PROTOTYPE_FAMILIES = [...NATIVE_WRAPPER_CONSTRUCTORS, "Array"] as const;
+type PrototypeFamily = (typeof PROTOTYPE_FAMILIES)[number];
+
 /**
- * (#7354 W2) Each wrapper prototype's keys (§22.1.3, §21.1.3, §20.3.3, Annex B included), from the catalog, and those
- * the realm holds where it holds the family (`constructor`, `toString`, `valueOf`, String.prototype's `length`).
+ * (#7354 W2) Each family prototype's keys (§22.1.3, §21.1.3, §20.3.3, (A1) §23.1.3, Annex B included), from the
+ * catalog, and those the realm holds where it holds the family (`constructor`, `toString`, `valueOf`, String.prototype's
+ * and Array.prototype's `length`).
  */
-const WRAPPER_PROTOTYPE_KEYS = Object.fromEntries(
-  NATIVE_WRAPPER_CONSTRUCTORS.map((name) => {
+const FAMILY_PROTOTYPE_KEYS = Object.fromEntries(
+  PROTOTYPE_FAMILIES.map((name) => {
     const id = `%${name}.prototype%`;
     return [name, { all: realmStringKeys(id), held: holdableKeys(id) }];
   }),
-) as Readonly<
-  Record<NativeWrapperConstructor, { readonly all: ReadonlySet<string>; readonly held: ReadonlySet<string> }>
->;
+) as Readonly<Record<PrototypeFamily, { readonly all: ReadonlySet<string>; readonly held: ReadonlySet<string> }>>;
 
 /**
- * (#7354 W2) The keys a read of a held family's object reaches on its prototype that the realm does not hold
- * (`String.prototype.charAt`): an object that may be a wrapper of `wrappers` (catalog ids) finds them only on its own
- * or source-built chain.
+ * (#7354 W2, A1) The keys a read of a held family's object reaches on its prototype that the realm does not hold
+ * (`String.prototype.charAt`, `Array.prototype.map`): an object that may belong to a family of `families` (catalog ids
+ * of constructors) finds them only on its own or source-built chain.
  */
-export function unheldWrapperPrototypeKeys(wrappers: ReadonlySet<string>): ReadonlySet<string> {
+export function unheldFamilyPrototypeKeys(families: ReadonlySet<string>): ReadonlySet<string> {
   return new Set(
-    NATIVE_WRAPPER_CONSTRUCTORS.filter((name) => wrappers.has(`%${name}%`)).flatMap((name) => {
-      const { all, held } = WRAPPER_PROTOTYPE_KEYS[name];
+    PROTOTYPE_FAMILIES.filter((name) => families.has(`%${name}%`)).flatMap((name) => {
+      const { all, held } = FAMILY_PROTOTYPE_KEYS[name];
       return [...all].filter((key) => !held.has(key));
     }),
   );
@@ -181,7 +194,7 @@ export function unheldWrapperPrototypeKeys(wrappers: ReadonlySet<string>): Reado
 
 /** (#7354 W2) Whether the realm holds `key` on the wrapper prototype `name` where it holds the family. */
 export const heldWrapperPrototypeKey = (name: NativeWrapperConstructor, key: string): boolean =>
-  WRAPPER_PROTOTYPE_KEYS[name].held.has(key);
+  FAMILY_PROTOTYPE_KEYS[name].held.has(key);
 
 /**
  * (#7354 W2) The statics of the realm constructors `constructors` (catalog ids) the realm does not hold
@@ -220,9 +233,9 @@ const FUNCTION_REACHABLE_KEYS = new Set(
 export const BUILTIN_REACHABLE_KEYS = {
   object: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
   function: FUNCTION_REACHABLE_KEYS,
-  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...WRAPPER_PROTOTYPE_KEYS.Number.all]),
-  boolean: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...WRAPPER_PROTOTYPE_KEYS.Boolean.all]),
-  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...WRAPPER_PROTOTYPE_KEYS.String.all]),
+  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...FAMILY_PROTOTYPE_KEYS.Number.all]),
+  boolean: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...FAMILY_PROTOTYPE_KEYS.Boolean.all]),
+  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...FAMILY_PROTOTYPE_KEYS.String.all]),
 } as const satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
 /** A canonical array index (§6.1.7): a string's own indexed character. */

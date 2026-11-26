@@ -42,6 +42,7 @@ export function familyObjects(
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
       ...(row.primitive ? { primitive: row.primitive } : {}),
+      ...(row.array ? { array: row.array } : {}),
       properties: familyProperties(row, holds),
     }));
   return objects.length === 0 ? {} : { objects };

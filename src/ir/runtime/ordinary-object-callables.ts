@@ -62,8 +62,10 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
   // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
   "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
-  // (#7354 G1) Whether an object has [[ErrorData]] (`Object.prototype.toString`'s "Error" tag).
-  "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
+  // (#7354 G1, A1) Whether an object carries the realm's brand `selector` (a flag bit of
+  // `ORDINARY_OBJECT_DESCRIPTOR_ENCODING`): [[ErrorData]] (`Object.prototype.toString`'s "Error" tag) or an Array
+  // exotic object (IsArray, the "Array" tag).
+  "js.object.has-brand": declaration("js.object.has-brand", [EXTERNAL, SELECTOR], [BOOLEAN]),
   // (#7354 G1) A new error of the Error constructor `selector` (its index in `NATIVE_ERROR_CONSTRUCTORS`), with the
   // already converted `message`, or none for null; and Error.prototype.toString of an object (§20.5.3.4).
   "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, SELECTOR], [EXTERNAL]),
@@ -91,7 +93,15 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // `WRAPPER_DATA`): the slot of an object, or thisXValue where the method is a held wrapper's `valueOf` / `toString`.
   "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
   "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, SELECTOR], [EXTERNAL]),
+  // (#7354 A1) ArrayCreate(length) (§10.4.2.2) on %Array.prototype%; a `length` that is no array length is a RangeError.
+  "js.object.create-array": declaration("js.object.create-array", [FLAGS], [EXTERNAL]),
 });
+
+/**
+ * (#7354 A1) CreateDataProperty's descriptor word for `js.object.define-data`: writable, enumerable and configurable,
+ * each specified, and a value (an array element, an object literal's data property).
+ */
+export const CREATE_DATA_PROPERTY_WORD = 191;
 
 /**
  * (#7354 O2) The contracts that can store a function value as an accessor half: the object literal's `get` / `set`

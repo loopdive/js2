@@ -22,6 +22,9 @@
  *   read-only `prototype`, so the realm reads it).
  * - `Object` (§20.1.1.1, NewTarget `Object` itself or undefined): `undefined`, `null` or no argument answer a new
  *   ordinary object; an object or a function answers itself; a primitive answers its wrapper (ToObject).
+ * - (#7354 A1) `Array` (§23.1.1.1; a call and a construct alike): no argument an empty array; one number argument
+ *   ArrayCreate of it (the realm's RangeError for a number that is no array length); one argument of any other kind,
+ *   or several, an array of them.
  *
  * Premise re-proof. C2's `instanceof` and P1's `isPrototypeOf` answer `false` for a function's chain because it holds
  * only realm objects no program obtains. With the Error family held, `%Error%` is a value and a NativeError
@@ -34,6 +37,7 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrType } from "../core/types.js";
 import {
+  ARRAY_ID,
   NATIVE_WRAPPER_CONSTRUCTORS,
   WRAPPER_OF_PRIMITIVE,
   ERROR_ID,
@@ -42,6 +46,7 @@ import {
   wrapperConstructorSelector,
 } from "./builtin-prototype-keys.js";
 import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
+import { CREATE_DATA_PROPERTY_WORD } from "../runtime/ordinary-object-callables.js";
 import type { ChainBuilders, ConvertingBuilders } from "./dynamic-value-chains.js";
 import { BOOLEAN, CARRIER, F64, carried } from "./dynamic-value-types.js";
 import { gap } from "./dynamic-value-gap.js";
@@ -66,7 +71,7 @@ export function realmConstructorOf(
 }
 
 const isRealmConstructor = (id: string): boolean =>
-  id === "%Object%" || errorConstructorSelector(id) >= 0 || wrapperConstructorSelector(id) >= 0;
+  id === "%Object%" || id === ARRAY_ID || errorConstructorSelector(id) >= 0 || wrapperConstructorSelector(id) >= 0;
 
 /** `X(…args)` (`construct` false) or `new X(…args)` of the realm constructor `id`, into the instruction's result. */
 export function dynamicRealmConstruction(
@@ -79,6 +84,7 @@ export function dynamicRealmConstruction(
   const error = errorConstructorSelector(id);
   if (error >= 0) return errorConstruction(b, instr, error, args);
   if (id === "%Object%") return objectConstruction(b, instr, args[0]);
+  if (id === ARRAY_ID) return arrayConstruction(b, instr, args);
   const selector = wrapperConstructorSelector(id);
   const conversion = CONVERSION[NATIVE_WRAPPER_CONSTRUCTORS[selector]!];
   const primitive = (r: IrValueId): IrInstr[] =>
@@ -190,6 +196,35 @@ function objectConstruction(b: ConvertingBuilders, instr: IrInstr, value: IrValu
       : b.selectorCall("js.object.create-wrapper", [value], NATIVE_WRAPPER_CONSTRUCTORS.indexOf(wrapper), r);
   };
   return b.kindChain(instr, value, instr.result!, arm, b.kinds.kindsOf(value), CARRIER);
+}
+
+/** `Array(…args)` / `new Array(…args)` into the instruction's result (§23.1.1.1). */
+function arrayConstruction(b: ConvertingBuilders, instr: IrInstr, args: readonly IrValueId[]): IrInstr[] {
+  const create = (length: IrValueId, r: IrValueId): IrInstr => realmCall("js.object.create-array", [length], r);
+  /** An array of `elements`, each CreateDataPropertyOrThrow under its index. */
+  const of = (elements: readonly IrValueId[], r: IrValueId): IrInstr[] => {
+    const length = b.fresh();
+    return [
+      { kind: "const", value: { kind: "f64", value: elements.length }, result: length, resultType: F64 },
+      create(length, r),
+      ...elements.flatMap((element, index): IrInstr[] => {
+        const [text, key, word] = [b.fresh(), b.fresh(), b.fresh()];
+        return [
+          b.text(String(index), text),
+          carried(text, key),
+          { kind: "const", value: { kind: "f64", value: CREATE_DATA_PROPERTY_WORD }, result: word, resultType: F64 },
+          realmCall("js.object.define-data", [r, key, element, word]),
+        ];
+      }),
+    ];
+  };
+  if (args.length !== 1) return of(args, instr.result!);
+  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
+    if (kind !== "number") return of(args, r);
+    const length = b.fresh();
+    return [...b.toNumber(instr, args[0]!, length), create(length, r)];
+  };
+  return b.kindChain(instr, args[0]!, instr.result!, arm, b.kinds.kindsOf(args[0]!), CARRIER);
 }
 
 /**
