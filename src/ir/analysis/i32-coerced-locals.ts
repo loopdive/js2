@@ -340,19 +340,14 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
         if (!isI32SafeExpr(expr.operand, depth + 1)) return false;
         return Number(expr.operand.text.replace(/_/g, "")) !== 0;
       }
+      // (#7411) A candidate written by `++` / `--` is never i32-safe, so only a loop counter qualifies.
       if (o === ts.SyntaxKind.PlusPlusToken || o === ts.SyntaxKind.MinusMinusToken) {
-        return (
-          ts.isIdentifier(expr.operand) &&
-          (i32Set.has(expr.operand.text) || forCounterCandidates.has(expr.operand.text))
-        );
+        return ts.isIdentifier(expr.operand) && forCounterCandidates.has(expr.operand.text);
       }
       return false;
     }
     if (ts.isPostfixUnaryExpression(expr)) {
-      // x++ / x-- as expression (rare): rely on the operand being i32-safe
-      return (
-        ts.isIdentifier(expr.operand) && (i32Set.has(expr.operand.text) || forCounterCandidates.has(expr.operand.text))
-      );
+      return ts.isIdentifier(expr.operand) && forCounterCandidates.has(expr.operand.text);
     }
     if (ts.isIdentifier(expr)) {
       return i32Set.has(expr.text) || forCounterCandidates.has(expr.text);
