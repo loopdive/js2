@@ -188,187 +188,211 @@ both the merge base and `LOC_GATE_BASE=origin/main`.
 
 ## Implementation Plan (R1+, Prepared provider)
 
-Written 2026-11-26 against `origin/main` `41f0654e8c`. Every number below is
-measured on that head unless it is labelled **estimate**.
+Written 2026-11-26 against `origin/main` `41f0654e8c`, and revised the same day after plan review PRV-7369. Every
+number below was measured on that head unless it is labelled **estimate**.
 
 ### Decisions
 
 | Question | Answer |
 | --- | --- |
-| One engine? | Yes. The Prepared realm calls R0's `buildRegExpRunBody`, `buildRegExpClassMatchBody` and `buildRegExpSearchBody`. Bytecode comes from the one pattern compiler (`compilePattern`). No second VM, no second compiler. |
-| Where does the pattern compiler live? | It moves out of `src/codegen/regex/`, into `src/runtime/contracts/regexp/` (the `runtime-contracts` layer). Both the Prepared front end (admission) and `backend-wasmgc` (the bytecode) must call it. That layer is the only one that both may import, and it already owns the opcode numbering (`regexp-bytecode.ts`). |
-| What is a RegExp value on this path? | An **ordinary realm object with an internal slot**, as an Error is. It is a final subtype `$RegExpObject` of the realm `$Object` with one extra field, `[[RegExpMatcher]]: ref $__StandaloneRegExp` (R0's carrier). Its `lastIndex` is an own data property (writable, not enumerable, not configurable). The shape follows `createPrimitiveWrapperDeclaration`. |
-| New `CarrierKind`? | **No.** A RegExp is the `object` kind (the complement), so every row of `dynamic-value-kinds.ts` is already right for it: `typeof` "object", member get and set through the realm, ToPrimitive through its prototype. `carrierKindOf` learns one rule: an `extern.regex` produces `object`. |
-| How is a literal created? | `extern.regex {pattern, flags}` survives legalization unchanged; its operands are immediates, as `string.const` carries its text. The realm description lists the program's pairs, deduplicated in canonical order. The lowering calls `js.object.create-regexp(selector)`, where `selector` is the pair's index in that list. This is the `create-error(selector)` / `intrinsic(selector)` pattern. |
-| Contract naming | The Error precedent: `js.object.create-error`, `is-error`, `error-to-string`, all served by `ROWS` in `native-source-objects.ts`. So: `js.object.create-regexp`, `js.object.is-regexp`, `js.object.regexp-exec-index` and `js.object.regexp-exec` (R2), and the accessor bodies (R1b). No separate `js.regexp.*` family. |
+| One engine? | Yes. The Prepared realm calls R0's `buildRegExpRunBody`, `buildRegExpClassMatchBody` and `buildRegExpSearchBody` over bytecode from the one `compilePattern`. There is no second VM and no second compiler. |
+| Where does the pattern compiler live? (Q2) | In a new boundaries layer `regexp-compiler` at `src/regexp-compiler/` (details under R1a). |
+| What is a RegExp value on this path? | An ordinary realm object with one internal slot. It is a final subtype `$RegExpObject` of the realm `$Object`, with the field `[[RegExpMatcher]]: ref $__StandaloneRegExp` (R0's carrier). The shape precedent is `createPrimitiveWrapperDeclaration`: a subtype that adds a ref field. `lastIndex` is an own data property (writable, not enumerable, not configurable). `js.object.is-regexp` is `ref.test $RegExpObject`. |
+| A new `CarrierKind`? | **No.** A RegExp is the `object` kind (the complement). Every row of `dynamic-value-kinds.ts` is already right for it: `typeof` "object", member get and set through the realm, ToPrimitive through its prototype. `carrierKindOf` learns one rule: a `js.object.create-regexp` call produces `object`. |
+| How is a construction created? (Q1) | The Prepared legalization rewrites `extern.regex {pattern, flags}` into `i32.const k; call js.object.create-regexp`, as G1 writes `js.object.intrinsic(selector)`. Here `k` is the pair's index in the program's literal table (see "Literal table" under R1). The `extern.regex` arm of `lower-generic.ts` gains no lane test, and no per-pair functions are created. |
+| Contract naming | The `js.object.*` family, served by `ROWS` in `native-source-objects.ts`, as `create-error` / `is-error` are: `js.object.create-regexp`, `js.object.is-regexp`, `js.object.regexp-exec-index`; later `js.object.regexp-exec` (R2) and the accessor bodies (R1b). |
 
 ### Steps (one PR each)
 
-| Step | Content | Depends on |
+| Step | Content | Gate |
 | --- | --- | --- |
-| R1a | Move the pattern compiler below the backend (pure move) | — |
+| R1a | **Move + merge**: the compiler into `regexp-compiler`; one static-pair predicate; one i32-array builder; the Prepared mode of `byte-diff-corpus` | — |
 | R1 | Realm RegExp object, creation, `RegExp.prototype.test`, `lastIndex`; the refusal disappears | R1a |
-| R1b | `%RegExp.prototype%` accessors (`source`, `flags`, `global`, `ignoreCase`, `multiline`) and `toString`. This covers the old "R3 `+`": ToPrimitive of a RegExp | R1 |
-| R2 | `RegExp.prototype.exec`: result array, `index`, `input` | R1, lane S13's arrays on main |
+| R1b | `%RegExp.prototype%` accessors (`source`, `flags`, `global`, `ignoreCase`, `multiline`) and `toString`, which covers ToPrimitive and `+` (the old "R3") | R1 |
+| R2 | `RegExp.prototype.exec` | **Parked** until Prepared arrays reach `main`. It is not stacked on S13's suspended branch. |
 
-#### R1a — the compiler moves (no behaviour change)
+R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 → R1b → R2 (Q6).
 
-- **Move as a unit** to `src/runtime/contracts/regexp/`: `parse`, `compile`, `bytecode`, `casefold`, `unicode`,
-  `unicode-string-properties`, `unicode-string-data.generated`, and the reference VM (`vm`, `linear`, `match-units`).
-  The VM is the executable specification of R0's arms and is imported only by tests.
-  - Record each path in `compiler-boundaries.json` `moves` and mark the files `clean` / `runtime-contracts`.
-  - Repoint `regex-runtime/unicode.ts` and about 10 `tests/*regex*` imports. No re-export shim (RV7337).
-- **Shared static-pair predicate.** `standaloneStaticRegExpCompiles`, `isSupportedStaticRegExpCandidate`,
-  `hostRegExpSyntaxErrorMessage` and `SUPPORTED_STANDALONE_FLAGS` leave `regexp-standalone.ts`. They become
-  `staticRegExpPairCompiles` and `staticRegExpPairSyntaxError` in `src/runtime/contracts/regexp/static-pair.ts`.
-  Legacy, the selector (`codegen/index.ts`) and the Prepared lane all import that one function.
-- **Pure half of `wasm-array-literal.ts`.** The chunked `array.new_fixed` / `array.copy` builder becomes
-  `regExpI32ArrayInstrs(i32ArrayTypeIdx, values, scratchLocal)` in `regexp-carrier-layouts.ts`. Both
-  `pushRegexI32Array` and `i32ArrayLiteralInstrs` become thin over it.
-- **Acceptance.**
-  - `scripts/byte-diff-corpus.mts --corpus regexp`, `--compare` against `origin/main`: 0 differences for default,
-    `standalone` and `wasi`.
-  - `check:ir-layering` and `check:compiler-boundaries` green, with no new edges.
-  - The 66 `tests/*regex*` files: the same failure set as on main.
+#### R1a — move + merge (no behaviour change)
+
+- **Layer `regexp-compiler`** (root `src/regexp-compiler/`), added to `scripts/compiler-boundaries.json`.
+  - Its edges: `regexp-compiler → [regexp-compiler, foundation, runtime-contracts]`. It reaches `runtime-contracts` only for the opcode numbering in `regexp-bytecode.ts`.
+  - `frontend-ts`, `backend-wasmgc`, `compiler` and the `legacy-*` layers gain an edge to it.
+  - Why a new top-level root:
+    - It runs at compile time, so it does not belong under the runtime roots (`src/runtime/**`).
+    - `src/shared/contracts` (foundation) may not import `runtime-contracts`.
+    - The backend may import neither `src/frontend` nor `src/compiler`.
+- **Moved files**:
+  - `parse`, `compile`, `bytecode`, `casefold`, `unicode`, `unicode-string-properties`, `unicode-string-data.generated`.
+  - The reference VM (`vm`, `linear`, `match-units`) goes to `src/regexp-compiler/reference/`. It is the executable specification of the same bytecode, so it stays with the compiler that owns that bytecode. Only tests import it.
+  - Each path is recorded in `moves` and marked `clean`.
+  - `regex-runtime/unicode.ts` and about 10 `tests/*regex*` imports are repointed, with no re-export shim (RV7337).
+- **Merge 1: one static-pair predicate.**
+  - `src/regexp-compiler/static-pair.ts` exports `staticRegExpPairCompiles` and `staticRegExpPairSyntaxError`.
+  - It replaces `standaloneStaticRegExpCompiles`, `isSupportedStaticRegExpCandidate`, `hostRegExpSyntaxErrorMessage` and `SUPPORTED_STANDALONE_FLAGS` in `regexp-standalone.ts`, and the host-`new RegExp` check in the early-error rule `src/compiler/early-errors/node-checks.ts:1310`.
+  - The syntax verdict comes from the in-module parser. Today the parser throws one class, `RegexUnsupportedError`, for both "invalid" and "unsupported", so R1a splits it:
+    - `RegexSyntaxError` for "nothing to repeat", an unterminated group, a duplicate flag, …;
+    - `RegexUnsupportedError` stays for valid patterns the engine lacks.
+  - The host engine is only the fallback for `u` / `v` patterns the parser does not cover (Q4).
+  - TypeScript's own regex diagnostics (1499–1535) are not reachable here:
+    - Measured with TS 5.9.3: `/a**/` gives 1507 in a `.ts` file but **nothing in a `.js` file** without `checkJs`.
+    - They come only through semantic diagnostics, which the test262 Prepared options skip.
+- **Merge 2: one i32-array builder.** `regExpI32ArrayInstrs(i32ArrayTypeIdx, values, scratchLocal)` goes in `regexp-carrier-layouts.ts`. `pushRegexI32Array` and `i32ArrayLiteralInstrs` become thin over it.
+- **Prepared byte identity.** `scripts/byte-diff-corpus.mts` gains `--corpus prepared`:
+  - It compiles through `src/test262/test262-prepared-entry.ts` with the real harness assembly and the CI worker's options.
+  - Its inputs are `plan/samples/7354-o411.txt` plus `plan/samples/7369-es5-regexp-606.txt`.
+  - The census's `loadToolchain`, `realAssembly` and `options` move into one exported module, `scripts/ir-census/prepared-toolchain.mts`, which both scripts import. There is no copy.
+- **Pins.**
+  - The early-error verdict:
+    - The 132 negative `language/literals/regexp` tests stay at 131 pass. That is the 2026-11-26 measurement on the Prepared lane; the one failure, `S7.8.5_A2.2_T2`, is a TypeScript "Expression expected." parse error, not a RegExp one.
+    - A unit table (`tests/issue-7369-static-pair-verdict.test.ts`) checks, for every RegExp literal in `byte-diff-corpus`'s regexp corpus, that the parser verdict equals node's. Any difference must be listed.
+  - Bytes:
+    - `byte-diff-corpus --corpus regexp` (default, `standalone`, `wasi`): 0 differences.
+    - `--corpus prepared`: 0 differences.
+  - Gates: `check:ir-layering` and `check:compiler-boundaries` green; the 66 `tests/*regex*` files show the same failure set as on main.
 
 #### R1 — the provider (create, `test`, `lastIndex`)
 
-| Concern | Module (sibling it follows) | Change |
-| --- | --- | --- |
-| Admission | `src/ir/regexp-literal-admission.ts` | `RegExpBuildAnswers` gains `regExpObjects?(): boolean`: "this lane's RegExp is an ordinary realm object, so every consumer takes it". `nativeStaticRegExpBuilt` = pair ∧ `native-regexp` ∧ `nativeRegExpCompiles` ∧ (`regExpObjects` ∨ today's consumer set). The selector does not answer it, so its answers are unchanged. |
-| Lane answers | `src/ir/source-dynamic-contracts.ts`, `resolver` block, beside `createsFunctionObjects` | On the native lane with native string storage: `supportsBackendCapability("native-regexp")`, `nativeRegExpCompiles: staticRegExpPairCompiles`, `isLibOnlyBinding: isPristineBuiltinGlobal`, `regExpObjects: () => true`. `from-ast.ts` stays as it is: `regExpLiteralBuilt` is already its only gate. |
-| Program fact | `src/ir/source-plain-objects.ts` | A static RegExp construction is an object producer, so `objects.present` holds and the object kind is admitted. |
-| Kind | `src/ir/program/dynamic-value-kinds.ts` `carrierKindOf` | `definition.kind === "extern.regex"` → `"object"`. |
-| `re.test(s)` | `src/ir/program/dynamic-regexp-methods.ts` (new; the shape of `dynamic-prototype-methods.ts`) | Callee = [[Get]] `test` on the receiver. If that is the realm built-in, the module writes the spec steps that can run user code: the brand test (`js.object.is-regexp`, TypeError on a miss), ToString(S) (the program's `stringOf`), RegExpExec's Get `exec` (not the built-in → the dispatcher), Get `lastIndex`, then ToNumber (the program's chain, which can call `valueOf`). Then `js.object.regexp-exec-index(R, S, n) -> f64` (end index or −1). Any other callee → the dispatcher. One dispatch arm in `dynamic-value-legalization.ts`. |
-| Realm family | `src/runtime/contracts/native-realm-catalog.ts` | Rows `%RegExp%` (constructor `unavailable`) and `%RegExp.prototype%`; `NATIVE_MEMBERS["RegExp.prototype"] = ["test"]`. `exec` and `toString` stay **`unavailable` rows, but present**. Otherwise ToPrimitive would silently fall back to `Object.prototype.toString`. Held when `description.regExpLiterals` is non-empty, as `heldErrorConstructors` decides for the Error family. |
-| Literal table | `src/ir/program/native-realm-requirements.ts` | `NativeRealmDescription.regExpLiterals: {pattern, flags}[]`, filled by scanning `extern.regex` (the scan `native-string-value-demands.ts` already does). It is empty for a program without one, so the bytes of every such program do not change. |
-| Layout | `src/runtime/wasmgc/values/regexp-carrier-layouts.ts` | `declareNativeRegExpType` / frame types (ledger keys, as in `bigint-carrier-layouts.ts`), and `createRegExpObjectDeclaration(keys)`. |
-| Bodies | `src/runtime/wasmgc/values/regexp-object-bodies.ts` (new) | Two builders. `buildRegExpCreateDefinition`: a chain over the selector, as `buildSourceObjectIntrinsicDefinition` does. Each arm builds the matcher (via `regExpI32ArrayInstrs`) and the object, then defines `lastIndex` = +0. An invalid pair's arm throws the realm SyntaxError (`create-error`) with `staticRegExpPairSyntaxError`'s message. `buildRegExpExecIndexDefinition`: ToLength's clamp; ¬g ∧ ¬y → 0; the bounds check; then R0's `__regex_search`; then Set `lastIndex` through the kernel's `set` (a TypeError when it is not writable). It runs no user code. |
-| Rows | `src/backend/wasmgc/resources/native-source-objects.ts` `ROWS` | `create-regexp`, `is-regexp`, `regexp-exec-index`, each `{ signature, body }`. Their operands resolve R0's run / class / search functions from one reservation of the three builders per realm (`regexp-vm` helpers, reserved once, like `RecordHelpers`). `stepCapThrow` / `poisonThrow` become the realm RangeError and TypeError. `indexedLiteralAlt` is empty here: only the runtime compiler produces that form. |
-| Contracts | `src/ir/runtime/ordinary-object-callables.ts` `DECLARATIONS`, `ORDINARY_OBJECT_RUNTIME_FEATURES` | Three declarations. |
-| Lowering | `src/ir/lower-generic.ts`, `extern.regex` arm | On the Prepared lane the provider is `js.object.create-regexp` and the resolver supplies `i32.const selector` before the call. The ordinary lane's per-pair helper path is untouched (open question Q1). |
+- **How each construction source comes out (finding 1).** Literals and string pairs follow different rules:
 
-```wasm
-;; re.test(s), after the legalization's observable steps
-local.get $R  local.get $S  local.get $n     ;; n = ToNumber(Get(R, "lastIndex"))
-call $js.object.regexp-exec-index            ;; ToLength, g/y rule, __regex_search, Set lastIndex
-f64.const -1  f64.ne                         ;; test's Boolean
-```
+  | Source | Invalid pair | Valid pair the engine cannot compile |
+  | --- | --- | --- |
+  | `/p/f` literal | An **early error at build time** (the R1a rule): no script code runs, no creation arm exists. A negative test (`negative: {phase: parse, type: SyntaxError}`, `$DONOTEVALUATE()` first) is a Prepared front-end failure in phase `early`. The worker counts it `pass`, as for the 131 today. | Named build refusal `regexp-constructor-unsupported` ("RegExp literal has no provider") |
+  | `new RegExp("p", "f")`, both string literals | The **run-time SyntaxError** of its `create-regexp` arm (the realm's `create-error`, SyntaxError selector, message from `staticRegExpPairSyntaxError`), thrown when the expression is evaluated | The same named build refusal |
+  | `new RegExp(x)` with a non-literal argument, `RegExp(…)`, `RegExp` as a value | — | Stay refused at build: `unknown class "RegExp"`, `"RegExp" is not in scope`. They need the runtime pattern compiler (`src/codegen/regex-runtime/`); follow-up issue. |
 
-- **Out of scope in R1, each stays a named refusal at build time:**
+- **Where each part lives.** Each row names its module and the existing sibling it follows:
 
-  | Refusal | Reason it stays |
+  | Concern | Module (sibling) | Change |
+  | --- | --- | --- |
+  | Capability | `src/ir/backend/legality.ts`, `src/ir/regexp-literal-admission.ts` | New capability `native-regexp-object` in `IrBackendTargetCapability` and `RegExpBuildCapability`. `supportsIrBackendTargetCapability` answers `false` for it, so the selector and the gc lane never see it, by construction. `nativeStaticRegExpBuilt` = pair ∧ `native-regexp` ∧ `nativeRegExpCompiles` ∧ (`native-regexp-object` ∨ today's consumer set). There is no new lane method. |
+  | Lane answers | `src/ir/source-dynamic-contracts.ts`, `resolver` block | On the native lane with i16 native string storage: `supportsBackendCapability` (`native-regexp`, `native-regexp-object`), `nativeRegExpCompiles: staticRegExpPairCompiles`, `isLibOnlyBinding: isPristineBuiltinGlobal`. `from-ast.ts` is unchanged: `regExpLiteralBuilt` stays its only gate. |
+  | Program fact | `src/ir/source-plain-objects.ts` | A static construction is an object producer (`objects.present`). The same walk yields the literal table: distinct pairs in source order. |
+  | Literal table | `src/ir/program/runtime-support.ts` | A batch `regexp-literals` beside the number-format radix batches: the pairs, and every `create-regexp` occurrence with its `k`. It is re-derived and checked by the existing canonical walk. The realm reads the pairs from it; a program without a RegExp has no batch. |
+  | Legalization | `src/ir/program/dynamic-regexp-methods.ts` (new; shaped like `dynamic-prototype-methods.ts`) | (a) Rewrites `extern.regex` into `create-regexp(k)`. (b) Writes `test` in spec order (below). (c) Turns a method call whose callee is the [[Get]] of `exec`, in a program that holds RegExps, into a **build-time** named refusal `RegExp.prototype.exec has no Prepared provider (#7369 R2)`, so the 269 `.exec` files stay census signal instead of run-time aborts (an own `exec` on a user object is refused too, on purpose). One dispatch arm in `dynamic-value-legalization.ts`. |
+  | Realm family | `src/runtime/contracts/native-realm-catalog.ts` | Rows `%RegExp%` (constructor `unavailable`) and `%RegExp.prototype%` with `exec`, `test` and `toString`. `NATIVE_MEMBERS["RegExp.prototype"] = ["test"]`. `exec` and `toString` are present as `unavailable` rows, so a lookup never falls through to `Object.prototype.toString`. The family is held when the table is non-empty, as `heldErrorConstructors` decides for the Error family. |
+  | Layout | `src/runtime/wasmgc/values/regexp-carrier-layouts.ts` | `declareNativeRegExpType` and the frame types (ledger keys, as in `bigint-carrier-layouts.ts`), plus `createRegExpObjectDeclaration(keys)`, written after `createPrimitiveWrapperDeclaration`. |
+  | Bodies | `src/runtime/wasmgc/values/regexp-object-bodies.ts` (new) | `buildRegExpCreateDefinition`: a chain over `k`, as `buildSourceObjectIntrinsicDefinition` does. Each arm builds the matcher and the object, then defines `lastIndex` = +0. `buildIsRegExpDefinition`: `ref.test`. `buildRegExpExecIndexDefinition`: steps 3–11 below. No body runs user code. |
+  | Rows and contracts | `native-source-objects.ts` `ROWS`; `ordinary-object-callables.ts` `DECLARATIONS` and `ORDINARY_OBJECT_RUNTIME_FEATURES` | Three `{ signature, body }` rows. R0's run, class and search functions are reserved once per realm (helpers, as with `RecordHelpers`). `stepCapThrow` is the realm RangeError and `poisonThrow` the TypeError. `indexedLiteralAlt` is empty. |
+  | Program arrays (Q5) | the create body | Each pair's program and class-table arrays are immutable globals built once per pair (with `regExpI32ArrayInstrs`). Each creation allocates only the two structs. Each `exec-index` call allocates its capture array, which R1 accepts; pooling comes after a measurement. |
+
+- **`re.test(S)` in spec order (§22.2.6.16, RegExpExec §22.2.7.1).** The method-call shape is `o.test(s)`, where the callee is the [[Get]] of `test` on `o`. When that callee is the realm built-in:
+  1. `R = o`. If R is not an Object, throw a TypeError. This is the kind chain; a primitive or `null` cannot reach this point, but the chain stays total.
+  2. `string = ToString(S)`, through the program's `stringOf`, so its side effects happen.
+  3. `exec = Get(R, "exec")`, through `js.object.get`.
+  4. If `exec` is the realm's `%RegExp.prototype.exec%` (identity against `js.object.intrinsic`):
+     - the built-in exec's own steps: RequireInternalSlot (`js.object.is-regexp`, a TypeError if absent);
+     - `n = ToNumber(Get(R, "lastIndex"))`, through the program's chain, so `valueOf` runs once;
+     - `js.object.regexp-exec-index(R, string, n)`; the test result is `≠ −1`.
+  5. Else, if `exec` is callable: the dispatcher calls it with receiver `R` and argument `string`.
+     - A result that is neither an Object nor `null` is a TypeError (the kind chain over the result).
+     - The test result is `result ≠ null`.
+     - This arm needs a program with function values; without one it is the existing dispatcher gap.
+  6. Else: RequireInternalSlot (`is-regexp`, TypeError), then step 4's lastIndex and `exec-index` path.
+
+  Any other callee of `o.test(s)` goes to the dispatcher. RegExp-ness is checked at step 4 or 6, never before `exec` has been read.
+- **The body of `js.object.regexp-exec-index(R, S, n) -> f64` (RegExpBuiltinExec §22.2.7.2).**
+  - Step 2's Get and ToNumber are the caller's (above). They are **always** performed, even without `g` or `y`.
+  - ToLength(n): NaN, −0 and negatives give 0; +∞ and anything ≥ 2^53 give 2^53 − 1. The comparison stays in f64, before any `i32` conversion.
+  - Neither `g` nor `y`: lastIndex = 0, and the body **never** writes `lastIndex`. A non-writable `lastIndex` therefore never throws.
+  - lastIndex > length: if g ∨ y, Set(R, "lastIndex", 0, true); return −1.
+  - Sticky failure (one anchored attempt): Set 0; return −1.
+  - Global failure (R0's search scans every start up to length): Set 0; return −1.
+  - Success at end e: if g ∨ y, Set(R, "lastIndex", e, true); return e.
+  - Every Set goes through the kernel's `set` with Throw = true: `false` (non-writable) becomes the realm TypeError. A Set never runs user code, because `lastIndex` is a non-configurable data property.
+
+  | Case | Pin |
   | --- | --- |
-  | `new RegExp(x)` with a non-literal argument, and `RegExp` as a value or in call form (`unknown class "RegExp"`, `"RegExp" is not in scope`) | These need the runtime pattern compiler, `src/codegen/regex-runtime/`, a Wasm-emitted second compiler. Follow-up issue. |
-  | `String.prototype.match` / `replace` / `search` / `split` (`method call .replace on string not in slice 4`) | The Prepared path has no String.prototype methods yet, and these also need the `@@match`/`@@replace` protocol. |
-  | Pairs the engine cannot compile (`nativeRegExpCompiles` false) | The existing `regexp-constructor-unsupported` "RegExp literal has no provider" stays exactly for these. |
-  | `--utf8-storage` | The VM reads i16 code units, so the lane answers `native-regexp` only with i16 native storage. |
+  | Get + ToLength with neither g nor y; `valueOf` runs once | `test262 …/exec/failure-lastindex-access.js`, `success-lastindex-access.js` (run by R2); unit `tests/issue-7369-test-lastindex.test.ts` ("no g/y: valueOf once, no write") |
+  | Neither g nor y: no Set, non-writable does not throw | unit (same file, "non-writable, no g/y") |
+  | lastIndex > length with g/y → Set 0 | `…/test/S15.10.6.3_A1_T22.js` (ToLength is the start); unit "beyond length" |
+  | sticky failure → Set 0; non-writable → TypeError | `…/test/y-fail-lastindex.js`, `…/test/y-fail-lastindex-no-write.js` |
+  | global failure → Set 0 | `…/exec/failure-g-lastindex-reset.js` (R2); unit "g failure resets" |
+  | success → Set e only with g/y | `…/test/y-set-lastindex.js`, `…/test/y-init-lastindex.js`; unit "g success sets e" |
+  | ToLength of NaN, −0, −1, +∞, 2^53 | unit, one case each; `…/exec/S15.10.6.2_A4_T*` (`lastIndex` = `"12"`, `NaN`, `null`, `undefined`, `false`, `"eleven"`; R2) |
 
-  A refusal is never a claim followed by a withdrawal: from-ast's `refuseUnselected` remains the only gate.
+- **Out of scope in R1.** Each item stays a named build-time refusal:
+  - `.exec` (finding 6, above);
+  - the dynamic constructor (the table above);
+  - `String.prototype.match`, `replace`, `search` and `split`: there is no String.prototype on this path yet, and they need the `@@match` / `@@replace` protocol;
+  - pairs the engine cannot compile;
+  - `--utf8-storage`: the VM reads i16 code units, so `native-regexp` is not answered there.
+
+  A refusal is never a claim and then a withdrawal.
 
 #### R1b — reflection accessors and `toString`
 
-- **Catalog.** `%RegExp.prototype%` gets accessor rows `source`, `flags`, `global`, `ignoreCase`, `multiline`
-  (get only, configurable) and `toString`. Their bodies go in `regexp-object-bodies.ts` and read
-  `RE_FIELD_SOURCE` / `RE_FIELD_FLAGS`.
-- **Receiver rules (§22.2.6).** `%RegExp.prototype%` itself → `undefined` for a flag getter and `"(?:)"` for
-  `source`. A non-RegExp receiver → TypeError.
-- **ToPrimitive.** Once `toString` is native, `'' + re` and `String(re)` render `/source/flags` through
-  OrdinaryToPrimitive. Nothing is added to `ADD_ROLE`.
+- **Catalog.** `%RegExp.prototype%` gets accessor rows (getter only, configurable): `source`, `flags`, `global`, `ignoreCase`, `multiline`. `toString` becomes native. The bodies go in `regexp-object-bodies.ts` and read `RE_FIELD_SOURCE` / `RE_FIELD_FLAGS`.
+- **Receiver rules (§22.2.6).** On `%RegExp.prototype%` itself, a flag getter returns `undefined` and `source` returns `"(?:)"`. On any other non-RegExp receiver, they throw a TypeError.
+- **ToPrimitive.** `'' + re` and `String(re)` produce `/source/flags` through OrdinaryToPrimitive. `ADD_ROLE` is unchanged.
 
-#### R2 — `exec` (after lane S13's arrays merge)
+#### R2 — `exec` (parked)
 
-- **Gate.** Lane S13's arrays are **not on main**: `claude/7354-arrays` (`9d3a111d11`, suspended 2026-11-20) is
-  not an ancestor of `origin/main`.
-- **Contract and realm.** `js.object.regexp-exec(R, S, n) -> externref` returns the match array or `null`, built
-  with S13's `create-array` and `index` / `input` defined as data properties. An unmatched capture is `undefined`.
-  `NATIVE_MEMBERS` adds `exec`.
-- **R1's `test` arm.** It now calls the built-in exec's index form directly when `exec` is the built-in.
-- **The match array.** The capture-array body is extracted the R0 way from `ensureRegexCaptureArray` and
-  `emitRegExpBuiltinExecFromLocal`; legacy keeps its match-vec carrier.
-- **Duplicate removed.** One instruction sequence: the matcher fields go into `__regex_search`'s operands
-  (`regExpSearchCallInstrs`, in `regexp-carrier-layouts.ts`). Legacy's `emitRegExpTestFromLocals`,
-  `emitRegexSearchCall` and the two realm bodies all use it. It stays byte-identical, because the helper is
-  parameterised by local indices.
+- **Gate.** It starts once Prepared arrays are on `main`. `claude/7354-arrays` (`9d3a111d11`, suspended 2026-11-20) is not an ancestor of `origin/main`.
+- **Contract and realm.** `js.object.regexp-exec(R, S, n) -> externref` returns the match array (`index`, `input`, `undefined` for an unmatched capture) or `null`.
+- **Unparking.** `NATIVE_MEMBERS` adds `exec`, and the build-time `.exec` refusal goes.
+- **Shared code.** The capture-array body is extracted the R0 way from `ensureRegexCaptureArray` / `emitRegExpBuiltinExecFromLocal`. The matcher-to-search instruction sequence (`regExpSearchCallInstrs`) is shared with legacy's `emitRegExpTestFromLocals` and `emitRegexSearchCall`, parameterised by local indices so the output stays byte-identical.
 
-### Measured yield (2026-11-26, `origin/main` `41f0654e8c`, `--target standalone`, `TEST262_COMPILER_PATH=ir`)
+### Measured yield (2026-11-26, `origin/main` `41f0654e8c`, standalone, `TEST262_COMPILER_PATH=ir`)
 
-**The 411-file sample** (`plan/samples/7354-o411.txt`, branch `claude/7354-o411-sample` `155b06691f`;
-`scripts/run-test262-vitest.sh`, 2 workers):
+**The 411 sample** (`plan/samples/7354-o411.txt`, branch `claude/7354-o411-sample` `155b06691f`; `scripts/run-test262-vitest.sh`, 2 workers):
 
 - 83 pass / 411.
-- 13 rows stop at "RegExp literal has no provider", and 5 at `unknown class "RegExp"`.
+- 13 rows stop at "RegExp literal has no provider", 5 at `unknown class "RegExp"`.
+- What comes next for those 18 rows (**estimates**):
+  - R1: +0. One row reaches `Function.prototype.bind`; three are `String.prototype` rows; four use a dynamic `new RegExp`.
+  - R1b: +1 (`S7.8.5_A3.1_T4`).
+  - R2: up to +11, of which 10 also need array literals with expando `index` / `input`.
 
-| Row(s) | What the test needs beyond the literal | Next stop | Passes after (estimate) |
-| --- | --- | --- | --- |
-| 8 × `S15.10.2.{6,7,8}_*` | `.exec`, then `__expected = ["…"]` with `.index` / `.input` written onto an array | exec, then S13 arrays | R2 |
-| `S15.10.2.11_A1_T9`, `S15.10.2.12_A4_T5` | `.exec` result read by index, or compared to `null` | exec | R2 |
-| `S7.8.5_A3.1_T4` | `.global` / `.ignoreCase` / `.multiline` reads | accessors | R1b |
-| `S15.3.4.4_A16` | `Function.prototype.bind.call(re, …)` | Function.prototype read (not RegExp) | — |
-| `S15.5.4.11_A3_T3` | `String.prototype.replace` | stays refused | — |
-| `15.10.6.2-9-e-1` | `new RegExp("World")`, `.exec`, then the array's `toString` | S13 array ToPrimitive | R2 + S13 |
-| `S15.5.4.18_A1_T14` | `String.prototype.toUpperCase` read | not RegExp | — |
-| 3 × `S15.10.4.1_*`, `15.10.4.1-1` | `new RegExp(regexp, …)`, `new RegExp(null, void 0)` | stays refused (dynamic) | — |
+**The wider ES5 measure (decides R1a / R1 / R1b).**
 
-- **Sample estimate.** R1 +0, R1b +1, R2 up to +11. All but one of these 11 need S13's array literals too.
-
-**The wider ES5 measure.**
-
-- **File set.** `es5-files.mts` lists 9,174 ES5 files. A static TypeScript AST scan of those
-  (`.tmp/classify.mjs`, uncommitted) finds the 606 positive files that construct a RegExp.
-- **Census.** S9's Prepared census, `--harness real --jobs 1` (1 min 44 s), on those 606:
+- **List.** `plan/samples/7369-es5-regexp-606.txt`, committed with this plan. It was produced as follows:
+  - start from `npx tsx scripts/ir-census/es5-files.mts` (9,174 ES5 files, seeded order);
+  - keep each file whose front matter has no `negative:` and whose TypeScript AST (`ScriptKind.JS`) contains a `RegularExpressionLiteral`, or a `new`/call expression whose callee is the identifier `RegExp`;
+  - that leaves 606 files, kept in `es5-files.mts` order, with paths relative to `test262/test/` (the format `es5-files.mts` writes and the census reads).
+- **Census.** S9's census (`npx tsx scripts/ir-census/prepared-census.mts --files plan/samples/7369-es5-regexp-606.txt --harness real --jobs 1`, 1 min 44 s):
   - 0 pass;
-  - **431 stop first at a RegExp** (346 "RegExp literal has no provider", 74 `unknown class "RegExp"`, 5 direct
-    `RegExp(…)` calls, 5 `"RegExp" is not in scope`, 1 `instanceof RegExp`);
-  - 175 stop earlier; the largest group is `'+' operands not provably …` (81, string concatenation in assert messages).
+  - **431 stop first at a RegExp**: 346 "RegExp literal has no provider", 74 `unknown class "RegExp"`, 5 direct `RegExp(…)` calls, 5 `"RegExp" is not in scope`, 1 `instanceof RegExp`;
+  - 175 stop earlier, the largest group at `'+' operands not provably …` (81).
 
-| Bucket of the 431 (static scan of what each test uses) | Files | Step | Passes after (estimate) |
-| --- | ---: | --- | --- |
-| literal or static `new RegExp` with `.test` / `lastIndex` only | 71 | R1 | 50–65: 35 `.test` files, 25 `Object/*` files that use `new RegExp()` as a plain object; not `S15.10.4.1_A6_T1`, which needs `Object.prototype.toString` |
-| reflection (`source` / `global` / …, `toString`) | 15 | R1b | 10–15 |
-| `.exec` | 269 | R2 | 21 compare only with `null`; 20 read elements; 228 compare with an `__expected` array literal carrying `.index` / `.input` (S13's A2 work) |
-| dynamic constructor / `RegExp` as a value | 49 | refused | 0 |
-| `String.prototype.match/replace/search/split` | 27 | refused | 0 |
+  | Bucket of the 431 (static scan of each test's uses) | Files | Step | Passes after (**estimate**) |
+  | --- | ---: | --- | --- |
+  | `.test` / `lastIndex` only, literal or static `new RegExp` | 71 | R1 | 50–65 (35 `.test` files; 25 `Object/*` files using `new RegExp()` as a plain object) |
+  | reflection (`source`, `global`, …, `toString`) | 15 | R1b | 10–15 |
+  | `.exec` | 269 | R2, parked | 0 until R2. Of these, 21 compare only with `null` and 228 compare against an `__expected` array literal. |
+  | dynamic constructor or `RegExp` as a value | 49 | refused | 0 |
+  | `String.prototype` match / replace / search / split | 27 | refused | 0 |
+
+- **Acceptance for R1.** The criterion is the census re-run on the committed list in the PR, with its date and head, against the 0 measured here. The estimate above is not the criterion.
 
 ### Code-quality acceptance (next to correctness)
 
-- **One engine.** R0's three VM builders and one `compilePattern`. No VM or compiler code exists twice: grep for
-  `ReOp.` dispatch outside `regexp-vm-arms.ts` and `src/runtime/contracts/regexp/vm.ts` finds nothing new.
-- **One admission rule.** `regexp-literal-admission.ts` serves the selector, from-ast and Prepared;
-  `from-ast.ts` gains no branch.
-- **Siblings in the same shape.** The contracts sit in `DECLARATIONS` and `ROWS`, the RegExp family in the
-  catalog beside Error's, and the legalization module next to `dynamic-prototype-methods.ts`.
-- **Duplicates removed.** `standaloneStaticRegExpCompiles` and its two helpers (moved, shared). The i32
-  array-literal builder (pure, shared). The search-call sequence (R2). `regexp-standalone.ts` and
-  `wasm-array-literal.ts` shrink.
-- **Budgets.** No `loc-budget-allow` or `func-budget-allow` expected. Each new file stays under 400 lines;
-  `native-source-objects.ts` grows by about 60 (**estimate**); `dynamic-value-legalization.ts` gains one arm.
+- **One engine.** R0's three builders and one `compilePattern`. A grep for `ReOp.` dispatch outside `regexp-vm-arms.ts` and `src/regexp-compiler/reference/` finds nothing new.
+- **One admission rule.** `regexp-literal-admission.ts` serves the selector, from-ast and Prepared through one capability. `from-ast.ts` and `lower-generic.ts` gain no branch.
+- **Siblings in the same shape.** The contracts sit in `DECLARATIONS` / `ROWS`; the family in the catalog beside Error's; the layout after `createPrimitiveWrapperDeclaration`; the table as a `runtime-support.ts` batch; the legalization next to `dynamic-prototype-methods.ts`.
+- **Duplicates removed.**
+  - The static-pair predicate, shared by legacy, the selector, Prepared and the early-error rule.
+  - The i32-array builder.
+  - The Prepared toolchain of the census and `byte-diff-corpus`.
+  - The search-call sequence (R2).
+- **Budgets.** No `loc-budget-allow` or `func-budget-allow` grant is expected. Each new file stays under 400 lines; `native-source-objects.ts` grows by about 60 (**estimate**).
 
-### Correctness and byte identity
+### Byte identity
 
-- **Byte identity.** R1a, R1 and R2 each run `byte-diff-corpus --corpus regexp` (default, `standalone`, `wasi`)
-  against their base, with 0 differences, and the equivalence gate. JS-environment output and the gc lane stay
-  byte-identical: the selector's answers do not change, because it never answers `regExpObjects`.
-- **Prepared programs without a RegExp.** Their `regExpLiterals` list is empty, so no family is held and their
-  bytes do not change. The 83 passing sample rows must stay passing.
+- **Ordinary pipeline.** Every step runs `byte-diff-corpus --corpus regexp` (default, `standalone`, `wasi`) with 0 differences, plus the equivalence gate.
+- **JS environment and the gc lane.** They cannot change: `native-regexp-object` is `false` in `supportsIrBackendTargetCapability`, and `lower-generic.ts` is untouched.
+- **Prepared programs without a RegExp.** `byte-diff-corpus --corpus prepared` (R1a) shows every such row byte-identical, and the 83 sample passes stay passing.
 
-### Risks and open questions for the reviewer
+### Settled questions and follow-ups
 
-- **Q1 — the `extern.regex` lowering seam.** Either the Prepared resolver supplies the selector immediate in
-  lower-generic's arm (proposed), or the realm reserves one function per pair (no immediate, but N reservations
-  and per-pair ABI symbols). Which shape does the frozen-body consumer prefer?
-- **Q2 — the layer.** Is `runtime-contracts` acceptable for a compiler of about 3,000 lines, or should the
-  boundaries schema get a dedicated `regexp-compiler` layer, which both `frontend-ts` and `backend-wasmgc` may
-  import?
-- **Q3 — the matcher carrier.** On the Prepared path R0's struct carries `lastIndex` fields 6–9 unused.
-  Splitting it into matcher and legacy shell would touch legacy bytes, so it is deferred.
-- **Q4 — compile-time SyntaxError check.** `staticRegExpPairSyntaxError` runs the compiler host's `new RegExp`
-  at compile time. That is a compile-time check, not a runtime host import, but it makes the result depend on
-  the host engine's version.
-- **Risk — allocation per call.** Each creation re-materialises the program arrays (legacy parity) and each
-  `exec-index` allocates a caps array; legacy has a scratch pool. Caching in globals is a measured follow-up,
-  not part of R1.
-- **Risk — S13 ordering.** R2's yield (up to 269 files, **estimate**) needs S13's arrays plus their A2 expando
-  writes. If S13 stays suspended, only the 21 null-only `.exec` files are reachable.
-- **Risk — the `'+'` stop.** 81 of the 606 stop at `'+' operands not provably …` before any RegExp. R1 does not
-  change that count; it belongs to #7354's dynamic `+` work.
+| # | Settled |
+| --- | --- |
+| Q1 | The legalization rewrite to `i32.const k; call create-regexp`; the table is a `runtime-support.ts` batch. |
+| Q2 | Layer `regexp-compiler`, `src/regexp-compiler/`; the reference VM in `reference/`. |
+| Q3 | R0's `$__StandaloneRegExp` fields 6–9 (`lastIndex` state) are unused on the Prepared path, and that is accepted. **Follow-up:** split the struct into a matcher and a legacy shell, which changes legacy bytes and so is its own change. |
+| Q4 | In-module parser verdict, host engine only for `u`/`v`, pinned by the verdict table and the 132 negative tests. TypeScript's regex diagnostics are unavailable for `.js` (measured, TS 5.9.3). |
+| Q5 | Allocation per call is fine for R1; program and class-table arrays are globals built once per pair; capture-array pooling after a measurement. |
+| Q6 | R1 → R1b → R2; R2 is gated on arrays on `main`. |
+
+- **Risk — the `'+'` stop.** 81 of the 606 stop at `'+' operands not provably …` before any RegExp. R1 does not change that count; it belongs to #7354's dynamic `+` work.
+- **Risk — the early-error rule.** Moving `node-checks.ts`'s rule to the parser verdict changes build verdicts wherever the parser and the host disagree. The verdict table must list every such difference before R1a merges.
