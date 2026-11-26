@@ -17,6 +17,7 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+const SELECTOR: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 function declaration(
   feature: OrdinaryObjectRuntimeFeature,
@@ -56,7 +57,47 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, FLAGS], []),
   "js.object.get": declaration("js.object.get", [EXTERNAL, EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has": declaration("js.object.has", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
+  // RequireObjectCoercible.
+  "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
+  // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
+  "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 G1) Whether an object has [[ErrorData]] (`Object.prototype.toString`'s "Error" tag).
+  "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
+  // (#7354 G1) A new error of the Error constructor `selector` (its index in `NATIVE_ERROR_CONSTRUCTORS`), with the
+  // already converted `message`, or none for null; and Error.prototype.toString of an object (§20.5.3.4).
+  "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.error-to-string": declaration("js.object.error-to-string", [EXTERNAL], [EXTERNAL]),
+  // (#7354 F1b) A source function object's own properties, once, right after its closure is created: `length`,
+  // `name` (a native string) and, for a constructor (the Boolean), `prototype` (`source-function-object-bodies.ts`).
+  "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN], []),
+  // (#7354 C2) Whether the second value is on the first's [[Prototype]] chain (OrdinaryHasInstance's walk).
+  "js.object.inherits": declaration("js.object.inherits", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 O1) The realm's half of the `Object` statics, after the caller's kind tests and ToPropertyKey: an object
+  // (ordinary or function), a canonical key, and the descriptor object ToPropertyDescriptor reads, then
+  // DefinePropertyOrThrow (`Object.defineProperty`); ObjectDefineProperties over an object's own enumerable properties
+  // (`Object.defineProperties`, `Object.create`'s second argument); FromPropertyDescriptor of an own property, or
+  // `undefined` (`Object.getOwnPropertyDescriptor`).
+  "js.object.descriptor-define": declaration("js.object.descriptor-define", [EXTERNAL, EXTERNAL, EXTERNAL], []),
+  "js.object.descriptors-define": declaration("js.object.descriptors-define", [EXTERNAL, EXTERNAL], []),
+  "js.object.own-descriptor": declaration("js.object.own-descriptor", [EXTERNAL, EXTERNAL], [EXTERNAL]),
+  // (#7354 P1, G1) The built-in function object the realm holds for `selector` (its index in
+  // `NATIVE_VALUE_INTRINSICS`), and HasOwnProperty of a canonical key on an ordinary or function object, also
+  // requiring the enumerable attribute when `selector` is 1.
+  "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
+  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
 });
+
+/**
+ * (#7354 O2) The contracts that can store a function value as an accessor half: the object literal's `get` / `set`
+ * and the descriptor statics. The realm calls such a half on a later [[Get]] / [[Set]].
+ */
+const ACCESSOR_DEFINING: ReadonlySet<string> = new Set<OrdinaryObjectRuntimeFeature>([
+  "js.object.define-accessor",
+  "js.object.descriptor-define",
+  "js.object.descriptors-define",
+]);
+export const definesAccessors = (symbol: string): boolean => ACCESSOR_DEFINING.has(symbol);
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
 export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {

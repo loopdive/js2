@@ -14,6 +14,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
 
 const options = (fileName: string, target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -55,8 +56,12 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string, fileName = "test.js", target: "standalone" | "gc" = "standalone") {
-  const result = await compile(source, options(fileName, target));
+  const result = await compile(source, options(fileName, target), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -145,14 +150,17 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
       'function h() { var s = "p"; s = s + "q"; return s; }\nh();',
       "mutable binding 's' (string) has no slot representation",
     ],
-    [
-      "the length of a string held in a script var's dynamic home (a member read of the dynamic value)",
-      'var s = "ab";\nif (s.length !== 2) throw 1;',
-      "dynamic operation dyn.member_get has no Prepared intrinsic",
-    ],
   ])("refuses %s", async (_, source, detail) => {
     expect(await refusal(source)).toContain(detail);
   });
+
+  // (#7354 C2, C2-D1) The home may also hold `undefined` or `null`, whose arm answers, so the string's arm aborts (a
+  // string's own `length` comes with arrays, #7352); it refused at compile time before C2.
+  it(
+    "ends the length of a string held in a script var's dynamic home at the run-time abort",
+    () => abortsAtRunTime('var s = "ab";\nvar n = s.length;'),
+    180_000,
+  );
 
   it("refuses the relational compare of typed strings (no join)", async () => {
     const source =

@@ -89,6 +89,7 @@ import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./modu
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
+import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
 import {
   type PrototypeBorrowCall,
   ambientStringPrototypeBorrow,
@@ -3757,13 +3758,7 @@ function dynamicUsesAreMoveOnly(
         ts.isPropertyAccessExpression(e.expression) &&
         isDynShaped(e.expression.expression)
       ) {
-        const narrowStringReplace =
-          e.expression.name.text === "replace" &&
-          e.arguments.length === 2 &&
-          e.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
-          e.arguments[0]!.getText() === "/_/g" &&
-          ts.isStringLiteralLike(e.arguments[1]!) &&
-          e.arguments[1]!.text === "";
+        const narrowStringReplace = isUnderscoreStripReplace(e);
         if (!currentDynMemberReadBuildable || !expectDyn) return false;
         if (!narrowStringReplace && !dynamicMethodCallIsAdmitted(e.expression.name.text, e.arguments.length)) {
           return false;

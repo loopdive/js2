@@ -5,7 +5,8 @@ import type {
   PreparedIrProgramFailure,
 } from "../../../ir/program/prepared-contracts.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
+  heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
@@ -13,7 +14,7 @@ import { deriveNativeStringOutputRequirements } from "../../../ir/program/native
 import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import {
   planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
 import {
@@ -26,6 +27,8 @@ import type {
   FunctionReservation,
   TypeReservation,
   GlobalReservation,
+  TagReservation,
+  TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import {
   assertNativeStringValueReservationInput,
@@ -37,6 +40,7 @@ import {
   type NativeStringValueReservations,
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
+import { familyObjects, familyProperties } from "./native-realm-families.js";
 import {
   reserveNativeVectorTypes,
   requireNativeVectorTypeReservations,
@@ -59,6 +63,7 @@ import {
 import {
   declareNativeBuiltinFunctionRequests,
   requireNativeBuiltinFunctionRequests,
+  type NativeBuiltinFunctionBehavior,
   type NativeBuiltinFunctionRequests,
 } from "../resources/native-builtin-function-requests.js";
 import {
@@ -70,6 +75,11 @@ import {
   type NativeClosureDeclarationPlan,
 } from "../resources/native-closures.js";
 import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "../resources/native-source-closures.js";
+import {
+  nativeInvocationAccessorCalls,
+  nativeInvocationFunctions,
+  type NativeInvocationReservations,
+} from "../resources/native-invocation.js";
 import {
   reserveNativeStringEqualityResources,
   fillNativeStringEqualityResources,
@@ -125,6 +135,7 @@ import {
   fillNativeBuiltinFunctionResources,
   requireCompletedNativeBuiltinFunctionKernel,
   nativeBuiltinFunctionReservationInventory,
+  type NativeBuiltinFunctionDependencies,
 } from "../resources/native-builtin-functions.js";
 
 import {
@@ -147,7 +158,7 @@ export function prepareNativeProgramStringInput(
   realmRequirements?: NativeRealmRequirements,
 ): NativeStringValueReservationInput | PreparedIrProgramFailure | undefined {
   const demands = collectNativeStringValueDemands(program, projection);
-  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsCurrent(invocationRequirements);
+  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsIssued(invocationRequirements);
   const invocation =
     invocationRequirements ??
     (realmRequirements?.source
@@ -185,6 +196,8 @@ export interface NativeRealmReservations {
   readonly strings: NativeStringValueReservations;
   readonly substrate: NativeInvocationSubstrateReservations;
   readonly requests: NativeBuiltinFunctionRequests;
+  /** (#7354 G1) The kernel's error creation, where the realm holds the Error family. */
+  readonly errorCreate?: FunctionReservation;
   readonly completionScope: "native-realm-bootstrap";
 }
 interface Population {
@@ -236,7 +249,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeRealmReservations):
   if (!owner || owner.tx !== tx || owner.requirements !== pack.requirements || owner.strings !== pack.strings)
     fail("foreign or copied realm owner");
   if (owner.phase === "failed") fail("failed composition has no completion authority");
-  assertNativeRealmRequirementsCurrent(pack.requirements);
+  assertNativeRealmRequirementsIssued(pack.requirements);
   assertNativeStringValueReservationInput(owner.input);
   assertFoundationVectors(owner.input, owner.vectorPlan);
   if (owner.input.realmRequirements !== pack.requirements) fail("substituted realm input identity");
@@ -270,41 +283,58 @@ function beginRealm(
   )!.realmRequirements;
   const key = requirements.description.key,
     shared = { key: key + ":invocation-substrate" };
+  // (#7354 G1) Reserved before the substrate, whose TypeError delegates to it; the kernel fills it.
+  const errorCreate = requirements.description.intrinsics.includes("%Error%")
+    ? tx.reserveFunction(key + ":error-create", key + ":error-create", {
+        params: [{ kind: "externref" }, { kind: "i32" }],
+        results: [{ kind: "externref" }],
+      })
+    : undefined;
   const substrate = reserveNativeInvocationSubstrateResources(
     tx,
     shared,
-    { vectors, vectorPlan, strings: strings.strings },
+    { vectors, vectorPlan, strings: strings.strings, ...(errorCreate ? { errorCreate } : {}) },
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
-  const intrinsics = requirements.description.catalog.bootstrap.map((id, index) => {
-    const row = requirements.description.catalog.intrinsics.find((row) => row.id === id),
+  const catalog = requirements.description.catalog;
+  // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
+  const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
+    const row = catalog.intrinsics.find((row) => row.id === id),
       call = row?.callable;
-    if (
-      !row ||
-      !call ||
-      call.implementation === "unavailable" ||
-      call.initialName !== "" ||
-      call.length !== 0 ||
-      row.constructible
-    )
-      fail("catalog bootstrap lacks its supported canonical behavior");
+    const behavior =
+      index < catalog.bootstrap.length
+        ? call?.implementation
+        : row?.heldWith !== undefined
+          ? "native"
+          : "object-prototype-method";
+    const supported =
+      index < catalog.bootstrap.length
+        ? behavior === "function-prototype" || behavior === "throw-type-error"
+        : call?.implementation === "native";
+    if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
+    const entry = behavior as NativeBuiltinFunctionBehavior;
     return {
-      id: call.implementation,
-      behavior: call.implementation,
+      id: index < catalog.bootstrap.length ? entry : id,
+      behavior: entry,
       signatureId: "realm:signature:" + index,
       metadataId: "realm:metadata:" + index,
       initialName: call.initialName,
       initialLength: call.length,
       userFormalCount: 0,
       prototype:
-        call.implementation === "function-prototype" ? ("object-prototype" as const) : ("function-prototype" as const),
-      constructible: false as const,
+        entry === "function-prototype"
+          ? "object-prototype"
+          : row.prototype === catalog.bootstrap[0]
+            ? "function-prototype"
+            : row.prototype!,
+      constructible: row.constructible,
       aliases: row.aliases,
+      ...(entry === "native" ? { properties: familyProperties(row) } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics },
+    { key: key + ":builtins", intrinsics, ...familyObjects(heldCatalogRows(requirements.description)) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,
@@ -334,6 +364,7 @@ function beginRealm(
     strings,
     substrate,
     requests,
+    ...(errorCreate ? { errorCreate } : {}),
     completionScope: "native-realm-bootstrap" as const,
   });
   owners.set(pack, { tx, input, vectors, vectorPlan, requirements, strings, population, phase: "foundation" });
@@ -360,7 +391,13 @@ export function reserveNativeProgramFoundation(
   return { vectorTypes, stringTypes, earlyStrings, realm };
 }
 
-function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations, owner: Owner) {
+function reserveKernelResources(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmReservations,
+  owner: Owner,
+  exception: TagReservation | TagImportReservation,
+  accessorCalls: NativeBuiltinFunctionDependencies["accessorCalls"],
+) {
   const number = pack.strings.number,
     valuePlan = owner.input.valueRequirements,
     population = owner.population;
@@ -436,13 +473,16 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     closurePlan: population.closurePlan,
     descriptors,
     descriptorDependencies,
+    exception,
+    ...(pack.errorCreate ? { errorCreate: pack.errorCreate } : {}),
+    ...(accessorCalls ? { accessorCalls } : {}),
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
   const sourceObjects = reserveNativeSourceObjectResources(
     tx,
     key,
     pack.requirements.description.objectUses.map((use) => use.feature),
-    { layouts, storage, descriptors, kernel },
+    { values: number.values, layouts, storage, descriptors, kernel, errors: pack.substrate.errors },
   );
   return {
     equality,
@@ -464,14 +504,20 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     sourceObjects,
   };
 }
-/** Consumer retains genuine source binding/lowering authority; no callback can attest its completion. */
+/**
+ * Consumer retains genuine source binding/lowering authority; no callback can attest its completion. The kernel
+ * throws under `exception`, the program's one tag, so a source `catch` catches a realm error.
+ */
 export function reserveNativeRealmKernel(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
+  exception: TagReservation | TagImportReservation | undefined,
   sourceTypes?: NativeSourceClosureTypes,
+  invocation?: NativeInvocationReservations,
 ) {
   const owner = current(tx, pack);
   if (tx.state !== "reserving" || owner.phase !== "foundation") fail("invalid or duplicate kernel reservation phase");
+  if (!exception) fail("kernel requires the program's exception tag");
   if (pack.requirements.source) {
     if (!sourceTypes) fail("missing actual source type issuer");
     requireNativeSourceClosureTypes(tx, sourceTypes, pack.requirements.source, pack.requests, sharedCarriers(owner));
@@ -483,7 +529,8 @@ export function reserveNativeRealmKernel(
   } else if (sourceTypes !== undefined) fail("unexpected source owner for no-source realm");
   owner.phase = "reserving-kernel";
   try {
-    owner.kernel = reserveKernelResources(tx, pack, owner);
+    const accessorCalls = invocation && nativeInvocationAccessorCalls(tx, invocation);
+    owner.kernel = reserveKernelResources(tx, pack, owner, exception, accessorCalls);
     owner.phase = "reserved";
     return owner.kernel.kernel;
   } catch (error) {
@@ -545,7 +592,6 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...population,
     kernel: k.kernel,
     sourceObjects: k.sourceObjects.served,
-    tags: Object.freeze([k.kernel.exception]),
     completionScope: pack.completionScope,
     unavailable: pack.requirements.description.unavailable,
   });
@@ -607,17 +653,33 @@ export interface EmittedNativeRealmSlots {
   }[];
 }
 /**
- * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated, with one layout audit
- * (a second enumeration would re-run every pack's ownership checks the certification just ran).
+ * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated in one index batch
+ * (a second enumeration would re-run every pack's ownership checks the certification just ran). (#7354 Fa) With
+ * source closures, the slots also hold the closure types the realm borrows and the closure invocation population,
+ * which their own `requireCompleted…` checks authenticated.
  */
 export function requireCompletedNativeRealmSlots(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
+  invocation: NativeInvocationReservations | undefined,
 ): EmittedNativeRealmSlots {
   requireCompletedNativeRealmBootstrap(tx, pack);
   const inventory = owners.get(pack)!.inventory;
   if (!inventory) fail("realm inventory was never enumerated");
-  const { functions, types, globals, sourceObjects } = inventory;
+  const { sourceObjects, sourceTypes } = inventory;
+  const functions = [...inventory.functions, ...(invocation ? nativeInvocationFunctions(tx, invocation) : [])];
+  const types = [
+    ...inventory.types,
+    ...(sourceTypes
+      ? [
+          ...sourceTypes.shapes.map((shape) => shape.type),
+          ...nativeClosureReservationInventory(tx, sourceTypes.closures, sourceTypes.closurePlan).filter(
+            (row): row is TypeReservation => row.kind === "type",
+          ),
+        ]
+      : []),
+  ];
+  const globals = [...inventory.globals, ...(invocation ? Object.values(invocation.globals) : [])];
   const indices = tx.physicalIndices([...functions, ...types, ...globals, ...sourceObjects.map((row) => row.token)]);
   let next = 0;
   const take = (count: number) => indices.slice(next, (next += count));

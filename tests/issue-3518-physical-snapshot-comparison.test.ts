@@ -65,18 +65,21 @@ function pair(make: (events: string[]) => unknown = () => ({ nested: { value: 1 
           historicalText(reference) !== expected
         )
           throw Error(altered);
-        return [0];
       });
-      return { actual: observed(() => tx.physicalIndices([token])), original: oldResult };
+      // The layout audit runs once, at the ledger's seal (#7354 Perf4).
+      return { actual: observed(() => void tx.seal()), original: oldResult };
     },
   };
 }
-function passes(p: ReturnType<typeof pair>) {
+function captured(p: ReturnType<typeof pair>) {
   expect(p.newCapture).toEqual(p.oldCapture);
   expect(p.newCapture).toEqual({ ok: true, value: undefined });
+}
+function passes(p: ReturnType<typeof pair>) {
+  captured(p);
   const result = p.check();
   expect(result.actual).toEqual(result.original);
-  expect(result.actual).toEqual({ ok: true, value: [0] });
+  expect(result.actual).toEqual({ ok: true, value: undefined });
 }
 function refuses(p: ReturnType<typeof pair>, message = altered) {
   const result = p.check();
@@ -120,7 +123,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
     });
     const p = pair(make);
     expect(words(nan(0x7ff80000, 1))).not.toEqual(words(nan(0x7ff80000, 2)));
-    for (let repeat = 0; repeat < 3; repeat++) passes(p);
+    passes(p);
   });
   it.each([
     ["negative-zero", () => -0, () => 0],
@@ -137,8 +140,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
     ["escaped-string", () => '"\\', () => '\\"'],
   ] as const)("detects warmed scalar change: %s", (_name, initial, changed) => {
     const p = pair(() => ({ value: initial() }));
-    passes(p);
-    passes(p);
+    captured(p);
     p.both((fn) => {
       (fn.audit as { value: unknown }).value = changed();
     });
@@ -175,16 +177,15 @@ describe("fresh filled-function snapshots match the historical textual algorithm
         (fn.audit as { nested: { value: number } }).nested.value = 2;
       },
     ],
-  ] as const)("detects %s after repeated successful public audits", (_name, change) => {
+  ] as const)("detects %s at the seal audit", (_name, change) => {
     const p = pair();
-    passes(p);
-    passes(p);
+    captured(p);
     p.both(change);
     refuses(p);
   });
   it.each(["length", "hole", "extra", "order"])("preserves array %s observability", (change) => {
     const p = pair(() => Object.assign(new Array<unknown>(2), { 1: undefined, first: "a", second: "b" }));
-    passes(p);
+    captured(p);
     p.both((fn) => {
       const value = fn.audit as unknown[] & { first: string; second: string; extra?: unknown };
       if (change === "length") value.length = 4;
@@ -199,7 +200,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
   });
   it("preserves ordered escaped object keys", () => {
     const p = pair(() => ({ 'a"\\': 1, "b\ud800": 2 }));
-    passes(p);
+    captured(p);
     p.both((fn) => {
       const value = fn.audit as Record<string, unknown>;
       Reflect.deleteProperty(value, 'a"\\');
@@ -209,7 +210,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
   });
   it.each(["byte", "object", "tag"])("preserves byte-array %s changes", (change) => {
     const p = pair(() => new Uint8Array([1, 255]));
-    passes(p);
+    captured(p);
     p.both((fn) => {
       if (change === "byte") (fn.audit as Uint8Array)[1] = 254;
       if (change === "object") fn.audit = { 0: 1, 1: 255 };
@@ -219,7 +220,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
   });
   it("preserves the old instanceof bytes tag instead of adding an internal-slot admission rule", () => {
     const p = pair(() => new Uint8Array([1, 255]));
-    passes(p);
+    captured(p);
     p.both((fn) => {
       fn.audit = Object.assign(Object.create(Uint8Array.prototype), { 0: 1, 1: 255 });
     });
@@ -227,7 +228,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
   });
   it.each(["hidden", "symbol", "prototype"])("keeps %s differences ignored as before", (change) => {
     const p = pair();
-    passes(p);
+    captured(p);
     p.both((fn) => {
       if (change === "hidden") Object.defineProperty(fn.audit, "hidden", { value: () => 1 });
       if (change === "symbol") Object.defineProperty(fn.audit, Symbol("hidden"), { value: Symbol("ignored") });
@@ -235,16 +236,16 @@ describe("fresh filled-function snapshots match the historical textual algorithm
     });
     passes(p);
   });
-  it("allows shared acyclic subtrees and equivalent replacement, then detects their mutation", () => {
+  it.each([false, true])("allows shared acyclic subtrees and equivalent replacement, mutated=%s", (mutated) => {
     const p = pair(() => {
       const shared = { value: 1 };
       return { first: shared, second: shared };
     });
-    passes(p);
+    captured(p);
     p.both((fn) => {
       (fn.audit as { second: unknown }).second = { value: 1 };
     });
-    passes(p);
+    if (!mutated) return passes(p);
     p.both((fn) => {
       (fn.audit as { first: { value: number } }).first.value = 2;
     });
@@ -268,7 +269,7 @@ describe("fresh filled-function snapshots match the historical textual algorithm
   });
   it.each(["function", "symbol", "cycle"])("walks later %s values after an earlier mismatch", (kind) => {
     const p = pair(() => ({ first: 1, later: { value: 2 } }));
-    passes(p);
+    captured(p);
     p.both((fn) => {
       const value = fn.audit as Record<string, unknown>;
       value.first = 999;
@@ -318,13 +319,11 @@ describe("snapshot traversal keeps original observable evaluation order", () => 
     expect(p.newCapture).toEqual(p.oldCapture);
     expect(p.events.actual).toEqual(["first", "second", "first.leaf", "second.leaf"]);
     expect(p.events.actual).toEqual(p.events.original);
-    for (let repeat = 0; repeat < 3; repeat++) {
-      p.events.actual.length = 0;
-      p.events.original.length = 0;
-      passes(p);
-      expect(p.events.actual).toEqual(["first", "second", "first.leaf", "second.leaf"]);
-      expect(p.events.actual).toEqual(p.events.original);
-    }
+    p.events.actual.length = 0;
+    p.events.original.length = 0;
+    passes(p);
+    expect(p.events.actual).toEqual(["first", "second", "first.leaf", "second.leaf"]);
+    expect(p.events.actual).toEqual(p.events.original);
   });
   it("compares captured siblings even when an earlier child mutates their live fields", () => {
     const p = pair((events) => {
@@ -352,7 +351,7 @@ describe("snapshot traversal keeps original observable evaluation order", () => 
   });
   it.each(["extra-child", "different-kind"])("does not skip a later getter/error in %s", (mode) => {
     const p = pair(() => (mode === "different-kind" ? null : { first: 1 }));
-    passes(p);
+    captured(p);
     for (const [fn, events] of [
       [p.actual, p.events.actual],
       [p.reference, p.events.original],
@@ -443,7 +442,7 @@ describe("snapshot traversal keeps original observable evaluation order", () => 
         },
       });
     });
-    passes(p);
+    captured(p);
     p.events.actual.length = 0;
     p.events.original.length = 0;
     for (const control of controls) control.fail = true;
@@ -453,7 +452,7 @@ describe("snapshot traversal keeps original observable evaluation order", () => 
   });
   it.each(["locals", "body"])("retains the outer %s identity short circuit", (changed) => {
     const p = pair();
-    passes(p);
+    captured(p);
     p.both((fn) => {
       fn[changed] = [];
       Object.defineProperty(fn, changed === "locals" ? "body" : "audit", {
@@ -464,30 +463,5 @@ describe("snapshot traversal keeps original observable evaluation order", () => 
       });
     });
     refuses(p);
-  });
-});
-
-describe("batch indices cannot escape a failed private ledger state", () => {
-  it.each([false, true])("checks state again after a getter swallows an audit failure, shadowed=%s", (shadowed) => {
-    const p = pair();
-    passes(p);
-    let swallowed = 0;
-    Object.defineProperty(p.token.object, "name", {
-      enumerable: true,
-      get() {
-        try {
-          p.tx.reserveType("forbidden", { kind: "struct", name: "forbidden", fields: [] });
-        } catch {
-          swallowed++;
-        }
-        return "snapshotControl";
-      },
-    });
-    if (shadowed) Object.defineProperty(p.tx, "state", { get: () => "filling" });
-    expect(() => p.tx.physicalIndices([p.token])).toThrow(
-      "physical module reservations: physical index requested in failed",
-    );
-    expect(swallowed).toBeGreaterThan(0);
-    expect(p.tx.state).toBe(shadowed ? "filling" : "failed");
   });
 });

@@ -3,8 +3,8 @@
 // #7354 slice P — sound contracts for untyped parameters on the Prepared standalone path. A parameter without a
 // TypeScript annotation is the dynamic value (call-site propagation saw no top-level caller, no call with missing
 // arguments and no call through a value, so it was never a contract), and an unannotated result is dynamic where
-// the checker cannot vouch for it: `any`, or a body that can run off its end after a value. A JSDoc `@returns` is no
-// contract either way: a converted value returns as typed, an unconverted one meets D1's implicit-flow rule.
+// the checker cannot vouch for it: `any`, or a body that can run off its end after a value. A JSDoc tag is no
+// contract either way (#7354 W2): a converted value returns as typed, an unconverted one as the dynamic value.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { programDynamicContracts } from "../src/ir/source-dynamic-contracts.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
@@ -59,8 +59,12 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string, target: "standalone" | "gc" = "standalone"): Promise<string> {
-  const result = await compile(source, options(target));
+  const result = await compile(source, options(target), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -133,6 +137,24 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       ["f(true) !== true", "f(true) !== false"],
     ],
     [
+      // (#7354 F1b, F2) A declaration read as a value is its home's function value; the call is the dispatcher's.
+      "a call through a value",
+      `${ID}var g = id;\nif (g(1) !== 1) throw 1;`,
+      ["g(1) !== 1", "g(1) !== 2"],
+    ],
+    [
+      // (#7354 W2) A JSDoc tag is a comment: the parameter stays the dynamic value it is called with.
+      "a JSDoc-typed parameter called with a wrong type at top level",
+      `/** @param {number} n */\nfunction f(n) { return n; }\n${ID}if (String(f(id(true))) !== "true") throw 1;`,
+      ['!== "true"', '!== "1"'],
+    ],
+    [
+      // (#7354 W2) …and the result returns the dynamic value its body returns.
+      "a JSDoc `@returns {number}` over an unconverted untyped value",
+      '/** @returns {number} */\nfunction f(n) { return n; }\nif (String(f(true)) !== "true") throw 1;',
+      ['!== "true"', '!== "1"'],
+    ],
+    [
       "the isNegativeZero helper of harness/assert.js",
       "function isNegativeZero(value) { return value === 0 && 1 / value === -Infinity; }\n" +
         "if (!isNegativeZero(-0)) throw 1;\nif (isNegativeZero(0)) throw 2;\nif (isNegativeZero(true)) throw 3;",
@@ -153,25 +175,6 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       "dynamic operation dyn.arguments_length has no Prepared intrinsic",
     ],
     ["an extra argument", `${ID}if (id(1, 2) !== 1) throw 1;`, "call to id has 2 args, expected 1"],
-    [
-      // (#7354 H) `g` has the dynamic home; a declaration read as a value is slice Fa's.
-      "a call through a value",
-      `${ID}var g = id;\nif (g(1) !== 1) throw 1;`,
-      'identifier "id" is not in scope',
-    ],
-    [
-      // JSDoc is not checked at runtime: the contract stays dynamic, and from-ast refuses it against a primitive tag.
-      "a JSDoc-typed parameter called with a wrong type at top level",
-      `/** @param {number} n */\nfunction f(n) { return n; }\n${ID}f(id(true));`,
-      "type override (dynamic) disagrees with annotation (f64) at param n of f",
-    ],
-    [
-      // (#7354 H) The returned parameter may be the dynamic value, so the result contract is dynamic, and from-ast
-      // refuses it against the JSDoc type before D1's flow rule would.
-      "a JSDoc `@returns {number}` over an unconverted untyped value",
-      "/** @returns {number} */\nfunction f(n) { return n; }\nf(true);",
-      "type override (dynamic) disagrees with annotation (f64) at return type of f",
-    ],
   ])("refuses %s", async (_name, source, message) => {
     expect(await refusal(source)).toContain(message);
   });
@@ -247,22 +250,33 @@ describe("#7354 P — the parameter and result contracts", () => {
   it("gives an untyped parameter of a host async function no dynamic contract", () => {
     const { checker, file, f } = declarationOf("async function f(n) { return 1; }");
     const host = programDynamicContracts(
-      checker,
-      { backend: "wasmgc", target: "host" },
+      { checker, policy: { backend: "wasmgc", target: "host" } },
       [file],
       new AllocSiteRegistry(),
     );
     expect(host.parameter(f, f.parameters[0]!)).toBeUndefined();
     const sync = declarationOf("function f(n) { return 1; }");
-    const native = programDynamicContracts(sync.checker, STANDALONE, [sync.file], new AllocSiteRegistry());
+    const native = programDynamicContracts(
+      { checker: sync.checker, policy: STANDALONE },
+      [sync.file],
+      new AllocSiteRegistry(),
+    );
     expect(native.parameter(sync.f, sync.f.parameters[0]!)).toEqual({ kind: "dynamic" });
   });
 
   it("keeps an annotated non-any result whose body runs off its end: the annotation is the contract", () => {
     const { checker, file, f } = declarationOf("function f(v: any): number | undefined { if (v === 1) return 2; }");
-    expect(programDynamicContracts(checker, STANDALONE, [file], new AllocSiteRegistry()).result(f)).toBeUndefined();
+    expect(
+      programDynamicContracts({ checker, policy: STANDALONE }, [file], new AllocSiteRegistry()).result(f),
+    ).toBeUndefined();
     const bare = declarationOf("function f(v: any) { if (v === 1) return 2; }");
-    expect(programDynamicContracts(bare.checker, STANDALONE, [bare.file]).result(bare.f)).toEqual({
+    expect(
+      programDynamicContracts(
+        { checker: bare.checker, policy: STANDALONE },
+        [bare.file],
+        new AllocSiteRegistry(),
+      ).result(bare.f),
+    ).toEqual({
       kind: "dynamic",
     });
   });

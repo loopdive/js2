@@ -17,6 +17,7 @@ import { irValueTypes } from "../analysis/value-types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { isIssuedTypedIrProgram, settledChecks } from "./settled-verdict.js";
 
 export type NativeStringValuePresence<T> = { readonly present: false } | { readonly present: true; readonly value: T };
 
@@ -127,8 +128,20 @@ function dense<T>(values: readonly T[], label: string): readonly T[] {
   return values;
 }
 
-/** Descriptive census only. The coordinator still authenticates the complete program. */
+// Each issued program owns fresh projection wrappers, so one projection identifies both inputs.
+const inventories = settledChecks<PreparedIrProgramRuntimeProjection, NativeStringValueDemands>();
+
 export function collectNativeStringValueDemands(
+  program: PreparedIrProgram,
+  projection: PreparedIrProgramRuntimeProjection,
+): NativeStringValueDemands {
+  if (!isIssuedTypedIrProgram(program)) return buildInventory(program, projection);
+  if (!program.runtime.includes(projection)) fail("foreign selected projection");
+  return inventories.check(projection, () => buildInventory(program, projection));
+}
+
+/** Descriptive census only. The coordinator still authenticates the complete program. */
+function buildInventory(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
 ): NativeStringValueDemands {

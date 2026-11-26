@@ -81,7 +81,8 @@ describe("#7364 — forgeries of an empty program still refuse", () => {
   }
 
   it("validation names only the one module-init unit of a non-executable source", async () => {
-    const program = await preparedProgram("var x;");
+    // `f` names `x`, so the #3418 dead-binding elision (#7354 F0) keeps the declaration.
+    const program = await preparedProgram("var x; function f() { return x; }");
     const [plan] = program.startup;
     expect(plan!.executable).toBe(false);
     expect(() => assertPreparedIrProgram(program)).not.toThrow();
@@ -101,7 +102,7 @@ describe("#7364 — forgeries of an empty program still refuse", () => {
 
   it("presentation refuses an empty module whose inventory claims a unit", async () => {
     const real = driver.runIrProgramDriver;
-    const [unit] = (await preparedProgram("var x = 1;")).inventory.terminalUnits;
+    const [unit] = (await preparedProgram("var x = 1; var y = x;")).inventory.terminalUnits;
     vi.spyOn(driver, "runIrProgramDriver").mockImplementation((...args: Parameters<typeof real>) => {
       const result = real(...args);
       if (result.kind !== "emitted") return result;

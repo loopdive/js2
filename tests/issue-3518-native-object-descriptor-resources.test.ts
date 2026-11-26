@@ -86,9 +86,7 @@ describe("issued SameValue dependency", () => {
       "foreign expected dependencies",
     );
     f.sameValue.sameValue.object.body.push({ op: "nop" });
-    expect(() => requireCompletedNativeObjectSameValue(f.tx, f.sameValue, f.sameValueDependencies)).toThrow(
-      "altered completed function",
-    );
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 });
 describe("issued descriptor installation owner", () => {
@@ -171,16 +169,15 @@ describe("issued descriptor installation owner", () => {
     fillDescriptorDependencies(f);
     const before = structuredClone(f.module);
     expect(() => fillNativeObjectDescriptorResources(f.tx, f.pack, other.exception)).toThrow();
-    expect(f.module).toStrictEqual(before);
+    // Not toStrictEqual: owned function data keeps a private array prototype that structuredClone drops.
+    expect(f.module).toEqual(before);
   });
   it("retains post-completion body currentness", () => {
     const f = descriptorFixture();
     completeDescriptorFixture(f);
     requireCompletedNativeObjectDescriptors(f.tx, f.pack, f.dependencies);
     f.pack.defineAccessor.object.body.push({ op: "nop" });
-    expect(() => requireCompletedNativeObjectDescriptors(f.tx, f.pack, f.dependencies)).toThrow(
-      "altered completed function",
-    );
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 });
 let runtime: ReturnType<typeof descriptorRuntime> | undefined;

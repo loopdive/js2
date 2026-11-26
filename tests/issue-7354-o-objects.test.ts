@@ -18,6 +18,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (): Test262CompileOptions =>
   ({
@@ -46,6 +47,7 @@ async function run(source: string): Promise<"returned" | "threw"> {
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, options());
   expect(messages(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();
@@ -59,8 +61,12 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string): Promise<string> {
-  const result = await compile(source, options());
+  const result = await compile(source, options(), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -119,23 +125,14 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
 
   // Each refusal names the step that removes it (the slice plan in the #7354 issue file).
   it("refuses what the later steps build, by name", async () => {
-    // O2: a script var's literal into the dynamic home.
-    expect(await refusal("var o = { a: 1 }; if (o.a !== 1) throw 1;")).toContain(
-      "proven dynamic binding 'o' initializer has no supported carrier",
-    );
+    // O4 reads a script var's object (tests/issue-7354-o4-member-read.test.ts).
     // O2: an object reaching a dynamic slot (here P's unannotated result).
     expect(await refusal("function f(){ var o = { a: 1 }; return o; } f();")).toContain(
       "concrete return needs a dynamic box in f",
     );
-    // O3: a member write.
-    expect(await refusal("function f(){ var o = { a: 1 }; o.a = 2; return o.a; } f();")).toContain(
-      "property assignment on externref is not in slice 4",
-    );
-    // O4: a member read with no typed plan (here of a key the literal lacks) is a dynamic member read, and this
-    // program has no dynamic contract to legalize it.
-    expect(await refusal("function f(){ var o = {}; return o.a === undefined ? 1 : 0; } f();")).toContain(
-      "body f keeps dynamic operation dyn.member_get that no dynamic contract legalized",
-    );
+    // O3 writes members, a function-local object's too (tests/issue-7354-o3-member-write.test.ts).
+    // O4: a member read with no typed plan (here of a key the literal lacks) is a dynamic member read; (#7354 M1) it
+    // is legalized without a dynamic contract too and runs (tests/issue-7354-m-member-access.test.ts).
     // A Boolean member read needs a Boolean unbox, which this presentation's policy does not offer.
     expect(await refusal("function f(){ const o = { b: true }; return o.b ? 1 : 0; } f();")).toContain(
       "semantic intrinsic js.boolean.unbox is unavailable",
@@ -143,8 +140,9 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
   }, 120_000);
 });
 
-// The kernel's [[Get]] answers (status, value): 0 found, 1 absent (value is `undefined`), 2 and 3 the incomplete
-// states no source object reaches. The adapter returns the value of a complete answer and traps on the others.
+// The kernel's [[Get]] answers (status, value): 0 absent (value `undefined`), 1 found, 2 a miss at the realm's
+// Object.prototype (value `undefined`; (#7354 O4) its keys refuse at every call site), 3 not an object. The adapter
+// returns the value of the first three and traps on 3 and on any status outside the four.
 describe("#7354 O — the js.object.get adapter over the kernel's [[Get]]", () => {
   const ext = { kind: "externref" } as const;
   function adapter(answer: (target: unknown, key: unknown, receiver: unknown) => readonly [number, unknown]) {
@@ -167,7 +165,7 @@ describe("#7354 O — the js.object.get adapter over the kernel's [[Get]]", () =
     receiver = {},
     value = {};
 
-  it.each([0, 1])("returns the value of a complete answer (status %i), forwarding all three operands", (status) => {
+  it.each([0, 1, 2])("returns the value of an answer (status %i), forwarding all three operands", (status) => {
     const seen: unknown[][] = [];
     const get = adapter((...args) => {
       seen.push(args);
@@ -178,7 +176,7 @@ describe("#7354 O — the js.object.get adapter over the kernel's [[Get]]", () =
     expect(seen[0]!.map((operand, i) => operand === [target, key, receiver][i])).toEqual([true, true, true]);
   });
 
-  it.each([2, 3, 0x7fffffff, -1])("traps on an incomplete answer (status %i)", (status) => {
+  it.each([3, 0x7fffffff, -1])("traps on a non-object or unknown answer (status %i)", (status) => {
     const get = adapter(() => [status, value]);
     expect(() => get(target, key, receiver)).toThrow(WebAssembly.RuntimeError);
   });

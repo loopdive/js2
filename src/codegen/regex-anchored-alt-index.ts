@@ -240,7 +240,8 @@ export function buildIndexedAnchoredLiteralAltProgram(arrayTypeIdx: number, stri
 
 /**
  * Emit the search-time indexed matcher and its private locals. Indices 16–21
- * immediately follow `ensureRegexSearch`'s existing parameters and locals.
+ * immediately follow the parameters and own locals of `__regex_search`
+ * (`buildRegExpSearchBody`, which splices this in as `indexedLiteralAlt`).
  */
 export function buildIndexedAnchoredLiteralAltSearch(
   arrayTypeIdx: number,

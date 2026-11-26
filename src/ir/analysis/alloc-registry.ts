@@ -297,6 +297,18 @@ export class AllocSiteRegistry {
     return id;
   }
 
+  /**
+   * (#7354 Fa) Re-type a live closure site whose `closure.new` a whole-function rewrite re-typed (the Prepared
+   * dynamic-value legalization's carrier form). The caller states the instruction's new closure type; a site of
+   * any other kind keeps the type it was allocated with.
+   */
+  retypeClosure(id: AllocSiteId, type: Extract<IrType, { kind: "closure" }>): void {
+    const entry = this.sites[id as number];
+    if (entry?.state !== "live" || entry.site.kind !== "closure")
+      throw new Error(`alloc registry: closure retype of site ${id}, which is not a live closure site`);
+    entry.site = { ...entry.site, type };
+  }
+
   /** True iff `id` indexes a known site (any state). */
   isKnown(id: AllocSiteId): boolean {
     const idx = id as number;
@@ -404,6 +416,15 @@ export class AllocSiteRegistry {
   /** Number of sites ever minted (including aliased/retired). For diagnostics. */
   get size(): number {
     return this.sites.length;
+  }
+
+  /**
+   * (#7354 U) Forget every site minted after the first `size`: a lowering the producer discards and repeats
+   * (`abort-bodies.ts`) leaves no site behind.
+   */
+  truncate(size: number): void {
+    this.sites.length = size;
+    this.meta.length = Math.min(this.meta.length, size);
   }
 
   /** Snapshot of live sites — for debugging / tooling, not hot paths. */

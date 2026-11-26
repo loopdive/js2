@@ -60,8 +60,8 @@ import {
   RE_FIELD_NGROUPS,
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
-  usesNativeRegExpProvider,
-} from "./regexp-standalone.js";
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import { usesNativeRegExpProvider } from "./regexp-standalone.js";
 import { ensureRegexSplit } from "./native-regex.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { getWellKnownSymbolId } from "./literals.js";

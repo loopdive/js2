@@ -42,8 +42,12 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string) {
-  const result = await compile(source, options("test.js"));
+  const result = await compile(source, options("test.js"), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -202,7 +206,8 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
     [
       "read by a closure",
       "function f(v, w){ var r = w; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r; } f(5, 0);",
-      "closure must have a return type annotation (f)",
+      // (#7354 Fa) The closure has the all-dynamic contract now; the hoisted `x` it reads has no capture.
+      'closure f__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
     ],
   ])("refuses a var %s by name", async (_, program, message) => {
     expect(await refusal(program)).toMatch(message);

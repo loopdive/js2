@@ -5,11 +5,14 @@
 //
 // A leaf of its own, as `dynamic-add-helper.ts` is: the IR's requirement checks and the WasmGC backend's reservation
 // checks both settle through it, and the backend may not import an IR module for that. The one IR fact it needs —
-// which objects are genuine frozen collections — is the caller's (`preparedIrFrozenCollectionMembers`, IR program
-// data), bound once per side with `preparedIrSettledVerdicts`.
+// which objects are genuine frozen collections, and which are already known to be deeply frozen — are the caller's
+// (`preparedIrFrozenCollectionMembers`, `isDeeplyFrozenPreparedIrValue`, IR program data), bound once per side with
+// `preparedIrSettledVerdicts`.
 
 /** The keys and values of a genuine frozen collection, or undefined for any other object. */
 export type FrozenCollectionMembers = (value: object) => readonly unknown[] | undefined;
+/** Whether the IR already knows `value` to be deeply frozen prepared data (a permanent fact). */
+export type DeeplyFrozen = (value: object) => boolean;
 
 /**
  * The own properties (key, value, getter, setter) of `Object.prototype` and `Array.prototype`, the two shared
@@ -27,6 +30,35 @@ function sharedPrototypeState(): readonly unknown[] {
       state.push(key, descriptor.value, descriptor.get, descriptor.set);
     }
   return state;
+}
+
+// An inherited application field can be a getter, or an object whose contents change without
+// changing its descriptor. Only the standard host prototype surface is eligible for reuse.
+const recordKeys = new Set(
+  "constructor __defineGetter__ __defineSetter__ hasOwnProperty __lookupGetter__ __lookupSetter__ isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf __proto__".split(
+    " ",
+  ),
+);
+const arrayKeys = new Set<PropertyKey>([
+  ..."length constructor at concat copyWithin entries every fill filter find findIndex findLast findLastIndex flat flatMap forEach includes indexOf join keys lastIndexOf map pop push reduce reduceRight reverse shift slice some sort splice toLocaleString toReversed toSorted toSpliced toString unshift values with".split(
+    " ",
+  ),
+  Symbol.iterator,
+  Symbol.unscopables,
+]);
+const initialPrototypeState =
+  Reflect.ownKeys(Object.prototype).every((key) => typeof key === "string" && recordKeys.has(key)) &&
+  Reflect.ownKeys(Array.prototype).every((key) => arrayKeys.has(key))
+    ? Object.freeze(sharedPrototypeState())
+    : undefined;
+
+function normalPrototypeState(): readonly unknown[] | undefined {
+  if (!initialPrototypeState || Object.getPrototypeOf(Array.prototype) !== Object.prototype) return undefined;
+  const current = sharedPrototypeState();
+  return current.length === initialPrototypeState.length &&
+    current.every((entry, index) => Object.is(entry, initialPrototypeState[index]))
+    ? initialPrototypeState
+    : undefined;
 }
 
 /**
@@ -66,12 +98,15 @@ export interface PreparedIrSettledVerdicts {
   settledChecks<Input extends object, Output = void>(): PreparedIrSettledChecks<Input, Output>;
 }
 
-export function preparedIrSettledVerdicts(collectionMembers: FrozenCollectionMembers): PreparedIrSettledVerdicts {
+export function preparedIrSettledVerdicts(
+  collectionMembers: FrozenCollectionMembers,
+  deeplyFrozen: DeeplyFrozen,
+): PreparedIrSettledVerdicts {
   const isImmutable = (value: unknown): boolean => {
     const visited = new Set<object>();
     const immutable = (item: unknown): boolean => {
       if (typeof item === "function") return false;
-      if (item === null || typeof item !== "object" || visited.has(item)) return true;
+      if (item === null || typeof item !== "object" || visited.has(item) || deeplyFrozen(item)) return true;
       visited.add(item);
       const members = collectionMembers(item);
       if (members) return members.every(immutable);
@@ -89,31 +124,29 @@ export function preparedIrSettledVerdicts(collectionMembers: FrozenCollectionMem
     return immutable(value);
   };
   const checkUnlessSettled = (holder: PreparedIrSettlement, input: unknown, check: () => void): void => {
-    const prototypes = sharedPrototypeState();
-    if (
-      holder.settled?.length === prototypes.length &&
-      holder.settled.every((entry, index) => Object.is(entry, prototypes[index]))
-    )
-      return;
-    const settles = isImmutable(input);
+    const prototypes = normalPrototypeState();
+    if (prototypes && holder.settled === prototypes) return;
+    const settles = prototypes !== undefined && isImmutable(input);
     check();
     holder.settled = settles ? prototypes : undefined;
   };
   return {
     isImmutable,
     checkUnlessSettled,
-    settledAtIssue: (input) => ({ settled: isImmutable(input) ? sharedPrototypeState() : undefined }),
+    settledAtIssue: (input) => ({ settled: isImmutable(input) ? normalPrototypeState() : undefined }),
     settledChecks: <Input extends object, Output = void>() => {
       const holders = new WeakMap<Input, PreparedIrSettlement & { output?: Output }>();
       return {
         check(input: Input, compute: () => Output): Output {
           let holder = holders.get(input);
           if (!holder) holders.set(input, (holder = { settled: undefined }));
-          const settled = holder;
-          checkUnlessSettled(settled, input, () => {
-            settled.output = compute();
+          let output = holder.output as Output;
+          checkUnlessSettled(holder, input, () => {
+            output = compute();
           });
-          return settled.output as Output;
+          if (holder.settled) holder.output = output;
+          else holders.delete(input);
+          return output;
         },
       };
     },

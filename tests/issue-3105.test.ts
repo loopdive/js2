@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { hashProbeAdvanceInstrs, hashProbeInitInstrs } from "../src/codegen-linear/emit-idioms.js";
-import { counterLoopInstrs } from "../src/codegen/emit-idioms.js";
+import { counterLoopInstrs } from "../src/runtime/wasmgc/values/emit-idioms.js";
 
 /**
  * #3105 slice 1 — emit-idiom builder library (linear backend).

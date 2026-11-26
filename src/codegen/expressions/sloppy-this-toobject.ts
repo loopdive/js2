@@ -49,7 +49,7 @@
 //     value that turns out to be an object would be a new wrong answer.
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
-import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis } from "../../shared/body-references-own-this.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import { resolveConstantString } from "./eval-inline.js";

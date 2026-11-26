@@ -66,6 +66,7 @@ export function prepareOrdinaryObjectAccessResolver(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   declarationOrStatements: ts.FunctionDeclaration | readonly ts.Statement[],
+  carries: (expression: ts.Expression) => boolean,
 ): {
   readonly preparedOrdinaryPropertyRead: (
     expression: ts.PropertyAccessExpression,
@@ -100,8 +101,8 @@ export function prepareOrdinaryObjectAccessResolver(
   };
   /**
    * The literal behind a receiver whose property values the checker types exactly: an accessor literal bound to a
-   * `const`, or (#7354 O1) a data-only literal whose binding is only ever read as `o.k`, so no property is written
-   * after the literal stored it.
+   * `const`, or (#7354 O1) a function's data-only literal whose binding is only ever read as `o.k`, so no property is
+   * written after the literal stored it.
    */
   const ordinaryLiteral = (expression: ts.Expression): ts.ObjectLiteralExpression | undefined => {
     // The literal itself as the receiver: its members are its own initializers.
@@ -121,17 +122,33 @@ export function prepareOrdinaryObjectAccessResolver(
       return undefined;
     const literal = declaration.initializer;
     if (literal.properties.some(isAccessor)) return declaration.parent.flags & ts.NodeFlags.Const ? literal : undefined;
+    // (#7354 O2) A binding outside any function is a module binding: a script `var` holds its object in the dynamic
+    // home, whose reads are the dynamic member read.
     return isDataOnlyLiteral(literal) &&
+      ts.findAncestor(declaration, ts.isFunctionLike) !== undefined &&
       referencesOf(symbol!).every((reference) => reference === declaration.name || isPlainMemberRead(reference))
       ? literal
       : undefined;
   };
+  // (#7354 W) The checker types a property from the value the literal stores (`{ p: n }` is `number`), but that value
+  // may be the dynamic one (`n` read from its dynamic home before its initializer runs): such a read keeps the
+  // dynamic member read.
+  const storesDynamic = (literal: ts.ObjectLiteralExpression, key: string): boolean =>
+    literal.properties.some(
+      (property) =>
+        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === key &&
+        carries(ts.isPropertyAssignment(property) ? property.initializer : property.name),
+    );
   const visit = (node: ts.Node): void => {
+    const literal =
+      ts.isPropertyAccessExpression(node) && !node.questionDotToken ? ordinaryLiteral(node.expression) : undefined;
     if (
+      literal &&
       ts.isPropertyAccessExpression(node) &&
-      !node.questionDotToken &&
       ts.isIdentifier(node.name) &&
-      ordinaryLiteral(node.expression)
+      !storesDynamic(literal, node.name.text)
     ) {
       const type = checker.getTypeAtLocation(node);
       const parts = type.isUnion() ? type.types : [type];
@@ -143,7 +160,7 @@ export function prepareOrdinaryObjectAccessResolver(
       } else if (parts.length > 0 && parts.every((part) => (part.flags & ts.TypeFlags.BooleanLike) !== 0)) {
         plans.set(node, Object.freeze({ key: node.name.text, resultType: BOOLEAN }));
       } else {
-        const getters = ordinaryLiteral(node.expression)!.properties.filter(
+        const getters = literal.properties.filter(
           (property): property is ts.GetAccessorDeclaration =>
             ts.isGetAccessorDeclaration(property) &&
             ts.isIdentifier(property.name) &&

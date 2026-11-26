@@ -6,7 +6,7 @@
  * and when one zero-width assertion holds must be a single definition — the
  * two VMs differ only in how they schedule alternatives.
  */
-import { ReOp } from "./bytecode.js";
+import { ReOp } from "../../runtime/contracts/regexp-bytecode.js";
 
 /** Does code unit/code point `c` fall in class at `classTable[offset]`? */
 export function classMatch(classTable: number[], offset: number, c: number, negated: boolean): boolean {

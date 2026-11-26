@@ -13,6 +13,7 @@ import { assertPreparedIrProgram } from "./program-validation.js";
 import { assertIrRuntimeSupport, irNumberFormatDemandOwners } from "./program/runtime-support.js";
 import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
+import { recordIssuedTypedIrProgram } from "./program/settled-verdict.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import { validatePreparedStage } from "./program/prepared-validator.js";
 import type {
@@ -144,5 +145,6 @@ export function prepareTypedIrProgram(
   validatePreparedStage("prepared program", () =>
     assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive }),
   );
+  recordIssuedTypedIrProgram(program);
   return { kind: "prepared", program };
 }

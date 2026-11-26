@@ -7,6 +7,7 @@
  */
 import ts from "typescript";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { errorConstructorId } from "./program/builtin-prototype-keys.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { FunctionValueLoweringPlans } from "./function-object-lowering.js";
@@ -21,6 +22,8 @@ export type IdentifierRead<Binding> =
   | { readonly kind: "top-level-function"; readonly plan: TopLevelFunction }
   | { readonly kind: "scope"; readonly binding: Binding }
   | { readonly kind: "module-binding"; readonly binding: ModuleBinding }
+  /** (#7354 G1) A built-in function object the realm holds, by catalog id ({@link realmIntrinsicRead}). */
+  | { readonly kind: "realm-intrinsic"; readonly id: string }
   /** The global `undefined` as a value: the carrier's undefined (#7106 item 1). */
   | { readonly kind: "global-undefined" }
   /** `NaN` / `Infinity` (#7104, legacy's `identifiers.ts` arm). */
@@ -54,6 +57,8 @@ export function classifyIdentifierRead<Binding>(
   const resolver = cx.resolver;
   const moduleBinding = resolver?.resolveModuleBinding?.(expr);
   if (moduleBinding) return { kind: "module-binding", binding: moduleBinding };
+  const intrinsic = realmIntrinsicRead(expr, resolver);
+  if (intrinsic !== undefined) return { kind: "realm-intrinsic", id: intrinsic };
   // Selector-admitted on the dynamic host-free lanes only.
   if (expr.text === "undefined" && resolver?.stringIsExternref?.() !== true) return { kind: "global-undefined" };
   if (expr.text === "NaN" || expr.text === "Infinity")
@@ -79,6 +84,23 @@ export function classifyIdentifierRead<Binding>(
     : { kind: "unresolved" };
 }
 
+/**
+ * (#7354 G1) The catalog id of the built-in function object `expr` reads, on the lane where closures are function
+ * objects: an Error constructor named by the unchanged global (`builtin-global-binding.ts`). Its value is the realm's
+ * (`js.object.intrinsic`), so a read of a shadowed or written name never reaches here.
+ */
+export function realmIntrinsicRead(
+  expr: ts.Identifier,
+  resolver: Pick<IrFromAstResolver, "createsFunctionObjects" | "isPristineBuiltinGlobal"> | undefined,
+): string | undefined {
+  const id = errorConstructorId(expr.text);
+  return id !== undefined &&
+    resolver?.createsFunctionObjects?.() === true &&
+    resolver.isPristineBuiltinGlobal?.(expr) === true
+    ? id
+    : undefined;
+}
+
 /** The build-time `typeof` answer for an absent global, from the same classification the read uses. */
 export function absentGlobalTypeof<Binding>(
   expr: ts.Identifier,
@@ -91,4 +113,22 @@ function isTypeofOperand(expr: ts.Identifier): boolean {
   let node: ts.Node = expr;
   while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
   return ts.isTypeOfExpression(node.parent);
+}
+
+/**
+ * Why a read of `identifier` has no binding. (#7354 Fa) A closure reading a local of its enclosing function that
+ * is declared after the closure is created names that: the hoisted binding exists in JavaScript, but the closure
+ * captures only what is bound where it is created.
+ */
+export function unboundIdentifierDetail(
+  identifier: ts.Identifier,
+  checker: ts.TypeChecker | undefined,
+  funcName: string,
+): string {
+  const declaration = checker?.getSymbolAtLocation(identifier)?.valueDeclaration;
+  const closure = ts.findAncestor(identifier, ts.isFunctionLike);
+  const home = declaration && ts.isVariableDeclaration(declaration) && ts.findAncestor(declaration, ts.isFunctionLike);
+  return closure && home && home !== closure && declaration.pos >= closure.end
+    ? `closure ${funcName} reads "${identifier.text}", a local of its enclosing function declared after the closure is created`
+    : `identifier "${identifier.text}" is not in scope in ${funcName}`;
 }

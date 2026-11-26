@@ -26,6 +26,10 @@ export interface NativeObjectAccessUse {
   /** A real create-call occurrence, not a fabricated structural allocation ID. */
   readonly creationOccurrence?: number;
   readonly descriptorMask?: number;
+  /** (#7354 P1) The property key, when the program spells it as a string constant. */
+  readonly constantKey?: string;
+  /** (#7354 G1) A selector contract's constant selector, its last argument (`js.object.intrinsic`'s id). */
+  readonly selector?: number;
 }
 export interface NativeObjectGetterDemand {
   readonly getOccurrence: number;
@@ -53,7 +57,6 @@ export interface NativeObjectAccessRequirements {
 }
 interface Issued {
   readonly demands: NativeStringValueDemands;
-  readonly sourceSnapshot: unknown;
   readonly dataSnapshot: unknown;
   /** The currentness check below, settled at issue once the requirements can no longer change. */
   readonly authentication: PreparedIrSettlement;
@@ -282,8 +285,10 @@ function calculate(demands: NativeStringValueDemands) {
       else if (feature === "js.object.define-accessor" && !(descriptorMask & 768))
         fail("accessor descriptor has no explicit getter/setter presence");
     }
+    let constantKey: string | undefined;
     if (!feature.startsWith("js.object.create-")) {
       const key = original(call.args[1]!, definitions)?.instruction;
+      if (key?.kind === "string.const") constantKey = key.value;
       const keyType = key?.resultType;
       if (
         key?.kind !== "string.const" &&
@@ -292,6 +297,9 @@ function calculate(demands: NativeStringValueDemands) {
       )
         gap("property key needs its actual canonical String/Symbol producer");
     }
+    const lastArgument = call.args.at(-1);
+    const last = lastArgument === undefined ? undefined : original(lastArgument, definitions)?.instruction;
+    const selector = last?.kind === "const" && last.value.kind === "i32" ? last.value.value : undefined;
     uses.push({
       occurrence,
       semanticOccurrence: paired.get(occurrence)!,
@@ -299,6 +307,8 @@ function calculate(demands: NativeStringValueDemands) {
       feature,
       ...(creationOccurrence === undefined ? {} : { creationOccurrence }),
       ...(descriptorMask === undefined ? {} : { descriptorMask }),
+      ...(constantKey === undefined ? {} : { constantKey }),
+      ...(selector === undefined ? {} : { selector }),
     });
   }
   for (const use of uses.filter((row) => row.feature === "js.object.get")) {
@@ -369,7 +379,6 @@ export function deriveNativeObjectAccessRequirements(
   issued.set(pack, {
     demands,
     dataSnapshot: snapshot,
-    sourceSnapshot: freezePreparedIrValue(demands),
     authentication: settledAtIssue(pack),
   });
   return pack;
@@ -380,7 +389,6 @@ export function assertNativeObjectAccessRequirementsCurrent(pack: NativeObjectAc
   checkUnlessSettled(owner.authentication, pack, () => checkCurrent(pack, owner));
 }
 function checkCurrent(pack: NativeObjectAccessRequirements, owner: Issued): void {
-  same(pack.demands, owner.sourceSnapshot, "borrowed source changed after selection");
   const fresh = collectNativeStringValueDemands(pack.demands.program, pack.demands.projection);
   same(fresh, pack.demands, "complete occurrence census changed");
   if (

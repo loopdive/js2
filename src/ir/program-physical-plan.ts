@@ -43,11 +43,11 @@ import { preparedIrCallableSignature, preparedIrTypeKey, preparedIrDataKey } fro
 import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./program-runtime-abi.js";
 import { preparedIrDataMismatch } from "./program/data.js";
 import {
+  assertNativeStringValuePlanIssued,
   planNativeStringValuePhysical,
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
-import { readNativeRealmLiteralInput } from "../backend/wasmgc/program/native-realm-literals.js";
 import type { NativeRealmDescription } from "./program/native-realm-requirements.js";
 import type {
   NativeResourceRecipe,
@@ -188,7 +188,7 @@ export interface PhysicalStartup {
 }
 
 export interface PhysicalExceptionTag {
-  /** Some body throws or catches, so a `__exn` tag must exist. */
+  /** Some body (a source body, a support helper or the realm kernel) throws or catches, so a `__exn` tag must exist. */
   readonly required: boolean;
   /** Requested by the options: import `env.__exn` instead of defining a local tag. */
   readonly shared: boolean;
@@ -608,22 +608,7 @@ function nativeStringSetup(
     input.demands.projection !== projection
   )
     nativeInvalid("native input does not belong to the selected standalone program/projection");
-  const realm = readNativeRealmLiteralInput(input, options.utf8Storage);
-  const current = planNativeStringValuePhysical(
-    input.demands,
-    {
-      representation: "native-string",
-      utf8Storage: options.utf8Storage,
-      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
-    },
-    input.invocationRequirements,
-    realm?.realmRequirements,
-  );
-  if (current.kind !== "planned") nativeInvalid("native input has no supported current physical recipe");
-  if (current.invocationRequirements !== input.invocationRequirements)
-    nativeInvalid("missing exact invocation demand owner");
-  if (current.realmLiterals !== realm?.realmLiterals) nativeInvalid("missing exact realm literal owner");
-  nativeSame(input.plan, current.plan, "native declarations or selection changed");
+  assertNativeStringValuePlanIssued(input, options);
   if (input.plan.mode !== "literals") {
     if (!input.valueRequirements) nativeInvalid("missing exact issued native value plan");
     assertNativeValueResourcePlanFor(input.valueRequirements, program, projection, "native-string");
@@ -1416,7 +1401,8 @@ export function planPhysicalSetup(
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
-  let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length) || Boolean(nativeInvocation);
+  let exceptionRequired =
+    vectors.exceptionRequired || Boolean(asyncFrames?.frames.length || nativeInvocation || native?.realmRequirements);
   for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
     const diagnosticUnit =
       formatter && fn === formatter.support.functions[0]

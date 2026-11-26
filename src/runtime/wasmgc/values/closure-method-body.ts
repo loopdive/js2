@@ -5,6 +5,7 @@ import { buildStandardTryTable } from "../../../wasm/physical/exception-control.
 import type { ClosureInvocationArityEntry, ClosureInvocationLayout } from "./closure-invocation-types.js";
 import {
   buildClosureFuncrefExtraction,
+  buildClosureRootTest,
   buildClosureMethodArgumentState,
   buildClosureMethodCallBody,
   type ClosureArgumentState,
@@ -33,10 +34,24 @@ export interface ClosureInvocationFailure {
     | { readonly kind: "callable"; readonly handle: FuncHandle };
   readonly newTypeError: FuncHandle;
   readonly exceptionTag: number;
+  /**
+   * (#7354 P1) The closure root, where the realm holds built-in methods as function objects. Every source closure has
+   * its dispatch arm, so a closure-root callee that reaches the failure is a built-in, which the dispatcher cannot run:
+   * the run-time abort, never the TypeError a value that is not callable gets. (#7354 O2) Likewise where the realm
+   * calls accessor halves: there the arms are the dispatchable source closures, and any other closure aborts.
+   */
+  readonly builtinRootTypeIdx?: number;
 }
 
-export function buildClosureInvocationFailure(failure: ClosureInvocationFailure): Instr[] {
+/** The dispatch's last arm, for the callee in the externref local `callee`. */
+export function buildClosureInvocationFailure(failure: ClosureInvocationFailure, callee: number): Instr[] {
   return [
+    ...(failure.builtinRootTypeIdx === undefined
+      ? []
+      : ([
+          ...buildClosureRootTest(callee, failure.builtinRootTypeIdx),
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+        ] satisfies Instr[])),
     ...(failure.message.kind === "global"
       ? ([{ op: "global.get", index: failure.message.index }, { op: "extern.convert_any" }] satisfies Instr[])
       : ([{ op: "call", funcIdx: failure.message.handle }] satisfies Instr[])),
@@ -135,7 +150,7 @@ export function buildNativeClosureMethodDefinition(
     result: anyLocal + 5,
   };
   const omittedLocal = anyLocal + 6;
-  let dispatch = buildClosureInvocationFailure(failure);
+  let dispatch = buildClosureInvocationFailure(failure, 1);
   for (const entry of [...entries].reverse()) {
     const argumentLocals = entry.params.map((_, index) => (index < arity ? index + 2 : omittedLocal));
     const argumentsBody = entry.params.flatMap((type, index) =>

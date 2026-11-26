@@ -21,6 +21,7 @@ import { WASI_NODE_FS_ALIAS_SENTINEL } from "./checker/node-capability-map.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
 import { resetDerivationFlagCache } from "./derivation-flags.js";
+import { deadBindingElisionApplies } from "./deadcode-elide.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
 import type { CodegenOptions } from "./codegen/context/types.js";
 import {
@@ -33,6 +34,7 @@ import {
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
+import type { AbortBodies } from "./ir/abort-bodies.js";
 import {
   prepareIrProgramPresentation,
   beginPreparedPresentationFinalization,
@@ -46,6 +48,7 @@ import {
 } from "./compiler/ir-program-presentation.js";
 import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
 import { preparedNumberFormatOptions, preparedPresentationPolicy } from "./compiler/prepared-provider-census.js";
+import { preparedCodeStrictness } from "./compiler/prepared-code-strictness.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
@@ -540,6 +543,15 @@ function diagnosticSeverity(diag: ts.Diagnostic, checker: ts.TypeChecker): "warn
     isArraySearchElementDiagnostic(diag)
     ? "warning"
     : "error";
+}
+
+/**
+ * The single-source compiler's type gate: a hard TypeScript diagnostic refuses the compile, in allowJs input too, and
+ * every other TypeScript error is reported and tolerated (#1927). The strict Prepared entry asks it for its
+ * single-source requests (#7354).
+ */
+function singleSourceHasHardTypeErrors(ast: Pick<TypedAST, "checker" | "diagnostics">): boolean {
+  return ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
 }
 
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
@@ -1117,8 +1129,14 @@ function runPipeline(input: PipelineInput): CompileResult {
   return finalizePipelineModule(input, mod, telemetry, { targetProfile, emitWatOutput, emitSourceMap });
 }
 
-/** Internal productive checkpoint; public entry points keep their existing route. */
-export function runPreparedIrPipelinePresentation(input: PipelineInput): PreparedIrPipelinePresentationResult {
+/**
+ * Internal productive checkpoint; public entry points keep their existing route. `unlowerableBodies` switches on the
+ * abort-body policy (#7354 U, `ir/abort-bodies.ts`) and records its functions.
+ */
+export function runPreparedIrPipelinePresentation(
+  input: PipelineInput,
+  unlowerableBodies?: AbortBodies,
+): PreparedIrPipelinePresentationResult {
   const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
   const { options, entryAst, multiAst, errors } = snapshot;
   const diagnostics = multiAst ?? {
@@ -1145,6 +1163,10 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     preparedFrontendBoundary.early(sourceFailure, rejected);
     return rejected;
   }
+  // The single-source compiler's type gate, asked after the early pass so that a hard diagnostic which is also an
+  // early error (TS1213, `class let {}`) keeps its certified early rejection.
+  if (!multiAst && singleSourceHasHardTypeErrors(entryAst))
+    return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(failResult(errors)) };
   const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
   const backendOptions: PreparedIrBackendOptions = {
     backend: targetProfile.backend,
@@ -1163,6 +1185,8 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       checker: entryAst.checker,
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
+      codeStrictness: preparedCodeStrictness(options.inferModuleStrictArguments),
+      unlowerableBodies,
     },
     backendOptions,
     output: {
@@ -1764,19 +1788,9 @@ export function compileSourceSync(
 
   processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
 
-  // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
-  // parsing so unreachable bodies do not register host imports. (#6898) The
-  // native regime in a JS environment elides too: which bindings are dead is a
-  // question of the implementation (`targetProfile.nativeRegime`), not of
-  // the embedder. Without it the unused test262 `$262.evalScript` shim kept a
-  // live direct `eval` and put every regime row into runtime-eval mode.
-  // Context-owned declarations remain observable from later Scripts even when
-  // this source never reads them. Private-program dead-binding proofs do not
-  // apply; keep their original source and stable IR inventory intact.
-  if (
-    !options.standaloneScriptVarBindings &&
-    (targetProfile.environment === "none" || targetProfile.environment === "wasi" || targetProfile.nativeRegime)
-  ) {
+  // Step 1a: #3418 — elide dead pure top-level bindings before parsing (which
+  // compiles do, and why: `deadBindingElisionApplies`).
+  if (deadBindingElisionApplies(targetProfile, options.standaloneScriptVarBindings)) {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
     processedSource = elision.source;
@@ -1881,9 +1895,8 @@ export function compileSourceSync(
   const hasSyntaxErrors = ast.syntacticDiagnostics.some(
     (d) => d.category === 1 && d.file === ast.sourceFile && !TOLERATED_SYNTAX_CODES.has(d.code),
   );
-  const hasHardTypeErrors = ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
 
-  if ((hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0) {
+  if ((hasSyntaxErrors || singleSourceHasHardTypeErrors(ast)) && errors.length > 0) {
     return failResult(errors);
   }
 

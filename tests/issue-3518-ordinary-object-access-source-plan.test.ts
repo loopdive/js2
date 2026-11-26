@@ -16,7 +16,7 @@ function prepare(source: string, extra: Record<string, string> = {}, name?: stri
   };
   visit(root);
   expect(sites.length).toBeGreaterThan(0);
-  return { ast, sites, resolver: prepareOrdinaryObjectAccessResolver(ast.checker, ast.sourceFiles, root) };
+  return { ast, sites, resolver: prepareOrdinaryObjectAccessResolver(ast.checker, ast.sourceFiles, root, () => false) };
 }
 const expected = { key: "value", resultType: { kind: "val", val: { kind: "f64" } } };
 describe("source-owned ordinary property reads", () => {
@@ -99,9 +99,12 @@ describe("source-owned ordinary property reads", () => {
     expect(p.resolver.preparedOrdinaryPropertyRead(clone.sites[0]!)).toBeUndefined();
     const declaration = clone.ast.entryFile.statements.find(ts.isFunctionDeclaration)!;
     expect(
-      prepareOrdinaryObjectAccessResolver(p.ast.checker, p.ast.sourceFiles, declaration).preparedOrdinaryPropertyRead(
-        clone.sites[0]!,
-      ),
+      prepareOrdinaryObjectAccessResolver(
+        p.ast.checker,
+        p.ast.sourceFiles,
+        declaration,
+        () => false,
+      ).preparedOrdinaryPropertyRead(clone.sites[0]!),
     ).toBeUndefined();
   });
   it("accepts genuine module statements without making a synthetic source", () => {
@@ -114,9 +117,12 @@ describe("source-owned ordinary property reads", () => {
     const access = statement.declarationList.declarations[0]?.initializer;
     if (!access || !ts.isPropertyAccessExpression(access)) throw new Error("missing property read");
     expect(
-      prepareOrdinaryObjectAccessResolver(ast.checker, ast.sourceFiles, [statement]).preparedOrdinaryPropertyRead(
-        access,
-      ),
+      prepareOrdinaryObjectAccessResolver(
+        ast.checker,
+        ast.sourceFiles,
+        [statement],
+        () => false,
+      ).preparedOrdinaryPropertyRead(access),
     ).toEqual(expected);
   });
 });
