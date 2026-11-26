@@ -28,6 +28,8 @@ func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
+  # (2026-11-26, RV7497 finding 3) +2: the move-only scan's named decline replaces the generic one.
+  - src/ir/select.ts::whyNotIrClaimable
 ---
 
 # #7525 — IR arithmetic on an `any` narrowed to `bigint` runs ToNumber
@@ -113,6 +115,17 @@ byte-identical. The real fix — ToNumeric dynamic ops that let the IR claim the
    `refuseUnselected(cx.unselected, "operand-coercion-unsupported", …)` when the predicate answers true. It is asked at
    the builder arms in (Cause). On the ordinary pipeline the selector refused first, so `refuseUnselected` is an
    invariant there, not a withdrawal; on the Prepared path it is the named refusal.
+
+### As built (2026-11-26)
+
+- The predicate, the host-free option builder and the builder refusal live in `src/ir/bigint-operand-refusal.ts`, not
+  in `module-bindings.ts`: one concern (the refusal), and the four wiring sites (both selector planners, the builder
+  resolver, the Prepared resolver in `program-source-units.ts`) then need one spread line each, where a
+  `module-bindings.ts` predicate needed a conditional object at each.
+- The rule is shared as `isBigIntUnsafeDynamicOperator(op)` (every typed binary operator but strict equality); the
+  builder also refuses at `lowerCompoundAssignment`'s dynamic arms (`*=`, `+=`, `-=`, `<<=`, …; RV7497).
+- A selector decline carries `operand-coercion-unsupported` (latched by `capabilityNo`), not the generic
+  `param-type-not-resolvable`.
 
 ### What it reuses, what it removes
 

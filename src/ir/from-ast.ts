@@ -13425,6 +13425,7 @@ function lowerCompoundAssignment(
     store(result, proof.resultEncoding);
     return result;
   }
+  if (slotFamily === "dynamic") refuseBigIntDynamicOperand(cx, id, rhs);
   // Dynamic += reads the binding before the RHS, then uses the same dynamic
   // addition producer as binary + (IR_DYN_ADD_FN).
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "dynamic") {

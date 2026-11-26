@@ -33,6 +33,14 @@ so legacy compiles them. That is a refusal, not support. Still wrong after #7525
 | `-t` on `t` narrowed to `bigint \| number`, `5n` | `-5n` | wrong | right after #7525 (refused) |
 | `-t`, `t * t`, … on an un-narrowed `t: any` holding a BigInt | BigInt result | NaN | NaN |
 
+Also pre-existing, identical on main (RV7497, review of PR #7497 at f510d93c):
+
+- legacy, both lanes: `let k = t; k *= 2` and `t >>> u` on a narrowed BigInt do not throw a TypeError; `t *= u`,
+  `t += u` and `t++` written to a narrowed **parameter** throw a wasm exception; on a module `var g: any = 5n`,
+  `g *= 2n`, `g += 2n`, `g -= h` and `g++` answer wrong;
+- Prepared path: `t += u` on a narrowed BigInt threw `PreparedIrProgramInvariantError: runtime support: support
+  supplied without primary demand` instead of refusing. #7525 now refuses it by name (`operand-coercion-unsupported`).
+
 ## Direction
 
 A dynamic numeric op family whose lowering is ToNumeric on the carrier:

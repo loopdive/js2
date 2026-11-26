@@ -1724,8 +1724,6 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
-const hasBigInt = (...operands: ts.Expression[]) =>
-  someBigIntOperand(currentSelectionOptions?.isBigIntOperand, ...operands);
 // #4787's exact exponentiation checkpoint is limited to an already-prepared
 // top-level function body. Retain the subject identity so a nested closure or
 // class member cannot inherit the outer function's checker proof.
@@ -2494,7 +2492,9 @@ function whyNotIrClaimable(
     containsDynamicCarrierForInHead(body)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
+    const latched = typedShapeRejectReason; // (#7525) a decline the scan names wins over the generic one
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
+      if (typedShapeRejectReason !== latched) return typedShapeRejectReason!;
       return dynNames.size > 0 ? "param-type-not-resolvable" : "return-type-not-resolvable";
     }
   }
@@ -3540,6 +3540,11 @@ function dynamicUsesAreMoveOnly(
   const carrierStaticValues = (e: ts.CallExpression): readonly ts.Expression[] | undefined =>
     certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic" ? e.arguments : objectStaticScanValues(e);
 
+  /** (#7525) A BigInt operand of a dynamic numeric arm below: refused by name, the arm cannot lower it (#7526). */
+  const refusesBigInt = (at: ts.Node, ...operands: ts.Expression[]): boolean =>
+    someBigIntOperand(currentSelectionOptions?.isBigIntOperand, ...operands) &&
+    !capabilityNo("operand-coercion-unsupported", "expr-dynamic-bigint-operand", at);
+
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
@@ -3976,7 +3981,8 @@ function dynamicUsesAreMoveOnly(
         );
       }
       // (#7525) The dynamic arms below cannot lower a BigInt operand (#7526).
-      if ((leftIsDyn || rightIsDyn) && isBigIntUnsafeDynamicOperator(op) && hasBigInt(e.left, e.right)) return false;
+      if ((leftIsDyn || rightIsDyn) && isBigIntUnsafeDynamicOperator(op) && refusesBigInt(e, e.left, e.right))
+        return false;
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
         if (!expectDyn) return false;
@@ -4087,13 +4093,13 @@ function dynamicUsesAreMoveOnly(
           e.operator === ts.SyntaxKind.MinusToken ||
           e.operator === ts.SyntaxKind.ExclamationToken)
       ) {
-        return (e.operator === ts.SyntaxKind.ExclamationToken || !hasBigInt(op)) && scanExpr(op, true);
+        return (e.operator === ts.SyntaxKind.ExclamationToken || !refusesBigInt(e, op)) && scanExpr(op, true);
       }
       if (
         isDynShaped(op) &&
         (e.operator === ts.SyntaxKind.PlusPlusToken || e.operator === ts.SyntaxKind.MinusMinusToken)
       ) {
-        return currentDynamicRuntimeBuildable && !hasBigInt(op) && scanExpr(op, true);
+        return currentDynamicRuntimeBuildable && !refusesBigInt(e, op) && scanExpr(op, true);
       }
       return scanExpr(op, false);
     }

@@ -83,7 +83,7 @@ describe.each(["gc", "standalone"] as const)("#7525 — numeric operators on a n
 describe("#7525 — the host-free IR refuses a BigInt operand of a dynamic numeric operator", () => {
   it("leaves `-t` on an `any` narrowed to bigint to legacy", async () => {
     const result = await compileTs(program(NARROW("return String(-t);"), 'f(5n, 2n) === "-5"'), "standalone");
-    expect(irOutcomeOfF(result)).not.toBe("emitted");
+    expect(irOutcomeOfF(result)).toBe("operand-coercion-unsupported");
   });
 
   // `bigint | number` has a BigInt member, so the IR refuses it; legacy's answer is still wrong on both lanes (#7526),
@@ -92,7 +92,17 @@ describe("#7525 — the host-free IR refuses a BigInt operand of a dynamic numer
     const fn =
       'function f(t: any): string { if (typeof t === "bigint" || typeof t === "number") return String(-t); return "o"; }';
     const result = await compileTs(program(fn, 'f(3) === "-3"'), "standalone");
-    expect(irOutcomeOfF(result)).not.toBe("emitted");
+    expect(irOutcomeOfF(result)).toBe("operand-coercion-unsupported");
+  });
+
+  // Strict equality and ToBoolean are exact on the carrier, so the IR keeps claiming them.
+  it.each([
+    ["t === u", NARROW("return String(t === u);"), 'f(5n, 5n) === "true"'],
+    ["!t", NARROW("return String(!t);"), 'f(0n, 2n) === "true" && f(5n, 2n) === "false"'],
+  ])("keeps %s on a narrowed BigInt on the IR", async (_, fn, check) => {
+    const result = await compileTs(program(fn, check), "standalone");
+    expect(await runMain(result, "standalone")).toBe(1);
+    expect(irOutcomeOfF(result)).toBe("emitted");
   });
 });
 
@@ -116,6 +126,17 @@ describe("#7525 — the Prepared path refuses the same operators by name", () =>
       'function f(t, u) { if (typeof t === "bigint" && typeof u === "bigint") return typeof (t * u); return "o"; }',
     ],
     ["++", 'function f(t) { if (typeof t === "bigint") { t++; return typeof t; } return "o"; }'],
+    ...["*=", "+=", "-=", "<<="].map(
+      (op) =>
+        [
+          `${op}`,
+          `function f(t, u) { if (typeof t === "bigint" && typeof u === "bigint") { t ${op} u; return typeof t; } return "o"; }`,
+        ] as const,
+    ),
+    [
+      "*= on a narrowed copy",
+      'function f(t, u) { if (typeof t === "bigint" && typeof u === "bigint") { var k = t; k *= u; return typeof k; } return "o"; }',
+    ],
   ])("%s on a narrowed BigInt", async (_, source) => {
     const result = await compilePrepared(source, options(), undefined, "refuse");
     expect(result.success).toBe(false);
@@ -124,8 +145,13 @@ describe("#7525 — the Prepared path refuses the same operators by name", () =>
     ]);
   });
 
-  it("still compiles the same operator on a narrowed number", async () => {
-    const source = 'function f(t) { if (typeof t === "number") return typeof -t; return "o"; }';
+  it.each([
+    ["unary -", 'function f(t) { if (typeof t === "number") return typeof -t; return "o"; }'],
+    [
+      "*=",
+      'function f(t, u) { if (typeof t === "number" && typeof u === "number") { t *= u; return typeof t; } return "o"; }',
+    ],
+  ])("still compiles %s on a narrowed number", async (_, source) => {
     const result = await compilePrepared(source, options(), undefined, "refuse");
     expect(result.errors).toEqual([]);
     expect(result.success).toBe(true);
