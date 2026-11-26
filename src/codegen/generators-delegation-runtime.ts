@@ -2,6 +2,7 @@
 /** Native yield-star protocol. Ordinary IteratorStep deliberately keeps its ABI. */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType, getOrRegisterVecType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
@@ -28,11 +29,7 @@ const getName = (key: Key) => `__gen_delegate_get_${key}`;
 const load = (index: number): Instr => ({ op: "local.get", index });
 const set = (index: number): Instr => ({ op: "local.set", index });
 const num = (value: number): Instr => ({ op: "i32.const", value });
-const call = (ctx: CodegenContext, name: string): Instr => {
-  const funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined) throw new Error(`Missing native delegation dependency ${name}`);
-  return { op: "call", funcIdx };
-};
+const call = (ctx: CodegenContext, name: string): Instr => ({ op: "call", funcIdx: requireHelper(ctx, name) });
 const branch = (then: Instr[], otherwise: Instr[] = [], type?: ValType): Instr => ({
   op: "if",
   blockType: type ? { kind: "val", type } : { kind: "empty" },

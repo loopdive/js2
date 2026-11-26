@@ -335,6 +335,7 @@ import type {
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { collectTupleArrayCarrierTypeIdxs } from "./array/tuple-array-carrier.js"; // (#7020)
 
 const restOnlyApplyServices = {
@@ -7450,40 +7451,38 @@ export function fillExternIsArray(ctx: CodegenContext): void {
     const F_REVOKED = 4;
     const revokedMsg = "Cannot perform operation on a proxy that has been revoked";
     addStringConstantGlobal(ctx, revokedMsg);
-    const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
-    if (typeErrorCtorIdx !== undefined) {
-      const exnTagIdx = ensureExnTag(ctx);
-      for (let depth = 0; depth < 4; depth += 1) {
-        body.push(
-          { op: "local.get", index: anyLocal },
-          { op: "ref.test", typeIdx: proxyTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: anyLocal },
-              { op: "ref.cast", typeIdx: proxyTypeIdx },
-              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                // FRESH Instr array per use — a SHARED one is double-remapped
-                // by the finalize dead-code walk (object-runtime-proxy.ts says
-                // so at `throwRevoked`).
-                then: [
-                  ...stringConstantExternrefInstrs(ctx, revokedMsg),
-                  { op: "call", funcIdx: typeErrorCtorIdx },
-                  { op: "throw", tagIdx: exnTagIdx },
-                ],
-              },
-              { op: "local.get", index: anyLocal },
-              { op: "ref.cast", typeIdx: proxyTypeIdx },
-              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
-              { op: "local.set", index: anyLocal },
-            ],
-          },
-        );
-      }
+    const typeErrorCtorIdx = requireHelper(ctx, "__new_TypeError");
+    const exnTagIdx = ensureExnTag(ctx);
+    for (let depth = 0; depth < 4; depth += 1) {
+      body.push(
+        { op: "local.get", index: anyLocal },
+        { op: "ref.test", typeIdx: proxyTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: proxyTypeIdx },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              // FRESH Instr array per use — a SHARED one is double-remapped
+              // by the finalize dead-code walk (object-runtime-proxy.ts says
+              // so at `throwRevoked`).
+              then: [
+                ...stringConstantExternrefInstrs(ctx, revokedMsg),
+                { op: "call", funcIdx: typeErrorCtorIdx },
+                { op: "throw", tagIdx: exnTagIdx },
+              ],
+            },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: proxyTypeIdx },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+            { op: "local.set", index: anyLocal },
+          ],
+        },
+      );
     }
   }
 
