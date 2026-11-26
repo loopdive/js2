@@ -97,7 +97,6 @@ export function test() {
     const r = await compile(src, { fileName: "t.js" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(r.binary)).toBe(true);
-    const { buildImports } = await import("../src/runtime.js");
     const instance = await instantiateWithRuntime(r);
     const exports = instance.exports as Record<string, () => unknown>;
     expect(exports.test()).toBe("foo:abcd");
