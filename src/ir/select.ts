@@ -9642,7 +9642,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
   // prepared component cannot name.
-  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr)) {
+  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr) && !readsTypedLocal(expr)) {
     return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
@@ -12287,6 +12287,17 @@ const RESOLVED_KIND_FAMILIES: Partial<Record<NonNullable<ResolvedKind>, OperandF
 /** The family of a resolved parameter or slot kind; `unknown` for a kind no predicate answer fits. */
 function resolvedKindFamily(kind: ResolvedKind): OperandFamily {
   return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
+}
+
+/**
+ * (#7408) Does `expr` read an unannotated local whose slot is not the carrier? Its family is `unknown` only
+ * because the binary does not trace the initializer; from-ast lowers it in the initializer's representation.
+ */
+function readsTypedLocal(expr: ts.BinaryExpression): boolean {
+  return [expr.left, expr.right].some((side) => {
+    const read = unwrapPhase1Parens(side);
+    return ts.isIdentifier(read) && unannotatedLocal(read) !== undefined && !dynamicShapedValue(read);
+  });
 }
 
 /** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
