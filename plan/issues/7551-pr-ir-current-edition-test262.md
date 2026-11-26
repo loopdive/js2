@@ -14,7 +14,7 @@ goal: ci-hardening
 sprint: current
 horizon: m
 es_edition: ES5
-related: [1897, 1956, 2097, 2519, 3448, 3467, 3431, 6760]
+related: [1897, 1956, 2097, 2178, 2519, 3448, 3467, 3431, 6760, 7552]
 ---
 
 # #7551 — per-merge test262 = IR path × current edition
@@ -231,6 +231,58 @@ about 10 min. Daily: about 950 once.
 **Size.** Part B touches the required check's content, `promote-baseline`
 triggers, the staleness alert and auto-park messaging. It should be its own
 PR stacked on this one (`claude/ci-legacy-daily`), after owner sign-off.
+
+#### Part B — decisions (owner approved the model, 2026-11-26)
+
+Job-graph changes in `test262-sharded.yml`:
+
+| Job | Before | After |
+|---|---|---|
+| `compiler-path-measurement-plan` | push, schedule, dispatch | + `merge_group` when `changes.run_shards`. Push is skipped when the queue already measured that SHA (probe on `test262-ir-standalone-edition-measurement` at `github.sha`). |
+| IR shards + `merge-ir-measurement` | push (full), schedule, dispatch | `merge_group` and push-MISS: edition. Schedule and dispatch: full. |
+| baseline for the edition diff | — | `merge_group`: lineage from `merge_group.base_sha`, distance 0 = the predecessor group or main tip. Push: lineage from `HEAD^`. |
+| `test262-shard-mg` (102 legacy) | merge_group | `if: false` (retired from the queue; the file's pattern for retired lanes) |
+| `test262-shard` (102 legacy) | push MISS, dispatch | **schedule** and dispatch |
+| `runtime-eval-provider` / `temporal-provider` | mg, push MISS, schedule, dispatch | schedule and dispatch |
+| `mg-artifact-probe` | push, dispatch | schedule and dispatch (always MISS there). The #3448 HIT path is dead because the queue no longer produces a legacy group artifact. |
+| `merge-report` (`merge shard reports`, required) | PR, mg, push, dispatch | PR: green no-op as before. **mg: the IR current-edition gate.** It passes when `run_shards` is false, otherwise it requires `merge complete IR standalone measurement` to succeed. Schedule and dispatch: the legacy gates as before (high-water, ratchet, #1897), plus a failure summary naming the commit range since the last successful daily run. |
+| `regression-gate` (required) | no-op | no-op, unchanged |
+| `promote-baseline` | push, dispatch | **schedule** and dispatch; still needs `merge-report` success, so a breached floor is not banked |
+
+Other decisions:
+
+- **Single legacy producer.** The daily `test262-sharded` schedule (02:23 UTC).
+  `refresh-baseline.yml` loses its 8-hourly cron and stays
+  `workflow_dispatch`-only: the emergency lever and the staleness auto-heal
+  target. Its 8-hourly run promoted **without** regression gates; keeping it
+  would bank regressions between daily audits.
+- **Staleness alert.** It checks the age of the standalone floor:
+  - breach when `baseline_generated_at` is older than **30 h** (daily cadence
+    plus a full run plus slack);
+  - the commit count is still reported, but no longer decides;
+  - the host lane is frozen (`test262-current.json` was generated
+    2026-10-11) and is no longer checked. Today it breaches on every
+    scheduled run: last 3 scheduled runs failed.
+- **Auto-park.**
+  - It already parks on any failed job in a failed `merge_group` run
+    (`scripts/auto-park-merge-group-failure.mjs:218`). The failed job here is
+    `merge complete IR standalone measurement`, failing step "Fail on an
+    edition regression (#7551)", and `merge shard reports` fails alongside it.
+  - The fail step emits one error annotation titled
+    `test262 regressions (#7551)`, listing the regressed tests (first 50).
+    Auto-park already reads the annotations of failed jobs (#4455). It now
+    also copies that annotation into the park comment, under the job line.
+- **"No baseline" frequency.** Exactly once after this lands: the first
+  queue run's nearest measurement is a pre-#7551 full artifact without
+  `scope.json`. After that, once per edition switch or eval-engine change.
+  In the normal case distance 0 hits: the predecessor group's artifact, or
+  the main tip's push/queue artifact. A test asserts this.
+- **Dead HOST_RAN-only gates** are left in place and filed as their own
+  cleanup issue (see `related`).
+- **Rollback.** Part B is one workflow commit plus its script and test
+  changes. `git revert <that commit>` restores the 102-shard legacy
+  merge_group gate, push-time promotion and the 8-hourly refresh. No baseline
+  file or required-check name changes, so the revert needs nothing else.
 
 ## Validation (Part A, local, 2026-11-26)
 
