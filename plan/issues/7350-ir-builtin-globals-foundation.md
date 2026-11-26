@@ -1271,8 +1271,8 @@ Three ordering notes for whichever lands second:
      write refuses through the expando. Part 1 alone would admit `Object.keys = f; Object.keys(o)` with the native
      `keys` folded in: a wrong answer, since `Object` is a complete object today. With part 2 that program does not
      fold.
-   - *Remaining holes, filed under #7503* (`plan/issues/7503-pristine-builtin-global-escaped-writes.md`, on
-     `origin/claude/prepared-eval-a7`; slice 1's PR adds these rows to it as plan text): an escape through the global
+   - *Remaining holes, filed under #7503* (its issue file is on
+     `origin/claude/prepared-eval-a7`, not yet on main; slice 1's PR adds these rows to it as plan text): an escape through the global
      object (`globalThis.Number`, `this.Number`, a global-object alias), and code run by eval or the `Function`
      constructor. Both stay unreachable while the Prepared path refuses `globalThis`, script-level `this` and
      unbound eval (#7503's "why it is mostly sound today").
