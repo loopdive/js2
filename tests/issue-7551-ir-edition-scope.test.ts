@@ -176,7 +176,7 @@ describe("#7551 per-test comparison", () => {
       paths,
       baseline: {
         statuses: statuses({ [ES5_A]: "pass", [ES2015]: "pass" }),
-        meta: meta({ scope: "full", edition: undefined, sourceSha: "daily" }),
+        meta: meta({ scope: "full", edition: undefined, sourceSha: "weekly" }),
         distance: 3,
       },
     });
@@ -281,14 +281,14 @@ describe("#7551 queue gate plumbing", () => {
     expect(code).toMatch(/if: steps\.staleness\.outputs\.breach == 'true'[\s\S]*?exit 1/);
   });
 
-  it("the floor goes stale by age, after a missed daily promotion, not by merge count", () => {
+  it("the floor goes stale by age, after a missed weekly promotion, not by merge count", () => {
     const now = Date.parse("2026-11-27T12:00:00Z");
-    expect(floorAge("2026-11-25T22:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
-      ageHours: 37.5,
+    expect(floorAge("2026-11-19T00:00:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 204,
       breach: true,
     });
-    expect(floorAge("2026-11-27T02:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
-      ageHours: 9.5,
+    expect(floorAge("2026-11-20T00:00:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 180,
       breach: false,
     });
     // No usable timestamp is "undetermined", never a false breach.

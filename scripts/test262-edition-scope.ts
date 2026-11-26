@@ -2,7 +2,7 @@
 /**
  * #7551 — the per-merge test262 scope: the CURRENT ES edition, on the IR path.
  *
- * The full corpus is measured daily. Every merge measures only the edition
+ * The full corpus is measured weekly. Every merge measures only the edition
  * being worked on (`scripts/test262-current-edition.json`) and compares it,
  * test by test, with the nearest earlier IR measurement on the same lineage.
  * A test of the edition that passed there and does not pass now is a
@@ -224,7 +224,7 @@ export function renderSummary(r: Report): string {
   const lines = [
     `## test262 on the IR path — ${r.edition} (current edition, #7551)`,
     "",
-    `Commit \`${r.sourceSha}\`. This is the edition only, not the full corpus (that runs daily).`,
+    `Commit \`${r.sourceSha}\`. This is the edition only, not the full corpus (that runs weekly).`,
     "",
     "| pass | fail | compile_error | other | total |",
     "|---:|---:|---:|---:|---:|",

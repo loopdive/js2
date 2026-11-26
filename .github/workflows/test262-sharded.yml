@@ -14,12 +14,12 @@ on:
   #     and auto-park parks the PR with the regressed tests listed.
   #   push        → nothing when the queue measured that SHA; a direct push
   #     runs the same edition measurement.
-  #   schedule (daily) / dispatch → the full legacy matrix with its gates
+  #   schedule (WEEKLY) / dispatch → the full legacy matrix with its gates
   #     (high-water floor, edition ratchet, #1897) and baseline promotion, plus
   #     the full-corpus IR measurement. Legacy and other-edition regressions
   #     are detected there, AFTER the fact, not blocked.
   # Rollback (gate only): restore this file and the gate tests from the last
-  # Part A commit dff600c97f — exact command in docs/ci-policy.md ("The
+  # Part A commit 39ef7afe08 — exact command in docs/ci-policy.md ("The
   # merge-queue test262 gate"); a plain revert of the Part B commits conflicts.
   #
   # This comment previously claimed "full 57-shard test262 runs at PR-time AND
@@ -81,7 +81,11 @@ on:
     branches: [main]
     types: [checks_requested]
   schedule:
-    - cron: "23 2 * * *"
+    # (#7551, owner decision 2026-11-26) The FULL run is WEEKLY: Sunday 02:23
+    # UTC, the lowest-traffic slot for the merge queue. GitHub fires scheduled
+    # runs late under load: the former daily 02:23 cron started 09:07–12:40
+    # UTC on 2026-11-12..26 (6.7–10.3 h late), so expect it around midday.
+    - cron: "23 2 * * 0"
   workflow_dispatch:
     inputs:
       compiler_path_measurement:
@@ -1904,7 +1908,7 @@ jobs:
     #     `test262-ir-standalone-edition-measurement`. A queue run measures the
     #     exact tree that lands, so the push after it reuses that artifact and
     #     runs nothing.
-    #   schedule (daily) / workflow_dispatch → the full corpus, 102 shards
+    #   schedule (weekly) / workflow_dispatch → the full corpus, 102 shards
     #     (~300 runner-min: a shard takes ~2 min because a file the IR does not
     #     fully lower is refused at compile time); uploaded as
     #     `test262-ir-standalone-measurement`, the only artifact the site reads.
@@ -1926,6 +1930,7 @@ jobs:
       edition: ${{ steps.plan.outputs.edition }}
       chunks: ${{ steps.plan.outputs.chunks }}
       matrix: ${{ steps.plan.outputs.matrix }}
+      max_parallel: ${{ steps.plan.outputs.max_parallel }}
       artifact: ${{ steps.plan.outputs.artifact }}
     steps:
       - name: Read the current-edition config
@@ -1980,9 +1985,12 @@ jobs:
           const cells = run ? [{ compilerPath: 'ir', target: 'standalone', scope, edition, chunks }] : [];
           console.log(JSON.stringify({ run, cells, promotion: false }));
           const matrix = JSON.stringify(Array.from({ length: chunks }, (_, i) => i + 1));
+          // The weekly full run shares ~120 runners with the legacy matrix (also 40) and the queue;
+          // the per-merge edition run is small and on the critical path, so it is never throttled.
+          const maxParallel = scope === 'full' ? 40 : chunks;
           const { appendFileSync } = await import('node:fs');
           appendFileSync(process.env.GITHUB_OUTPUT,
-            `run=${run}\nscope=${scope}\nedition=${edition}\nchunks=${chunks}\nmatrix=${matrix}\nartifact=${artifact}\n`);
+            `run=${run}\nscope=${scope}\nedition=${edition}\nchunks=${chunks}\nmatrix=${matrix}\nmax_parallel=${maxParallel}\nartifact=${artifact}\n`);
           // IR_MEASUREMENT_PLAN_END
           NODE
 
@@ -1992,7 +2000,7 @@ jobs:
     # (#7551) `!cancelled()` + explicit results: `changes` (an ancestor of the
     # plan) does not run on schedule, and GitHub propagates a skipped ancestor
     # through the plan's always() into any dependant without a status function
-    # (the #3611 hazard) — the daily full run would be skipped silently.
+    # (the #3611 hazard) — the weekly full run would be skipped silently.
     if: |
       !cancelled() &&
       needs.compiler-path-measurement-plan.result == 'success' &&
@@ -2001,6 +2009,8 @@ jobs:
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      # Full scope: 40 (see the plan); edition scope: all chunks at once.
+      max-parallel: ${{ fromJSON(needs.compiler-path-measurement-plan.outputs.max_parallel) }}
       matrix:
         chunk: ${{ fromJSON(needs.compiler-path-measurement-plan.outputs.matrix) }}
         target:
@@ -2285,7 +2295,7 @@ jobs:
           name: ${{ needs.compiler-path-measurement-plan.outputs.artifact }}
           path: ir-measurement
           if-no-files-found: error
-          # The daily full run carries the 90-day history; per-merge edition runs only serve as baselines.
+          # The weekly full run carries the 90-day history; per-merge edition runs only serve as baselines.
           retention-days: ${{ env.SCOPE == 'edition' && 14 || 90 }}
           # A re-run of failed jobs re-uploads under the same name.
           overwrite: true
@@ -2310,7 +2320,7 @@ jobs:
   test262-shard:
     # Heavy 102-shard standalone test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR and (#7551) NOT on every merge:
-    #   schedule (daily) → the legacy-lane audit + baseline update.
+    #   schedule (weekly) → the legacy-lane audit + baseline update.
     #   workflow_dispatch → manual reruns.
     # The merge queue gates on the IR current edition instead (#7551); the
     # consolidated `test262-shard-mg` job below is retired.
@@ -2329,13 +2339,19 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # the same 102 standalone shards for push baseline updates and manual reruns.
     needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline]
-    # (#7551) The legacy lane runs ONCE A DAY (schedule) and on dispatch, no
+    # (#7551) The legacy lane runs ONCE A WEEK (schedule) and on dispatch, no
     # longer per merge: the merge queue gates on the IR current edition, and
     # this run is the after-the-fact audit plus baseline promotion for
-    # everything else. `changes` does not run on schedule, hence always() and
-    # the explicit results of the jobs that do.
+    # everything else. `changes` does not run on schedule, hence a status
+    # function (!cancelled(), so a cancelled run stops) and the explicit
+    # results of the jobs that do run.
+    #
+    # max-parallel 40: the weekly run starts this matrix and the full IR one
+    # (also 40) together; 80 of the ~120 runners leaves room for the merge
+    # queue's own 8-shard IR gate instead of stalling it for hours (set on the
+    # matrix's `strategy` below).
     if: |
-      always() &&
+      !cancelled() &&
       needs.mg-artifact-probe.result == 'success' &&
       needs.runtime-eval-provider.result == 'success' &&
       needs.temporal-provider.result == 'success' &&
@@ -2362,6 +2378,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      max-parallel: 40
       matrix:
         # The existing 102-shard budget now belongs entirely to standalone.
         chunk:
@@ -2694,7 +2711,7 @@ jobs:
     #
     # (#7551) Retired from the queue: `merge_group` gates on the IR current
     # edition (`test262-ir-measurement-shard`, `merge complete IR standalone
-    # measurement`), and the legacy lane runs daily (`test262-shard` on
+    # measurement`), and the legacy lane runs weekly (`test262-shard` on
     # schedule). Rollback: docs/ci-policy.md ("The merge-queue test262 gate").
     if: false
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
@@ -2930,10 +2947,10 @@ jobs:
     #                  complete IR standalone measurement` (a per-test pass →
     #                  not-pass in the current edition fails it). The legacy
     #                  matrix no longer runs in the queue.
-    #   schedule / workflow_dispatch → the legacy lane's gates on the daily
+    #   schedule / workflow_dispatch → the legacy lane's gates on the weekly
     #                  full matrix (high-water floor, edition ratchet, #1897);
     #                  a breach fails the scheduled run and names the commit
-    #                  range since the last green daily run. Detected after the
+    #                  range since the last green weekly run. Detected after the
     #                  fact, not blocked.
     #   push → not run (no legacy shards on push any more).
     if: |
@@ -2943,7 +2960,7 @@ jobs:
     needs:
       [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline, merge-ir-measurement]
     runs-on: ubuntu-latest
-    # actions:read — the daily-breach summary looks up the last green scheduled run.
+    # actions:read — the weekly-breach summary looks up the last green scheduled run.
     permissions:
       contents: read
       actions: read
@@ -3395,6 +3412,7 @@ jobs:
       # this step from vetoing a deliberate re-baseline the script approved
       # (pre-#3303 it re-derived net from the raw count and disagreed).
       - name: Standalone regression guard (#1897)
+        id: standalone_guard
         if: env.STANDALONE_RAN == 'true'
         env:
           STANDALONE_REGRESSION_TOLERANCE: "15"
@@ -3576,10 +3594,10 @@ jobs:
 
       # (#7551) The #1668 stale-baseline guard (fail when the promoted baseline
       # is > 50 test262-relevant commits behind main) is gone. It now only ran
-      # on the daily legacy run, where a day of merges routinely exceeds it
+      # on the weekly legacy run, where a week of merges always exceeds it
       # (24 h windows found in the #7551 review: 65/202, 45/146, 29/97
       # relevant/total commits) and a
-      # failure skips promotion, so every later daily run would fail the same
+      # failure skips promotion, so every later run would fail the same
       # way. A promotion that stops landing is caught by the floor-AGE alert
       # (baseline-floor-staleness-alert.yml), which does not lock itself.
 
@@ -3634,24 +3652,29 @@ jobs:
           if-no-files-found: warn
 
       # (#7551) The legacy lane is no longer a merge gate, so a breach found by
-      # the daily run is AFTER THE FACT: name what landed since the last green
-      # daily run, so it can be attributed without a bisect. The regressed
+      # the weekly run is AFTER THE FACT: name what landed since the last green
+      # weekly run, so it can be attributed without a bisect. The regressed
       # tests themselves are listed by the guard steps above.
-      - name: Name the commits since the last green daily run (#7551)
-        if: failure() && github.event_name == 'schedule'
+      - name: Name the commits since the last green weekly run (#7551)
+        # Only when a verdict step failed: a cancelled or infrastructure-failed
+        # run is not "a regression".
+        if: |
+          always() && github.event_name == 'schedule' && env.STANDALONE_RAN == 'true' &&
+          (steps.standalone_highwater.outcome == 'failure' || steps.edition_ratchet.outcome == 'failure' ||
+           steps.standalone_guard.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           PREV=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test262-sharded.yml/runs?event=schedule&status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)
           {
-            echo "## Daily legacy test262 run found a regression (#7551)"
+            echo "## Weekly full test262 run found a regression (#7551)"
             echo ""
             echo "The merge queue gates only on the IR current edition, so this was not blocked at merge time."
             if [ -z "$PREV" ]; then
-              echo "No earlier green daily run was found; inspect the history before \`${GITHUB_SHA}\`."
+              echo "No earlier green weekly run was found; inspect the history before \`${GITHUB_SHA}\`."
             else
-              echo "Merged since the last green daily run (\`${PREV}\` .. \`${GITHUB_SHA}\`):"
+              echo "Merged since the last green weekly run (\`${PREV}\` .. \`${GITHUB_SHA}\`):"
               echo ""
               gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_SHA}" \
                 --jq '.commits[] | select(.parents | length > 1) | "- \(.sha[0:10]) \(.commit.message | split("\n")[0])"' \
@@ -4501,9 +4524,9 @@ jobs:
     # still honouring cancellation, and the explicit `needs.*.result` checks
     # below restore the failure semantics the implicit `success()` provided.
     #
-    # (#7551) Promotion moved from push to the DAILY schedule (and dispatch):
+    # (#7551) Promotion moved from push to the WEEKLY schedule (and dispatch):
     # the legacy matrix no longer runs per merge, so the baseline, the landing
-    # page numbers and `runs/index.json` are as of the last green daily run.
+    # page numbers and `runs/index.json` are as of the last green weekly run.
     # `merge-report` must succeed first, so a breached floor is never banked.
     if: |
       !cancelled() &&

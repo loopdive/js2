@@ -155,7 +155,7 @@ jobs:
           // Edition artifacts are optional (older measurements predate them): absent means unmeasured.
           const optional = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return undefined; } };
           let latest;
-          // Only full-corpus runs (daily/dispatch) carry this name; per-merge runs measure one
+          // Only full-corpus runs (weekly/dispatch) carry this name; per-merge runs measure one
           // edition under test262-ir-standalone-edition-measurement and never reach the site (#7551).
           // The history keeps the newest valid measurement of each day.
           const days = new Set();

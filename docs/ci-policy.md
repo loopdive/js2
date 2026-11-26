@@ -46,7 +46,7 @@ classic endpoint (`gh api repos/loopdive/js2wasm/branches/main/protection`) answ
 | Check name                          | Workflow file                           | What it gates                                                                                                                                                                                                                                                                                |
 | ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
-| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | **merge queue (#7551):** the IR-path current-edition gate — fails on any pass → not-pass of the current edition against the base commit's IR measurement. **Daily / dispatch:** aggregates the 102 legacy standalone shards and runs the legacy gates (standalone net guard #1897, high-water floor #2097, per-edition ratchet), which there detect regressions after the fact — see §3 |
+| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | **merge queue (#7551):** the IR-path current-edition gate — fails on any pass → not-pass of the current edition against the base commit's IR measurement. **Weekly full run / dispatch:** aggregates the 102 legacy standalone shards (weekly) and runs the legacy gates (standalone net guard #1897, high-water floor #2097, per-edition ratchet), which there detect regressions after the fact — see §3 |
 | `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
 | `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
 | `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | js-host rolling-baseline diff (`scripts/diff-test262.ts`). A **net** gate, not a per-row one: fails when net (improvements − wasm-change regressions) < 0, when any path bucket has > 50 regressions, when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions, or on any uncatchable-trap growth (#3189). A +5 / −4 diff passes it. Pass→fail rows of a **completed** edition are blocked by `merge shard reports` instead — see "What blocks a pass→fail row" in §3 |
@@ -176,7 +176,7 @@ Two test262 workflows currently run on PRs:
 
 - **`test262-sharded.yml` is the authoritative PR gate.** The required
   check is `merge shard reports`. Since #7551 it carries the IR-path
-  current-edition gate in the merge queue, and the legacy matrix runs daily
+  current-edition gate in the merge queue, and the legacy matrix runs weekly
   (see "The merge-queue test262 gate" below). The queue-model notes that
   follow describe the legacy matrix as it ran in the queue until then.
   - Queue model (#109 → #1956, see `plan/method/pr-drift-protocol.md`):
@@ -447,7 +447,7 @@ Owner decision, 2026-11-26.
 | `pull_request` | none | green no-op |
 | `merge_group` | IR path (`TEST262_COMPILER_PATH=ir`, standalone), current edition only (`scripts/test262-current-edition.json`: ES5, 8 shards) | **gate**: fails when a test of that edition went pass → not-pass against the IR measurement of the group's `base_sha` |
 | `push` to main | nothing, when the queue already measured this SHA; a direct push runs the edition measurement | not run |
-| `schedule` (daily, 02:23 UTC) / dispatch | full legacy matrix (102 shards) with the high-water floor, edition ratchet and #1897 guard, then `promote-baseline`; full-corpus IR measurement | the legacy gates; a breach fails the scheduled run, blocks promotion, and names the commits since the last green daily run |
+| `schedule` (**weekly**, Sunday 02:23 UTC) / dispatch | full legacy matrix (102 shards) with the high-water floor, edition ratchet and #1897 guard, then `promote-baseline`; full-corpus IR measurement. Both matrices run at `max-parallel: 40`, so about 40 of the ~120 runners stay free for the merge queue | the legacy gates; a breach fails the scheduled run, blocks promotion, and names the commits since the last green weekly run |
 
 **Edition measurement details:**
 
@@ -481,22 +481,34 @@ Owner decision, 2026-11-26.
 **What this trades away:**
 
 - A legacy-lane regression, or one in another edition, is detected after
-  the fact (within a day), not blocked.
+  the fact (within a week), not blocked.
 - The landing page, `test262-current.json` and the js2wasm-baselines floor
-  are as of the last green daily run.
+  are as of the last green weekly run.
+- **Before a release, the full run is dispatched by hand and must be green:**
+  `gh workflow run test262-sharded.yml --ref main`, then check that
+  `merge shard reports` and `promote merged report to main baseline`
+  passed.
+- Known limit: an infrastructure failure in the queue gate (a baseline
+  download that fails after its retries, or a crashed report) makes the
+  queue retry the PR with no cap. There is no retry counter; a persistent
+  infrastructure failure shows up as a PR cycling in the queue.
 - `refresh-baseline.yml` is dispatch-only. Its 8-hourly cron promoted
   without gates.
-- `baseline-floor-staleness-alert.yml` breaches on floor **age** above 36 h.
-  The cron (02:23 UTC) actually started 09:07–12:40 UTC on 2026-11-12..26
-  (start-to-start gaps 22.8–25.8 h), and a run takes ~2–4 h before it
-  promotes, so a healthy floor can reach ~30 h. One fully missed
-  promotion (~48 h) still breaches.
-  It **only alerts**: the run fails and names the age and the last green
-  daily run. Its auto-heal, a forced `refresh-baseline.yml` dispatch, was
-  removed (owner decision 2026-11-26), because after a failed daily run it
+- `baseline-floor-staleness-alert.yml` breaches on floor **age** above
+  192 h (8 days). The derivation:
+  - 168 h of weekly cadence;
+  - 3.6 h of start jitter: the 02:23 UTC cron fired 6.7–10.3 h late on
+    2026-11-12..26;
+  - about 4 h of run time before promotion.
+
+  A healthy floor therefore reaches about 176 h. 192 h leaves 16 h of slack,
+  and a second missed promotion (about 336 h) still breaches long after.
+  The alert **only alerts**: the run fails and names the age and the last
+  green weekly run. Its auto-heal, a forced `refresh-baseline.yml` dispatch,
+  was removed (owner decision 2026-11-26), because after a failed run it
   would bank the regression. A forced refresh is a manual dispatch only.
 
-**Full-corpus IR runs** (daily, dispatch) upload
+**Full-corpus IR runs** (weekly, dispatch) upload
 `test262-ir-standalone-measurement`. That is the only IR artifact the site
 reads (`deploy-pages.yml` lists artifacts by that name), so site IR numbers
 are as of the last full run.
@@ -504,10 +516,10 @@ are as of the last full run.
 **Rollback (the gate only; the alert-only staleness rule stays):** a plain
 `git revert` of the Part B commits does not apply cleanly (5d7abeaf87 and
 the auto-heal removal 3c90c135e2 touch the same files). Instead, restore
-the gate's files from the last Part A commit, `dff600c97f`, in one PR:
+the gate's files from the last Part A commit, `39ef7afe08`, in one PR:
 
 ```bash
-git checkout dff600c97f -- \
+git checkout 39ef7afe08 -- \
   .github/workflows/test262-sharded.yml .github/workflows/refresh-baseline.yml \
   .github/workflows/retry-test262-baseline.yml scripts/test262-ir-pages-artifacts.test.mjs \
   tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
@@ -516,8 +528,8 @@ git checkout dff600c97f -- \
 git rm tests/issue-7551-job-skip-propagation.test.ts  # models the #7551 job graph only
 ```
 
-That brings back the 102-shard legacy merge_group gate, promotion on push
-and the 8-hourly refresh. It leaves alone the alert-only, age-based
+That brings back the 102-shard legacy merge_group gate, promotion on push,
+the daily full IR run and the 8-hourly refresh. It leaves alone the alert-only, age-based
 staleness check (`baseline-floor-staleness-alert.yml`,
 `check-baseline-floor-staleness.mjs`), the auto-park changes and the
 scope script. Then edit the Cadence text in CLAUDE.md and this section by
@@ -805,7 +817,7 @@ much tighter floor.
 
 **Floor-holding, not absolute-target.** The standalone guard diffs against
 `test262-standalone-current.jsonl` — the moving standalone baseline that
-`promote-baseline` refreshes on every daily run (on every push to main before
+`promote-baseline` refreshes on every weekly full run (on every push to main before
 #7551, when this guard still gated PRs in the queue). So it pins **whatever
 floor standalone is currently at**: a PR that leaves standalone unchanged
 (net 0) or improves it (net > 0) always passes; only a PR that drops the
@@ -877,7 +889,7 @@ re-baseline branches (a genuinely new trap is a real regression regardless of an
 oracle bump; the trap categories are not touched by any oracle reclassification,
 so they stay comparable across a forward bump). **Decreases auto-bank** with no
 per-PR baseline-bump merge conflict: the ratchet reads the committed baseline
-jsonl that `promote-baseline` re-seeds on every daily run (#1528/#3131, #7551), so a
+jsonl that `promote-baseline` re-seeds on every weekly full run (#1528/#3131, #7551), so a
 trap fix lowers the floor automatically on the next promote — there is no
 separate ratchet baseline file. Byte-identical (`wasm_sha`-unchanged) pass→trap
 flips are excluded as CI runner noise, exactly like the `net_per_test` gate's
@@ -1048,7 +1060,7 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 | Required check                      | Workflow              | What it protects against                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
-| `merge shard reports`               | `test262-sharded.yml` | **in the merge queue:** the IR-path current-edition per-test gate (#7551) — each PR validated on its own merge_group ref against the measurement of the commit its group was built on. **On the daily run:** the legacy standalone lane's aggregate and gates (#1897, #2097, edition ratchet), not a merge gate — see §3. |
+| `merge shard reports`               | `test262-sharded.yml` | **in the merge queue:** the IR-path current-edition per-test gate (#7551) — each PR validated on its own merge_group ref against the measurement of the commit its group was built on. **On the weekly full run:** the legacy standalone lane's aggregate and gates (#1897, #2097, edition ratchet), not a merge gate — see §3. |
 | `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
 | `check for test262 regressions`     | `test262-sharded.yml` | js-host net gate (net ≥ 0, ≤ 50 per bucket, ratio, trap growth) below the inline catastrophic threshold. Not per-row: pass→fail rows of a completed edition are blocked by `merge shard reports` (§3, #6786).                                                                                                                                                                                                                                                                         |
@@ -1212,3 +1224,9 @@ Version tags (`v*`) drive `publish-npm.yml`, which publishes whatever
 lockstep with `node scripts/release.mjs <x.y.z>`, land a `release:` PR, then
 tag the merge commit — the workflow's `verify-version` job fails the publish
 if the tag and `package.json` versions disagree. Full flow: [releasing.md](releasing.md).
+
+**Before tagging, the full test262 run must be green on the release commit
+(#7551).** The merge queue only gates the IR current edition; the full run
+(legacy matrix and full-corpus IR) is weekly. Dispatch it by hand on `main`
+with `gh workflow run test262-sharded.yml --ref main`, then wait for
+`merge shard reports` and `promote merged report to main baseline` to pass.

@@ -19,13 +19,13 @@
 // It does NOT promote anything; it only reports. A wrapping workflow decides
 // whether to alert based on the threshold breach (exit code 2).
 //
-// (#7551) Since the legacy lane runs daily, the breach is decided by the
+// (#7551) Since the legacy lane runs weekly, the breach is decided by the
 // floor's AGE (`baseline_generated_at`), not by the commit count, which is
 // still measured and reported. Only the standalone floor is checked; the host
 // floor is frozen (#6979).
 //
 // Inputs (env or flags):
-//   --max-age-hours N     floor age before staleness is a breach (default 36; env MAX_FLOOR_AGE_HOURS)
+//   --max-age-hours N     floor age before staleness is a breach (default 192; env MAX_FLOOR_AGE_HOURS)
 //   --max-behind N        cap on the reported commit walk (default 25)
 //   --repo loopdive/js2wasm-baselines   baselines repo (default)
 //   --ref main            git ref of `main` to measure against (default origin/main)
@@ -40,7 +40,7 @@
 // Exit codes:
 //   0 — floor is fresh (within threshold) OR staleness undetermined (floor SHA
 //       unreachable / fetch failed) — never blocks on uncertainty
-//   2 — the standalone floor is older than --max-age-hours (the daily
+//   2 — the standalone floor is older than --max-age-hours (the weekly
 //       promotion did not land — the caller alerts; #7551 removed the auto-heal)
 //   3 — internal/usage error
 
@@ -51,15 +51,17 @@ import { fileURLToPath } from "node:url";
 
 const RAW_BASE = (repo) => `https://raw.githubusercontent.com/${repo}/main`;
 
-// (#7551) The standalone floor is promoted by the DAILY legacy run, so it
-// legitimately trails main by a whole day's merges. Staleness is therefore an
-// AGE. The cron (02:23 UTC) is not punctual: on 2026-11-12..26 the daily run
-// started between 09:07 and 12:40 UTC, so start-to-start gaps were 22.8–25.8 h,
-// and a full legacy run takes ~2–4 h before it promotes. A floor can therefore
-// legitimately reach ~30 h; 36 h cannot false-alarm on that jitter, while one
-// fully missed daily promotion (~48 h) still breaches. The relevant-commit
-// count is still reported, but no longer decides.
-export const DEFAULT_MAX_FLOOR_AGE_HOURS = 36;
+// (#7551) The standalone floor is promoted by the WEEKLY full run (owner
+// decision 2026-11-26), so it legitimately trails main by a week of merges.
+// Staleness is therefore an AGE, derived from what was measured:
+//   168 h  the weekly cadence;
+//   + 3.6 h start jitter: the 02:23 UTC cron fired 6.7–10.3 h late on
+//          2026-11-12..26 (09:07–12:40 UTC), a 3.6 h spread between runs;
+//   + 4 h  a full run before it promotes (2–4 h; 11:08 → 15:03 on 2026-11-26).
+// A healthy floor can reach ~176 h. 192 h (8 days) leaves 16 h of slack for
+// worse jitter and still breaches long before a second missed promotion
+// (~336 h). The relevant-commit count is still reported, but no longer decides.
+export const DEFAULT_MAX_FLOOR_AGE_HOURS = 192;
 
 /** Age of a floor and whether it breaches; null when its timestamp is unusable (never a false breach). */
 export function floorAge(generatedAt, nowMs, maxAgeHours) {
@@ -342,7 +344,7 @@ async function main() {
     const atLeast = drift.exact ? "" : "≥";
     const ageText = age === null ? "of unknown age" : `${age.ageHours.toFixed(1)} h old`;
     console.error(
-      `::${level}::[${lane}] floor ${floor.sha.slice(0, 8)} is ${ageText} (max ${args.maxAgeHours} h) and ${atLeast}${drift.relevant} test262-relevant commit(s) behind ${args.ref}${isBreach ? " — STALE FLOOR, the daily promotion likely failed or was dropped (#2178, #7551)" : ""}.`,
+      `::${level}::[${lane}] floor ${floor.sha.slice(0, 8)} is ${ageText} (max ${args.maxAgeHours} h) and ${atLeast}${drift.relevant} test262-relevant commit(s) behind ${args.ref}${isBreach ? " — STALE FLOOR, the weekly promotion likely failed or was dropped (#2178, #7551)" : ""}.`,
     );
   }
 

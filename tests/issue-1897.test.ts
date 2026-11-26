@@ -30,7 +30,7 @@ describe("#1897 standalone test262 merge gate", () => {
     const standaloneGuard = workflow.indexOf("- name: Standalone regression guard (#1897)");
     expect(standaloneReport).toBeGreaterThanOrEqual(0);
     expect(standaloneGuard).toBeGreaterThan(standaloneReport);
-    // (#7551) The commit-count stale-baseline guard locked the daily run red
+    // (#7551) The commit-count stale-baseline guard locked the scheduled run red
     // (a day of merges exceeds it, and a failure skips promotion); the floor
     // AGE alert covers a promotion that stops landing.
     expect(workflow).not.toContain("- name: Stale-baseline guard (#1668)");

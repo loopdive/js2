@@ -290,10 +290,10 @@ Other decisions:
   fails on the Part B head `d4b7bf66ac` in 10 files that later commits
   changed, `3c90c135e2` among them. Reverting those commits as well would
   also bring back the auto-heal. The verified procedure restores the gate's files from the last
-  Part A commit, `dff600c97f`, in one PR:
+  Part A commit, `39ef7afe08`, in one PR:
 
   ```bash
-  git checkout dff600c97f -- \
+  git checkout 39ef7afe08 -- \
     .github/workflows/test262-sharded.yml .github/workflows/refresh-baseline.yml \
     .github/workflows/retry-test262-baseline.yml scripts/test262-ir-pages-artifacts.test.mjs \
     tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
@@ -533,7 +533,7 @@ Other decisions:
 
 - Setup: a scratch copy of the Part B head `d4b7bf66ac` (via `git archive`,
   because the worktree guards forbid a second worktree), with the rollback
-  files restored from `dff600c97f`.
+  files restored from `39ef7afe08`.
 - Results:
   - `test262-ir-pages-artifacts.test.mjs`: 57/57.
   - Auto-park self-check: OK.
@@ -564,3 +564,46 @@ Other decisions:
   - "No baseline" now means no comparable measurement among those
     candidates.
   - Tested (`candidateRejection`).
+
+## Delta review fixes, Part B — weekly full run (2026-11-26)
+
+- **Weekly, not daily (owner decision).** `test262-sharded.yml` schedule
+  `23 2 * * 0` (Sunday 02:23 UTC, the lowest-traffic slot for the queue)
+  runs the full legacy matrix, the full-corpus IR run and promotion.
+  - Observed jitter: the former daily 02:23 cron started 09:07–12:40 UTC on
+    2026-11-12..26, i.e. 6.7–10.3 h late.
+  - All "daily" wording is now "weekly": workflow header and comments, the
+    "Name the commits since the last green weekly run" step and its summary,
+    CLAUDE.md Cadence block and baseline table ("as of the last green weekly
+    run"), docs/ci-policy.md, the refresh/retry/staleness workflows, the
+    scope script's summary, the tests.
+  - Before a release the full run is dispatched by hand and must be green:
+    CLAUDE.md, docs/ci-policy.md §10 and docs/releasing.md.
+- **Staleness threshold 192 h (8 days), still alert-only.** The derivation:
+  - 168 h of weekly cadence;
+  - 3.6 h of observed start-jitter spread;
+  - about 4 h of run time before promotion (2–4 h; 11:08 → 15:03 on
+    2026-11-26).
+
+  A healthy floor reaches about 176 h, so 192 h leaves 16 h of slack.
+- **max-parallel.**
+  - `test262-shard` runs at 40.
+  - `test262-ir-measurement-shard` takes `max-parallel` from a new plan
+    output, `max_parallel`: 40 in full scope, the chunk count in edition
+    scope.
+  - The pages test asserts full = 40 and edition ≥ its chunk count. The
+    per-lane test pins the legacy 40. The skip-propagation model is
+    unaffected (strategy is not part of `if:`).
+- **retry-test262-baseline.yml** retries the weekly schedule run. Its shard
+  pattern now also matches `test262 IR standalone measurement shard N`, so
+  a transient IR shard failure no longer blocks the auto-retry. A test
+  extracts the bash pattern and checks matching and non-matching names.
+- **Nits.**
+  - `test262-shard` uses `!cancelled()` instead of `always()`.
+  - The commit-range step runs only when a verdict step failed (high-water,
+    edition ratchet or #1897 guard), never on a cancelled or
+    infrastructure-failed run.
+  - The known limit (an uncapped infra retry in the queue) is documented in
+    CLAUDE.md and ci-policy.md; no counter was built.
+- **Runner contention, now addressed.** The weekly run is capped at 40 + 40
+  of the ~120 runners, leaving about 40 for the queue's 8-shard gate.

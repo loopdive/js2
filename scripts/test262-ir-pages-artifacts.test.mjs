@@ -306,6 +306,8 @@ test("every daily run has exactly the full IR standalone cell and never Host", a
     JSON.parse(outputs.matrix),
     Array.from({ length: 102 }, (_, i) => i + 1),
   );
+  // The weekly full run is throttled so the merge queue keeps runners.
+  assert.equal(outputs.max_parallel, "40");
 });
 test("every merge to main measures only the configured current edition, under its own artifact name", async () => {
   const { edition, chunks } = JSON.parse(currentEdition);
@@ -321,6 +323,8 @@ test("every merge to main measures only the configured current edition, under it
   // The site lists artifacts by the full name; an edition run must never carry it.
   assert.equal(outputs.artifact, "test262-ir-standalone-edition-measurement");
   assert.match(pagesWorkflow, /artifacts\?name=test262-ir-standalone-measurement&/);
+  // The edition run is on the merge queue's critical path: never throttled below its chunk count.
+  assert.ok(Number(outputs.max_parallel) >= chunks, `max_parallel ${outputs.max_parallel} < ${chunks} chunks`);
 });
 test("a merge with an unusable current-edition config fails the plan instead of measuring the wrong scope", async () => {
   for (const config of [{ edition: "ES5" }, { edition: "ES5", chunks: 0 }, { chunks: 8 }])
@@ -533,7 +537,7 @@ test("IR merge keeps the site-facing reports to the full scope and gates the edi
   ])
     assert.match(step(name), /if: env\.SCOPE == 'full'/);
   const fetch = step("Download the nearest earlier IR measurement (#7551)");
-  assert.match(fetch, /fetch-baseline --from "\$FROM"/);
+  assert.match(fetch, /fetch-baseline \\\s+--from "\$FROM" --meta ir-measurement\/scope\.json --dest ir-baseline/);
   // The queue diffs against the commit its group was built on; a push against its parent.
   assert.match(
     fetch,
@@ -573,6 +577,10 @@ test("IR shards take their partition from the plan and filter to the edition onl
   );
   assert.match(shard, /chunk: \$\{\{ fromJSON\(needs\.compiler-path-measurement-plan\.outputs\.matrix\) \}\}/);
   assert.match(shard, /TEST262_CHUNK_TOTAL: \$\{\{ needs\.compiler-path-measurement-plan\.outputs\.chunks \}\}/);
+  assert.match(
+    shard,
+    /max-parallel: \$\{\{ fromJSON\(needs\.compiler-path-measurement-plan\.outputs\.max_parallel\) \}\}/,
+  );
   const select = shard.slice(shard.indexOf("      - name: Select the current edition's tests"));
   assert.match(select, /if: needs\.compiler-path-measurement-plan\.outputs\.scope == 'edition'/);
   assert.match(select, /TEST262_PATH_FILTER_FILE=/);

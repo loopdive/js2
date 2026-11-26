@@ -64,7 +64,7 @@ describe("#3611 promote-baseline must survive the #3448 HIT path", () => {
   it("keeps the guards that predate this change", () => {
     // #2947 — an IR-first dispatch must never promote its pass-set.
     expect(promote).toContain("!(github.event_name == 'workflow_dispatch' && inputs.ir_first)");
-    // The bot-actor guard, and the event restriction — (#7551) the daily
+    // The bot-actor guard, and the event restriction — (#7551) the weekly
     // schedule, no longer every push.
     expect(promote).toContain("github.actor != 'github-actions[bot]'");
     expect(promote).toContain("github.event_name == 'schedule'");
@@ -87,7 +87,7 @@ describe("#3611 promote-baseline must survive the #3448 HIT path", () => {
 });
 
 describe("#3611 the standalone baseline keeps a live writer", () => {
-  it("retires the host cache writer; the common promotion runs on the daily schedule (#7551)", () => {
+  it("retires the host cache writer; the common promotion runs on the weekly schedule (#7551)", () => {
     expect(job("write-run-cache-bot")).toContain("if: false # Retired host cache writer");
     const code = promote
       .split("\n")

@@ -17,10 +17,10 @@ name: Baseline Refresh (manual + emergency)
 # subject distinguishes a normal refresh from a forced one.
 #
 # (#7551) No timer and no automation dispatches this workflow any more. The
-# daily `test262-sharded.yml` schedule is the single place the legacy lane
+# weekly `test262-sharded.yml` schedule is the single place the legacy lane
 # runs: the same full matrix, but with the floor, ratchet and #1897 gates
 # before it promotes. This workflow promotes WITHOUT them, so running it on a
-# timer between daily audits would bank a regression unexamined, and the floor
+# timer between weekly audits would bank a regression unexamined, and the floor
 # staleness alert no longer auto-heals through it (owner decision 2026-11-26).
 #
 # Usage: Actions → Baseline Refresh → Run workflow

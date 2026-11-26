@@ -281,10 +281,11 @@ describe("test262 per-lane gating — workflow wiring", () => {
     expect(s).toContain('if [ "$RUN_STANDALONE" != "false" ]');
   });
 
-  it("the daily legacy matrix cannot cascade-skip through `changes`, which does not run on schedule (#7551)", () => {
+  it("the weekly legacy matrix cannot cascade-skip through `changes`, which does not run on schedule (#7551)", () => {
     expect(job("test262-shard-mg")).toContain("if: false");
     const shardJob = job("test262-shard");
-    expect(shardJob).toMatch(/if: \|\n\s+always\(\) &&/);
+    expect(shardJob).toMatch(/if: \|\n\s+!cancelled\(\) &&/);
+    expect(shardJob).toMatch(/strategy:\n\s+fail-fast: false\n\s+max-parallel: 40\n/);
     for (const dep of ["mg-artifact-probe", "runtime-eval-provider", "temporal-provider", "admit-measurement-baseline"])
       expect(shardJob).toContain(`needs.${dep}.result == 'success'`);
   });
