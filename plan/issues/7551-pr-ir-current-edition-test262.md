@@ -286,9 +286,10 @@ Other decisions:
   - `3c90c135e2`: the auto-heal removal;
   - the review-fix commits.
 
-  `git revert 5d7abeaf87` does **not** apply on the Part B head: 7 files
-  overlap with `3c90c135e2`. Reverting both would also bring back the
-  auto-heal. The verified procedure restores the gate's files from the last
+  `git revert 5d7abeaf87` does **not** apply: `git apply -R --check` of it
+  fails on the Part B head `d4b7bf66ac` in 10 files that later commits
+  changed, `3c90c135e2` among them. Reverting those commits as well would
+  also bring back the auto-heal. The verified procedure restores the gate's files from the last
   Part A commit, `dff600c97f`, in one PR:
 
   ```bash
@@ -298,6 +299,7 @@ Other decisions:
     tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
     tests/issue-4153-test262-sharded-pr-gating.test.ts tests/issue-4350-baseline-refresh-cron.test.ts \
     tests/test262-baseline-auto-retry.test.ts tests/test262-per-lane-gating.test.ts
+  git rm tests/issue-7551-job-skip-propagation.test.ts  # models the #7551 job graph only
   ```
 
   - **Brought back:** the 102-shard legacy merge_group gate, promotion on
@@ -526,3 +528,19 @@ Other decisions:
   (e.g. 50 each, leaving at least 20 runners free), or stagger them with a
   second cron for the full IR run. Either is a one-line change; I did not
   make it because it changes dispatch-run timing too.
+
+**Rollback verification (2026-11-26).**
+
+- Setup: a scratch copy of the Part B head `d4b7bf66ac` (via `git archive`,
+  because the worktree guards forbid a second worktree), with the rollback
+  files restored from `dff600c97f`.
+- Results:
+  - `test262-ir-pages-artifacts.test.mjs`: 57/57.
+  - Auto-park self-check: OK.
+  - 14 workflow test files pass, except:
+    - the pre-existing #1897 failure, identical on main;
+    - two #2178 `countRelevantDrift` cases, which need a git checkout (the
+      archive has none) and pass in the worktree;
+    - the #7551 skip-propagation model. It encodes the Part B graph and
+      flags Part A's correlated `merge-ir-measurement` condition, so the
+      rollback removes it.

@@ -513,6 +513,7 @@ git checkout dff600c97f -- \
   tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
   tests/issue-4153-test262-sharded-pr-gating.test.ts tests/issue-4350-baseline-refresh-cron.test.ts \
   tests/test262-baseline-auto-retry.test.ts tests/test262-per-lane-gating.test.ts
+git rm tests/issue-7551-job-skip-propagation.test.ts  # models the #7551 job graph only
 ```
 
 That brings back the 102-shard legacy merge_group gate, promotion on push
