@@ -17368,6 +17368,14 @@
       "nextBoundary": "Source recognition of a native Object static's call form (#7354 O1) beside its symbolic helper call; the TypeScript half moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/realm-constructor-forms.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source shapes that name a realm constructor without reading it (#7354 W2), shared by from-ast and the program-objects walk; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/program/builtin-prototype-keys.ts",
       "state": "clean",
       "layer": "ir-program"

@@ -34,17 +34,20 @@ export interface RealmWrapperKind {
   /** #3518's `(prototype, payload) -> wrapper` and `(wrapper) -> payload`. */
   readonly allocation: FuncHandle;
   readonly read: FuncHandle;
-  /** Its prototype's `valueOf` and `toString` (function values, initializing the realm), each with the TypeError of a
-   * receiver that is no value of the kind. */
+}
+/** A held kind with its prototype's `valueOf` and `toString` (`WRAPPER_DATA` order after the slot). */
+export interface RealmWrapperMethodKind extends RealmWrapperKind {
+  /** Each method's function value (initializing the realm) and the TypeError of a receiver that is no such value. */
   readonly methods: readonly { readonly value: readonly Instr[]; readonly throwTypeError: readonly Instr[] }[];
 }
-export interface RealmWrapperOperands extends WrapperRepresentation {
+export interface RealmWrapperDataOperands extends WrapperRepresentation {
   /** The kinds the realm holds (none: no wrapper exists, and every answer is "no wrapper"). */
-  readonly kinds: readonly RealmWrapperKind[];
+  readonly kinds: readonly RealmWrapperMethodKind[];
   readonly undefinedGlobal: number;
   readonly sameValue: FuncHandle;
 }
-export interface RealmWrapperCreateOperands extends RealmWrapperOperands {
+export interface RealmWrapperCreateOperands extends WrapperRepresentation {
+  readonly kinds: readonly RealmWrapperKind[];
   readonly initializer: FuncHandle;
   readonly nativeStrTypeIdx: number;
   readonly flatten: FuncHandle;
@@ -236,13 +239,17 @@ export function buildWrapperCreateDefinition(
  *   method's TypeError), and `null` for any other method (no primitive is null). The caller answers `toString` with
  *   ToString of it.
  */
-export function buildWrapperDataDefinition(d: RealmWrapperOperands): Definition {
-  const slotOf = (kind: RealmWrapperKind): Instr[] => [
+export function buildWrapperDataDefinition(d: RealmWrapperDataOperands): Definition {
+  const slotOf = (kind: RealmWrapperMethodKind): Instr[] => [
     get(0),
     { op: "call", funcIdx: kind.read },
     ...SLOT[kind.kind].toCarrier(d),
   ];
-  const isWrapper = (kind: RealmWrapperKind): Instr[] => [get(0), asAny, { op: "ref.test", typeIdx: kind.typeIdx }];
+  const isWrapper = (kind: RealmWrapperMethodKind): Instr[] => [
+    get(0),
+    asAny,
+    { op: "ref.test", typeIdx: kind.typeIdx },
+  ];
   const slot: Instr[] = [
     ...d.kinds.flatMap((kind): Instr[] => [
       ...isWrapper(kind),
@@ -252,7 +259,7 @@ export function buildWrapperDataDefinition(d: RealmWrapperOperands): Definition 
     asExtern,
     { op: "return" },
   ];
-  const thisValue = (kind: RealmWrapperKind, method: number): Instr[] => [
+  const thisValue = (kind: RealmWrapperMethodKind, method: number): Instr[] => [
     get(0),
     ...SLOT[kind.kind].isPrimitive(d),
     { op: "if", blockType: { kind: "empty" }, then: [get(0), { op: "return" }] },

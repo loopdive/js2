@@ -17,7 +17,7 @@ import { CARRIER, F64, I32, STRING, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
-import { identityTest, wrapperMethodTests } from "./dynamic-builtin-methods.js";
+import { identityTest, wrapperMethodTest, type WrapperMethodName } from "./dynamic-builtin-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -276,9 +276,12 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** (#7354 G1, W2) Error.prototype.toString where a value may be an error; a held wrapper's methods. */
-  const builtins = (instr: IrInstr) => (method: IrValueId, object: IrValueId) => [
-    ...(holdsErrors(program)
+  /**
+   * (#7354 G1, W2) The built-ins a method read under `name` may be: Error.prototype.toString where a value may be an
+   * error, a held wrapper's method of that name.
+   */
+  const builtins = (instr: IrInstr) => (name: WrapperMethodName, method: IrValueId, object: IrValueId) => [
+    ...(name === "toString" && holdsErrors(program)
       ? [
           () =>
             identityTest(builtinMethodBuilders, instr, ERROR_TO_STRING_ID, method, (r) => [
@@ -287,7 +290,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ]
       : []),
     ...(heldWrappers(program).size > 0
-      ? wrapperMethodTests(builtinMethodBuilders, instr, method, object).map((test) => () => test)
+      ? [() => wrapperMethodTest(builtinMethodBuilders, instr, name, method, object)]
       : []),
   ];
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */

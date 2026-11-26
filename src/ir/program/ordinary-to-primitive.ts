@@ -19,7 +19,7 @@ import { irClosureMethodReference } from "../core/closure-invocation-callables.j
 import type { LegalizationProgram } from "./dynamic-value-kinds.js";
 import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { builtinMethodChain, type BuiltinMethodTest } from "./dynamic-builtin-methods.js";
+import { builtinMethodChain, type BuiltinMethodTest, type WrapperMethodName } from "./dynamic-builtin-methods.js";
 
 /** ToPrimitive's hint: `string` for ToString, `number` for ToNumber and (as `default`) for `+`. */
 export type ToPrimitiveHint = "string" | "number";
@@ -54,7 +54,11 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
    * and answered here: Error.prototype.toString where a value may be an error (`js.object.error-to-string`), a held
    * wrapper family's `valueOf` and `toString` (`dynamic-builtin-methods.ts`).
    */
-  readonly builtins: (method: IrValueId, object: IrValueId) => readonly (() => BuiltinMethodTest)[];
+  readonly builtins: (
+    name: WrapperMethodName,
+    method: IrValueId,
+    object: IrValueId,
+  ) => readonly (() => BuiltinMethodTest)[];
   /**
    * (#7354 G1) Where the program creates no source function, every callable method is a built-in, which the
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
@@ -78,7 +82,11 @@ export function ordinaryToPrimitive(
   if (program.objects.namesSymbol) gap("ToPrimitive of an object in a program that names 'Symbol'");
   // Without a callable kind `valueOf` is skipped whether held or not, so it is not consulted at all: the answers are
   // the same, and a program without function values keeps the bytes it had before F1.
-  const names = !b.isCallable ? ["toString"] : hint === "string" ? ["toString", "valueOf"] : ["valueOf", "toString"];
+  const names: readonly WrapperMethodName[] = !b.isCallable
+    ? ["toString"]
+    : hint === "string"
+      ? ["toString", "valueOf"]
+      : ["valueOf", "toString"];
   // The method `names[index]` and the ones after it, into `r`.
   const step = (index: number, r: IrValueId): IrInstr[] => {
     const name = names[index];
@@ -86,7 +94,7 @@ export function ordinaryToPrimitive(
     if (name === undefined) return [...typeError(b, "Cannot convert object to primitive value"), ...answer.text("", r)];
     const [text, key] = [b.fresh(), b.fresh()];
     const next = (s: IrValueId) => step(index + 1, s);
-    const method = (s: IrValueId) => callIfCallable(b, object, key, answer, next, s);
+    const method = (s: IrValueId) => callIfCallable(b, name, object, key, answer, next, s);
     const named: IrInstr[] = [
       b.text(name, text),
       { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },
@@ -106,6 +114,7 @@ export function ordinaryToPrimitive(
  */
 function callIfCallable(
   b: ToPrimitiveBuilders,
+  name: WrapperMethodName,
   object: IrValueId,
   key: IrValueId,
   answer: ToPrimitiveAnswer,
@@ -126,7 +135,7 @@ function callIfCallable(
             resultType: b.carrier,
           },
         ];
-  const call = builtinMethodChain(b, b.builtins(method, object), dispatch, b.carrier);
+  const call = builtinMethodChain(b, b.builtins(name, method, object), dispatch, b.carrier);
   const skip = (r: IrValueId): IrInstr[] => [
     { kind: "coerce.to_externref", value: object, result: r, resultType: b.carrier },
   ];

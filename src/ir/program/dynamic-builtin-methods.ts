@@ -49,53 +49,50 @@ export function identityTest(
 
 const PRIMITIVES = Object.keys(WRAPPER_OF_PRIMITIVE) as CarrierKind[];
 
+/** The wrapper prototype methods {@link wrapperMethodTest} answers. */
+export type WrapperMethodName = "valueOf" | "toString";
+
 /**
- * The wrappers' `valueOf` and `toString` called on `receiver` through `method`. `radix`: the call passes an argument,
- * which Number.prototype.toString reads as a radix the realm does not format (the run-time abort; String's and
- * Boolean's `toString` ignore it).
+ * The wrappers' method `name` called on `receiver` through `method`, read under that name (a wrapper method read under
+ * another name is no such call: it reaches the dispatcher, whose built-in arm is the run-time abort). `radix`: the call
+ * passes an argument, which Number.prototype.toString reads as a radix the realm does not format (the run-time abort;
+ * String's and Boolean's `toString` ignore it).
  */
-export function wrapperMethodTests(
+export function wrapperMethodTest(
   b: BuiltinMethodBuilders,
   instr: IrInstr,
+  name: WrapperMethodName,
   method: IrValueId,
   receiver: IrValueId,
   radix = false,
-): BuiltinMethodTest[] {
-  const test = (
-    selector: number,
-    answer: (primitive: IrValueId, result: IrValueId) => IrInstr[],
-  ): BuiltinMethodTest => {
-    const [value, absent, cond, primitive] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
-    b.kinds.learn(primitive, PRIMITIVES);
-    return {
-      instrs: [
-        ...b.selectorCall("js.object.wrapper-data", [receiver, method], selector, value),
-        ...b.anyKind(instr, ["null"], value, absent),
-        { kind: "unary", op: "i32.eqz", rand: absent, result: cond, resultType: BOOLEAN },
-      ],
-      cond,
-      answer: (r) => [carried(value, primitive), ...answer(primitive, r)],
-    };
-  };
-  const text = (primitive: IrValueId, r: IrValueId): IrInstr[] => {
+): BuiltinMethodTest {
+  const [value, absent, cond, primitive] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+  b.kinds.learn(primitive, PRIMITIVES);
+  const text = (r: IrValueId): IrInstr[] => {
     const string = b.fresh();
     return [...b.stringOf(instr, primitive, string), carried(string, r)];
   };
-  return [
-    test(WRAPPER_DATA.valueOf, (primitive, r) => [carried(primitive, r)]),
-    test(WRAPPER_DATA.toString, (primitive, r) =>
-      radix
-        ? b.kindChain(
-            instr,
-            primitive,
-            r,
-            (kind, s) => (kind === "number" ? b.abort(instr, s) : text(primitive, s)),
-            PRIMITIVES,
-            CARRIER,
-          )
-        : text(primitive, r),
-    ),
-  ];
+  const answer = (r: IrValueId): IrInstr[] => {
+    if (name === "valueOf") return [carried(primitive, r)];
+    if (!radix) return text(r);
+    return b.kindChain(
+      instr,
+      primitive,
+      r,
+      (kind, s) => (kind === "number" ? b.abort(instr, s) : text(s)),
+      PRIMITIVES,
+      CARRIER,
+    );
+  };
+  return {
+    instrs: [
+      ...b.selectorCall("js.object.wrapper-data", [receiver, method], WRAPPER_DATA[name], value),
+      ...b.anyKind(instr, ["null"], value, absent),
+      { kind: "unary", op: "i32.eqz", rand: absent, result: cond, resultType: BOOLEAN },
+    ],
+    cond,
+    answer: (r) => [carried(value, primitive), ...answer(r)],
+  };
 }
 
 /** The tests in turn, each answering where it holds, else `otherwise`; into the arm's result, of `resultType`. */

@@ -11,6 +11,7 @@ import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { programObjects } from "../src/ir/source-plain-objects.js";
+import { pristineBuiltinGlobal } from "../src/ir/builtin-global-binding.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -148,7 +149,7 @@ describe("#7354 O2 — an ordinary object is a kind of the dynamic value", () =>
 describe("#7354 O2 — what a program's source allows its objects", () => {
   const objects = (source: string) => {
     const ast = analyzeMultiSource({ "./entry.ts": source }, "./entry.ts");
-    return programObjects(ast.sourceFiles, false);
+    return programObjects(ast.sourceFiles, false, pristineBuiltinGlobal(ast.checker, ast.sourceFiles));
   };
 
   it("answers no objects, and objects", () => {
@@ -156,16 +157,36 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: false,
       functions: false,
       namesSymbol: false,
+      constructors: new Set(),
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
       namesSymbol: false,
+      constructors: new Set(),
     });
   });
 
-  // (#7354 G1, W2) Which realm constructors a program reads is the IR's answer (`realmConstructorsRead`), not the
-  // source's: a member name, a label or a binding spelled like one reads none (issue-7354-g1-spelled-names).
+  // (#7354 G1, W2) A realm constructor makes objects; naming one (not as a member) admits the object kind. This is a
+  // fact of the whole program, which every group's legalization reads (a function that names none sees it too).
+  it("answers which realm constructors the whole program names", () => {
+    const names = (source: string) => [...objects(source).constructors];
+    expect(objects("export const e = new TypeError('m');")).toMatchObject({ present: true });
+    expect(names("export const e = new TypeError('m');")).toEqual(["%TypeError%"]);
+    expect(
+      names("export function f(x: any) { return x.k; } export const s = String; export const n = new Number(1);"),
+    ).toEqual(["%String%", "%Number%"]);
+    expect(names("export const o = { TypeError: 1, String: 2 }; export const v = o.TypeError;")).toEqual([]);
+    // A binding or a label spelled like one is not the global.
+    expect(names("function f(RangeError: unknown) { return RangeError; } export const v = f(1);")).toEqual([]);
+    expect(names("TypeError: for (;;) { break TypeError; }")).toEqual([]);
+    // (W2) A call form the front end lowers without reading the name (realm-constructor-forms.ts) names none.
+    expect(names("export const s = String(1); export const t = Object.prototype.toString.call(1);")).toEqual([]);
+    expect(names("export const o = Object.create(null);")).toEqual([]);
+    // A mention anywhere else counts, also a value passed on.
+    expect(names("export const a = [1].map(String);")).toEqual(["%String%"]);
+  });
+
   // (#7354 F1) A function expression is the one producer of a function value the source shows here.
   it("answers whether the program creates function values", () => {
     expect(objects("export const f = function () {};").functions).toBe(true);

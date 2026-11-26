@@ -6,8 +6,17 @@
 // without `new` are ToString / ToNumber / ToBoolean / ToObject, and the wrappers' `valueOf` / `toString` answer
 // thisXValue. Each program computes `out` and is checked against node and with a wrong answer
 // (tests/helpers/prepared-node-agreement.ts); a program that writes a built-in prototype runs in a fresh node realm.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { abortsAtRunTime, agreesWithNode, freshRealmOut, refusal } from "./helpers/prepared-node-agreement.js";
+import {
+  abortsAtRunTime,
+  agreesWithNode,
+  freshRealmOut,
+  refusal,
+  runPrepared,
+  runnerOptions,
+} from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 300_000;
 /** A function expression: on this path a function value is what makes the dispatcher exist. */
@@ -158,3 +167,91 @@ describe("#7354 W2 — what the realm does not hold refuses or aborts", () => {
     SLOW,
   );
 });
+
+/**
+ * (review r1) Which realm constructors a program names is a fact of the whole program: a function whose own body names
+ * none still sees the families the program holds (its primitives read through the realm's prototypes, a caught or
+ * passed error or wrapper keeps its kind). Each program is checked bare and through the real harness prelude.
+ */
+const FUNCTION_BODIES: readonly (readonly [string, string])[] = [
+  [
+    "String.prototype written, read through a string in a function",
+    `String.prototype.k = 5; function f(x){ return typeof x.k; } var out = f("abc");`,
+  ],
+  [
+    "Object.prototype written, read through a number in a function",
+    `Object.prototype.k = 5; function f(x){ return typeof x.k; } var out = f(1);`,
+  ],
+  [
+    "Number.prototype written, read through a number in a function",
+    `Number.prototype.k = "z"; function f(x){ return x.k; } var out = f(1);`,
+  ],
+  [
+    "a getter on String.prototype, read through a string in a function",
+    `Object.defineProperty(String.prototype, "g", { get: function () { return "G"; } }); function f(x){ return x.g; } var out = f("s");`,
+  ],
+  [
+    "a method on String.prototype, called on a string in a function",
+    `String.prototype.m = function(){ return "M"; }; function f(x){ return x.m(); } var out = f("s");`,
+  ],
+  [
+    "a caught error's message in a function",
+    `var e = new TypeError("m"); function f(x){ return x.message; } var out = f(e);`,
+  ],
+  [
+    "an error's ToString by + in a function",
+    `var e = new TypeError("m"); function f(x){ return "" + x; } var out = f(e);`,
+  ],
+  [
+    "an error's String() in a function",
+    `var e = new TypeError("m"); function f(x){ return String(x); } var out = f(e);`,
+  ],
+  [
+    "an error's Object.prototype.toString in a function",
+    `var e = new TypeError("m"); function f(x){ return Object.prototype.toString.call(x); } var out = f(e);`,
+  ],
+  ["a wrapper's ToString by + in a function", `function f(v){ return "" + v; } var out = f(new Number(3));`],
+  ["a wrapper's String() in a function", `function f(v){ return String(v); } var out = f(new Boolean(true));`],
+  ["a wrapper's Number() in a function", `function f(v){ return Number(v); } var out = String(f(new String("4")));`],
+];
+
+const ROOT = join(__dirname, "..");
+const prelude = (): string =>
+  [
+    join(ROOT, "scripts", "test262-fyi-runtime.js"),
+    ...["assert.js", "sta.js"].map((f) => join(ROOT, "test262", "harness", f)),
+  ]
+    .map((file) => readFileSync(file, "utf8"))
+    .join("");
+
+/** One program per route through the prelude (each compiles with the harness, about 10 s): a prototype read, a
+ * prototype method, a caught error read and converted, a wrapper converted. */
+const THROUGH_PRELUDE = [0, 4, 5, 7, 9].map((index) => FUNCTION_BODIES[index]!);
+
+describe("#7354 W2 r1 — a function sees the program's families (bare)", () => {
+  it.each(FUNCTION_BODIES)(
+    "%s",
+    async (_label, body) => agreesWithNode(body + CALLS, true, undefined, freshRealmOut),
+    SLOW,
+  );
+});
+
+describe.skipIf(!existsSync(join(ROOT, "test262", "harness", "assert.js")))(
+  "#7354 W2 r1 — a function sees the program's families (harness prelude)",
+  () => {
+    it.each(THROUGH_PRELUDE)(
+      "%s",
+      async (_label, body) => {
+        const expected = freshRealmOut(body);
+        const asserting = (answer: string) =>
+          `${prelude()}\n${body}\nassert.sameValue(out, ${JSON.stringify(answer)});`;
+        expect(await runPrepared(asserting(expected), runnerOptions())).toBe("returned");
+        // The wrong twin must not pass: the harness's failure path formats the values, which may end at the run-time
+        // abort rather than the Test262Error throw (either fails the test).
+        const wrong = await runPrepared(asserting(`${expected}!`), runnerOptions()).catch(() => "aborted");
+        expect(wrong).not.toBe("returned");
+      },
+      SLOW,
+    );
+  },
+);

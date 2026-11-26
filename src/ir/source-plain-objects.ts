@@ -16,6 +16,8 @@ import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
 import { realmConstructorId } from "./program/builtin-prototype-keys.js";
+import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
+import { ambientStringPrototypeBorrow } from "./array-prototype-borrow-call.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -53,23 +55,27 @@ export function programObjects(
 
 /**
  * (#7354 G1, W2) Whether `identifier` names the unchanged global realm constructor of its name where the front end may
- * read it as a value (`identifier-read.ts` `realmIntrinsicRead`, the same pristine test): a member name, a label or a
- * binding of the same spelling is none, and neither is `Object` as the receiver of a native static's call, which
- * `realm-static-call.ts` lowers by the same predicate without reading it. Any other mention counts, also one a front-end
- * arm happens to intercept (`String(v)`): holding a family no code reads costs bytes, never an answer, while a family
- * a function reads but this walk missed would answer wrong in every other function.
+ * read it as a value (`identifier-read.ts` `realmIntrinsicRead`, the same pristine test). A member name, a label or a
+ * binding of the same spelling is none, and neither is a call form the front end lowers from its shape without reading
+ * the name, tested by the predicate that lowering uses: `Object` as the receiver of a native static
+ * (`realm-static-call.ts`), `String(v)` and `Object.prototype.toString.call(v)` (`realm-constructor-forms.ts`),
+ * `String.prototype.m.call(r)` (`array-prototype-borrow-call.ts`). Any other mention counts, also one in a function
+ * the path cannot lower: holding a family no code reads costs bytes, never an answer, while a family a function reads
+ * but this walk missed would answer wrong in every other function.
  */
 function readsConstructor(
   identifier: ts.Identifier,
   isPristineGlobal: (identifier: ts.Identifier) => boolean,
 ): boolean {
-  const parent = identifier.parent;
   if (isMemberName(identifier) || !isPristineGlobal(identifier)) return false;
+  const call = ts.findAncestor(identifier.parent, (node) => !ts.isPropertyAccessExpression(node));
+  if (call === undefined || !ts.isCallExpression(call)) return true;
   return !(
-    ts.isPropertyAccessExpression(parent) &&
-    parent.expression === identifier &&
-    ts.isCallExpression(parent.parent) &&
-    parent.parent.expression === parent &&
-    nativeObjectStaticCall(parent.parent, isPristineGlobal) !== undefined
+    (call.expression === identifier && isStringConversionCall(call)) ||
+    objectToStringCallRoot(call) === identifier ||
+    ambientStringPrototypeBorrow(call, new Set(), isPristineGlobal)?.root === identifier ||
+    (ts.isPropertyAccessExpression(identifier.parent) &&
+      identifier.parent.parent === call &&
+      nativeObjectStaticCall(call, isPristineGlobal) !== undefined)
   );
 }

@@ -16,7 +16,12 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
-import { builtinMethodChain, identityTest, wrapperMethodTests } from "./dynamic-builtin-methods.js";
+import {
+  builtinMethodChain,
+  identityTest,
+  wrapperMethodTest,
+  type WrapperMethodName,
+} from "./dynamic-builtin-methods.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
@@ -51,14 +56,14 @@ export function prototypeMethodOfCall(
     ...(objectMethod ? [objectPrototypeMethodId(objectMethod)] : []),
     ...(name === "toString" && held.errors ? [ERROR_TO_STRING_ID] : []),
   ];
-  const wrapper = held.wrappers && (name === "valueOf" || name === "toString");
-  return ids.length === 0 && !wrapper ? undefined : { ids, wrapper };
+  const wrapper = held.wrappers && (name === "valueOf" || name === "toString") ? name : undefined;
+  return ids.length === 0 && wrapper === undefined ? undefined : { ids, wrapper };
 }
 
-/** The realm methods a call may reach: by identity (`ids`), and (W2) a held wrapper's (`wrapper`). */
+/** The realm methods a call may reach: by identity (`ids`), and (W2) a held wrapper's of the name read (`wrapper`). */
 export interface RealmMethods {
   readonly ids: readonly string[];
-  readonly wrapper: boolean;
+  readonly wrapper?: WrapperMethodName;
 }
 
 /** `value`, the realm's Boolean of `test`, boxed into the carrier `result`. */
@@ -150,8 +155,8 @@ export function dynamicPrototypeMethodCall(
     };
   const tests = [
     ...methods.ids.map((id) => () => identityTest(b, instr, id, callee, algorithm(id))),
-    ...(methods.wrapper
-      ? wrapperMethodTests(b, instr, callee, receiver, instr.args.length > 2).map((test) => () => test)
+    ...(methods.wrapper !== undefined
+      ? [() => wrapperMethodTest(b, instr, methods.wrapper!, callee, receiver, instr.args.length > 2)]
       : []),
   ];
   // Without a source function no dispatcher exists, and every function value is a built-in: its abort.

@@ -121,10 +121,7 @@ export function fillNativeRealmWrappers(tx: PhysicalModuleReservations, wrappers
 }
 
 /** The held kinds' types and bodies, physical (fill phase). */
-export function realmWrapperKinds(
-  tx: PhysicalModuleReservations,
-  wrappers: NativeRealmWrappers,
-): Omit<RealmWrapperKind, "methods">[] {
+export function realmWrapperKinds(tx: PhysicalModuleReservations, wrappers: NativeRealmWrappers): RealmWrapperKind[] {
   return wrappers.selectors.map((selector) => {
     const kind = NATIVE_WRAPPER_CONSTRUCTORS[selector]!;
     return {
