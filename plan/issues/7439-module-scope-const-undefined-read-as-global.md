@@ -40,42 +40,57 @@ lowering: const undefined = 42; …" and "retains the unsupported undefined read
 2. Without a resolver, a read of `undefined` that the checker does not prove global is refused.
 3. The two red tests pass unchanged.
 
-## Implementation Plan (2026-11-26)
+## Implementation Plan (2026-11-26, revised after the lead's decision: legacy fix in the same PR, one predicate)
 
-**Reproduced** on `origin/main` c3b7be66 and 1a726b3e: `const undefined = 42; export function f(): number { return (undefined as any) + 1; }`
-returns NaN on gc and standalone, **in both the default and the legacy pipeline** (`experimentalIR: false`).
+**Reproduced** on `origin/main` c3b7be66 and 1a726b3e: `const undefined = 42; export function f(): number { return
+(undefined as any) + 1; }` returns NaN on gc and standalone, in the default and the legacy (`experimentalIR: false`)
+pipeline. In the default pipeline the IR claims only `<module-init>` (`irCompiledFuncs`), so `f` is legacy there too.
 
-**Two causes, one per front-end.**
+**Causes.**
 
-1. IR: `classifyIdentifierRead` (`src/ir/identifier-read.ts`) answers `global-undefined` for any `undefined` that has
-   no scope binding and no module binding. "No module binding" proves nothing: the resolver can be absent, or present
-   and not track this binding (the ordinary pipeline here). `isUnshadowedGlobalExpression` (`from-ast.ts`) makes the
-   same inference. Only `lowerExpressionStatement`'s discard arm (`from-ast.ts` ~2716) asks the checker for proof.
-2. Legacy: `compileExpressionInner` (`src/codegen/expressions.ts` ~1133) emits the undefined value for every
-   identifier spelled `undefined`, shadowed or not. So an IR refusal alone demotes the function to legacy, which still
-   answers NaN; acceptance 1 ("43 or refused by name, never NaN") needs both.
+1. Legacy: `compileExpressionInner` (`src/codegen/expressions.ts:1133`) emits the undefined value for every identifier
+   spelled `undefined`, shadowed or not. This is the wrong value in both pipelines today.
+2. IR: `classifyIdentifierRead` (`src/ir/identifier-read.ts`) answers `global-undefined` for an `undefined` with no
+   scope binding and no module binding, but "no module binding" proves nothing (no resolver, or a resolver that does
+   not track this name). `isUnshadowedGlobalExpression(…, "undefined")` (`from-ast.ts`) makes the same inference.
+   Only the discard arm (`from-ast.ts:2717`) proves it, with its own inline raw-checker query.
 
-**Target structure.**
+**One predicate, over the oracle.** `isAmbientUndefinedRead(oracle, id)` in `src/checker/oracle.ts`, beside the
+other derived oracle helpers (`identifierWriteFact`): `id` reads the ambient global `undefined` exactly when it
+resolves (`!oracle.isUnresolvableIdentifier(id)`) and has no declaration (`oracle.declarationsOf(id).length === 0`).
+The ambient `undefined` is the one binding with a symbol and no declaration. Any `const` / `let` / `var` / parameter /
+function / import named `undefined` has one. No new `TypeOracle` method is needed, and both backends answer it: the
+checker oracle through the symbol, and the in-house oracle through its binder plus `GLOBAL_VALUE_NAMES`.
 
-- `src/ir/identifier-read.ts`: one predicate, `isProvenGlobalUndefined(expr, checker)`: no binding shadows the read,
-  as the checker proves it (`getSymbolAtLocation(expr)` is the ambient `undefined` symbol). It is the proof that
-  `from-ast.ts` ~2716 already writes inline; that copy moves here and is the only one. `classifyIdentifierRead`
-  answers `global-undefined` only on that proof, else falls through to `unresolved` (the existing named refusal,
-  `identifier "undefined" is not in scope`). The context gains the checker it needs (`checker?`).
-- `from-ast.ts`: the discard arm and `isUnshadowedGlobalExpression(…, "undefined")` call the predicate (the latter
-  keeps its module-binding check for its other names). Without a checker the read is refused, never guessed.
-- Legacy (`expressions.ts`): the `undefined` arm applies only when the read is the global (through `ctx.oracle`, not
-  the raw checker; a shadowed read falls through to the ordinary identifier path, which reads the module global
-  `undefined` like any other). If the oracle cannot answer this, a small `oracle-ratchet-allow:` with a reason.
+**Callers.**
 
-**Reuses / removes.** The ambient-symbol proof exists once instead of inline in one arm and missing in two.
+- Legacy, `expressions.ts:1133`: the arm applies only when `isAmbientUndefinedRead(ctx.oracle, expr)`. A shadowed read
+  falls through to the ordinary identifier path, which reads the binding like any other name.
+- IR, `identifier-read.ts`: `global-undefined` only when `cx.oracle` proves it; without an oracle, or when the proof
+  fails and no module binding resolved, the read is `unresolved`, the existing named refusal
+  (`identifier "undefined" is not in scope`).
+- IR, `from-ast.ts`: the discard arm (2717) and `isUnshadowedGlobalExpression`'s `undefined` case call the same
+  predicate. The inline `resolveName` / `getSymbolAtLocation` proof is deleted.
+
+**Reuses / removes.** One proof instead of an inline raw-checker copy, a missing check in two IR places, and a missing
+check in legacy. No new oracle surface.
+
+**Not in scope.** `src/codegen` has about 20 other syntactic `text === "undefined"` tests (omitted-argument and
+default-parameter detection, `JSON.stringify` replacer, `parseInt` radix, and others). They decide how an argument is
+treated, not what value a read yields. Their callers can adopt the predicate later; I will list them in the PR.
+
+**Selection.** No selector change: the selector does not claim `f` today, and the IR refusal is the existing
+build-time one. If a shadowed read in an otherwise-claimed function now reaches it, the plan reviewer should say
+whether `select.ts`'s `dynNames.has("undefined")` checks need the predicate too (refuse at select, not after claim).
+I will measure claims on the sample to answer this.
 
 **Acceptance.**
-- The program above returns 43 on gc and standalone, default and legacy; a local `let undefined = 1` likewise.
-- Without a checker, an `undefined` read is refused by name; the two #7380 red tests in
-  `tests/issue-3518-native-family-source-identity.test.ts` pass unchanged.
-- Quality: one proof predicate, no new inline checker queries; bytes unchanged on a 100-file sample × default and
-  standalone (an unshadowed `undefined` lowers exactly as before).
 
-**Open question for the lead:** the legacy arm is outside "a refusal in from-ast". Without it the program is refused
-by the IR and still NaN in legacy. Include it in this PR, or file it separately?
+- The program above returns 43 on gc and standalone, default and legacy. A function-local `let undefined = 1` read,
+  and a parameter named `undefined`, also return their values.
+- An unshadowed `undefined` is unchanged. Bytes are identical on a 100-file test262 sample × {default, standalone}
+  and the same × legacy, except files that declare a binding named `undefined`. List those files, with the reason.
+- Without a checker or oracle, an IR read of `undefined` is refused by name. The two #7380 tests in
+  `tests/issue-3518-native-family-source-identity.test.ts` pass unchanged.
+- Quality: one predicate used by every caller above; no inline checker query left at `from-ast.ts:2717`; no
+  oracle-ratchet growth.
