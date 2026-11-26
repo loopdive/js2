@@ -53,7 +53,7 @@ import type { RuntimeFeature } from "../runtime/contracts/manifest.js";
 type ProducerInput = PreparedIrProgramProducerInput;
 
 export function locatedFailure(
-  input: ProducerInput,
+  input: Parameters<typeof preparedIrProgramOwner>[0],
   unitId: IrUnitId,
   failure: IrPreparationFailure,
 ): PreparedIrProgramFailure {

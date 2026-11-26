@@ -1,10 +1,11 @@
 ---
 id: 7446
 title: "Prepared path silently drops class static blocks: wrong value instead of a refusal"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-21
 updated: 2026-11-26
+completed: 2026-11-26
 priority: high
 horizon: s
 feasibility: medium

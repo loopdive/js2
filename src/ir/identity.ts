@@ -801,7 +801,7 @@ class SourceInventoryBuilder {
               kind: "unsupported",
               code: "static-class-initialization",
               stage: "select",
-              detail: "class static initialization is still emitted by the direct module-init path",
+              detail: "a class static block or static field initializer has no IR module-init lowering",
             }
           : undefined,
       );

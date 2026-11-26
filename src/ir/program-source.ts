@@ -47,7 +47,7 @@ import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import { preparedIrProgramOwner } from "./program.js";
+import { locatedFailure } from "./program/runtime-manifest.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -1566,6 +1566,9 @@ export function prepareIrProgramSources(
   };
   const { promiseDelaysBySource, certifiedDelays } = delayPlans;
   const diagnostic: SourceDiagnosticOwner = { active: undefined };
+  // (#7446) Inventory select-stage refusals hold here too: no body producer runs a class's static block or initializer.
+  const refused = inventory.terminalUnits.find((unit) => unit.directFailure !== undefined);
+  if (refused) return locatedFailure({ inventory, derivedUnits }, refused.id, refused.directFailure!);
   try {
     const types = buildIrUnitTypeMap(sourceFiles, input.checker, identity);
     const callGraph = buildIrProgramCallableBindingGraph({
@@ -1733,15 +1736,12 @@ export function prepareIrProgramSources(
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
     return prepared;
   } catch (error) {
-    const owner = diagnostic.active
-      ? preparedIrProgramOwner({ inventory, derivedUnits }, diagnostic.active)
-      : undefined;
-    if (!owner)
+    const failure = classifyIrFailure(error, "build");
+    if (!diagnostic.active)
       throw new PreparedIrProgramInvariantError(
         "invalid-prepared-data",
-        `source preparation failed without an original owner: ${String(error)}`,
+        `source preparation failed without an original owner: ${failure.detail}`,
       );
-    const { cause: _cause, ...failureDiagnostic } = classifyIrFailure(error, "build");
-    return { ...failureDiagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile };
+    return locatedFailure({ inventory, derivedUnits }, diagnostic.active, failure);
   }
 }
