@@ -183,6 +183,8 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
     // (W2) A call form the front end lowers without reading the name (realm-constructor-forms.ts) names none.
     expect(names("export const s = String(1); export const t = Object.prototype.toString.call(1);")).toEqual([]);
     expect(names("export const o = Object.create(null);")).toEqual([]);
+    // Only the static's receiver is that form: a constructor among its arguments is read.
+    expect(names("Object.defineProperty(String.prototype, 'g', { value: 1 });")).toEqual(["%String%"]);
     // A mention anywhere else counts, also a value passed on.
     expect(names("export const a = [1].map(String);")).toEqual(["%String%"]);
   });

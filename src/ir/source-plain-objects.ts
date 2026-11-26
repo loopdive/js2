@@ -74,8 +74,6 @@ function readsConstructor(
     (call.expression === identifier && isStringConversionCall(call)) ||
     objectToStringCallRoot(call) === identifier ||
     ambientStringPrototypeBorrow(call, new Set(), isPristineGlobal)?.root === identifier ||
-    (ts.isPropertyAccessExpression(identifier.parent) &&
-      identifier.parent.parent === call &&
-      nativeObjectStaticCall(call, isPristineGlobal) !== undefined)
+    (identifier.parent === call.expression && nativeObjectStaticCall(call, isPristineGlobal) !== undefined)
   );
 }
