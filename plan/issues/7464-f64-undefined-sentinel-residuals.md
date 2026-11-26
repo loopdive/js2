@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7366, 7360, 7406]
+related: [7366, 7360, 7406, 7470]
 ---
 
 # #7464 — what the f64 `undefined` sentinel still gets wrong
@@ -66,7 +66,7 @@ Re-measured on origin/main 6694a8b839 (2026-11-26); every row reproduces on gc a
 | 1 | `declarations/module-var-undefined-seed.ts`, `statements/nested-declarations.ts` | The seed registry keeps each static's declaration. `emitClassStaticF64UndefinedSeeds` re-seeds a function-local class's statics at each evaluation, before its static initialisers. Reuses `pushUndefF64` and the existing registry; there is no second list. |
 | 2 | `statements/loops.ts` | A `var` head that reuses a hoisted externref slot keeps that type, as the `seedUninitialisedForLet` doc already says. |
 | 3 | the shared sentinel readers (String/concat coercion, JSON, `typeof`) and the parameter-property store | Test the sentinel where an f64 is read as a value, reusing `emitIsUndefF64`/`f64MayHoldUndefined`. |
-| 4 | module-global keying | Key module globals per file, following #3364, through one helper. |
+| 4 | — | Split out as #7470: it is not sentinel-specific (every same-named top-level binding across files shares one global) and needs about 8 places in 7 files. |
 
 Code-quality criterion: no new predicate or seed list beside the existing ones, no budget grants, gc bytes
 unchanged outside the affected shapes (checked on 240 test262 files × gc/standalone).
