@@ -32,7 +32,11 @@ import { emitThrowJsError } from "../js-errors.js";
 import { addFuncType } from "../registry/types.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { scriptVarBindingNames } from "../source-scan-predicates.js";
-import { emitModuleVarUndefinedSeeds } from "./module-var-undefined-seed.js";
+import {
+  emitModuleF64UndefinedSeeds,
+  emitModuleVarUndefinedSeeds,
+  moduleF64UndefinedSeedGlobals,
+} from "./module-var-undefined-seed.js";
 
 /** WAT-visible name of the private helper an IR-claimed initializer calls first. */
 export const MODULE_INIT_PROLOGUE_FUNCTION_NAME = "__module_init_prologue";
@@ -70,6 +74,7 @@ export function emitModuleInitPrologue(
   // AHEAD of the function-binding seeds below — rationale, scope and the
   // measured before/after in `declarations/module-var-undefined-seed.ts`.
   emitModuleVarUndefinedSeeds(ctx, sourceFile, initFctx);
+  emitModuleF64UndefinedSeeds(ctx, sourceFile, initFctx);
 
   // (#4394) §9.1.1.4.18 — a SCRIPT's top-level function declarations are own
   // properties of the global object. Seeded here, ahead of every user
@@ -136,6 +141,7 @@ export function moduleInitPrologueMayEmit(ctx: CodegenContext, sourceFile: ts.So
   if (ctx.restrictedGlobalLexicalName !== undefined) return true;
   if ((ctx.liveFuncBindingGlobals?.size ?? 0) > 0) return true;
   if (scriptVarBindingNames(sourceFile).size > 0) return true;
+  if (moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0) return true;
   if (ctx.sourceIsModule) return false;
   return ctx.topLevelFunctionNames.size > 0 || (ctx.globalObjectVarBindings?.size ?? 0) > 0;
 }

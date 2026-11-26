@@ -11,7 +11,8 @@
 import { describe, expect, it } from "vitest";
 import { buildImports } from "../src/runtime.js";
 import { compile } from "../src/index.js";
-import { ReOp, parseFlags } from "../src/codegen/regex/bytecode.js";
+import { parseFlags } from "../src/codegen/regex/bytecode.js";
+import { ReOp } from "../src/runtime/contracts/regexp-bytecode.js";
 import { compilePattern } from "../src/codegen/regex/compile.js";
 import { search } from "../src/codegen/regex/vm.js";
 

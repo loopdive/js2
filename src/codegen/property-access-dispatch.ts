@@ -180,7 +180,6 @@ import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
   ensureStandaloneBuiltinStaticMethodClosure,
-  getWellKnownSymbolId,
   hasNativeBuiltinConstantHandler,
   reportUnsupportedStandaloneBuiltinValueRead,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
@@ -251,6 +250,7 @@ import {
   byteVecLengthInstrs,
 } from "./buffers/array-buffer-native.js"; // (#7274) shared with the IR adapters
 import { dataViewByteAttrInstrs } from "./buffers/data-view-native.js"; // (#7274) shared with the IR adapters
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -1833,7 +1833,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     // well-known symbols. Scoped to `Symbol.<wellKnown>` only — the Math/Number
     // f64 constants and `<Ctor>.length`/`.name` keep their standalone-only
     // defer, so host-mode bytes for those are unchanged.
-    const deferToWellKnownSymbolId = builtinName === "Symbol" && getWellKnownSymbolId(propName) !== undefined;
+    const deferToWellKnownSymbolId = builtinName === "Symbol" && wellKnownSymbolId(propName) !== undefined;
     const deferToNativeConstant = deferToWellKnownSymbolId || hasNativeBuiltinConstantHandler(builtinName, propName);
     if (BUILTIN_CTOR_NAMES.has(builtinName) && !isShadowed && !deferToNativeConstant) {
       // (#2175 S1) `<Builtin>.prototype` as a value → the native `$NativeProto`
@@ -3527,7 +3527,7 @@ export function tryNamespaceConstantAndSymbolReads(
 
   // Handle Symbol.iterator, Symbol.hasInstance, etc. → constant i32
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Symbol") {
-    const symId = getWellKnownSymbolId(propName);
+    const symId = wellKnownSymbolId(propName);
     if (symId !== undefined) {
       fctx.body.push({ op: "i32.const", value: symId });
       // (#5267 A-2) Carry the symbol BRAND in the native-symbol lanes, exactly

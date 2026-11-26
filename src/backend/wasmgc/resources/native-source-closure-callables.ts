@@ -100,6 +100,7 @@ function resolveEntries(
     : [
         ...requirements.uses.flatMap((use) => (use.liftedUnitId ? [use.liftedUnitId] : [])),
         ...requirements.getterUses.map((use) => use.liftedUnitId),
+        ...(requirements.realmAccessors?.units ?? []),
       ];
   return resolveSourceEntries(tx, types, slots, new Set(selected));
 }

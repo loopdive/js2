@@ -1006,10 +1006,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   dynamicCarrierIsExternref?(): boolean;
   /**
-   * (#7354 Fa) The all-dynamic signature the Prepared native lane gives an unannotated function expression, if any
+   * (#7354 Fa) The all-dynamic signature the Prepared native lane gives an unannotated closure literal, if any
    * (`source-dynamic-contracts.ts`). A lane without it keeps the annotated-closure rule.
    */
-  dynamicClosureSignature?(expression: ts.FunctionExpression): IrClosureSignature | undefined;
+  dynamicClosureSignature?(expression: ts.FunctionLikeDeclaration): IrClosureSignature | undefined;
   /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
@@ -16387,7 +16387,7 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       ambientThisStrict: memberPlan.thisStrict,
     });
   }
-  const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
+  const dynamicSignature = cx.resolver?.dynamicClosureSignature?.(expr);
   if (dynamicSignature)
     return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, {
       writtenParameterSlots: true,

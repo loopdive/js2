@@ -45,10 +45,11 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
-import { getWellKnownSymbolId, wellKnownSymbolName } from "./literals.js";
+import { wellKnownSymbolName } from "./literals.js";
 import { sourceWritesRegExpProtoSymbol } from "./regexp-proto-symbol-writes.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -194,7 +195,7 @@ export function tryInvokeReplacedOnSearchValue(
 ): ValType | null | undefined {
   if (argExpr === undefined || !sourceWritesRegExpProtoSymbol(argExpr, protocol)) return undefined;
   if (ctx.oracle.wellKnownSymbolMemberOf(argExpr, protocol) !== true) return undefined;
-  const symbolId = getWellKnownSymbolId(protocol)!;
+  const symbolId = wellKnownSymbolId(protocol)!;
   if (!ensureRegExpProtoSymbolInvoke(ctx, fctx)) return undefined;
   const oLocal = allocLocal(fctx, `__rpsi_o_${fctx.locals.length}`, EXTERNREF);
   if (subjectOverride) {

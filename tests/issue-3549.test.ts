@@ -11,13 +11,12 @@
  * enough to raise the budget they still exceed it.
  */
 import { describe, expect, it } from "vitest";
+import { regexStepBudget, search } from "../src/codegen/regex/vm.js";
 import {
   REGEX_STEP_CAP,
   REGEX_STEP_CAP_LEN_SATURATION,
   REGEX_STEP_CAP_PER_UNIT,
-  regexStepBudget,
-  search,
-} from "../src/codegen/regex/vm.js";
+} from "../src/runtime/contracts/regexp-bytecode.js";
 import { compilePattern } from "../src/codegen/regex/compile.js";
 import { RE_FLAG_U } from "../src/codegen/regex/bytecode.js";
 import { compile } from "../src/index.js";

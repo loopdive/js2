@@ -30,6 +30,7 @@ import {
   isSymbolType,
   isVoidType,
 } from "../../checker/type-mapper.js";
+import { memberKeyForProperty } from "../../checker/well-known-symbol-keys.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileHostFreeCryptoCall, isHostFreeCryptoCall, marshalRegimeCryptoUuid } from "./standalone-crypto.js";
 import { tryStandaloneQueueMicrotaskCall } from "./standalone-queue-microtask.js";
@@ -280,7 +281,7 @@ import {
   tryEmitJsonParseLiteral,
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
-import { emitJsonParsePrimitive, emitJsonQuoteString } from "../json-runtime.js";
+import { emitJsonQuoteString } from "../json-runtime.js";
 import {
   emitJsonParseText,
   emitJsonParseTextReviver,
@@ -467,11 +468,10 @@ import {
   compileStandaloneRegExpConstructor,
   emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
-  tryCompileStandaloneRegExpCompile,
   tryCompileStandaloneRegExpExec,
+  tryCompileStandaloneRegExpMethod,
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
-  tryCompileStandaloneRegExpToString,
   usesNativeRegExpProvider,
 } from "../regexp-standalone.js";
 import {
@@ -1231,15 +1231,14 @@ function tryEmitNativeProtoReflectiveCall(
     const invoked = tryEmitPrimitiveToLocaleStringInvoke(ctx, fctx, expr, expr.expression);
     if (invoked !== undefined) return invoked;
   }
-
-  // Resolve the member name + declaring builtin from the receiver's symbol.
+  // Resolve the member key (#7427: `@@1` for `[Symbol.iterator]`) + declaring builtin from the receiver's symbol.
   let sym: ts.Symbol | undefined;
   try {
     sym = ctx.checker.getTypeAtLocation(receiver).getSymbol();
   } catch {
     return undefined;
   }
-  let member = sym?.getName();
+  let member = sym === undefined ? undefined : memberKeyForProperty(ctx.oracle, sym);
   const decl = sym?.declarations?.[0];
   let ifaceName: string | undefined;
   if (member && decl && ts.isMethodSignature(decl) && decl.parent && ts.isInterfaceDeclaration(decl.parent)) {
@@ -2202,59 +2201,6 @@ export function tryEmitJsonStringifyPrimitive(
   // bigint / unhandled — fall through to the host import. Full
   // pure-Wasm support tracked under #1353.
   return undefined;
-}
-
-/**
- * (#1599 Phase 2) Try to emit `JSON.parse(s)` for a runtime string-typed
- * argument in standalone / WASI mode, where there is no `env::JSON_parse`
- * host import. Handles the JSON *primitive* slice — number / `true` / `false`
- * / `null` — via the pure-Wasm `__json_parse_primitive` helper, which boxes
- * the parsed value into the host-free `$AnyValue` tagged union.
- *
- * Returns the emitted `ref $AnyValue` type (so the downstream AnyValue→
- * primitive coercion path unboxes it to number / boolean as the consumer
- * requires) and pushes the value; returns `undefined` (no stack effect) when
- * the argument is not a runtime string — objects, arrays, and string *values*
- * still fall through to the #1599 refusal (they need the full Phase 2 codec).
- *
- * Spec: ECMA-262 §25.5.2 `JSON.parse` / `ParseJSON`, ECMA-404.
- */
-export function tryEmitJsonParsePrimitive(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  call: ts.CallExpression,
-  arg: ts.Expression,
-): ValType | undefined {
-  // A property/element read on the result — `JSON.parse(s).x` / `JSON.parse(s)[i]`
-  // — means the parsed value is consumed as an object/array, which the primitive
-  // slice does not produce. Leave those to the #1599 refusal (full Phase 2 codec).
-  const parent = call.parent;
-  if (
-    (ts.isPropertyAccessExpression(parent) && parent.expression === call) ||
-    (ts.isElementAccessExpression(parent) && parent.expression === call)
-  ) {
-    return undefined;
-  }
-  let argType: ts.Type;
-  try {
-    argType = ctx.checker.getTypeAtLocation(arg);
-  } catch {
-    return undefined;
-  }
-  // Only a string-typed argument routes here. `JSON.parse(<string literal>)`
-  // is folded earlier by tryEmitJsonParseLiteral; this handles the runtime
-  // string-value case.
-  if ((argType.flags & ts.TypeFlags.StringLike) === 0) return undefined;
-
-  const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
-  if (argResult === null) return undefined;
-  if (argResult.kind !== "externref") {
-    coerceType(ctx, fctx, argResult, { kind: "externref" });
-  }
-  const parseIdx = emitJsonParsePrimitive(ctx);
-  flushLateImportShifts(ctx, fctx);
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_primitive") ?? parseIdx });
-  return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
 }
 
 /**
@@ -7366,20 +7312,8 @@ function compileCallExpression(
       if (openTargetCall !== undefined) return openTargetCall;
     }
 
-    const standaloneRegExpExec = tryCompileStandaloneRegExpExec(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpExec !== undefined) return standaloneRegExpExec;
-
-    const standaloneRegExpTest = tryCompileStandaloneRegExpTest(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpTest !== undefined) return standaloneRegExpTest;
-
-    const standaloneRegExpToString = tryCompileStandaloneRegExpToString(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpToString !== undefined) return standaloneRegExpToString;
-
-    // (#5142) `re.compile(pattern, flags)` — Annex B §B.2.4.1 in-place
-    // re-initialization. Without an arm here the call fell through to a generic
-    // path that silently no-op'd.
-    const standaloneRegExpCompile = tryCompileStandaloneRegExpCompile(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpCompile !== undefined) return standaloneRegExpCompile;
+    const standaloneRegExpMethod = tryCompileStandaloneRegExpMethod(ctx, fctx, expr, propAccess);
+    if (standaloneRegExpMethod !== undefined) return standaloneRegExpMethod;
 
     // Handle Array.prototype.METHOD.call(obj, ...args) — inline as array method on shape-inferred obj
     {

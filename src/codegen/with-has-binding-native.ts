@@ -35,7 +35,7 @@ import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
-import { getWellKnownSymbolId } from "./literals.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /** Registry name of the standalone HasBinding native. */
 export const WITH_HAS_BINDING_NATIVE = "__with_has_binding_native";
@@ -66,7 +66,7 @@ export function ensureWithHasBindingNative(ctx: CodegenContext): number | undefi
   // `__box_symbol(11)` — the same identity `Symbol.unscopables` reads as a
   // value, so a user's `obj[Symbol.unscopables] = …` write is found by this
   // lookup.
-  const unscopablesId = getWellKnownSymbolId("unscopables");
+  const unscopablesId = wellKnownSymbolId("unscopables");
   if (unscopablesId === undefined) return undefined;
   ensureSymbolCarrier(ctx);
   const boxSymbolIdx = ctx.funcMap.get("__box_symbol");

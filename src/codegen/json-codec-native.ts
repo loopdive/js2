@@ -4,8 +4,8 @@
  * (issue #2166, PR-A).
  *
  * `json-standalone.ts` folds *statically known* JSON literal graphs at compile
- * time, and `json-runtime.ts` adds the lone-runtime-primitive serialisers
- * (`__json_quote_string`, `__json_parse_primitive`). What was still missing —
+ * time, and `json-runtime.ts` adds the runtime-string serialiser
+ * (`__json_quote_string`). What was still missing —
  * and the bulk of the standalone JSON conformance residual — is
  * `JSON.stringify` of a **dynamic object graph**: a runtime-built object/array
  * whose contents are not known at compile time (`const o = {}; o.x = f();

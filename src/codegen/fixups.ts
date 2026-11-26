@@ -690,26 +690,26 @@ export function fixupStructNewArgCounts(ctx: CodegenContext): void {
       // or were independently grown). Use typeDef as the source of truth.
       // Count backwards from struct.new to find how many default-value
       // instructions were pushed. We look for a contiguous run of
-      // const/ref.null/ref.as_non_null ops.
+      // const/ref.null ops and the two converters a default may end in.
       let pushedCount = 0;
       let j = i - 1;
       while (j >= 0) {
         const prev = instrs[j]!;
         const op = prev.op;
+        // A converter rewrites the value under it and pushes none of its own:
+        // `ref.null; ref.as_non_null` and the `undefined` default of an f64 slot,
+        // `i64.const UNDEF_F64_BITS; f64.reinterpret_i64` (#7366), are one value each.
+        const isConverter = op === "ref.as_non_null" || op === "f64.reinterpret_i64";
         if (
+          isConverter ||
           op === "f64.const" ||
           op === "i32.const" ||
           op === "i64.const" ||
           op === "ref.null" ||
           op === "ref.null.extern" ||
-          op === "ref.null.eq" ||
-          op === "ref.as_non_null"
+          op === "ref.null.eq"
         ) {
-          // ref.as_non_null doesn't push a new value, it converts the top.
-          // Don't count it as a separate pushed value.
-          if (op !== "ref.as_non_null") {
-            pushedCount++;
-          }
+          if (!isConverter) pushedCount++;
           j--;
         } else {
           break;

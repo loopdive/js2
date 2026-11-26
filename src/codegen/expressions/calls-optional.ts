@@ -4,17 +4,17 @@
  * - obj?.method(args) — compileOptionalCallExpression
  */
 import { ts } from "../../ts-api.js";
-import { isExternalDeclaredClass, isStringType, isVoidType } from "../../checker/type-mapper.js";
+import { isExternalDeclaredClass, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, withPreEvaluatedExpression } from "../context/locals.js";
+import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { addStringImports, resolveWasmType } from "../index.js";
+import { resolveWasmType } from "../index.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, ensureLateImport, valTypesMatch, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression, ensureLateImport, VOID_RESULT } from "../shared.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
-import { compileNativeStringMethodCall } from "../string-ops.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -23,7 +23,9 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
-import { emitIsUndefF64, f64MayHoldUndefined } from "../value-tags.js";
+import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";
+import { isBuiltinTypeName } from "../builtin-tags.js";
+import { emitIsUndefF64, f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 
 export function compileOptionalCallExpression(
   ctx: CodegenContext,
@@ -54,7 +56,8 @@ export function compileOptionalCallExpression(
     const retType = ctx.checker.getReturnTypeOfSignature(sig);
     if (!isVoidType(retType)) callReturnType = resolveWasmType(ctx, retType);
   }
-  let resultType: ValType = callReturnType === VOID_RESULT ? { kind: "externref" } : callReturnType;
+  const declaredType: ValType = callReturnType === VOID_RESULT ? { kind: "externref" } : callReturnType;
+  let resultType = declaredType;
 
   // `?.` short-circuits on null/undefined. `ref.is_null` only validates on a
   // reference operand, but the receiver can lower to a non-reference value type.
@@ -177,93 +180,20 @@ export function compileOptionalCallExpression(
     }
   }
 
-  if (!methodResolved && isStringType(tsReceiverType)) {
-    if (ctx.fast && ctx.nativeStrTypeIdx >= 0) {
-      const nativeResult = compileNativeStringMethodCall(ctx, fctx, expr, propAccess, methodName);
-      if (nativeResult !== null) {
-        resultType = nativeResult;
-        methodResolved = true;
-      }
-    } else {
-      const importName = `string_${methodName}`;
-      const funcIdx = ctx.funcMap.get(importName);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: tmp });
-        const paramTypes = getFuncParamTypes(ctx, funcIdx);
-        const userParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
-        for (let i = 0; i < expr.arguments.length; i++) {
-          if (i >= userParamCount) {
-            const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
-            if (extraType !== null) fctx.body.push({ op: "drop" });
-            continue;
-          }
-          const expected = paramTypes?.[i + 1];
-          const actual = compileExpression(ctx, fctx, expr.arguments[i]!, expected);
-          if (actual === null) {
-            pushDefaultValue(fctx, expected ?? { kind: "externref" }, ctx);
-          } else if (expected && !valTypesMatch(actual, expected)) {
-            coerceType(ctx, fctx, actual, expected);
-          }
-        }
-        if (paramTypes) {
-          for (let i = expr.arguments.length + 1; i < paramTypes.length; i++) {
-            const paramType = paramTypes[i]!;
-            if ((methodName === "substring" || methodName === "slice") && i === 2 && paramType.kind === "f64") {
-              addStringImports(ctx);
-              const lengthIdx = ctx.jsStringImports.get("length");
-              if (lengthIdx === undefined) {
-                fctx.body.push({ op: "f64.const", value: 0x7fffffff });
-              } else {
-                fctx.body.push(
-                  { op: "local.get", index: tmp },
-                  { op: "call", funcIdx: lengthIdx },
-                  { op: "f64.convert_i32_u" },
-                );
-              }
-            } else if (paramType.kind === "externref") {
-              const undefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-              flushLateImportShifts(ctx, fctx);
-              if (undefinedIdx === undefined) fctx.body.push({ op: "ref.null.extern" });
-              else fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_undefined")! });
-            } else if (paramType.kind === "f64") {
-              const value =
-                methodName === "split"
-                  ? -1
-                  : methodName === "includes" || methodName === "startsWith" || methodName === "endsWith"
-                    ? Number.NaN
-                    : 0;
-              fctx.body.push({ op: "f64.const", value });
-            } else {
-              pushDefaultValue(fctx, paramType, ctx);
-            }
-          }
-        }
-        fctx.body.push({ op: "call", funcIdx });
-        methodResolved = true;
-      }
-    }
-  }
-
   // (#4292) An optional call on an unannotated/dynamic receiver still has to
   // perform ordinary method dispatch in the non-null branch. Hono's published
   // `mergePath(base, ...)` uses `base?.at(-1)` where `base` is an unannotated
   // JavaScript parameter: the static string arm above cannot prove its brand,
   // but at runtime it is a native string. The old fallback emitted only the
   // default result, so `.at()` became undefined even for a non-null receiver.
-  // Delegate repeatable local dynamic receivers to the same generic runtime
-  // method ladder as a non-optional call; the outer branch has already applied
-  // the nullish short-circuit. The delegated path re-evaluates its receiver, so
-  // property chains are deliberately excluded: even a syntactically simple
-  // `box.value` can invoke an observable getter.
-  // (#7370) The same holds for a primitive receiver boxed in an externref
-  // (`x?: number`): no arm above dispatches a Number/Boolean/BigInt method.
-  const primitiveReceiver = isPrimitiveMethodReceiver(tsReceiverType);
-  if (
-    !methodResolved &&
-    ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || primitiveReceiver) &&
-    isRepeatableOptionalReceiver(propAccess.expression)
-  ) {
-    const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+  // Delegate dynamic receivers to the same generic runtime method ladder as a
+  // non-optional call; the outer branch has already applied the nullish
+  // short-circuit. (#7370, #7395) The same holds for a primitive (`x?: number`,
+  // `s: string | undefined`) or built-in (`a: number[] | undefined`) receiver:
+  // no arm above dispatches their methods.
+  const ladderReceiver = isLadderMethodReceiver(tsReceiverType);
+  if (!methodResolved && ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || ladderReceiver)) {
+    const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, tmp);
     if (delegated !== undefined) {
       resultType = settleDelegatedResult(fctx, delegated, resultType);
       methodResolved = true;
@@ -276,15 +206,14 @@ export function compileOptionalCallExpression(
   // non-null branch would emit a default value and the call would never happen
   // (#2049). `compileCallablePropertyCall` implements exactly this — extract the
   // closure field, push self + args, `call_ref` — and already normalizes a
-  // nullable receiver via a guarded cast. Pass the receiver already captured
-  // for the nullish test so a live property chain is not evaluated twice.
+  // nullable receiver via a guarded cast. The receiver is the one already held
+  // for the nullish test, so a live property chain is not evaluated twice.
   if (!methodResolved && isSupportedOptionalCallableReceiverShape(propAccess.expression)) {
     const structName = resolveStructName(ctx, tsReceiverType);
     if (structName) {
-      const delegated = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName, {
-        localIdx: tmp,
-        type: objType,
-      });
+      const delegated = withPreEvaluatedExpression(fctx, propAccess.expression, tmp, () =>
+        compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName),
+      );
       if (delegated !== undefined) {
         resultType = settleDelegatedResult(fctx, delegated, resultType);
         methodResolved = true;
@@ -293,6 +222,7 @@ export function compileOptionalCallExpression(
   }
 
   if (!methodResolved) fctx.body.push(...defaultValueInstrs(resultType));
+  if (ladderReceiver) resultType = undefinableJoin(fctx, resultType, declaredType);
 
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
@@ -302,16 +232,23 @@ export function compileOptionalCallExpression(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultType },
-    then: primitiveReceiver ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
+    then: ladderReceiver ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
     else: elseInstrs,
   });
 
   return resultType;
 }
 
-/** (#7370) The value a short-circuited `?.` call yields: the lane's real `undefined` for an externref result. */
+/**
+ * (#7370, #7395) The value a short-circuited `?.` call yields: the lane's real `undefined` for an externref result, the
+ * `undefined` sentinel for an f64 one.
+ */
 function optionalUndefinedInstrs(ctx: CodegenContext, type: ValType): Instr[] {
-  return type.kind === "externref" ? canonicalUndefinedExternInstrs(ctx) : defaultValueInstrs(type);
+  if (type.kind === "externref") return canonicalUndefinedExternInstrs(ctx);
+  if (type.kind !== "f64") return defaultValueInstrs(type);
+  const undef: Instr[] = [];
+  pushUndefF64(undef);
+  return undef;
 }
 
 function compileOptionalPropertyValueCall(
@@ -398,11 +335,16 @@ function compileOptionalPropertyValueCall(
   return externref;
 }
 
-/** Receiver types whose methods only the generic receiver-method ladder dispatches. */
-const PRIMITIVE_METHOD_RECEIVER = ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike;
+const PRIMITIVE_METHOD_RECEIVER =
+  ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.StringLike;
 
-/** A Number/Boolean/BigInt receiver type, including the `true | false` union that `boolean` is. */
-function isPrimitiveMethodReceiver(type: ts.Type): boolean {
+/**
+ * Receiver types whose methods only the generic receiver-method ladder dispatches: a built-in object (`Array`, `Map`,
+ * `Set`, …) or a primitive, including the `true | false` union that `boolean` is.
+ */
+function isLadderMethodReceiver(type: ts.Type): boolean {
+  const name = type.getSymbol()?.name;
+  if (name !== undefined && isBuiltinTypeName(name)) return true;
   return type.isUnion()
     ? type.types.every((member) => (member.flags & PRIMITIVE_METHOD_RECEIVER) !== 0)
     : (type.flags & PRIMITIVE_METHOD_RECEIVER) !== 0;
@@ -411,9 +353,8 @@ function isPrimitiveMethodReceiver(type: ts.Type): boolean {
 /**
  * (#7370) `x?.m(args)` on a receiver that lowered to a Wasm value type, with its value on the stack. A receiver that
  * can hold `undefined` (`f64MayHoldUndefined`) short-circuits on the sentinel; one whose static type admits neither
- * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller. The
- * call goes through the ordinary receiver-method ladder, which re-reads the receiver, so only a repeatable one is
- * taken. `undefined` leaves the stack untouched for the caller's fallback.
+ * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller.
+ * `undefined` leaves the stack untouched for the caller's fallback.
  */
 function compileOptionalValueReceiverCall(
   ctx: CodegenContext,
@@ -423,38 +364,61 @@ function compileOptionalValueReceiverCall(
   receiverType: ValType,
   resultType: ValType,
 ): InnerResult | undefined {
-  if (!isRepeatableOptionalReceiver(propAccess.expression)) return undefined;
   const holdsUndefined = f64MayHoldUndefined(ctx, propAccess.expression, receiverType);
   const nullability = ctx.oracle.nullabilityOf(propAccess.expression);
   if (!holdsUndefined && (nullability.nullable || nullability.undefinable)) return undefined;
+  // The ladder reads the receiver from its local while it compiles, so the local exists first; an unclaimed call
+  // rolls it back with everything the attempt allocated.
+  const attempt = snapshotSpeculative(ctx, fctx);
+  const receiverLocal = allocLocal(fctx, `__optcall_${fctx.locals.length}`, receiverType);
   const savedBody = pushBody(fctx);
-  const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+  const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, receiverLocal);
   if (delegated === undefined) {
     popBody(fctx, savedBody);
+    rollbackSpeculative(ctx, fctx, attempt);
     return undefined;
   }
-  const callType = settleDelegatedResult(fctx, delegated, resultType);
+  const settled = settleDelegatedResult(fctx, delegated, resultType);
+  const callType = holdsUndefined ? undefinableJoin(fctx, settled, resultType) : settled;
   const callInstrs = fctx.body;
   popBody(fctx, savedBody);
-  // A primitive receiver cannot be nullish, so its value is only the ladder's input: the call re-reads it.
+  // A receiver that cannot be nullish is a primitive: the call always runs, on the held value.
   if (!holdsUndefined) {
-    fctx.body.push({ op: "drop" }, ...callInstrs);
+    fctx.body.push({ op: "local.set", index: receiverLocal }, ...callInstrs);
     return callType;
   }
+  fctx.body.push({ op: "local.tee", index: receiverLocal });
   emitIsUndefF64(fctx.body);
-  const joined = nullableJoin(callType);
   fctx.body.push({
     op: "if",
-    blockType: { kind: "val", type: joined },
-    then: optionalUndefinedInstrs(ctx, joined),
+    blockType: { kind: "val", type: callType },
+    then: optionalUndefinedInstrs(ctx, callType),
     else: callInstrs,
   });
-  return joined;
+  return callType;
 }
 
 /** The result of a short-circuiting branch joined with a default: a non-null reference widens to its nullable form. */
 function nullableJoin(type: ValType): ValType {
   return type.kind === "ref" ? { kind: "ref_null", typeIdx: type.typeIdx } : type;
+}
+
+/**
+ * (#7395) The type of a call result joined with the `undefined` that `optionalUndefinedInstrs` yields, converting the
+ * result on the stack where needed: a number (`declared` f64, even when the method lowers to an i32 such as a string
+ * `indexOf`) becomes an f64 carrying the sentinel, an anyref (`Map.get`) an externref, and any other reference its
+ * nullable form. An i32 the declared type calls a boolean (`Set.has`) keeps the boolean brand, so `String(r)` reads
+ * "true"; its `undefined` still reads as `false` (#7406).
+ */
+function undefinableJoin(fctx: FunctionContext, type: ValType, declared: ValType): ValType {
+  if (type.kind === "i32" && declared.kind === "i32") return declared;
+  if (type.kind === "anyref") {
+    fctx.body.push({ op: "extern.convert_any" });
+    return { kind: "externref" };
+  }
+  if (type.kind === "i32" && declared.kind === "f64") fctx.body.push({ op: "f64.convert_i32_s" });
+  else if (type.kind !== "f64") return nullableJoin(type);
+  return { kind: "f64", undefSentinel: true };
 }
 
 /** The type a delegated call leaves on the stack: a value-less result (`void`, a failed compile) pushes a default. */
@@ -468,11 +432,21 @@ function settleDelegatedResult(
   return fallback;
 }
 
-/** An optional-method receiver that can be read twice observably safely. */
-function isRepeatableOptionalReceiver(expr: ts.Expression): boolean {
-  let cur = expr;
-  while (ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
-  return ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword;
+/**
+ * (#7374) The receiver-method ladder for `recv?.m(args)` with `recv` read from `receiverLocal`, which already holds the
+ * value the nullish test saw: a call or a getter in `recv` runs once.
+ */
+function compileHeldReceiverMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  receiverLocal: number,
+): InnerResult | undefined {
+  return withPreEvaluatedExpression(fctx, propAccess.expression, receiverLocal, () => {
+    const regExpMethod = tryCompileStandaloneRegExpMethod(ctx, fctx, expr, propAccess);
+    return regExpMethod !== undefined ? regExpMethod : compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+  });
 }
 
 /**

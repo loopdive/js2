@@ -459,12 +459,20 @@ export function recordScriptVarBindingNames(target: Set<string>, sourceFile: ts.
       if (!ts.isOmittedExpression(element)) recordName(element.name);
     }
   };
+  forEachScriptVarDeclaration(sourceFile, (declaration) => recordName(declaration.name));
+}
+
+/** Visit every `var` declaration of the top-level region (never a function or class body), in source order. */
+export function forEachScriptVarDeclaration(
+  sourceFile: ts.SourceFile,
+  visit: (declaration: ts.VariableDeclaration) => void,
+): void {
   const walk = (node: ts.Node): void => {
     if (node !== sourceFile && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
       return;
     }
     if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-      for (const declaration of node.declarations) recordName(declaration.name);
+      for (const declaration of node.declarations) visit(declaration);
     }
     forEachChild(node, walk);
   };

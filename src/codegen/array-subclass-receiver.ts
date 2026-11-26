@@ -16,8 +16,8 @@
 // receiver is evaluated ONCE, cast back to its vec (`coerceType`
 // externref → `ref_null $__vec_externref` tests the brand and only copies a
 // foreign value), spilled to a local, and the ordinary vec lowering reads that
-// local in place of the receiver expression (the `nativeGeneratorExpression
-// ValueLocals` override `compileExpression` already honours for any node). The
+// local in place of the receiver expression (`withPreEvaluatedExpression`, the
+// override `compileExpression` already honours for any node). The
 // vec is the instance itself, so mutating methods mutate the instance.
 //
 // Not in scope: @@species. `slice`/`map`/`filter` return a plain Array, as the
@@ -26,7 +26,7 @@
 import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, withPreEvaluatedExpression } from "./context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -56,8 +56,7 @@ export function withArraySubclassReceiverAsVec<T>(
   emitReceiver: () => ValType | null,
   lower: () => T | undefined,
 ): T | undefined {
-  const overrides = (fctx.nativeGeneratorExpressionValueLocals ??= new Map());
-  if (overrides.has(receiverExpr)) return undefined;
+  if (fctx.preEvaluatedExpressionLocals?.has(receiverExpr)) return undefined;
   const snap = snapshotSpeculative(ctx, fctx);
   const recvType = emitReceiver();
   if (recvType === null) {
@@ -68,14 +67,11 @@ export function withArraySubclassReceiverAsVec<T>(
   coerceType(ctx, fctx, recvType, vecType);
   const vecLocal = allocLocal(fctx, `__arrsub_recv_${fctx.locals.length}`, vecType);
   fctx.body.push({ op: "local.set", index: vecLocal });
-  overrides.set(receiverExpr, vecLocal);
-  try {
+  return withPreEvaluatedExpression(fctx, receiverExpr, vecLocal, () => {
     const result = lower();
     if (result === undefined) rollbackSpeculative(ctx, fctx, snap);
     return result;
-  } finally {
-    overrides.delete(receiverExpr);
-  }
+  });
 }
 
 /**

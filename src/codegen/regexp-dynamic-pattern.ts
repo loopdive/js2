@@ -32,8 +32,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { ReOp } from "../runtime/contracts/regexp-bytecode.js";
 import {
-  ReOp,
   RE_FLAG_D,
   RE_FLAG_G,
   RE_FLAG_I,
