@@ -66,33 +66,43 @@ is meant to turn main red within one run.
 
 ## Fix chain
 
-1. **PR #7451:** the detector workflow (`issue-tests.yml`, shard job) runs
-   the gate's parallel pass with 2 forks and 50 files per vitest invocation,
-   instead of `availableParallelism() - 1` forks (3 on the 4-vCPU runner) and
-   150 files. `scripts/known-failures-gate.mjs` gains
-   `KNOWN_FAILURES_MAX_FORKS`, which it passes to the child vitest as
-   `VITEST_MAX_FORKS`. Checked against `vitest.config.ts`: `maxForks`
-   resolves to 3 without it on a 4-core box and to 2 with it.
-   - The script's defaults are unchanged, so the PR-time `issue-tests-shard`
-     job in `ci.yml` (8 shards, 100-minute limit) is unaffected.
-   - The cause is a hypothesis, not a measurement: CPU contention. Several
-     tests (`issue-4485`, `issue-4621`, `es5-standalone-harness-selftests`)
-     instead attribute `onTaskUpdate` timeouts to a worker's own event loop
-     being blocked by a long synchronous compile. Fewer forks helps under
-     either explanation; smaller batches help only under the first.
-   - The PR's own `issue-tests` run is the measurement, against run
-     45760154331.
-   - Known gap: a set `VITEST_MAX_FORKS` overrides the config's RAM guard
-     (`forksByRam`) instead of capping it. That is harmless on a 16 GB runner
-     at 2 forks.
+1. **Measured and rejected: fewer forks, smaller batches (PR #7451's first
+   version).** Hypothesis: CPU contention. Three forks per 150-file vitest
+   invocation on the 4-vCPU runner would starve the main process, so the
+   worker RPC times out. #7451 ran the detector with 2 forks and 50-file
+   batches. Its `issue-tests` run 45806551748, against run 45760154331 on main
+   (partial; shards 3, 5 and 6 had finished when this was written):
+
+   | shard | integrity errors before → after | runtime before → after |
+   |---|---|---|
+   | 3 | 1 → 1 (`AggregateError`/`ECONNREFUSED`; fixed by #7504) | 21.5 → 20.8 min |
+   | 5 | 0 → 0 | 24.7 → 24.3 min |
+   | 6 | 2 → 2 (`onTaskUpdate` timeouts) | 23.7 → 35.0 min |
+
+   The timeouts did not move, and shard 6 got 48 % slower, so the hypothesis
+   is refuted. The `issue-tests.yml` settings and the
+   `KNOWN_FAILURES_MAX_FORKS` knob were reverted forward; #7451 carries only
+   this file.
+
+   What the timeouts are instead: a worker that stays blocked for more than
+   birpc's 60 s RPC timeout after sending a task update. A 65 s synchronous
+   stretch in one test file reproduces exactly
+   `[vitest-worker]: Timeout calling "onTaskUpdate"`, at any fork count. The
+   per-shard counts are stable across runs, which points at specific files.
 2. **PR #7450:** `tests/issue-1151-gap-b.test.ts` observes the JS-side
    rejection.
-3. **Remaining:**
-   - `tests/issue-2701.test.ts`: JS host only; it needs either a fix in the
-     host adapter boundary or a decision for the sunsetting JS-host lane;
-   - the `ECONNREFUSED` source;
-   - whatever unattributed errors the first post-#7451 run on main still
-     shows.
+3. **PR #7461 (#7504):** `node:` builtin arguments get host values for native
+   strings. This removes the unhandled errors of `tests/issue-2701.test.ts`
+   (2) and `tests/issue-1795.test.ts` (1, the `ECONNREFUSED`).
+4. **PR #7455:** the reporter names the file behind a worker-caught unhandled
+   error (`[raised while running <file>]`).
+5. **PR #7470 (#7509):** an error scheduled after a file's last hook is
+   refused, not lost.
+6. **PR #7478 (#7518):** batch bisection names the file behind untagged run
+   errors, including the `onTaskUpdate` timeouts, within a 900 s budget per
+   call.
+7. **Remaining:** fix the files #7478's bisection names in the first detector
+   run on main after it lands.
 
    Then a first green gate run seeds and ratchets the baseline. From that run
    on, new failures go red.
