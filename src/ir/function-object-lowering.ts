@@ -50,8 +50,6 @@ export interface FunctionObjectLoweringHost {
    * closures are function objects, a call through a value is the native dispatcher `js.closure.call:N`.
    */
   readonly createsFunctionObjects: () => boolean;
-  /** (#7354 L0a, L0b) `onPreparedDynamicLane` of the resolver. */
-  readonly onPreparedDynamicLane: () => boolean;
   /** (#7354 O1) The identifier reads the unchanged global built-in of its name (`builtin-global-binding.ts`). */
   readonly isPristineGlobal: (identifier: ts.Identifier) => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
@@ -156,8 +154,20 @@ export function emitFunctionObjectInit(
  * with native strings (`source-dynamic-contracts.ts`). There every closure literal that can become a value is created
  * as a function object (`emitFunctionObjectInit`) and may be stored as a member.
  */
-export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
+export function createsFunctionObjects(resolver: LaneResolver): boolean {
   return resolver?.createsFunctionObjects?.() === true;
+}
+
+/** The resolver (or host) answer both predicates read. */
+export type LaneResolver = { createsFunctionObjects?(): boolean } | undefined;
+
+/**
+ * (#7354 L0a, L0b) Whether the program is lowered on the Prepared dynamic-value lane, where the front end puts what it
+ * cannot type into the carrier and its legalization implements JavaScript's conversions. That lane is exactly where
+ * closures are function objects (one resolver answer, above); this name is for the sites that ask about the lane.
+ */
+export function onPreparedDynamicLane(resolver: LaneResolver): boolean {
+  return createsFunctionObjects(resolver);
 }
 
 export function functionObjectDynamicValue(

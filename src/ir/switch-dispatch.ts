@@ -12,7 +12,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { carrierOperand } from "./dynamic-comparison-lowering.js";
-import type { FunctionObjectLoweringHost } from "./function-object-lowering.js";
+import { onPreparedDynamicLane, type FunctionObjectLoweringHost } from "./function-object-lowering.js";
 import { stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 const I32 = irVal({ kind: "i32" });
@@ -36,7 +36,7 @@ export function switchDiscriminant(
 ): SwitchDiscriminant {
   // The selector's own predicate: the Prepared path has no selector, and the string dispatch skips non-literals.
   const caseTests = switchCaseTests(stmt);
-  const lane = host.onPreparedDynamicLane();
+  const lane = onPreparedDynamicLane(host);
   if (caseTests.kind === "rejected" && (!lane || caseTests.reason === "switch-multiple-defaults"))
     throw new IrUnsupportedError(
       "body-shape-rejected",

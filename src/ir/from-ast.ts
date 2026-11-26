@@ -452,7 +452,6 @@ import { readEnv } from "../env.js";
 import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
 import { numericCaseTestValue } from "./switch-case-tests.js";
 import { switchDiscriminant } from "./switch-dispatch.js";
-import { onPreparedDynamicLane } from "./prepared-dynamic-lane.js";
 import { directCallArityPlan } from "./direct-call-arity.js";
 
 interface ResolvedIrVecType {
@@ -535,7 +534,7 @@ function unsupportedVoidCallExpression(detail: string): never {
  * `undefined` (§10.2.1.4), the carrier's; elsewhere the shape refuses with `detail`.
  */
 function voidCallValue(detail: string, cx: LowerCtx): IrValueId {
-  if (!onPreparedDynamicLane(cx.resolver)) unsupportedVoidCallExpression(detail);
+  if (!functionObjects.onPreparedDynamicLane(cx.resolver)) unsupportedVoidCallExpression(detail);
   return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
 }
 
@@ -1028,7 +1027,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
-  preparedDynamicLane?(): boolean; // (#7354 L0a, L0b) `prepared-dynamic-lane.ts`
   isPristineBuiltinGlobal?(identifier: ts.Identifier): boolean; // (#7354 O1) `builtin-global-binding.ts`
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
   readonly closureCodeStrictness?: CodeStrictness;
@@ -2353,7 +2351,7 @@ function terminateTailFallOut(cx: LowerCtx): void {
 
 function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): void {
   // (#7354 L0b) An EmptyStatement completes empty (§14.4); on the Prepared lane it neither lowers nor is the tail.
-  const stmts = onPreparedDynamicLane(cx.resolver)
+  const stmts = functionObjects.onPreparedDynamicLane(cx.resolver)
     ? statements.filter((statement) => !ts.isEmptyStatement(statement))
     : statements;
   if (stmts.length < 1) {
@@ -5189,7 +5187,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     // (#7354 L0b) On the Prepared lane a `null` no reference hint admits is the carrier's, for its user to convert.
     const admissible = nullValueAdmissible(irOperandFamily(hint, expr));
     const dynamicNull =
-      (hint.kind === "dynamic" || (!admissible && onPreparedDynamicLane(cx.resolver))) &&
+      (hint.kind === "dynamic" || (!admissible && functionObjects.onPreparedDynamicLane(cx.resolver))) &&
       cx.resolver?.dynamicCarrierIsExternref?.() === true;
     if (dynamicNull || admissible) {
       const ty = dynamicNull || hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
@@ -6286,7 +6284,7 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
     if (value === null) throw new Error("ordinary Get contract returned no value");
     if (result.kind === "callable") return cx.builder.emitOrdinaryGetCallableResult(value, result.signature);
     if (boolean)
-      return onPreparedDynamicLane(cx.resolver)
+      return functionObjects.onPreparedDynamicLane(cx.resolver)
         ? cx.builder.emitBox(value, irDynamic())
         : cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
     return cx.builder.emitIntrinsic("js.number.unbox", [value]);
@@ -7719,7 +7717,7 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
   if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
     return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
   // (#7354 T) The Prepared lane binds no `js.number.from-value`; its carrier's ToNumber is the legalized one.
-  if (type.kind === "dynamic" && functionObjects.createsFunctionObjects(cx.resolver))
+  if (type.kind === "dynamic" && functionObjects.onPreparedDynamicLane(cx.resolver))
     return cx.builder.emitDynToNumber(first);
   if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
     demoteToLegacy("operand-coercion-unsupported", "Number argument requires an exact logical value carrier");
@@ -7737,7 +7735,6 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
     createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
-    onPreparedDynamicLane: () => onPreparedDynamicLane(cx.resolver),
     isPristineGlobal: (identifier) => cx.resolver?.isPristineBuiltinGlobal?.(identifier) === true,
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
@@ -7941,7 +7938,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
   // (#7287) …or a script `var` in its dynamic home (`print`); (#7354 F1b) a declaration's value home keeps its call;
   // (F2) on the Prepared lane in any position and also from module-init, whose scope binds the home.
-  const lane = functionObjects.createsFunctionObjects(cx.resolver);
+  const lane = functionObjects.onPreparedDynamicLane(cx.resolver);
   const inHome = (callee: ts.Identifier) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic";
   const dynamicModuleCallee =
     (binding === undefined || (lane && binding.kind === "moduleGlobal")) &&
@@ -12646,7 +12643,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     withNodeSourceSite(cx, stmt, () => lowerStmt(stmt, cx));
     return;
   }
-  if (ts.isEmptyStatement(stmt) && onPreparedDynamicLane(cx.resolver)) return;
+  if (ts.isEmptyStatement(stmt) && functionObjects.onPreparedDynamicLane(cx.resolver)) return;
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
     lowerBodyStatements(stmt.statements, childCx);
@@ -13385,7 +13382,7 @@ function lowerCompoundAssignment(
  */
 function lowerValueUpdate(expr: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression, cx: LowerCtx): IrValueId | null {
   const update = expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken;
-  if (!update || !ts.isIdentifier(expr.operand) || !onPreparedDynamicLane(cx.resolver)) return null;
+  if (!update || !ts.isIdentifier(expr.operand) || !functionObjects.onPreparedDynamicLane(cx.resolver)) return null;
   const { old, updated } = lowerIncrementDecrement(expr.operand, expr.operator, cx);
   const value = ts.isPrefixUnaryExpression(expr) ? updated : old;
   return asVal(cx.builder.typeOf(value))?.kind === "i32"
@@ -13595,7 +13592,8 @@ function lowerToStringOperand(operand: ts.Expression, cx: LowerCtx): IrValueId {
   // A string, a boolean (branded, or (#7354 L0b) on the Prepared lane proven by its expression) or an f64; another
   // `i32` may be a number.
   const boolean =
-    irTypeIsBoolean(type) || (onPreparedDynamicLane(cx.resolver) && irOperandFamily(type, operand) === "boolean");
+    irTypeIsBoolean(type) ||
+    (functionObjects.onPreparedDynamicLane(cx.resolver) && irOperandFamily(type, operand) === "boolean");
   if (type.kind === "string" || boolean || asVal(type)?.kind === "f64")
     return lowerPrimitiveToString(cx.builder, value, boolean ? "boolean" : carrierStringFamily(type))!;
   demoteToLegacy(
@@ -13860,7 +13858,7 @@ function lowerCarrierConditional(expr: ts.ConditionalExpression, cx: LowerCtx): 
  * `c ? "s" : null`) joins on the carrier.
  */
 function laneMixedConditional(expr: ts.ConditionalExpression, cx: LowerCtx): boolean {
-  if (!onPreparedDynamicLane(cx.resolver)) return false;
+  if (!functionObjects.onPreparedDynamicLane(cx.resolver)) return false;
   const typed = (arm: ts.Expression): OperandFamily | null => {
     if (isUnshadowedGlobalExpression(arm, "undefined", cx)) return "undefined";
     const family = checkerOperandFamily(arm, cx);
@@ -14307,7 +14305,7 @@ function provenAdditiveOperands(expr: ts.BinaryExpression, cx: LowerCtx): Additi
   const rProof = additiveOperandProof(expr.right, cx);
   if (lProof === null || rProof === null) return UNPROVEN_ADDITION;
   if (!additiveOperandsProvable(expr, lProof, rProof, additiveLaneOf(cx))) {
-    if (onPreparedDynamicLane(cx.resolver)) return { proofs: undefined, carrier: true };
+    if (functionObjects.onPreparedDynamicLane(cx.resolver)) return { carrier: true };
     throw new IrUnsupportedError(
       "operand-coercion-unsupported",
       "build",
@@ -14320,10 +14318,9 @@ function provenAdditiveOperands(expr: ts.BinaryExpression, cx: LowerCtx): Additi
 }
 
 /** How a `+` lowers: by its operands' proofs, or with both operands in the carrier. */
-interface AdditivePlan {
-  readonly proofs: readonly [AdditiveProof, AdditiveProof] | undefined;
-  readonly carrier: boolean;
-}
+type AdditivePlan =
+  | { readonly carrier: false; readonly proofs: readonly [AdditiveProof, AdditiveProof] | undefined }
+  | { readonly carrier: true; readonly proofs?: undefined };
 
 const UNPROVEN_ADDITION: AdditivePlan = { proofs: undefined, carrier: false };
 
@@ -15857,7 +15854,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // arm and surfacing an "identifier not in scope" invariant.
   if (ts.isIdentifier(other) && other.text === "undefined" && !cx.scope.has("undefined")) {
     // (#7354 L0b) The Prepared lane has both values in the carrier: the comparison is the carrier's.
-    if (onPreparedDynamicLane(cx.resolver)) return null;
+    if (functionObjects.onPreparedDynamicLane(cx.resolver)) return null;
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",

@@ -7,7 +7,7 @@ import { ts } from "../ts-api.js";
 import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrUnitId } from "./identity.js";
 import { directCallPublishesArgc } from "./select.js";
-import { onPreparedDynamicLane } from "./prepared-dynamic-lane.js";
+import { onPreparedDynamicLane, type LaneResolver } from "./function-object-lowering.js";
 
 /**
  * The plan of a call (without spread arguments) that is not exactly the callee's arity, or `null` when this lowering
@@ -24,7 +24,7 @@ export function directCallArityPlan(
   expr: ts.CallExpression,
   direct: IrDirectCallLoweringPlan,
   declarationByUnitId: ReadonlyMap<IrUnitId, ts.Node> | undefined,
-  resolver: { preparedDynamicLane?(): boolean } | undefined,
+  resolver: LaneResolver,
 ): { readonly publishArgc: boolean } | null {
   const params = direct.signature.params;
   const actual = expr.arguments.length;

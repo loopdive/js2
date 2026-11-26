@@ -7669,3 +7669,14 @@ numeric tests as the number 0/1: `var b = true; switch (b) { case 1: … }` chos
 - `check:prepared-bytes` identical to the round-0 head.
 - Tests: l0b-statements 7, l0b-expressions 6, l0a-relational 9, l0a-loose-equality 5, ty 61.
 - Gates exit 0, also with `LOC_GATE_BASE` = origin/main (a9cdc8857a). `from-ast.ts` 17175.
+
+### L0b review round 2 (no behaviour change)
+
+- Round 1's claim that the remaining `createsFunctionObjects(cx.resolver)` calls all ask about function objects was
+  false for two: `Number(v)`'s carrier ToNumber and `lowerCall`'s `lane`. Both use `onPreparedDynamicLane` now.
+- One resolver answer. The lane is exactly where closures are function objects, so `preparedDynamicLane` (resolver and
+  host member) and `prepared-dynamic-lane.ts` are gone. `onPreparedDynamicLane` sits next to `createsFunctionObjects`
+  in `function-object-lowering.ts` and reads the same answer under the lane's name; both take one `LaneResolver`
+  type, which `direct-call-arity.ts` shares.
+- `AdditivePlan` is a union: the carrier plan carries no proofs.
+- `check:prepared-bytes` identical to round 1; l0a/l0b test files pass; gates exit 0.

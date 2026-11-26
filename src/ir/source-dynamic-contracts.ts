@@ -308,8 +308,6 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
     readonly createsFunctionObjects?: () => boolean;
-    /** (#7354 L0a, L0b) `onPreparedDynamicLane`: the native carrier with native strings. */
-    readonly preparedDynamicLane?: () => boolean;
     /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
     readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
     /**
@@ -407,7 +405,6 @@ export function programDynamicContracts(
             !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
           createsFunctionObjects: () => functionObjects,
-          preparedDynamicLane: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
         }

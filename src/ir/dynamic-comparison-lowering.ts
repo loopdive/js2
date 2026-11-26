@@ -10,7 +10,11 @@ import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { asVal, irVal, type IrType, type IrValueId } from "./nodes.js";
-import { storedCarrierValue, type FunctionObjectLoweringHost } from "./function-object-lowering.js";
+import {
+  onPreparedDynamicLane,
+  storedCarrierValue,
+  type FunctionObjectLoweringHost,
+} from "./function-object-lowering.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { isEqualityOperator } from "./analysis/operand-admissibility.js";
 import { RELATIONAL_OPERATORS, type RelationalOperator } from "../shared/contracts/dynamic-operator-helpers.js";
@@ -38,7 +42,7 @@ export function comparisonTakesCarrier(
   rt: IrType,
   host: FunctionObjectLoweringHost,
 ): boolean {
-  if (!host.onPreparedDynamicLane() || (relationalOperator(op) === undefined && !isEqualityOperator(op))) return false;
+  if (!onPreparedDynamicLane(host) || (relationalOperator(op) === undefined && !isEqualityOperator(op))) return false;
   if ((lt.kind === "dynamic" && rt.kind === "dynamic") || (lt.kind === "string" && rt.kind === "string")) return false;
   const [lv, rv] = [asVal(lt), asVal(rt)];
   return lv === null || rv === null || lv.kind !== rv.kind || lv.kind === "externref";
@@ -107,7 +111,7 @@ export function tryLowerDynamicRelational(
     const rf = relOperandToF64(rhs, rt, host.builder)!;
     return host.builder.emitBinary(relational.number, lf, rf, I32);
   }
-  if (!host.onPreparedDynamicLane()) return null;
+  if (!onPreparedDynamicLane(host)) return null;
   const dynL = carrierOperand(lhs, expr.left, host);
   const dynR = carrierOperand(rhs, expr.right, host);
   return dynL === null || dynR === null ? null : helper(dynL, dynR);
@@ -127,7 +131,7 @@ export function emitStringRelational(
   host: FunctionObjectLoweringHost,
 ): IrValueId {
   const relational = relationalOperator(op)!;
-  const sign = host.onPreparedDynamicLane()
+  const sign = onPreparedDynamicLane(host)
     ? host.builder.emitIntrinsic("js.value.string_compare", [lhs, rhs])
     : host.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], I32);
   if (sign === null) {
