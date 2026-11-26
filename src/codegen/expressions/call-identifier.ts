@@ -68,6 +68,7 @@ import {
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
 import { parameterMayBeOmitted } from "../declarations.js";
+import { reassignedFunctionBindingIsDynamic } from "../declarations/reassigned-function-binding-widening.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { emitSymbolToString } from "../symbol-native.js";
@@ -1631,12 +1632,6 @@ function compileBoundIdentifierCall(
     // so it must win here too — otherwise a nested `function equal()` calling
     // itself from a sibling reached another module's `const equal = function
     // equal(...)` instead, and the enclosing function silently returned 0.
-    // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace, consulted
-    // BEFORE `funcMap`. A visible nested declaration lexically shadows any
-    // outer closure or function-valued variable of the same name, so it must
-    // win here too — otherwise a nested `function equal()` called from a
-    // sibling reached another module's `const equal = function equal(...)` and
-    // the enclosing function silently returned 0.
     const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
     // Annex B block functions shadow a same-named parameter/local only while
     // evaluating their declaring block.  In particular, a function declaration
@@ -1765,6 +1760,11 @@ function compileBoundIdentifierCall(
     const heterogeneousCallableCapture = fctx.boxedCaptures?.get(funcName)?.valType.kind === "externref";
     if (closureInfo && !heterogeneousCallableCapture && !calleeIsGenericCallableFactoryResult) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
+    }
+    // (#7456) A reassigned declaration (`h = k`, `({ h } = o)`) is its live global; a direct call would skip it.
+    if (reassignedFunctionBindingIsDynamic(ctx, expr.expression)) {
+      const liveCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (liveCall !== null) return liveCall;
     }
 
     // #1177: funcIdx must be re-fetched from funcMap whenever a late-import
