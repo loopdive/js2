@@ -21,6 +21,7 @@ import { tryStaticToNumber } from "./misc.js";
 import { compileMemberIncDec, compilePostfixUnary, compilePrefixUpdate } from "./unary-updates.js";
 import { emitBigIntCarrierNegate } from "../bigint-wide.js";
 import { coercionMode } from "../coercion-engine.js";
+import { emitF64ToNumber } from "../value-tags.js";
 
 /**
  * §7.1.4 ToNumber / §7.1.3 ToNumeric step 3 — a Symbol operand in any numeric
@@ -92,8 +93,8 @@ function compilePrefixUnary(
         fctx.body.push({ op: "f64.convert_i32_s" });
         return { kind: "f64" };
       }
-      // Already numeric — no-op
-      return operandType;
+      // Already numeric: the value itself, except a branded f64's `undefined` sentinel.
+      return operandType && emitF64ToNumber(fctx, operandType);
     }
     case ts.SyntaxKind.MinusToken: {
       // Unary - applies ToNumber (§7.1.4); Symbol operand must throw TypeError.

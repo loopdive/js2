@@ -190,7 +190,7 @@ import {
 import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
 import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
-import { moduleF64UndefinedSeedGlobals } from "./declarations/module-var-undefined-seed.js"; // (#7366)
+import { moduleBindingSlotType, moduleF64UndefinedSeedGlobals } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
@@ -3450,7 +3450,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // declaration-vs-declaration half of #4204's assignment rule.
       redeclarationWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
-      resolveWasmType(ctx, varType)
+      moduleBindingSlotType(ctx, decl, resolveWasmType(ctx, varType))
     );
   }
 

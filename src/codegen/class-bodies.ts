@@ -115,7 +115,7 @@ import { emitStandaloneSubclassMethodInstall } from "./standalone-subclass-metho
 import { emitVecProtoLinkInstall } from "./vec-proto-link.js"; // (#2917)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
-import { fieldStartsUndefined } from "./uninitialised-field-undefined.js";
+import { declaredField, fieldSlotType, fieldStartsUndefined } from "./uninitialised-field-undefined.js";
 import { noteStaticF64UndefinedSeed } from "./declarations/module-var-undefined-seed.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
@@ -1238,12 +1238,7 @@ export function collectClassDeclaration(
     ) {
       fieldType = { kind: "externref" };
     }
-    ownFields.push({
-      name: fieldName,
-      type: fieldType,
-      mutable: true,
-      ...(fieldStartsUndefined(ctx, member, fieldType) ? { undefinedDefault: true as const } : {}),
-    });
+    ownFields.push(declaredField(ctx, fieldName, member, fieldType));
   };
   for (const param of fieldParameterProperties(ctx, className, ctor)) pushDeclaredField(param.name.text, param);
 
@@ -1285,13 +1280,7 @@ export function collectClassDeclaration(
           fieldType = { kind: "externref" };
         }
         if (!ownFields.some((f) => f.name === fieldName)) {
-          const declaration = declaredPropertyByName.get(fieldName);
-          ownFields.push({
-            name: fieldName,
-            type: fieldType,
-            mutable: true,
-            ...(fieldStartsUndefined(ctx, declaration, fieldType) ? { undefinedDefault: true as const } : {}),
-          });
+          ownFields.push(declaredField(ctx, fieldName, declaredPropertyByName.get(fieldName), fieldType));
         }
       }
     }
@@ -2110,7 +2099,7 @@ export function collectClassDeclaration(
               kind: "ref_null",
               typeIdx: (wasmType as { typeIdx: number }).typeIdx,
             }
-          : wasmType;
+          : fieldSlotType(ctx, member, wasmType);
 
       const globalIdx = nextModuleGlobalIdx(ctx);
       ctx.mod.globals.push({

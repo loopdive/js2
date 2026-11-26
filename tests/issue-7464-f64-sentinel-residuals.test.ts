@@ -43,6 +43,21 @@ const ROWS: readonly (readonly [string, string])[] = [
     `function f(): number { let n = 0; for (var g: number | undefined; n < 2; ) { n += g === undefined ? 1 : 0; } return n; }
      export function main(): number { return f(); }`,
   ],
+  [
+    "String, `+` concatenation and unary `+` of an uninitialised module `let`",
+    `let g: number | undefined;
+     export function main(): number { return (String(g) === "undefined" ? 1 : 0) + ("" + g === "undefined" ? 10 : 0) + (g + "" === "undefined" ? 100 : 0) + (String(+(g as number)) === "NaN" ? 1000 : 0); }`,
+  ],
+  [
+    "String, typeof and concatenation of a never-initialised field, then of a NaN stored in it",
+    `class C { a: number | undefined; }
+     export function main(): number { const c = new C(); const r = (String(c.a) === "undefined" ? 1 : 0) + (typeof c.a === "undefined" ? 10 : 0) + ("" + c.a === "undefined" ? 100 : 0); c.a = NaN; return r + (String(c.a) + typeof c.a === "NaNnumber" ? 1000 : 0); }`,
+  ],
+  [
+    "String and typeof of a never-initialised static",
+    `class C { static a: number | undefined; }
+     export function main(): number { return (String(C.a) === "undefined" ? 1 : 0) + (typeof C.a === "undefined" ? 10 : 0); }`,
+  ],
 ];
 
 describe("#7464 f64 undefined-sentinel residuals", () => {

@@ -63,10 +63,10 @@
 import { ts } from "../../ts-api.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import type { Instr } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { forEachScriptVarDeclaration, scriptVarBindingNames } from "../source-scan-predicates.js";
-import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
+import { f64MayHoldUndefined, pushUndefF64, undefinedCapableSlotType } from "../value-tags.js";
 
 /**
  * Emit `global.set $__mod_<name> (undefined)` for every externref module global
@@ -122,6 +122,14 @@ export function emitModuleF64UndefinedSeeds(
     pushUndefF64(initFctx.body);
     initFctx.body.push({ op: "global.set", index: globalIdx });
   }
+}
+
+/**
+ * (#7464) The slot type of the module binding `decl` declares, given its Wasm type: the f64 of one that can hold
+ * `undefined` is branded, so its reads box and stringify the sentinel this module seeds as `undefined`.
+ */
+export function moduleBindingSlotType(ctx: CodegenContext, decl: ts.VariableDeclaration, type: ValType): ValType {
+  return undefinedCapableSlotType(ctx, decl.name, type);
 }
 
 /**

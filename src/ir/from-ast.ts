@@ -267,7 +267,7 @@ import {
   tryLowerVecPush,
 } from "./array-element-lowering.js";
 import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
-import { F64_UNDEFINED_BITS } from "./f64-undefined-marker.js";
+import { emitF64ToNumber, emitUndefinedStringOr, F64_UNDEFINED_BITS } from "./f64-undefined-marker.js";
 import {
   lowerStaticPredicateCall,
   staticPredicatePlan,
@@ -6056,7 +6056,7 @@ function lowerTypeOfValue(operand: ts.Expression, cx: LowerCtx): IrValueId {
       `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
     );
   }
-  return cx.builder.emitStringConst(tag);
+  return emitUndefinedStringOr(cx.builder, inner, () => cx.builder.emitStringConst(tag));
 }
 
 /** The `typeof` tag every value of an IR type has, or `null` when it varies (unions, boxed, references). */
@@ -14266,7 +14266,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
         }
         throw new Error(detail);
       }
-      return rand;
+      return emitF64ToNumber(cx.builder, rand);
     }
     case ts.SyntaxKind.ExclamationToken: {
       const randType = typeOfValue(rand, cx);
