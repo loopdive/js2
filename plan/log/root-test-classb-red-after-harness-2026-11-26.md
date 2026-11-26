@@ -73,7 +73,6 @@ root cause is not yet triaged.
 | `issue-6780-await-static-suspends.test.ts` | 14/16 | 3/16 | forward references: a caller compiled before its driven callee reads the settled value, not NaN :: AssertionError: expected 'af+1=NaN,real+1=NaN,all=NaN/NaN' to be 'af+1=7,real+1=9,all=2/4' // Object.is equality |
 | `issue-6944-proto-chain-fnctor-instance.test.ts` | 12/20 | 4/20 | gc: identity :: AssertionError: expected 'function,false,undefined,false,false,…' to be 'function,true,function,true,true,func…' // Object.is equality |
 | `issue-json-stringify-structs.test.ts` | 8/8 | 1/8 | serializes a basic struct :: AssertionError: expected null to deeply equal { x: 1, y: 2 } |
-| ◦ `issue-1058-closure-rest-host-dispatch.test.ts` | 1/2 | 1/2 | materializes empty and populated rest arrays for plain and method host calls :: AssertionError: expected null to be 10 // Object.is equality |
 | `issue-2012.test.ts` | 5/5 | 1/5 | a non-frozen object remains writable (no false positive) :: AssertionError: expected 'false,2,false' to be 'false,1,false' // Object.is equality |
 | `issue-5095-array-at-no-argument.test.ts` | 4/13 | 1/13 | gc: at() compiles byte-identically to at(0) and at(undefined) :: AssertionError: expected '5deeb7d301ef990614f685cb3ee15d18f1446…' to be 'f59b4955fc84b0eab00dfa7da60b2b6015bbf…' // Object.is equality |
 | ⚠ `issue-5386.test.ts` | 3/8 | 1/8 | preserves a numeric write and reversed addition through a chained alias :: TypeError: type incompatibility when transforming from/to JS |
@@ -111,6 +110,7 @@ Their tests still fail on main. Each needs a decision before a harness change.
 |---|---|
 | `issue-1636-s1-tojson-this.test.ts` | Converting it broke a test that passed on main. The test hands a closure from a wrapped export to the raw internal export `__call_fn_method_0`, so it needs raw and wrapped exports side by side. |
 | `issue-2623-p7-finally-bridge.test.ts` | Same: it hands wrapped `grab2()` results to the raw internal `__closure_arity` export (returns -1, not 2). |
+| `issue-1058-closure-rest-host-dispatch.test.ts` | Same family as issue-1636/2623 (RV-S24 re-measure, 2026-11-26): under the shared harness every `__call_fn_*` returns `null`, including plain `__call_fn_0`/`__call_fn_2` (10/12 under the raw harness). A closure from a wrapped export does not survive the round trip into the raw internal dispatchers. Its harness edit stays parked; it needs raw and wrapped exports side by side. |
 | `issue-1740.test.ts` | Converts green, but only by dropping the `{ globalSandbox: getTestSandbox() }` runtime option, which the shared helper cannot pass. Not shipped. |
 | `issue-2804.test.ts` | Converts green, but its one `run` serves the host and standalone modes, so the standalone path would change too. Not shipped. |
 | `issue-3000.test.ts` | **Tests the raw-export API by design** (lead, 2026-11-26: `compileAndInstantiate` keeps its export shape; JS-host public API, lane sunsetting). Stays as is. |
