@@ -105,8 +105,9 @@ Both are listed in `depends_on`.
 ## Dependency
 
 The arm is built on the **literal dynamic-code source seam of #7363 slice A, in its A1–A4 PR**, not on #7432. #7432
-lands only the `src/frontend/eval` move and the dedupe; the seam (A1–A3) lands together with A4, and A4 waits on
-#7350 B2b. The plan below is concrete about this arm, but its seam-facing details are checked against A1–A4's design
+lands only the `src/frontend/eval` move and the dedupe; the seam (A1–A3) lands together with A4. A4 was narrowed on
+2026-11-26 (a7 `67e4115a`) to a static proof instead of a run-time identity test, so it no longer waits on #7350 B2b.
+The plan below is concrete about this arm, but its seam-facing details are checked against A1–A4's design
 once that design is concrete. The plan review waits for that (lead, 2026-11-26).
 
 The arm needs three things, in this order:
@@ -114,7 +115,8 @@ The arm needs three things, in this order:
 1. #7439, the `src/frontend/eval` move;
 2. the A1–A4 PR, on branch `claude/prepared-eval-a7`, carrying RV7432's B1 fix (diagnostics in a virtual source
    refuse the site) and B2 fix (write analyses walk virtual sources);
-3. S5's #7350 B2b on main, which A4 waits for.
+3. A4's code: the pristine proof as a resolver capability, and `withLiteralEvalSources`' all-or-nothing fallback.
+   The arm reuses both.
 
 The arm stacks on `claude/prepared-eval-a7` once S2 reports its head.
 
@@ -224,11 +226,16 @@ concatenating it.
    gives that name a home, so its site keeps a named refusal. Checked on main `c3b7be667a`: `typeof <undeclared>` does
    lower, at top level and inside a function, so the `typeof anonymous` rows stay JS-answer rows. The re-measure on a7
    shows how many of the 27 such reads cost.
-8. **The site's identity test.** The site tests global `Function` === %Function% through `js.object.global` and
-   `js.value.strict_eq`, the A4 shape for %eval%:
-   - equal: the site evaluates to item 5's closure;
-   - unequal: the site is a generic call or construct of the value, through C2's `lowerDynamicConstruct` / the
-     dynamic call path.
+8. **The site's proof (A4 narrowed).** No run-time identity test. As A4 does for `eval`, the arm asks the existing
+   static proof that the global `Function` is %Function% at every site: `pristineBuiltinGlobal("Function")`
+   (`src/ir/builtin-global-binding.ts`, #7354 O1), through the resolver capability `isPristineBuiltinGlobal`,
+   over every source including the virtual ones. It also asks A4's `ambientThisMayBeGlobal` flag, which says no
+   sloppy function's own `this` escapes as the global object.
+   - Pristine: the site evaluates to item 5's closure.
+   - Not pristine: the site refuses at select, by name: `Function literal: the global Function is not pristine
+     (#7487)`.
+   - The proof's soundness boundary is A4's and #7503's, and a dynamic-function body is one of its sources, so a body
+     that writes `Function` or `eval` falls under the same write check.
 
 ### Gaps: each gets a JS answer or a named refusal, and an acceptance row
 
@@ -238,7 +245,7 @@ concatenating it.
 | `toString()` | the exact assembled text with `anonymous` (item 4); a named refusal until `Function.prototype.toString` exists on this path |
 | constructing the result (`new (Function("this.a = 1"))()`) | C2's constructor path: every function value here is a constructor |
 | `length` with default / rest parameters | the §15.1.5 count from `emitFunctionObjectInit` (`Function("a", "b = 1", "...c", "")` → 1) |
-| generic construct in the unequal arm | C2's `lowerDynamicConstruct`, or its named refusal |
+| a non-pristine global `Function` | the site refuses at select by name (item 8); no generic arm
 | `%Function%` itself as a value | #7350 |
 
 ### Out of scope
@@ -274,7 +281,7 @@ for the named refusal:
     by name (not covered; see the table in item 3);
 - a write in the body to a caller-visible global is seen by the caller (B2);
 - a local `var Function` shadow stays an ordinary call;
-- a reassigned global `Function` takes the generic arm;
+- a reassigned global `Function` (`Function = f`, `var Function`, `globalThis.Function = f`) refuses the site by name;
 - a computed argument still refuses by name;
 - sloppy `this` and `toString()`: their named refusals until #7350 and #7354 C2 provide them, then node's answer.
 
