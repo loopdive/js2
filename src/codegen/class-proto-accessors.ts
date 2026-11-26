@@ -57,6 +57,8 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
 import { classMemberFuncKey, isInstanceAccessorKey } from "./class-member-keys.js";
 import { dynamicClassKeyGlobalKey, dynamicClassMemberOrdinal } from "./class-dynamic-keys.js"; // (#5195 Step 1)
+import { symbolMemberKeyId } from "../runtime/contracts/well-known-symbols.js";
+import { buildPrototypeSeedSymbolKey } from "../runtime/wasmgc/values/prototype-seeder-bodies.js";
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
 const PRIVATE_NAME_PREFIX = "__priv_";
@@ -180,6 +182,14 @@ export function emitClassMemberKeyOperand(
   className: string,
   memberName: string,
 ): boolean {
+  // A `[Symbol.iterator]() {}` member is spelled `@@iterator`; its key is the symbol, not that string.
+  const symbolId = symbolMemberKeyId(memberName);
+  if (symbolId !== undefined) {
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    if (boxSymbolIdx === undefined) return false;
+    fctx.body.push(...buildPrototypeSeedSymbolKey(symbolId, boxSymbolIdx));
+    return true;
+  }
   const ordinal = dynamicClassMemberOrdinal(memberName);
   if (ordinal === undefined) {
     addStringConstantGlobal(ctx, memberName);

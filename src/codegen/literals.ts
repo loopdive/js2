@@ -3718,12 +3718,10 @@ export function compileObjectLiteralForStruct(
     const matchingProps = expr.properties.filter((p) => {
       if (ts.isShorthandPropertyAssignment(p)) return p.name.text === field.name;
       if (ts.isMethodDeclaration(p)) {
-        return (
-          !!p.name &&
-          ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
-            (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
-            (ts.isNumericLiteral(p.name) && p.name.text === field.name))
-        );
+        const key = ts.isComputedPropertyName(p.name)
+          ? resolveComputedKeyExpression(ctx, p.name.expression)
+          : p.name.text;
+        return key === field.name;
       }
       return resolvePropertyNameText(ctx, p) === field.name;
     });

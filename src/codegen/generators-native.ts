@@ -110,6 +110,7 @@ import {
 
 import {
   delegateSentForwardInstrs,
+  delegateStartCall,
   delegationUndefinedInstrs,
   ensureNativeDelegatedResultHelpers,
   nativeGeneratorExecutingCheck,
@@ -5402,7 +5403,6 @@ function emitGenericDelegationState(
   const convert = (instrs: Instr[], from: ValType, to: ValType): Instr[] => {
     return instrs;
   };
-  const startName = "__gen_delegate_start";
   const stepName = "__gen_delegate_step";
   const get = (fieldIdx: number): Instr[] => [
     { op: "local.get", index: selfLocal },
@@ -5444,7 +5444,7 @@ function emitGenericDelegationState(
   );
   if (!type) throw new Error("Unable to compile generic delegation operand");
   if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
-  materialize.push({ op: "call", funcIdx: ctx.funcMap.get(startName)! });
+  materialize.push(delegateStartCall(ctx));
   fctx.body = body;
   body.push(
     ...get(slot.fieldIdx),
@@ -5583,7 +5583,7 @@ function emitForOfStepState(
     );
     if (!subjectType) throw new Error("Unable to compile for-of subject");
     if (subjectType.kind !== "externref") coerceType(ctx, fctx, subjectType, { kind: "externref" });
-    materialize.push({ op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_start")! });
+    materialize.push(delegateStartCall(ctx));
     fctx.body = savedFo;
   }
   body.push(

@@ -90,6 +90,7 @@ import {
   resolveBindingElementType,
 } from "../checker/type-mapper.js";
 import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
+import { structFieldKeyForProperty } from "../checker/well-known-symbol-keys.js"; // (#7425) `@@name` struct field keys
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
@@ -12859,7 +12860,8 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     if (wasmType.kind === "externref" && callSigs.length > 0 && (prop.name === "valueOf" || prop.name === "toString")) {
       wasmType = { kind: "eqref" };
     }
-    fields.push({ name: prop.name, type: wasmType, mutable: true, ...optionalFieldFlag(prop) });
+    const name = structFieldKeyForProperty(ctx.oracle, prop);
+    fields.push({ name, type: wasmType, mutable: true, ...optionalFieldFlag(prop) });
     if (callSigs.length > 0) {
       const sig = callSigs[0]!;
       // Include arity AND return-type signature in the hash key. Two object
@@ -12925,10 +12927,9 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     // body causing "stack for fallthru" validation errors.
     if (!ts.isMethodDeclaration(decl)) continue;
     // Also skip declarations from .d.ts files (lib types)
-    const declSourceFile = decl.getSourceFile();
-    if (declSourceFile && declSourceFile.isDeclarationFile) continue;
+    if (decl.getSourceFile().isDeclarationFile) continue;
 
-    const fullName = `${structName}_${prop.name}`;
+    const fullName = `${structName}_${structFieldKeyForProperty(ctx.oracle, prop)}`;
     const methodKey = classMemberFuncKey(ctx, fullName); // (#1983) collision-free key + display name
     if (ctx.funcMap.has(methodKey)) continue; // already registered
 

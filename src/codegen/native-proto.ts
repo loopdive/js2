@@ -79,7 +79,7 @@ export {
   builtinBrandOffsetOf,
   isBrandedBuiltinName,
 } from "./builtin-brands.js";
-import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
+import { symbolMemberKeyId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * Resolve (and lazily seed) the builtin brand id for `name`. Asserts the brand
@@ -641,7 +641,7 @@ export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): Read
         .split(",")
         .map((member) => member.trim())
         .filter((member) => member.startsWith("@@"))
-        .map((member) => nativeProtoMemberSymbolId(member))
+        .map((member) => symbolMemberKeyId(member))
         .filter((id): id is number => id !== undefined) ?? [];
     // (#6771 S5) Symbol-keyed data props are own companion entries too.
     for (const { id } of glue?.symbolDataProps ?? []) members.push(id);
@@ -811,7 +811,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
 
     const body = seedFctx.body;
     if (member.startsWith("@@")) {
-      const symbolId = nativeProtoMemberSymbolId(member);
+      const symbolId = symbolMemberKeyId(member);
       const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
       if (symbolId === undefined || boxSymbolIdx === undefined) continue;
       body.push(...buildPrototypeSeedReceiver());
@@ -985,21 +985,9 @@ function makeNativeClosureFctx(
  */
 function nativeProtoMemberDisplayName(member: string): string {
   if (!member.startsWith("@@")) return member;
-  const id = nativeProtoMemberSymbolId(member);
+  const id = symbolMemberKeyId(member);
   const wellKnown = id === undefined ? undefined : wellKnownSymbolName(id);
   return wellKnown === undefined ? member : `[Symbol.${wellKnown}]`;
-}
-
-/**
- * (#6775 S16) Well-known-symbol id of a `@@` member key. Both spellings occur:
- * `@@<id>` (the glue CSVs) and `@@<name>` (`resolveComputedKeyExpression`'s,
- * e.g. Function.prototype's `@@hasInstance`), which the seeder used to skip
- * as `Number("hasInstance")` = NaN — so the member never reached the companion.
- */
-function nativeProtoMemberSymbolId(member: string): number | undefined {
-  const tail = member.slice(2);
-  const id = /^\d+$/.test(tail) ? Number(tail) : wellKnownSymbolId(tail);
-  return id !== undefined && Number.isInteger(id) ? id : undefined;
 }
 
 /**
