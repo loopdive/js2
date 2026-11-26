@@ -19,14 +19,14 @@ related: [7473]
 
 ## Problem
 
-Seven wrong answers on the ordinary pipeline (legacy codegen), on the default target and `--target standalone` alike.
+Eight wrong answers on the ordinary pipeline (legacy codegen), on the default target and `--target standalone` alike.
 They were found while fixing [#7473](7473-ordinary-array-destructuring-default-nan.md) (PR #7453), which fixes the
 plain `[n = 5] = []` form; none of them is fixed by that PR.
 
 ## Reproduction (2026-11-26, `origin/main` `1a726b3e64`)
 
 Each body is `export function g() { <body> }` in a `.js` file, compiled through `compile()` with `allowJs`. "#7453"
-is the PR head `4e889f329e` (rows 6–7 were measured at `679569ee24`, which compiles them to the same bytes). The rows are grouped by sub-cause.
+is the PR head `4e889f329e` (rows 6–8 were measured at `679569ee24`, which builds the same bytes as `4e889f329e`). The rows are grouped by sub-cause.
 
 | # | Sub-cause | Declarations | Body | node | main (both targets) | #7453 (both targets) |
 | --- | --- | --- | --- | ---: | ---: | ---: |
@@ -39,6 +39,8 @@ is the PR head `4e889f329e` (rows 6–7 were measured at `679569ee24`, which com
 | 5 | member target evaluated after the default | `var log = 0; var o = {}; function obj() { log = log * 10 + 1; return o; } function d() { log = log * 10 + 2; return 5; }` | `[obj().x = d()] = []; return log;` | 12 | 1 | 21 |
 | 6 | `undefined` read from a variable | | `var u; var a; [a = 1] = [u]; return a;` | 1 | NaN | NaN |
 | 7 | nesting deeper than two levels | | `var n; [[[n = 5] = []] = []] = []; return n;` | 5 | NaN | NaN |
+| 8 | object pattern: default of a member target skipped | `var log = 0; var o = {}; function k() { log = log * 10 + 1; return 'x'; } function d() { log = log * 10 + 2; return 5; }` | `({ a: o[k()] = d() } = {}); return log;` | 12 | 1 | 1 |
+| 8 | object pattern: default of a member target skipped | `var o = {}; function k() { return 'x'; } function d() { return 5; }` | `({ a: o[k()] = d() } = {}); return o.x === undefined ? -1 : o.x;` | 5 | -1 | -1 |
 
 Notes per sub-cause, from the #7473 investigation:
 
@@ -57,6 +59,8 @@ Notes per sub-cause, from the #7473 investigation:
    rather than the `UNDEF_F64_BITS` marker.
 7. Added from the RV7453 review. #7453 handles a default one nesting level down; a third level still reads NaN.
    Not yet traced.
+8. Added from the RV7453 review. The object-pattern twin of row 5's member target: the key `k()` is evaluated, but
+   the default `d()` never runs, so `o.x` is never written. #7453 does not touch the object path.
 
 ## Acceptance criteria
 
