@@ -59,6 +59,7 @@ import {
 } from "../direct-eval-environment.js";
 import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 import { emitRefusedDynamicFunction, isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
+import { functionSourceText } from "../../interp/function-source-text.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -1532,16 +1533,15 @@ function synthesizeStaticNewFunction(
     consts.push(s);
   }
 
-  // §20.2.1.1.1: the LAST argument is the body; the rest form the parameter list
-  // (comma-joined so `("a","b,c","…")` flattens to params a, b, c). No args →
-  // `function anonymous() {}` (empty body, empty params).
+  // §20.2.1.1.1: the LAST argument is the body; the rest form the parameter list, comma-joined so
+  // `("a","b,c","…")` flattens to params a, b, c. No args → an empty body and parameter list.
   const body = consts.length > 0 ? consts[consts.length - 1]! : "";
   const paramSrc = consts.slice(0, -1).join(",");
 
   // A unique synthesized name; `mod.functions.length` is monotonic within a
   // compile, so two `new Function` sites never collide.
   const fnName = `__new_function_${ctx.mod.functions.length}`;
-  const synthSrc = `function ${fnName}(${paramSrc}) {\n${body}\n}`;
+  const synthSrc = functionSourceText(fnName, paramSrc, body);
 
   const sf = ts.createSourceFile(
     EVAL_SOURCE_FILENAME,

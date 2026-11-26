@@ -229,6 +229,7 @@ const INTERP_FILES = [
   "eval-environment.ts",
   "emitter.ts",
   "loop.ts",
+  "function-source-text.ts",
   "dynamic-function.ts",
 ];
 

@@ -8,6 +8,7 @@
 // function at the module global environment, and materializes an ordinary
 // callable through the interpreter's existing closure seam.
 
+import { functionSourceText } from "./function-source-text.js";
 import { emitFunction, emitProgram } from "./emitter.js";
 import {
   createRuntimeEvalGlobalEnvironment,
@@ -211,15 +212,9 @@ export function snapshotDirectEvalActivationState(stateCells: JSValue[], names: 
   }
 }
 
-/** Build the source text parsed by the Function constructor.
- *
- * The newlines are intentional: they keep a trailing line comment in the
- * parameter or body text from swallowing the wrapper delimiter. Parameter and
- * body strings have already undergone ToString and comma-flattening at the
- * call-site routing layer.
- */
+/** Build the source text parsed by the Function constructor (see `functionSourceText`). */
 export function dynamicFunctionSource(paramString: string, bodyString: string): string {
-  return "function anonymous(" + paramString + "\n) {\n" + bodyString + "\n}";
+  return functionSourceText("anonymous", paramString, bodyString);
 }
 
 /** Parse and emit a Function-constructor body without materializing a value. */
