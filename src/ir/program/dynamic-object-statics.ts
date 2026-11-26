@@ -9,8 +9,8 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-catalog.js";
 import { nativeObjectStatic } from "./builtin-prototype-keys.js";
-import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { realmCall } from "./dynamic-realm-calls.js";
+import { CARRIER, carried, throwingArm, type ChainBuilders } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 
 const HELPER_PREFIX = "__ir_object_static:";
@@ -38,8 +38,7 @@ const served = (kind: CarrierKind): boolean =>
 export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
   const [first, second, third] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
   const undefinedValue = (r: IrValueId) => b.intrinsic(instr, "js.value.undefined", [], r);
-  const throwing = (message: string, r: IrValueId) =>
-    typeErrorThen({ ...b, carrier: CARRIER }, message, undefinedValue(r));
+  const throwing = (message: string, r: IrValueId) => throwingArm(b, instr, message)(r);
   /**
    * A chain over the kinds `value` may hold: `object` answers a served object ((#7354 G1) an error is one), and
    * `other` answers each remaining kind (a primitive, `undefined`, `null`).

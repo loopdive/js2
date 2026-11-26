@@ -11,9 +11,9 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
-import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
+import { realmCall } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { CARRIER, carried, throwingArm, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
   holdsErrors,
@@ -57,10 +57,6 @@ function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly Carri
       : b.anyKind(instr, tested, value, cond);
   return { instrs, cond };
 }
-
-/** A TypeError with `message`, then the arm's unread `answer` into `result`. */
-const throwing = (b: Builders, message: string, answer: (result: IrValueId) => IrInstr) => (result: IrValueId) =>
-  typeErrorThen({ ...b, carrier: CARRIER }, message, answer(result));
 
 /** Get(C, "prototype") of the once-evaluated function value `callee` into `prototype` (its own data property). */
 function getPrototype(b: Builders, callee: IrValueId, prototype: IrValueId): IrInstr[] {
@@ -115,7 +111,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
   const result = instr.result!;
   b.kinds.learn(result, b.objects);
-  const notConstructor = throwing(b, "Value is not a constructor", (r) =>
+  const notConstructor = throwingArm(b, instr, "Value is not a constructor", (r) =>
     b.intrinsic(instr, "js.value.undefined", [], r),
   );
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
@@ -187,7 +183,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
       b.branch(
         prototypeObject.cond,
         (t) => b.kindChain(instr, value, t, walk, valueObjects, BOOLEAN),
-        throwing(b, "Function has non-object prototype in instanceof check", unread),
+        throwingArm(b, instr, "Function has non-object prototype in instanceof check", unread),
         s,
         BOOLEAN,
       ),
@@ -200,7 +196,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     b.branch(
       callable.cond,
       hasInstance,
-      throwing(b, "Right-hand side of 'instanceof' is not callable", unread),
+      throwingArm(b, instr, "Right-hand side of 'instanceof' is not callable", unread),
       result,
       BOOLEAN,
     ),

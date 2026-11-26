@@ -70,6 +70,14 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
         `var fv = function(){ return 1; }; fv(); function f(v){ return v.hasOwnProperty.${key}; } f(${receiver});`,
       ]),
     ),
+    // (#7489) The route `call` and `apply` open: each is a built-in function object, and every key that would lead
+    // from it to a prototype aborts.
+    ...(["call.constructor", "call.__proto__", "apply.constructor", "apply.__proto__"] as const).map(
+      (route): [string, string] => [
+        `a function's ${route}`,
+        `var fv = function(){ return 1; }; fv(); function f(g){ return g.${route}; } f(fv);`,
+      ],
+    ),
     // (#7354 G1) The Error family's values and prototypes are the program's to read and write, but none leads on to a
     // prototype the premise covers: each route past them (a function's or an object's [[Prototype]], Function) aborts.
     ...["TypeError.__proto__", "TypeError.constructor", "TypeError.bind", "Error.prototype.__proto__"].map(

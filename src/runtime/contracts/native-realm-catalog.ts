@@ -154,7 +154,6 @@ export const NATIVE_PROTOTYPE_METHODS = Object.freeze({
   "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
   "Function.prototype": NATIVE_FUNCTION_PROTOTYPE_METHODS,
 });
-export type NativePrototype = keyof typeof NATIVE_PROTOTYPE_METHODS;
 /** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
 export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "Error",
