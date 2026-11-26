@@ -6989,3 +6989,55 @@ leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7
 - Node 25 (not installed).
 - The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
   h-script-var-dynamic-home and 3518-native-invocation-substrate suites.
+
+## Slice W2 plan (2026-11-26, branch `claude/7354-w2` from `origin/main` 1a726b3e64)
+
+`String`, `Number`, `Boolean` and `Object` as realm constructors on the Prepared path, by G1's mechanism.
+
+Measured on the base (411-row sample): 59 rows stop first at one of these four names (`identifier … is not in
+scope` 27, `unknown class` 31, `direct call to "Object"` 1).
+
+### Design (lead decisions 2026-11-26: option A, reuse #3518's wrapper subtypes)
+
+1. **Catalog.** G1's `errorRows` becomes one parameterised family builder (constructor row, prototype object, the
+   prototype's methods, `heldWith` the constructor); the Error family and the three wrapper families are its rows.
+   The wrapper prototypes' specification keys move from the hand lists in `builtin-prototype-keys.ts` into the catalog
+   (`unavailable` rows), so "which keys does a held object lack" has one answer: its catalog properties whose value
+   is an intrinsic the realm does not hold. `%Object%` becomes a value (native, not constructible through the
+   dispatcher), its statics stay unheld. Number's data constants (`NaN`, `MAX_VALUE`, …) are seeded as data.
+2. **What a realm holds** (`native-realm-requirements.ts`): `heldErrorConstructors` becomes a per-family rule over the
+   same uses (an intrinsic read of a member, a family contract; Error also a bound catch payload).
+3. **Kernel.** Constructors are G1 entries (behavior `native`, algorithm `unreachable`). A wrapper is #3518's
+   `$StringObject` / `$NumberObject` / `$BooleanObject` (`primitive-wrapper-layouts.ts`, payload field 6), allocated
+   by `buildPrimitiveWrapperAllocationDefinition`; the realm's `$Object` takes the existing `extensible` opt-in. The
+   wrapper prototypes are themselves wrappers ("", +0, false). Contracts: `js.object.create-wrapper(primitive,
+   selector)` (also defines a String's own `length`), `js.object.primitive-data(object)` (the payload as a carrier
+   value, `undefined` for no wrapper: which wrapper it is comes only from the `ref.test` of the subtype).
+   `js.object.intrinsic` also answers the family prototype objects.
+4. **IR.** `realmIntrinsicRead` answers the four names (pristine, `pristineBuiltinGlobal`); `dynamic-error-constructors.ts`
+   generalises to `dynamic-realm-constructors.ts`: a call / construct whose callee is the intrinsic expands at the
+   site — `String(v)`/`Number(v)`/`Boolean(v)` are the existing ToString / ToNumber / ToBoolean builders,
+   `new X(v)` is that conversion then `create-wrapper`, `Object(v)` / `new Object(v)` a kind chain (nullish → a new
+   object, object or function → itself, primitive → its wrapper). OrdinaryToPrimitive and P1's method call recognise
+   the wrappers' `valueOf` / `toString` by identity (G1's error-to-string row, generalised to a list) and answer
+   `thisXValue` through `primitive-data`, a TypeError for a wrong receiver. `dyn.object_tag`'s object arm reads the
+   wrapper payload's kind.
+5. **Premise.** With a prototype obtainable, a primitive's member read goes through the realm's prototype object
+   (`js.object.get(%K.prototype% or %Object.prototype%, key, primitive)`) and a primitive's write aborts where the key
+   is found on it; the M1 premise test's routes move accordingly.
+
+### Refuses / aborts (each sound)
+
+- A read or write, by constant key, of a constructor static the realm does not hold (`String.fromCharCode`,
+  `Object.keys`): refusal by name. Computed keys refuse as before.
+- A String wrapper's index keys: run-time abort (the exotic lookup in `string-exotic-bodies.ts` is not wired).
+- `Number.prototype.toString(radix)` with a radix, the unheld prototype methods (`charAt`, `toFixed`): by name.
+- `==` with a wrapper: refused as all loose equality is today (L0a not on main).
+- A built-in called through any other value (`var C = String; C(1)`): the dispatcher's built-in abort (G1).
+
+### Placement and quality criterion
+
+Catalog rows in `native-realm-catalog.ts`; kernel bodies beside G1's in `realm-family-bodies.ts`; contracts in
+`native-source-objects.ts`; IR in `dynamic-realm-constructors.ts` (the renamed G1 module) and the existing chain /
+member-access / to-primitive modules. from-ast net ≤ 0. Quality: no Error-only module stays where it is now one family
+of several; no second wrapper layout; no hand list of wrapper-prototype keys left beside the catalog.
