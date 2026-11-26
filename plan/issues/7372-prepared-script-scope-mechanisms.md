@@ -141,10 +141,13 @@ look unresolvable. They are not: B.3.3 makes `f` a var of the script or of `g`, 
   - `"applied"`: the name is S19's var home; slice 3 makes no absent home and answers nothing for it;
   - `"skipped"` (script scope): the name is an ordinary unresolvable reference; its writes, collected like any
     other, give it an absent home, and a read is unbound otherwise.
-  - A function-scope `"skipped"` name in a function body refuses by name: an undeclared write there would create a
-    global, which S19's 2a decides, not slice 3.
-- Until S19's slice 2 lands the input is absent, and every such name refuses by name: `name 'f' is declared by a
-  block function (Annex B.3.3), which this path does not decide yet`.
+- The decision is pure AST and shared (S19, 2026-11-26): `"applied"` ⇔
+  `annexBBlockFunctions(scope).some((e) => e.writesVar && e.declaration.name.text === name)`
+  (`src/shared/annexb-block-functions.ts`, from #7447); one applied declaration of a name makes it applied. The
+  parameter defaults to that predicate, so neither slice passes it in; the parameter stays only so tests can vary it.
+- If slice 3 lands before #7447, the default is "refuse": every such name refuses by name, `name 'f' is declared by
+  a block function (Annex B.3.3), which this path does not decide yet`.
+- Inside a function body both answers stay refused (or aborted) until S19's 2b.
 - No by-name lookup: the decision is an input to the one collection, so a write and a read of `f` always reach the
   same answer.
 
