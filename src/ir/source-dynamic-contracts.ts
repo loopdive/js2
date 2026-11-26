@@ -391,7 +391,7 @@ export function programDynamicContracts(
       ? { functionCodeStrict, ambientThisStrict: functionCodeStrict }
       : { functionCodeStrict };
   };
-  const receivers = receiverBindings(functionObjects ? sourceFiles : [], codeStrictness);
+  const receivers = receiverBindings(sourceFiles, codeStrictness);
   const provenance = sourceDynamicProvenance(
     checker,
     startupSources,
@@ -450,19 +450,11 @@ export function programDynamicContracts(
 }
 
 /**
- * (#7354 Ty, T) `typeof X` answers "undefined" only for a name that nothing declares: the checker resolves it to no
- * symbol, neither the program's nor the loaded TypeScript lib's (`globalThis` resolves to a symbol without
- * declarations). The lib stands in for the list of standard globals; it is not exactly that list (see #7354 "Slice T
- * result", known limits: a later-edition global it does not declare, DOM names it does). A
- * standard global this path does not provide yet (`Math`, `parseInt`, `Object`, …) is not absent: its `typeof`, like
- * every other read of it, refuses by name (an abort body inside a function under the test262 entry), never
- * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the
- * checker as the lib declarations alone, hence the file check.
- */
-/**
- * One pass over every non-arrow function-like that binds its own `this` from the dispatcher's receiver
- * (`ambientThisStrict`, defined only where functions are values). (#7354 C2) `closuresBindReceivers`: some function
- * expression does. (#7363 A4) `ambientThisMayBeGlobal`: some sloppy one does and lets it escape.
+ * One pass over every non-arrow function-like. (#7354 C2) `closuresBindReceivers`: some function expression binds its
+ * own `this` from the dispatcher's receiver (`ambientThisStrict`, defined only where functions are values). (#7363
+ * A4) `ambientThisMayBeGlobal`: some function that is not known strict reads its ambient `this` and lets it escape.
+ * That one is judged from the code's own strictness, whether or not functions are values: a sloppy plain call gives
+ * the global object too, and only the run-time trap in sloppy `dyn.current_this` stops it today (#7503).
  */
 function receiverBindings(
   sourceFiles: readonly ts.SourceFile[],
@@ -472,9 +464,10 @@ function receiverBindings(
   let ambientThisMayBeGlobal = false;
   const visit = (node: ts.Node): void => {
     if (isReceiverBindingFunction(node)) {
-      const { ambientThisStrict } = codeStrictness(node);
+      const { functionCodeStrict, ambientThisStrict } = codeStrictness(node);
       closuresBindReceivers ||= ts.isFunctionExpression(node) && ambientThisStrict !== undefined;
-      ambientThisMayBeGlobal ||= ambientThisStrict === false && ownThisEscapes(node, GLOBAL_ALIASES);
+      ambientThisMayBeGlobal ||=
+        functionCodeStrict !== true && readsAmbientThisGlobal(node) && ownThisEscapes(node, GLOBAL_ALIASES);
     }
     ts.forEachChild(node, visit);
   };
@@ -482,6 +475,16 @@ function receiverBindings(
   return { closuresBindReceivers, ambientThisMayBeGlobal };
 }
 
+/**
+ * (#7354 Ty, T) `typeof X` answers "undefined" only for a name that nothing declares: the checker resolves it to no
+ * symbol, neither the program's nor the loaded TypeScript lib's (`globalThis` resolves to a symbol without
+ * declarations). The lib stands in for the list of standard globals; it is not exactly that list (see #7354 "Slice T
+ * result", known limits: a later-edition global it does not declare, DOM names it does). A
+ * standard global this path does not provide yet (`Math`, `parseInt`, `Object`, …) is not absent: its `typeof`, like
+ * every other read of it, refuses by name (an abort body inside a function under the test262 entry), never
+ * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the
+ * checker as the lib declarations alone, hence the file check.
+ */
 function absentGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
   return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
 }

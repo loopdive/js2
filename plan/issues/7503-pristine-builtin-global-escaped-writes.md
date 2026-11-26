@@ -35,6 +35,12 @@ see a write that reaches the global object some other way:
   materialises on standalone (PRV-A4, verified on main). #7363 A4 refuses it for `eval` with the contracts'
   `ambientThisMayBeGlobal` flag (`source-dynamic-contracts.ts`: a sloppy function whose own `this` escapes,
   `ownThisEscapes`); the `Object` statics must ask the same flag.
+  The same holds for a plain call with no function value at all (`function f(){return this} f().Object = …`):
+  A4's flag judges the code's own strictness for that reason (RV7502 finding 4).
+- **misjudged strictness:** `isStrictContext` reports an object-literal method (`{ m(){ return this } }`) as
+  strict, so the flag does not see its `this`. Extracting it (`var h = o.m; h()`) refuses today ("closure must have
+  a return type annotation"); before object-literal methods lower as values, the strictness must be the method's
+  real one (sloppy in sloppy code).
 
 ## Users
 

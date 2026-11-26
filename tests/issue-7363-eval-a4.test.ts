@@ -89,7 +89,6 @@ describe("#7363 A4 — a sloppy function whose this escapes refuses the site by 
     expect(await gaps(source)).toEqual([NOT_PRISTINE]);
   });
 
-  // `var h = f` makes `f` a value: only then does a plain call give it the global object as `this`.
   it.each([
     ["an alias member", "return this.globalThis;"],
     ["a computed member", 'return this["eval"];'],
@@ -101,6 +100,14 @@ describe("#7363 A4 — a sloppy function whose this escapes refuses the site by 
     ["a direct eval", 'eval("1");'],
   ])("%s", async (_label, body) => {
     expect(await gaps(`eval("1");\nfunction f() { ${body} }\nvar h = f;`)).toEqual([NOT_PRISTINE]);
+  });
+
+  // RV7502 4: no function is a value here, yet a sloppy plain call still gives `f` the global object as `this`.
+  it.each([
+    ["through a binding", 'function f(){ return this } var G = f(); G.eval = 1; eval("1");'],
+    ["directly", 'function f(){ return this } f().eval = 1; eval("1");'],
+  ])("a plain call %s", async (_label, source) => {
+    expect(await gaps(source)).toEqual([NOT_PRISTINE]);
   });
 
   it("a parameter initializer", async () => {

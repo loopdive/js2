@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
-import { createPreparedFrontendBoundary } from "./compiler/prepared-pipeline-boundary.js";
+import { createPreparedFrontendBoundary, sourceEarlyErrors } from "./compiler/prepared-pipeline-boundary.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -555,7 +555,26 @@ function singleSourceHasHardTypeErrors(ast: Pick<TypedAST, "checker" | "diagnost
   return ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
 }
 
-export function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
+/**
+ * (#7363) The compile gates of a JavaScript entry, asked for one source of an analyzed graph: a syntax error outside
+ * `TOLERATED_SYNTAX_CODES`, a hard TypeScript error, or an ES early error. The strict Prepared entry admits a literal
+ * eval text only when this is false for it.
+ */
+export function sourceFailsCompileGates(
+  source: ts.SourceFile,
+  ast: Pick<MultiTypedAST, "checker" | "diagnostics" | "syntacticDiagnostics">,
+  options: CompileOptions,
+): boolean {
+  return (
+    ast.syntacticDiagnostics.some(
+      (d) => d.category === 1 && d.file === source && !TOLERATED_SYNTAX_CODES.has(d.code),
+    ) ||
+    ast.diagnostics.some((d) => d.file === source && isHardTypeScriptDiagnostic(d, ast.checker)) ||
+    sourceEarlyErrors(source, options).some((error) => error.severity !== "warning")
+  );
+}
+
+function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
   if (checker && isJsDefaultInferredParamFalsePositive(diag, checker)) return false;
@@ -1563,7 +1582,7 @@ function finalizePipelineModule(
  */
 // Don't stop on type errors – the compiler can still generate code for many cases
 // Only stop on syntax errors (parsing failures), except tolerated ones
-export const TOLERATED_SYNTAX_CODES = new Set([
+const TOLERATED_SYNTAX_CODES = new Set([
   1156, // "'let' declarations can only be declared inside a block"
   1313, // "The body of an 'if' statement cannot be the empty statement"
   1344, // "A label is not allowed here"

@@ -6,12 +6,10 @@ import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
 import { ts } from "../ts-api.js";
 import { elideDeadBindings } from "./prepared-dead-bindings.js";
 import {
-  isHardTypeScriptDiagnostic,
   preparedFrontendRejectionObservation,
   runPreparedIrPipelinePresentation,
-  TOLERATED_SYNTAX_CODES,
+  sourceFailsCompileGates,
 } from "../compiler.js";
-import { sourceEarlyErrors } from "../compiler/prepared-pipeline-boundary.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
@@ -408,15 +406,6 @@ function withLiteralEvalSources(
   const ast = analyze(graph);
   const isEvalSource = (file: ts.SourceFile | undefined) =>
     file !== undefined && evalNames.has(normalizeMultiFileName(file.fileName));
-  const failsCompile = (source: ts.SourceFile) =>
-    ast.syntacticDiagnostics.some(
-      (diagnostic) =>
-        diagnostic.file === source &&
-        diagnostic.category === ts.DiagnosticCategory.Error &&
-        !TOLERATED_SYNTAX_CODES.has(diagnostic.code),
-    ) ||
-    ast.diagnostics.some((diagnostic) => diagnostic.file === source && isHardTypeScriptDiagnostic(diagnostic, ast.checker)) ||
-    sourceEarlyErrors(source, options).some((error) => error.severity !== "warning");
   const othersReport = (diagnostics: readonly ts.Diagnostic[]) =>
     diagnostics
       .filter((diagnostic) => !isEvalSource(diagnostic.file))
@@ -426,7 +415,7 @@ function withLiteralEvalSources(
       .sort()
       .join("\n");
   const quiet =
-    !ast.sourceFiles.some((source) => isEvalSource(source) && failsCompile(source)) &&
+    !ast.sourceFiles.some((source) => isEvalSource(source) && sourceFailsCompileGates(source, ast, options)) &&
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
   if (!quiet) return compileGraph(files, without, 0);
   const joined = compileGraph(graph, ast, texts.length);

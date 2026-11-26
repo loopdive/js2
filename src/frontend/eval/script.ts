@@ -25,8 +25,6 @@ export interface ParsedEvalScript {
   readonly evalIsStrict: boolean;
 }
 
-export type EvalDeclarationNames = FoldedEvalDeclarationNames;
-
 /**
  * (#2923 park fix) Does the eval Script begin with a `"use strict"` directive
  * prologue? Per §11.2.1 a directive prologue is the leading run of
@@ -78,7 +76,7 @@ export function foldedEvalStaticSyntaxError(
   call: ts.CallExpression,
   directEval: boolean,
   script: ParsedEvalScript,
-  declarationNames: EvalDeclarationNames,
+  declarationNames: FoldedEvalDeclarationNames,
   globalLexicals: ReadonlySet<string> | undefined,
 ): string | undefined {
   // `parseDiagnostics` is an internal field on SourceFile.

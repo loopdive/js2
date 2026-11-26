@@ -717,3 +717,26 @@ Built as planned, with three deviations, each stated here.
 - **Gates.** loc, func (also with `LOC_GATE_BASE` = `1a726b3e`), coercion, oracle, dead exports, typecheck, biome
   lint, prettier, import cycles, IR layering, and the compiler-boundary inventory against `origin/main` all pass.
   Grant: from-ast +27 (above).
+
+### Review RV7502 (2026-11-26, head `cfcee6c6`): APPROVE, five findings
+
+1. The orphaned JSDoc in `source-dynamic-contracts.ts`: `receiverBindings` now sits above the `typeof X` doc, which
+   is again directly on `absentGlobal`.
+2. The A4/A5 gate demotes in lowering, then the adapter compiles again: sized (about 60–80 lines and a census) and
+   put to the coordinator; not in this commit.
+3. The adapter's third copy of the compile gates: one exported `sourceFailsCompileGates(source, ast, options)` in
+   `compiler.ts` (non-tolerated syntax error, hard TypeScript error, ES early error) replaces it.
+   `isHardTypeScriptDiagnostic` and `TOLERATED_SYNTAX_CODES` are private again. The compiler's own entry gates keep
+   their per-entry policies (the single-source one reads every diagnostic; the multi-source one only the entry's,
+   and none semantic under `allowJs`), so they do not call it.
+4. "Not scanned" read as "proved": the finding was a real gap, not a nit. With no function value, a sloppy plain
+   call still gives `this` the global object: `function f(){ return this } f().eval = 1; eval("1");` lowered its
+   site, held only by the run-time trap in sloppy `dyn.current_this` (#7503). The flag is now judged from the code's
+   own strictness (`functionCodeStrict !== true` and `readsAmbientThisGlobal`) over every source, whether or not
+   functions are values. Pinned (two plain-call rows); reverting to `ambientThisStrict === false` turns both red.
+   An object-literal method is misjudged strict by `isStrictContext`; that row is #7503's.
+5. `EvalDeclarationNames` is gone (the same edit as #7439's).
+
+Re-measured: the 12 acceptance files pass with the real harness
+(`npx tsx scripts/ir-census/prepared-census.mts --files twelve.txt --out <fresh> --harness real --jobs 3`); the
+7363, Prepared-entry and `issue-7354-{c2,o1,f1,fa}*` files pass (293 and 165 tests).
