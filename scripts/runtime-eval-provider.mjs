@@ -221,7 +221,8 @@ export const RUNTIME_EVAL_REFUSAL_CANARY_SOURCE = `
 export const RUNTIME_EVAL_REFUSAL_CANARY_EXPECTED = 21;
 
 /** Import-clean interpreter sources, in initializer order. */
-const INTERP_FILES = [
+/** The interpreter sources the provider concatenates, in initialization order (also tests/issue-2928.test.ts). */
+export const INTERP_FILES = [
   "types.ts",
   "opcodes.ts",
   "encoder.ts",
@@ -233,7 +234,7 @@ const INTERP_FILES = [
   "dynamic-function.ts",
 ];
 
-function stripModuleSyntax(source) {
+export function stripModuleSyntax(source) {
   return source
     .replace(/^import[\s\S]*?;\n/gm, "")
     .replace(/^export \{[^;]+;\n/gm, "")

@@ -8,7 +8,7 @@
 // function at the module global environment, and materializes an ordinary
 // callable through the interpreter's existing closure seam.
 
-import { functionSourceText } from "./function-source-text.js";
+import { fitsFunctionSourceText, functionSourceText } from "./function-source-text.js";
 import { emitFunction, emitProgram } from "./emitter.js";
 import {
   createRuntimeEvalGlobalEnvironment,
@@ -223,11 +223,16 @@ export function compileDynamicFunctionMeta(parse: DynamicParser, paramString: st
   options.ecmaVersion = 2025;
   options.sourceType = "script";
 
-  const ast: JSValue = parse(dynamicFunctionSource(paramString, bodyString), options);
+  const source = dynamicFunctionSource(paramString, bodyString);
+  const ast: JSValue = parse(source, options);
   const body: JSValue = ast.body;
   const declaration: JSValue = body[0];
   if (declaration === undefined || declaration.type !== "FunctionDeclaration") {
     throw new SyntaxError("runtime parser did not return a FunctionDeclaration");
+  }
+  const fnBody: JSValue = declaration.body;
+  if (!fitsFunctionSourceText(source, "anonymous", paramString, body.length, fnBody.start, fnBody.end)) {
+    throw new SyntaxError("Function parameters or body do not parse on their own");
   }
   return emitFunction(declaration);
 }

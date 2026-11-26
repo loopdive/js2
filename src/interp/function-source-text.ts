@@ -13,3 +13,25 @@
 export function functionSourceText(name: string, paramString: string, bodyString: string): string {
   return "function " + name + "(" + paramString + "\n) {\n" + bodyString + "\n}";
 }
+
+/** The offset of the `{` that `functionSourceText` writes after the parameters. */
+function functionSourceBodyStart(name: string, paramString: string): number {
+  return ("function " + name + "(" + paramString + "\n) ").length;
+}
+
+/**
+ * §20.2.1.1.1 parses the parameters and the body as separate goals before the whole text, so text that only parses
+ * once the two run together (`Function("a) { if (1 //", "return 7 }")`, `Function("/*", "*\/){")`,
+ * `Function("}; function x(){")`) is a SyntaxError. A parse of the assembled text stands for the two separate parses
+ * exactly when it is one declaration whose body opens at the `{` the assembler wrote and closes at the text's end.
+ */
+export function fitsFunctionSourceText(
+  text: string,
+  name: string,
+  paramString: string,
+  statements: number,
+  bodyStart: number,
+  bodyEnd: number,
+): boolean {
+  return statements === 1 && bodyStart === functionSourceBodyStart(name, paramString) && bodyEnd === text.length;
+}
