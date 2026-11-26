@@ -346,6 +346,7 @@ import {
 export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resolution.js";
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
+import { bigIntOperandOption } from "./bigint-operand-refusal.js";
 import {
   makeIrCheckerSelectionOptions,
   makeIrModuleBindingResolver,
@@ -2598,6 +2599,7 @@ export function compileIrPathFunctions(
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
       ...makeIrCheckerSelectionOptions(ctx.checker),
+      ...bigIntOperandOption(ctx.checker, ctx.targetProfile.environment !== "javascript"), // (#7525) host-free
       jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
       classifyArrayElementFamily,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
@@ -7213,6 +7215,7 @@ function makeFromAstResolver(
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
     nativeRegExpCompiles: standaloneStaticRegExpCompiles,
+    ...bigIntOperandOption(ctx.checker, ctx.targetProfile.environment !== "javascript"), // (#7525) the selector's
     isNativeRegExpReceiver(receiver: ts.Expression) {
       return (
         supportsBackendCapability("native-regexp") &&

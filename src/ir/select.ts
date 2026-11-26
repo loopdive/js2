@@ -254,6 +254,7 @@ import {
   isEqualityOperator,
   isGlobalUndefinedIdentifier,
   isNumberCompoundAssignOperator,
+  isBigIntUnsafeDynamicOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   mayBeElementRead,
@@ -264,6 +265,7 @@ import {
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
+import { someBigIntOperand } from "./bigint-operand-refusal.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -740,6 +742,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * standalone codegen instead of selecting the host-extern IR ABI.
    */
   readonly isRegExpExpression?: (expr: ts.Expression) => boolean;
+  /** (#7525) An operand whose static type has a BigInt member (`bigIntOperandOption`); host-free lanes only. */
+  readonly isBigIntOperand?: (expr: ts.Expression) => boolean;
   /** (#7106 lever R) Legacy's static RegExp compiler builds this pair (`standaloneStaticRegExpCompiles`). */
   readonly nativeRegExpCompiles?: (pattern: string, flags: string) => boolean;
   /**
@@ -1720,6 +1724,8 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
+const hasBigInt = (...operands: ts.Expression[]) =>
+  someBigIntOperand(currentSelectionOptions?.isBigIntOperand, ...operands);
 // #4787's exact exponentiation checkpoint is limited to an already-prepared
 // top-level function body. Retain the subject identity so a nested closure or
 // class member cannot inherit the outer function's checker proof.
@@ -3969,6 +3975,8 @@ function dynamicUsesAreMoveOnly(
           scanExpr(concrete, false)
         );
       }
+      // (#7525) The dynamic arms below cannot lower a BigInt operand (#7526).
+      if ((leftIsDyn || rightIsDyn) && isBigIntUnsafeDynamicOperator(op) && hasBigInt(e.left, e.right)) return false;
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
         if (!expectDyn) return false;
@@ -4079,13 +4087,13 @@ function dynamicUsesAreMoveOnly(
           e.operator === ts.SyntaxKind.MinusToken ||
           e.operator === ts.SyntaxKind.ExclamationToken)
       ) {
-        return scanExpr(op, true);
+        return (e.operator === ts.SyntaxKind.ExclamationToken || !hasBigInt(op)) && scanExpr(op, true);
       }
       if (
         isDynShaped(op) &&
         (e.operator === ts.SyntaxKind.PlusPlusToken || e.operator === ts.SyntaxKind.MinusMinusToken)
       ) {
-        return currentDynamicRuntimeBuildable && scanExpr(op, true);
+        return currentDynamicRuntimeBuildable && !hasBigInt(op) && scanExpr(op, true);
       }
       return scanExpr(op, false);
     }

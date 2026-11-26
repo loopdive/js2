@@ -188,6 +188,7 @@ import {
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import { makeIrPromiseDelayResolver } from "../ir/promise-delay.js";
+import { bigIntOperandOption } from "../ir/bigint-operand-refusal.js";
 import { containsStringBuilderLoopShape } from "../ir/string-builder-shape.js";
 import {
   buildIrPromiseDelayLoweringPlans,
@@ -3312,6 +3313,7 @@ function planIrOverlay(
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       ...makeIrCheckerSelectionOptions(ast.checker),
+      ...bigIntOperandOption(ast.checker, hostFreeEnvironment(ctx)), // (#7525)
       jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       classifyArrayElementFamily,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)

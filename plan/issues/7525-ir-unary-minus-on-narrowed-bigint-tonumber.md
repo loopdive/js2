@@ -1,7 +1,8 @@
 ---
 id: 7525
 title: "Standalone IR: arithmetic on an `any` narrowed to bigint runs ToNumber (`String(-t)` is \"NaN\")"
-status: in-progress
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
@@ -13,6 +14,20 @@ task_type: bugfix
 area: ir
 goal: core-semantics
 related: [7135, 7497, 6656, 7526, 7403]
+# (2026-11-26) Each line is the new option's declaration, its import, or a one-line call at an existing arm; the
+# predicate, the option builder and the refusal live in src/ir/bigint-operand-refusal.ts.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
+  - src/ir/from-ast.ts::lowerBinary
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
 ---
 
 # #7525 — IR arithmetic on an `any` narrowed to `bigint` runs ToNumber
@@ -111,8 +126,8 @@ byte-identical. The real fix — ToNumeric dynamic ops that let the IR claim the
 - **Correctness.** `tests/issue-7525-ir-bigint-numeric-operand.test.ts`, on gc and standalone against node's answer:
   every row of the table (unary, binary `- * / %`, `t * 2`, `++` / `--`, `t + u`, `t != u`, `t == 1`, `bigint | number`),
   plus the already-right controls and a `typeof t === "number"` control that the IR keeps claiming (`trackIrOutcomes`
-  shows `f` emitted). The rows that are wrong on main fail on main and pass after; `bigint | number` passes on
-  standalone after and stays a documented gc failure (#7526).
+  shows `f` emitted). The rows that are wrong on main fail on main and pass after. `bigint | number` is pinned as
+  "refused by the IR"; legacy's answer is still wrong on both lanes (#7526), so node's value is not asserted.
 - **Prepared path.** One pin under `wholeProgram: { kind: "prepared-program-required" }` expects the named refusal
   `operand-coercion-unsupported`, not a wrong value.
 - **Bytes.** gc output identical to main on the 160-file test262 sample and the IR fallback corpus. Standalone

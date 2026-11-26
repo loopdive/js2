@@ -14,6 +14,7 @@ import type { IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
 import type { buildIrPlanningIdentityContext } from "./planning-identity.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
 import type { IrModuleBindingIdentity } from "./module-bindings.js";
+import { bigIntOperandOption } from "./bigint-operand-refusal.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
@@ -214,6 +215,7 @@ function prepareSourceBuiltinResolvers(
           // (#7354 T) The one lane capability this path binds: the native number formatter (Str2-c), so a `+` of a
           // string and a number converts the number like a template does. Every other capability stays unanswered.
           supportsBackendCapability: (capability: string) => capability === "number-to-string",
+          ...bigIntOperandOption(input.checker, true), // (#7525) refuse it by name
         }
       : {}),
   };

@@ -317,6 +317,14 @@ export function isTypedBinaryOperator(op: ts.SyntaxKind): boolean {
   );
 }
 
+/**
+ * (#7525) The typed binary operators whose dynamic-operand lowering cannot take a BigInt: all but strict equality
+ * run ToNumber, a Number addition or Number loose equality on the carrier (#7526).
+ */
+export function isBigIntUnsafeDynamicOperator(op: ts.SyntaxKind): boolean {
+  return isTypedBinaryOperator(op) && !isStrictEqualityOperator(op);
+}
+
 /** ToNumber(undefined) is the NaN sentinel and ToNumber(null) is +0: both read as an f64. */
 function numberIfNullOrUndefined(family: OperandFamily): OperandFamily {
   return family === "undefined" || family === "nullish" ? "number" : family;
