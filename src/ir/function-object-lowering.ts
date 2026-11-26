@@ -107,6 +107,26 @@ export function lowerTopLevelFunctionValue(
   return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
 }
 
+/** (#7489) Neither a generator nor async: a function §17.1 lets an implementation extend with an own `caller`. */
+function plainFunction(fn: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
+  return fn.asteriskToken === undefined && !ts.getModifiers(fn)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+}
+
+/** (#7489) The program's strictness of `fn`'s code; without an answer the function refuses by name. */
+function functionCodeStrict(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression,
+  resolver: Pick<IrFromAstResolver, "closureCodeStrictness"> | undefined,
+): boolean {
+  const strict = resolver?.closureCodeStrictness?.(fn).functionCodeStrict;
+  if (strict === undefined)
+    throw new IrUnsupportedError(
+      "type-resolution-unsupported",
+      "build",
+      "a function object's own caller needs its code's strictness",
+    );
+  return strict;
+}
+
 /**
  * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
  * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate, the §15.1.5 count the legacy metadata uses), `name`
@@ -120,16 +140,15 @@ export function lowerTopLevelFunctionValue(
  *
  * (#7489) A sloppy plain function (a declaration or expression, neither a generator nor async: the functions §17.1 lets
  * an implementation extend) owns V8's `caller`, read only and `null`; every other function's `caller` is
- * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`, which
- * the lane that creates function objects always has).
+ * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`); where
+ * it has no answer for a function declaration or expression the function refuses by name, since a guess would answer
+ * a sloppy function's `caller` with the accessor's TypeError.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
-  resolver:
-    | { closureCodeStrictness?(code: ts.FunctionLikeDeclaration): { readonly functionCodeStrict?: boolean } }
-    | undefined,
+  resolver: Pick<IrFromAstResolver, "closureCodeStrictness"> | undefined,
 ): void {
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
@@ -145,11 +164,7 @@ export function emitFunctionObjectInit(
     );
   const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
-  const ownsCaller =
-    isConstructor &&
-    fn.asteriskToken === undefined &&
-    !ts.getModifiers(fn)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
-    resolver?.closureCodeStrictness?.(fn).functionCodeStrict === false;
+  const ownsCaller = isConstructor && plainFunction(fn) && !functionCodeStrict(fn, resolver);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [

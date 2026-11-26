@@ -13,12 +13,14 @@ const SEEDED_BY_THE_KERNEL = new Set(["length", "name"]);
  * A held row's own properties beyond `length` and `name`, as the kernel defines them (catalog order). `entryOf` names
  * the realm's entry or object for a catalog id, or `undefined` where the realm does not hold that intrinsic: a property
  * naming one is not seeded, and every read that could reach it refuses or aborts at its site
- * (`BUILTIN_REACHABLE_KEYS`). (#7489) An accessor is seeded with its realm getter and setter (%Function.prototype%'s
- * `caller` and `arguments`, both %ThrowTypeError%).
+ * (`BUILTIN_REACHABLE_KEYS`). (#7489) Where `accessors` (the program can reach one, `restrictedFunctionAccessors`) an
+ * accessor is seeded with its realm getter and setter (%Function.prototype%'s `caller` and `arguments`, both
+ * %ThrowTypeError%).
  */
 export function familyProperties(
   row: NativeRealmIntrinsic,
   entryOf: (id: string) => string | undefined,
+  accessors: boolean,
 ): NativeBuiltinProperty[] {
   return row.properties.flatMap((property): NativeBuiltinProperty[] => {
     if (property.key.kind !== "string" || (row.callable && SEEDED_BY_THE_KERNEL.has(property.key.value))) return [];
@@ -27,7 +29,7 @@ export function familyProperties(
     ];
     if (property.kind === "accessor") {
       const [get, set] = [entryOf(property.get), entryOf(property.set)];
-      return get === undefined || set === undefined ? [] : seeded({ kind: "accessor", get, set }, false);
+      return !accessors || get === undefined || set === undefined ? [] : seeded({ kind: "accessor", get, set }, false);
     }
     if (property.value.kind === "string") return seeded(property.value, property.writable);
     if (property.value.kind === "number")
@@ -50,7 +52,8 @@ export function familyObjects(
     .map((row) => ({
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
-      properties: familyProperties(row, entryOf),
+      // A family's ordinary objects hold no accessor in the catalog.
+      properties: familyProperties(row, entryOf, false),
     }));
   return objects.length === 0 ? {} : { objects };
 }

@@ -300,8 +300,8 @@ function beginRealm(
   const heldRows = heldCatalogRows(requirements.description);
   // (#7489) The realm's entry or object for a catalog id: a bootstrap function's entry is named by its behavior.
   const entryOf = (id: string): string | undefined => {
-    const bootstrap = catalog.bootstrap.indexOf(id);
-    if (bootstrap >= 0) return catalog.intrinsics.find((row) => row.id === id)?.callable?.implementation;
+    if (catalog.bootstrap.includes(id))
+      return catalog.intrinsics.find((row) => row.id === id)?.callable?.implementation;
     return requirements.description.intrinsics.includes(id) || heldRows.some((row) => row.id === id && !row.callable)
       ? id
       : undefined;
@@ -322,7 +322,7 @@ function beginRealm(
         : call?.implementation === "native";
     if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
     const entry = behavior as NativeBuiltinFunctionBehavior;
-    const properties = familyProperties(row, entryOf);
+    const properties = familyProperties(row, entryOf, requirements.description.restrictedFunctionAccessors);
     return {
       id: index < catalog.bootstrap.length ? entry : id,
       behavior: entry,

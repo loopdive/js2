@@ -6,6 +6,8 @@
 // implementation-defined and §17.1 forbids only a strict function. `arguments` keeps its refusal: a sloppy function's own
 // is its arguments object.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { emitFunctionObjectInit } from "../src/ir/function-object-lowering.js";
+import { ts } from "../src/ts-api.js";
 import { agreesWithNode, gapText, refusal, runPrepared, runnerOptions } from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -95,4 +97,49 @@ describe("#7489 A — refusals that stay", () => {
     },
     SLOW,
   );
+});
+
+describe("#7489 A — js.object.init-function's own-caller operand", () => {
+  // The generator / async programs above refuse before they reach this site, so the operand is pinned here directly.
+  const operands = (source: string, strict: boolean | undefined) => {
+    const file = ts.createSourceFile("t.js", source, ts.ScriptTarget.ES2020, true);
+    const fn = file.statements[0] as ts.FunctionDeclaration;
+    const consts = new Map<number, unknown>();
+    let next = 0;
+    let call: readonly number[] = [];
+    const id = () => next++;
+    const builder = {
+      typeOf: () => ({ kind: "closure", signature: { params: [], returnType: { kind: "dynamic" } } }),
+      emitCallablePack: id,
+      emitCoerceToExternref: id,
+      emitStringConst: id,
+      emitConst: (value: { value: unknown }) => {
+        const result = id();
+        consts.set(result, value.value);
+        return result;
+      },
+      emitCall: (_target: unknown, args: readonly number[]) => {
+        call = args;
+        return null;
+      },
+    };
+    const resolver = { closureCodeStrictness: () => (strict === undefined ? {} : { functionCodeStrict: strict }) };
+    emitFunctionObjectInit(builder as never, id() as never, fn, resolver);
+    return { isConstructor: consts.get(call[3]!), ownsCaller: consts.get(call[4]!) };
+  };
+
+  it.each([
+    ["a sloppy declaration", "function g() {}", false, true],
+    ["a strict declaration", "function g() {}", true, false],
+    ["a sloppy generator", "function* g() {}", false, false],
+    ["a sloppy async function", "async function g() {}", false, false],
+  ])("%s", (_label, source, strict, owns) => {
+    expect(operands(source, strict)).toEqual({ isConstructor: true, ownsCaller: owns });
+  });
+
+  it("refuses by name without the code's strictness", () => {
+    expect(() => operands("function g() {}", undefined)).toThrow(
+      "a function object's own caller needs its code's strictness",
+    );
+  });
 });

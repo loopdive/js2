@@ -317,3 +317,38 @@ Branch `claude/s20-fn-members`, measured against main `c3b7be66`.
   %Function.prototype%'s `caller` / `arguments` come from its catalog rows; the
   Error family rows reference only held intrinsics, so their seeding is
   unchanged.
+
+## Slice A review r1 (RV7449 on 4a1d7bd0) and fixes
+
+- **B1, the generator / async exclusion was unpinned.** Both programs refuse
+  before `js.object.init-function` for unrelated reasons, so removing the
+  exclusion left every test green. `tests/issue-7489-function-caller.test.ts`
+  now drives `emitFunctionObjectInit` directly with a recording builder and
+  pins its own-caller operand: sloppy declaration true; strict, `function*`
+  and `async function` false. The two program-level pins stay, reworded to
+  claim only that those programs still refuse.
+- **A missing strictness answer gave a wrong value.** It now refuses by name
+  ("a function object's own caller needs its code's strictness",
+  `functionCodeStrict` in `function-object-lowering.ts`). The resolver type is
+  `Pick<IrFromAstResolver, "closureCodeStrictness">`, dropping the inline copy
+  of `CodeStrictness`. Production always answers (`compiler.ts` passes
+  `preparedCodeStrictness`); three test fixtures that built a Prepared input
+  without it now pass the same function (`typed-program-fixtures.ts`,
+  `native-getter-invocation-fixture.ts`, one inline input in
+  `issue-3518-closure-parameter-projections.test.ts`). Making the field
+  required on `IrProgramSourceInput` was tried and rejected: 92 fixture call
+  sites build that input.
+- **Every Prepared program grew by the two accessor defines (+66 B).** The
+  accessors are now seeded only where the program can reach them:
+  `restrictedFunctionAccessors` (`native-realm-requirements.ts`) is true where
+  some `js.object.get` / `set` / `has` use has the key `caller` or `arguments`
+  or a key not known at compile time. Nothing else reaches them, since no
+  Prepared program obtains %Function.prototype%.
+  - `var o = { a: 1 }; var b = o.a;` is now 24003 B, as on main.
+  - A program with a function value grows 29 B: the own-`caller` define in
+    the `js.object.init-function` body.
+- **Nits**: `includes` for the bootstrap test, the [[Set]] body's local is
+  named `vector`, and the over-long comment is wrapped.
+- **Re-measured**: the census of `candidates.txt` is unchanged (43 / 100 /
+  409, zero row differences). The 87 test files that use the Prepared fixtures
+  fail exactly main's set (93 tests, same names).
