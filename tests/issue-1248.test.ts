@@ -18,15 +18,14 @@
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runStringTest(source: string, fn = "test"): Promise<string> {
   const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => string>)[fn]!();
 }
 
