@@ -92,7 +92,9 @@ mirror.
   - Peers: `linkedPeerExports(target, result, imports)`. The runner does instantiate `result.linkedModules`, so it now
     drains linked peers exactly as the worker does. There is no divergence left.
   - Rename `standaloneDrainError` to `drainError`.
-- **`test262-shared.ts`** (row 4): the same call, with the same peer lookup for its multi-module fixture.
+- **`test262-shared.ts`** (row 4): the same call, with the same peer lookup for its multi-module fixture. Passing
+  peers is a no-op unless the fixture row has `result.linkedModules` (Temporal, #5248), and the lookup returns `[]`
+  off standalone. One of the 10 fixture rows in acceptance 3 is chosen to confirm the output is identical.
 - **Tests** (rows 5–7): call the helper. **The 6723 tests assert `drainError === null`**, which keeps them as strict as
   the throwing original.
 
@@ -113,16 +115,18 @@ mirror.
    - Expected fail→pass: the JS-target async rows that stopped at "async completion marker not observed", among them
      `tests/issue-1363.test.ts`. Its repo-relative `TEST262_ROOT` path fix ships here.
 2. **No copies left.**
-   - Check: `rg -l "__drain_microtasks" tests scripts | xargs rg -l "__stdout_char"`. This finds aliased forms too, such
-     as `(exp.__drain_microtasks as () => void)()`.
+   - Check, matching code only, not comments: `rg -l '\.__drain_microtasks\b' tests scripts | xargs rg -l '\.__stdout_char\b'`.
+     It still catches the aliased form `(exp.__drain_microtasks as () => void)()` and `exp.__stdout_char as …`.
    - Allowed hits after the change:
      - `scripts/test262-native-drain.mjs`, the one implementation.
-     - The frozen instruments under `scripts/lib/fixtures/frame-delay-original-instruments/*.txt`, which must not
-       change.
-     - Embedder tests that compile their own module and read its sink as the behaviour under test:
+     - The frozen instruments `scripts/lib/fixtures/frame-delay-original-instruments/*.txt`, which must not change.
+     - The embedder tests that compile their own module and read its sink as the behaviour under test:
        `tests/equivalence/issue-6995-*`, `issue-6996-*`, `tests/helpers/native-delay-combinator-source-receipts.mjs`,
        `tests/issue-3518-async-frame-body-source-preservation`, `issue-3542`, `issue-3548`, `issue-4574-*`.
-   - `test262-worker.mjs`, `test262-runner.ts`, `test262-shared.ts` and the 6723, 6685 and 3469 tests must not appear.
+     - `tests/issue-6685.test.ts`: its L91/L126 drains are embedder calls under test (they drive `__drain_microtasks`,
+       then observe the console capability). Only its `readSink` mirror is folded.
+   - `test262-worker.mjs`, `test262-runner.ts`, `test262-shared.ts`, the 6723 tests and the 3469 test must not appear.
+     The 3469 comments that name the intrinsics are reworded so the code-only check stays exact.
 3. **Worker equivalence.** Before and after, run `scripts/run-test262-vitest.sh` with `TEST262_PATH_FILTER` on 20 async
    test262 files: 10 single-module and 10 multi-module fixture rows (`_FIXTURE` imports). Do this in the standalone and
    honest lanes, and once with `TEST262_ORACLE_MODE=linked`. Row `status`, `error` and output must be identical. The

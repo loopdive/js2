@@ -77,7 +77,7 @@ it is not deleted here: retiring it is its own reviewed change.
    imports: env::Promise_all" (from S7, #6979; it belongs with #5385). It is not skipped or marked todo. It stays red
    under #7539.
 5. Follow-ups: #7540 (retire `host-wasmgc`, rename the native runtime; backlog) and #7541 (a `setExports` embedder
-   with an IR timer callback hangs silently).
+   with an IR timer callback gets an uncaught `TypeError`).
 
 ## Acceptance criteria
 
@@ -98,5 +98,5 @@ it is not deleted here: retiring it is its own reviewed change.
 ## Risks
 
 - Native async on JS depends on the boundary adapter (`__drain_microtasks`, `setInstance`). A raw `setExports`
-  embedder hangs silently; that is #7541.
+  embedder gets an uncaught `TypeError`; that is #7541.
 - More programs claim through IR on gc, so their binaries change by design. The A/B diff must list exactly those.
