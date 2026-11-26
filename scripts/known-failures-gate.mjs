@@ -72,7 +72,8 @@
 //   KNOWN_FAILURES_FETCH_BASE=1  fetch `measuredAt` from origin when the clone lacks it (CI)
 //   KNOWN_FAILURES_FORK_HEAP_MB  per-fork heap for the parallel pass (default 2048)
 //   KNOWN_FAILURES_RERUN_HEAP_MB per-fork heap for serial re-runs (default 4096)
-//   KNOWN_FAILURES_BATCH         files per vitest invocation (default 150)
+//   KNOWN_FAILURES_BATCH         files per vitest invocation (default 50)
+//   KNOWN_FAILURES_MAX_FORKS     vitest forks in the parallel pass (default 2)
 //   KNOWN_FAILURES_CONFIRM_MAX   status changes re-run to confirm, per direction (default 25)
 //   KNOWN_FAILURES_ONLY          regex narrowing the population (local debugging only)
 //
@@ -338,7 +339,7 @@ function envInt(name, fallback) {
  * One vitest invocation over `files` with the crash-safe reporter. Resolves
  * to { ended: Map<rel, entry>, started: Set<rel>, timedOut, code }.
  */
-function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs }) {
+function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs, maxForks }) {
   const dir = mkdtempSync(join(tmpdir(), "known-failures-"));
   const progress = join(dir, "progress.jsonl");
   writeFileSync(progress, "");
@@ -355,6 +356,7 @@ function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs }) {
         CI: "1",
         KNOWN_FAILURES_PROGRESS: progress,
         VITEST_FORK_MAX_OLD_SPACE_SIZE: String(heapMb),
+        ...(maxForks ? { VITEST_MAX_FORKS: String(maxForks) } : {}),
       },
     });
     let timedOut = false;
@@ -432,7 +434,12 @@ export function unaccountedRunErrors(run, files) {
 }
 
 export async function runFiles(root, toRel, files, { label, serial = false, onRunIntegrity }) {
-  const batch = envInt("KNOWN_FAILURES_BATCH", 150);
+  // (S23, 2026-11-26) Every post-merge issue-tests run since #7014 refused at the integrity step, chiefly on
+  // unattributed `[vitest-worker]: Timeout calling "onTaskUpdate"` errors: forks starving vitest's main process
+  // (which serves their module transforms) across 150-file batches on a 4-vCPU runner. Fewer forks and smaller
+  // batches keep that RPC answered; the gate still refuses any error it cannot attribute to a file.
+  const batch = envInt("KNOWN_FAILURES_BATCH", 50);
+  const maxForks = envInt("KNOWN_FAILURES_MAX_FORKS", 2);
   const heap = envInt("KNOWN_FAILURES_FORK_HEAP_MB", 2048);
   const rerunHeap = envInt("KNOWN_FAILURES_RERUN_HEAP_MB", 4096);
   const results = new Map();
@@ -449,6 +456,7 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
     const r = await vitestOnce(root, toRel, chunk, {
       serial: false,
       heapMb: heap,
+      maxForks,
       timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
     });
     if (onRunIntegrity) for (const error of unaccountedRunErrors(r, chunk)) onRunIntegrity(error);
