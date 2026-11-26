@@ -375,3 +375,25 @@ Base `6694a8b8391`, head = this branch, measured 2026-11-26.
   The new file passes under Node 24 with `--no-experimental-wasm-legacy-eh`.
 - **Size:** `src/ir/from-ast.ts` 17,340 → 17,317 lines; no budget grant.
 
+### After merging main `1a726b3e64e` (#7434), measured 2026-11-26
+
+Base = `1a726b3e64e`, head = the merge commit. #7434's `refuseImmutableWrite` runs once, at the top of
+`identifierWriteTarget`, which all three writers enter first, with each writer's label (`assignment to`,
+`compound assignment to`, `increment/decrement of`); its pinned messages are unchanged.
+
+- **Gate 1, 411-row sample:** pass 83 → 83; 0 of 411 rows differ in status or first error (also 0 against the
+  pre-merge head run).
+- **Gate 2, `check:prepared-bytes`:** 804 rows (745 `bytes`, 58 `refused`, 1 `threw`), output identical, sha256
+  `6c9504fe8787…` on both.
+- **Gate 3, prelude + `assert(true);`:** 81,397 B, sha256 `031c67f357f6…` on both.
+- **Gate 4, ordinary pipeline:** 7,632 compiles (3,816 inputs, gc and standalone), all identical in status, sha256 and
+  claim set; 6,379 claimed functions over 3,677 compiles on both.
+- **Suites:** the 74 files of `tests/issue-7462-*`, `tests/issue-7434-*`, `tests/issue-7354-*`,
+  `tests/test262-prepared-*` and `tests/issue-7338*`, one vitest run each: 2,261 pass, 1 fail. The failure is
+  `issue-7354-o-objects` "refuses what the later steps build, by name", which fails the same way on `1a726b3e64e`. The
+  new file passes under Node 24 with `--no-experimental-wasm-legacy-eh` (29/29).
+- **The `const` pin** now aborts with `const-write: increment/decrement of "n"`. The "pass no write value" mutated twin
+  therefore survives (38/38 of the 7462 and 7434 files pass with it): the resolver's own immutable refusal is left
+  for an imported binding, which no single-file Prepared program has.
+- **Size:** `src/ir/from-ast.ts` 17,337 (main) → 17,319 lines; no budget grant.
+
