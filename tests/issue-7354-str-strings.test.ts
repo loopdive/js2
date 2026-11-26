@@ -162,11 +162,12 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     180_000,
   );
 
-  it("refuses the relational compare of typed strings (no join)", async () => {
+  // (#7354 L0a) The relational compare of typed strings goes through the carrier's code-unit compare.
+  it("orders typed strings by code units", async () => {
     const source =
-      "function lt(a: string, b: string): boolean { return a < b; }\n" +
-      "export function main(): number { return lt('a', 'b') ? 1 : 0; }\n";
-    expect(await refusal(source, "entry.ts")).toContain("js.string.compare is unavailable");
+      "function lt(a: string, b: string): number { return a < b ? 1 : 0; }\n" +
+      "export function main(): number { return lt('a', 'b') * 4 + lt('B', 'a') * 2 + lt('b', 'a'); }\n";
+    expect(await main(source)).toBe(6);
   });
 
   it("refuses a typed string program on the gc target (no string policy there)", async () => {
@@ -227,10 +228,8 @@ describe("#7354 Str 2 — a string in the dynamic value", () => {
   });
 
   // ToBoolean of a string is slice T's (merged): tested in `tests/issue-7354-t-truthiness-null.test.ts`, "T after Str".
-  it.each([
-    ["loose equality", "function f(v) { return v == 'a'; }\nf('a');", "dyn.eq (loose)"],
-    ["a method call on a dynamic string", "function f(v) { return v.charAt(0); }\nf('a');", "dyn"],
-  ])("refuses %s", async (_, source, detail) => {
-    expect(await refusal(source)).toContain(detail);
+  // (#7354 L0a) Loose equality of a dynamic string is slice L0a's: tested in `tests/issue-7354-l0a-loose-equality.test.ts`.
+  it("refuses a method call on a dynamic string", async () => {
+    expect(await refusal("function f(v) { return v.charAt(0); }\nf('a');")).toContain("dyn");
   });
 });
