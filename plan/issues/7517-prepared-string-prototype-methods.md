@@ -95,8 +95,19 @@ cover them.
 - `replace` searches a string literally.
 - `match` throws in its argument's ToString, and `split` in its limit's ToUint32, both before their
   array result.
-- The plan revisions below (run-time defaults, argument order, literal `replace` / `split`) match
-  the stand-in's answers for all 42 files, so the yield was not re-measured.
+- The plan revisions below (run-time defaults, argument order, literal `replace` / `split`, the
+  object-pattern refusal) match the stand-in's answers for all 42 files, so the yield was not
+  re-measured.
+- **Object patterns (checked 2026-11-26):** 6 of the 8 files pass an ordinary object as the pattern:
+  - `search/S15.5.4.12_A1_T10`, `-T11`;
+  - `replace/S15.5.4.11_A1_T10`, `-T11`;
+  - `match/S15.5.4.10_A1_T11`;
+  - `split/separator-override-tostring-limit-override-valueof-throws`.
+
+  None of the 8 contains a RegExp literal or names `RegExp` or `Symbol`, and neither does the
+  assembled harness (scanned with the TypeScript parser). The shim's `RegExp: globalThis.RegExp` and
+  `Symbol: globalThis.Symbol` are member names, which `isMemberName` excludes. So the refusal below
+  does not fire for them: S2 stays 8. Refusing every object pattern would have cost these 6.
 
 ## Implementation Plan
 
@@ -248,10 +259,27 @@ function heldPrototypeMethods(uses: readonly Use[]): ReadonlySet<string>;
 ### String methods: roles, conversions, patterns
 
 **The role table** (`string-method-surface.ts`) is the one source of arguments for the typed and the
-dynamic path, and the new data is visible only to the dynamic path. `stringMethodPlan`,
-`isStringSurfaceMethod` and `isStringMethodHelper` give the same answers as today for every method,
-argument count and backend: a unit test pins them over all String.prototype names, argument counts
-0–4 and both backends, so selection and gc output cannot move.
+dynamic path. One field on the row keeps the new data out of the typed path, with no second table:
+
+- **`typedPath: false` hides a whole row.** The new rows (`split`, `match`, `localeCompare`,
+  `toString`, `valueOf`) carry it; absent means `true`, so every existing row is unchanged. All three
+  typed predicates read it:
+  - `stringMethodPlan` and `isStringSurfaceMethod`, through `stringMethodRow`, their one accessor;
+  - `isStringMethodHelper`, which today scans `Object.values(ROWS)` directly and gains the same filter.
+    Without it, `localeCompare`'s `__str_compare` would turn `isStringMethodHelper` true and move the
+    ordinary pipeline's helper materialisation (`integration.ts`).
+- **Dynamic-only parts of a typed row live in the row's `dynamic` record:**
+  - `concat`'s `rest: true`;
+  - the conversion order (`split`'s);
+  - the receiver conversion (thisStringValue for `toString` / `valueOf`).
+
+  `stringMethodPlan` copies only named fields into its result, and its arity check reads
+  `row.arity ?? row.parameters.length`. So the record changes neither the plan nor typed `concat`'s
+  one-argument arity.
+- **The dynamic path** reads every row through `stringMethodRole(method)`.
+- **A unit test pins the typed predicates.** `stringMethodPlan`, `isStringSurfaceMethod` and
+  `isStringMethodHelper` give today's answers for every String.prototype name, argument counts 0–4,
+  both backends, and every helper symbol, so selection and gc output cannot move.
 
 New rows and fields:
 
@@ -259,7 +287,7 @@ New rows and fields:
 |---|---|---|---|
 | `localeCompare` | ToString(this) | that: `search`, `undefined` | `index` (`__str_compare`'s -1/0/1) |
 | `toString`, `valueOf` | thisStringValue: a non-string throws a TypeError | — | `string` |
-| `concat` | ToString(this) | `search`, `rest: true` (each argument in order) | `string` |
+| `concat` | ToString(this) | `search`, `dynamic.rest: true` (each argument in order) | `string` |
 | `split` | ToString(this) | separator: `literal-pattern`; limit: `limit`, undefined → 2^32−1 | array: the run-time abort after the conversions |
 | `match` | ToString(this) | regexp: `pattern`, `empty` | array: the run-time abort after the conversions |
 | `replace` | ToString(this) | search: `literal-pattern`; replaceValue: `replacer` (callable, else ToString) | `string` |
@@ -269,7 +297,7 @@ New rows and fields:
   - `replacer`: IsCallable, else ToString, applied before the search;
   - `literal-pattern`: a non-object operand is used literally, with no RegExpCreate.
 - `split`'s order exception: the limit is converted before the separator (§22.1.3.23 steps 4–5).
-  The table records the conversion order per row, and every other row converts in parameter order.
+  The row's `dynamic.order` records it, and every other row converts in parameter order.
 
 **Run-time defaults.** Every parameter with `omitted` gets a run-time branch:
 `js.extern.is_undefined(arg)` ? default : conversion.
@@ -300,9 +328,25 @@ tests:
 **Patterns (S2).**
 - `replace` and `split` use a non-object pattern literally, with no RegExpCreate, so
   `"a.b".replace(".", "x")` is `"axb"`, not a refusal.
-- An object pattern first needs `GetMethod(pattern, @@replace / @@split / @@search / @@match)`. In a
-  program that names `Symbol` this refuses by name, as `instanceof` does; otherwise the symbol is
-  absent, and the object's ToString follows.
+- An object pattern first needs `GetMethod(pattern, @@replace / @@split / @@search / @@match)`.
+  - **Where the method can only be absent:** an ordinary object, and the program names neither
+    `Symbol` nor `RegExp`. The object's ToString follows.
+  - **Where it can be present, a named compile-time `gap()`** ("an object pattern of `<method>` in a
+    program that names `Symbol` / `RegExp`"). Two sources can supply it:
+    - a symbol-keyed property, possible only where the program names `Symbol`, as for `instanceof`;
+    - a RegExp, which carries all four methods without the program naming `Symbol`.
+  - **The RegExp key.** It is `ProgramObjects.namesRegExp`, computed in `programObjects`
+    (`source-plain-objects.ts`) beside `namesSymbol`: a RegExp literal, or a pristine `RegExp`
+    identifier that is not a member name. This keys the refusal on the RegExp family being
+    reachable, as the `errors` flag keys Error.prototype.
+  - **Why the key is syntactic for now.** A member read such as `globalThis.RegExp` cannot produce a
+    RegExp value on the Prepared path today: there is no RegExp provider, and `globalThis` is out of
+    scope.
+  - **Owner of lifting it:** [#7369](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7369-prepared-regexp).
+    - When it admits a RegExp value, it widens `namesRegExp` to every construct it admits (a call,
+      `new RegExp`, a global read), or replaces the flag with the realm's own "holds RegExp" fact.
+    - When it serves the protocol methods on its values, it narrows the refusal to object patterns
+      whose method it does not serve.
 - `replace` with a string `replaceValue` calls the existing `__str_replace` (GetSubstitution, #7313).
 - `replace` with a callable `replaceValue`:
   1. ToString(this), then ToString(searchValue);
@@ -354,7 +398,8 @@ type order are unchanged, because minting and `addFuncType` stay in the emitter.
 | dispatch | `src/ir/program/dynamic-prototype-methods.ts` | candidates, identity chain, `PROTOTYPE_ALGORITHMS` |
 | holding | `src/ir/program/native-realm-requirements.ts` | per-method `heldPrototypeMethods` |
 | String algorithm | `src/ir/program/dynamic-string-methods.ts` (new) | `stringMethodCall` |
-| roles | `src/ir/string-method-surface.ts` | new rows and roles; `omittedStringMethodArgument` |
+| roles | `src/ir/string-method-surface.ts` | new rows and roles, the `typedPath` field, `dynamic` records, `stringMethodRole`; `omittedStringMethodArgument` |
+| object-pattern key | `src/ir/source-plain-objects.ts`, `src/ir/program/dynamic-value-kinds.ts` | `namesRegExp` beside `namesSymbol` |
 | search bodies | `src/runtime/wasmgc/values/string-search-bodies.ts` (new) | `indexOf`, `lastIndexOf`, `includes`, `region_eq` |
 | slice / char bodies | `src/runtime/wasmgc/values/string-slice-char-bodies.ts` (new) | `substring`, `charAt`, `charAt_cp`, `slice`, `substr`, `charCodeAt` |
 | compare body | `src/runtime/wasmgc/values/string-compare-body.ts` (new) | `__str_compare` |
@@ -452,7 +497,7 @@ Tests:
 
 **S2: `replace`, `search`, `match`, `split` (8 files, measured stand-in).**
 1. The replace extraction.
-2. The `limit`, `replacer` and `literal-pattern` roles.
+2. The `limit`, `replacer` and `literal-pattern` roles; `ProgramObjects.namesRegExp`.
 3. The four algorithms above.
 
 Tests:
@@ -463,7 +508,13 @@ Tests:
 - `split`'s limit before its separator, and undefined limit;
 - `search` with a literal and with a RegExp-syntax pattern (the abort);
 - `match` / `split` conversions before their abort;
-- an object pattern in a program that names `Symbol` refuses by name.
+- the object-pattern refusal, pinned with a RegExp-literal pattern:
+  - `"abc".replace(/b/, "x")`, `"a,b".split(/,/)`, `"abc".search(/b/)` and `"abc".match(/b/)` must
+    each refuse, and never search the literal text `"/b/"`;
+  - today the literal's own refusal (no RegExp provider) comes first; the test accepts either that
+    refusal or this issue's named gap, so it keeps holding when #7369 admits the literal;
+  - the same four with an ordinary-object pattern in a program that names `Symbol` refuse by name;
+  - with an ordinary-object pattern in a program that names neither, they run ToString.
 
 ### Acceptance criteria
 
