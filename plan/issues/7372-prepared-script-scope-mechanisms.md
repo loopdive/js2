@@ -110,7 +110,270 @@ Replaces the earlier four-line plan. The home is shared:
 
 The API is stated below so that S19 can agree to it first.
 
-**Measured** (main `1a726b3e64`, 2026-11-26; strict Prepared entry, standalone). The tool is
+**Measured** (main `1a726b3e64`, 2026-11-26, `prepared-census.mts --harness real`, which skips negatives): on o411,
+12 rows stop first at an undeclared name, with an expected **+7** (an estimate); on the wider ES5 set, 166 rows, an
+estimated ≈ +116. The per-row lists and the method are in "Slice 3 measurements" below.
+
+**Semantics** (ES5 §8.7.1–2, §10.2.1.2, §11.4.3; ES2024 §6.2.5.5–6, §9.1.1.4, §13.15.2). A reference no
+environment binds is unresolvable.
+
+- GetValue throws ReferenceError, in sloppy and strict code; `typeof` answers `"undefined"`.
+- PutValue in sloppy code creates a writable, enumerable, **configurable** global property; in strict code it
+  throws ReferenceError.
+- The reference is resolved before the RHS runs. So a strict write whose name was absent then throws even if the
+  RHS creates it. V8 deviates and stores; that program is pinned to the spec.
+- Compound assignment and `++`/`--` run GetValue first, so they throw before the RHS when the name is absent.
+- Once created, the name is an ordinary global property; it differs from a `var` only in being deletable (slice 4).
+
+**Why a per-name home is exact.** Under the H2 invariant (`module-binding-script-var.ts` header), the global object
+never becomes a value on this path. Every route that would expose it refuses at its own site under its existing name:
+script or sloppy `this`, `globalThis`, `with`, direct `eval`, `Function(…)`. So identifier references are the only
+observers of a property an undeclared write creates. The slice needs nothing from Session B.
+
+**The home.** A name *N* gets one when some identifier write targets it as an unresolvable reference anywhere in the
+script: `=`, a compound assignment, or `++`/`--`. A name that is only read is **unbound**.
+
+**Block functions (Annex B.3.3; PRV finding 1).** TypeScript gives a block FunctionDeclaration no symbol outside its
+block, even in sloppy JS, so `{ function f(){} } f = 1; f;` and `function g() { { function f(){} } f = 2; return f; }`
+look unresolvable. They are not: B.3.3 makes `f` a var of the script or of `g`, or skips it.
+
+- `collectAbsentGlobals` takes S19's B.3.3 decision as the input `blockFunctionVar(scope, name)`:
+  - `"applied"`: the name is S19's var home; slice 3 makes no absent home and answers nothing for it;
+  - `"skipped"` (script scope): the name is an ordinary unresolvable reference; its writes, collected like any
+    other, give it an absent home, and a read is unbound otherwise.
+  - A function-scope `"skipped"` name in a function body refuses by name: an undeclared write there would create a
+    global, which S19's 2a decides, not slice 3.
+- Until S19's slice 2 lands the input is absent, and every such name refuses by name: `name 'f' is declared by a
+  block function (Annex B.3.3), which this path does not decide yet`.
+- No by-name lookup: the decision is an input to the one collection, so a write and a read of `f` always reach the
+  same answer.
+
+- Storage: a dynamic value global *N* and an i32 flag *N*`$present`.
+- Invariant: flag 0 ⇒ value `undefined`. The flag starts at 0. The value starts at `undefined` through the
+  module-init prologue that `legalizeDynamicGlobals` already writes for every dynamic global.
+
+| operation | home | unbound |
+| --- | --- | --- |
+| read | flag 0 → throw; else the value | throw |
+| `typeof` operand | the value, unchecked | build-time `"undefined"` (today's fold) |
+| sloppy `=` | RHS; store; flag := 1 | — (any write makes a home) |
+| strict `=` | read the flag; RHS; flag was 0 → throw; store | — |
+| compound, `++`/`--` | flag 0 → throw; then the existing compound/update code on the value global | — |
+
+**The ReferenceError** is the realm's %ReferenceError% with the message `"N is not defined"`.
+
+- It is built by the IR that source `new ReferenceError(m)` lowers to: `lowerRealmIntrinsicRead(errorConstructorId
+  ("ReferenceError"))` and then `emitDynConstruct`, which the legalization turns into `js.object.create-error`
+  (`dynamic-error-constructors.ts`).
+- So `assert.throws` sees the right `constructor`, shadowing the global name changes nothing, and no second
+  constructor or backend change is needed.
+- `programObjects.namesErrors` (`source-plain-objects.ts:40`) also holds for a program with an unresolvable reference,
+  so that the realm holds the Error family.
+- A lane without function objects refuses by name: `ReferenceError for undeclared name 'N' needs the realm's Error
+  family`.
+
+**The shared module, `src/ir/absent-globals.ts`.** It is the only code that touches the two globals. API:
+
+```ts
+/** A global property no declaration creates (§9.1.1.4): made by a sloppy write; (2c) by an eval `var`. */
+export interface AbsentGlobalHome {
+  readonly name: string;
+  readonly value: IrGlobalRef; // dynamic carrier; `undefined` while absent
+  readonly present: IrGlobalRef; // i32; 0 = absent
+}
+/** How a reference no declaration binds resolves at run time. */
+export type UnresolvableName =
+  | { readonly kind: "home"; readonly home: AbsentGlobalHome }
+  | { readonly kind: "unbound"; readonly name: string };
+
+// Producer side: pure, backend-independent.
+/** The one rule: a value reference no declaration binds (no checker symbol; not inside `with`; not `arguments`;
+ *  not a name the script declares at top level, which guards the checker's lib-merge answer). A name a block
+ *  FunctionDeclaration declares anywhere in the enclosing scope is never decided here: see `blockFunctionVar`. */
+export function isUnresolvableReference(checker: ts.TypeChecker, node: ts.Identifier): boolean;
+export interface AbsentGlobals {
+  /** The program input's rows (value + flag), owned by the script's module-init. */
+  readonly globals: readonly ProgramSourceGlobal[];
+  /** The startup bindings (`initialization: "absent"`), numbered after the script's own. */
+  readonly bindings: (firstOrdinal: number, bindingId: (ordinal: number) => IrBindingId) => IrModuleInitBindingIntent[];
+  /** `node`'s resolution when `isUnresolvableReference`, else `undefined`. */
+  readonly resolve: (node: ts.Identifier) => UnresolvableName | undefined;
+}
+/** (Annex B.3.3) S19's decision for a name a block function declares in `scope` (the script or a function body). */
+export type BlockFunctionVar = (scope: ts.SourceFile | ts.FunctionLikeDeclaration, name: string) => "applied" | "skipped";
+export function collectAbsentGlobals(input: {
+  readonly checker: ts.TypeChecker;
+  readonly sourceFiles: readonly ts.SourceFile[];
+  readonly identity: IrPlanningIdentityContext;
+  /** Absent until S19's slice 2 lands; then every such name is refused by name. */
+  readonly blockFunctionVar?: BlockFunctionVar;
+}): AbsentGlobals;
+
+// Lowering side: one IrFunctionBuilder.
+/** GetValue: ReferenceError while absent or unbound. */
+export function lowerUnresolvableRead(b: IrFunctionBuilder, name: UnresolvableName): IrValueId;
+/** The one `typeof` entry: a home's value unchecked; `undefined` for an unbound name. Replaces `absentGlobalTypeof`. */
+export function lowerUnresolvableTypeofOperand(b: IrFunctionBuilder, name: UnresolvableName): IrValueId;
+/** `=`. `strict` is the strictness of the code holding the reference. Returns the stored value. */
+export function lowerAbsentGlobalWrite(b: IrFunctionBuilder, home: AbsentGlobalHome, strict: boolean, rhs: () => IrValueId): IrValueId;
+/** GetValue's presence check, then the value global as the existing compound/update code's storage. */
+export function absentGlobalStorage(b: IrFunctionBuilder, home: AbsentGlobalHome): { readonly globalRef: IrGlobalRef; readonly type: IrType };
+
+// Added by their own slices, in this file. Nothing is exported before its first user.
+// slice 4: lowerAbsentGlobalDelete(b, name): IrValueId
+//   home: flag := 0, value := undefined, `true`; unbound: `true`.
+//   A sloppy write re-creates; a strict write re-checks the flag after the RHS (stillExists, §9.1.1.4.5).
+// S19 2c: lowerCreateGlobalVarBinding(b, home): void
+//   CreateGlobalVarBinding (§9.1.1.4.17): if flag == 0 then { value := undefined; flag := 1 }; a present
+//   property is left as it is. 2c adds eval-declared names to `collectAbsentGlobals`.
+```
+
+**Where it plugs in.**
+
+- **Producer:** `prepareIrProgramSources` (`program-source.ts`, beside `functionDeclarationValues` at ~1643) calls
+  `collectAbsentGlobals`, which collects writes with `identifierWritesOf`.
+  - Its rows go into the input's `globals` and through `legalizeDynamicGlobals`, but **not** into module-init's
+    `moduleBindings` scope map (`program-source-units.ts` ~184). A home must never look like a plain `moduleGlobal`,
+    whose writes would not set the flag.
+  - **R1 fork taken:** main's `prepareSourceGlobals` (`program-source.ts` ~1496). PR #7329's separate registry was
+    closed as superseded, so the rows join the globals `prepareSourceGlobals` already builds.
+- **Startup:** the intents are appended in `buildIrModuleInitPlan` (`module-init-plan.ts` ~436), as F1b's are.
+  - `IrModuleInitBindingIntent` (`program/startup.ts`) gains `declarationKind: "global-property"` with
+    `initialization: "absent"`: R1's anticipated `global-object-property` kind.
+  - The flag rides in the `tdzBindingId` / `tdzGlobalRef` slot, which means "not usable while 0". So the input pair
+    check (`program/input.ts:51–68`) and the ABI storage (`program-abi-contracts.ts:107`) are unchanged;
+    `program/validation.ts:596` gains one row.
+  - **It is a presence flag, not a TDZ flag (PRV finding 2b).** The intent names it so
+    (`initialization: "absent"`, the flag documented as "present"), and unlike a TDZ flag it can go 1 → 0 under
+    slice 4's `delete`. So no consumer may treat it as monotonic.
+  - **No module-binding read path (PRV finding 2a).** A post-startup unit sets `omitTdzReadCheck`, which elides the
+    TDZ check on `moduleGlobal` reads (`from-ast.ts` ~4899). A home is never a `moduleGlobal` binding, and every read
+    of it goes through `lowerUnresolvableRead`, which always checks the flag. Test 11 pins it.
+- **Resolver:** `unresolvableName?(node): UnresolvableName | undefined` replaces `unresolvedNameIsAbsent?(node)`
+  (`from-ast.ts:976`).
+  - It is answered from `AbsentGlobals.resolve` in `lowerUnitOnce`, beside `resolveModuleBinding`.
+  - `absentGlobal` (`source-dynamic-contracts.ts:450`) is deleted. The ordinary pipeline never answers the hook.
+- **from-ast:** one call replaces each refusal or arm.
+  - `classifyIdentifierRead` returns `{ kind: "absent-global", name }` for every read the hook answers, not only a
+    `typeof` operand, and `absentGlobalTypeof` answers only for `unbound`.
+  - The read switch (`from-ast.ts:5253`) calls `lowerUnresolvableRead`.
+  - `lowerIdentifierAssignment` (:13239) calls `lowerAbsentGlobalWrite`, with the RHS boxed by
+    `boxForDynamicModuleStorage`.
+    - `strict` is `cx.functionCodeStrict`, which the producer sets for every unit and closure; undefined there is an
+      invariant error.
+  - `lowerCompoundAssignment` (:13342) and `lowerIncrementDecrement` (:13517) start from
+    `cx.scope.get(id.text) ?? <the home's absentGlobalStorage as a moduleGlobal binding>`.
+  - `from-ast.ts` is at 17,337 of its 17,340 ceiling. Target: net ≤ +3 lines; failing that, a dated grant of at most
+    +8 lines in this frontmatter.
+
+**Refused by name.** At the producer, before any body is lowered:
+
+- `undeclared global 'N' in a program of several scripts`;
+- `write to undeclared global 'N' through a pattern` (a destructuring target, or a `for-in`/`for-of` head).
+
+Unchanged, each at its own site:
+
+- the H2 routes;
+- `delete N` (until slice 4);
+- `arguments` (Session B);
+- names the lib declares (`Math = 1`);
+- a value-position update.
+
+**Reuse and the duplicate it removes.**
+
+- Reused:
+  - the dynamic carrier and its `undefined` prologue;
+  - F1b's startup numbering;
+  - `identifierWritesOf`;
+  - `codeStrictness` and `closureCodeStrictness`;
+  - the source path of `new ReferenceError(m)`;
+  - the existing compound/update arithmetic;
+  - the TDZ flag's storage path.
+- Removed: `absentGlobal` and the typeof-only `unresolvedNameIsAbsent` become one predicate and one hook, and the
+  file-wide `isUndeclaredInFile` test leaves that predicate. `isUndeclaredInFile` itself stays: it is still used by
+  `ambient-intrinsics.ts` (the global constants), `function-mention.ts` and `prepare-number-conversion.ts`.
+- `absentGlobalTypeof`'s build-time fold becomes the unbound arm of `lowerUnresolvableTypeofOperand`, the one
+  `typeof` entry (PRV finding 3).
+- Follow-up issue, which the dev files: the TDZ throw (`lowerResolvedModuleBindingTdzCheck`) is a second
+  ReferenceError emitter. Moving it to this realm error on the Prepared lane only would fix Prepared TDZ; that needs
+  its own byte checks, since the ordinary pipeline shares the code.
+
+**Tests:** `tests/issue-7372-absent-globals.test.ts`. Each program runs through `runPreparedScript`, with node's
+verdict asserted on the same source; the right check returns and a wrong one throws.
+
+1. `x = 1;` and `function f() { x = 1; } f();`, each against `x !== 1`.
+2. A read before the write: `try { x; } catch (e) { ok = e instanceof ReferenceError; } x = 2;`.
+3. An unbound read in a closure: `try { (function () { zz; })(); } catch (e) { ok = e.constructor ===
+   ReferenceError; }`.
+4. `typeof x` is `"undefined"` before `x = "s"` and `"string"` after it.
+5. `try { x += (n = 1); } catch (e) {} x = 0;`: a ReferenceError, and `n` stays `0`.
+6. `x = 1; x += 2; x++;` gives `4`.
+7. Strict writes:
+   - `(function () { "use strict"; y = 1; })()` throws ReferenceError;
+   - after a sloppy `y = 0`, the same write stores;
+   - `y = (n = 1)` runs its RHS first.
+8. **Spec, not node:** `function g() { z = 0; } (function () { "use strict"; z = (g(), 1); })();` throws.
+9. `function F() { var obj; } typeof obj === "undefined"` (the S13.2.2_A15_T1 shape).
+10. `function Error() {} typeof Error === "function"` (the top-level guard).
+11. A function called after startup reads a home before any write: `function r() { return x; } try { r(); } catch
+    (e) { ok = e instanceof ReferenceError; } x = 1;`, and `r()` answers `1` afterwards.
+12. `typeof (x)` is `"undefined"` before `x = 1` and `"number"` after it.
+
+Refusals pinned: two scripts, `[x] = [1]`, `this.x = 1`, `x = 1; (function () { return this; })().x`,
+`with ({}) { x = 1; }`, `Math = 1`, `x = 1; delete x;`, `'' + (x++)`, and (until S19's slice 2)
+`{ function f() {} } f = 1; f;` and `function g() { { function f() {} } f = 2; return f; } g();`.
+
+**Checks.**
+
+- Mutations, each to be killed by the test named:
+  - the read skips the flag (2);
+  - the sloppy write leaves the flag (1);
+  - `typeof` checks the flag (4);
+  - the strict write does not throw (7);
+  - the strict check runs after the RHS (8);
+  - the compound check runs after the RHS (5);
+  - the predicate keeps the file-wide test (9);
+  - the predicate drops the top-level guard (10);
+  - the home is put in module-init's scope map as a `moduleGlobal` (1);
+  - a home read goes through the module-binding read path, so `omitTdzReadCheck` elides it (11);
+  - a block function's name is given an absent home (the two block-function refusals).
+- Ordinary bytes, base vs head, on the JS environment, standalone and wasi: the `byte-diff-corpus.mts` sample corpus
+  and the 506 filtered ES5 files.
+- Prepared bytes by R1's corpus method: identical except programs with an unresolvable reference, each one named.
+- Yield: o411 through S3's runner, base vs head, every changed row named. Expected **+7**; the ES5 166 are re-measured.
+- Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles; compiler-boundaries classifies the module with owner 7372.
+
+**Code-quality acceptance.**
+
+- One new module of at most ~200 lines, which alone touches the two globals; from-ast holds dispatch calls only.
+- One predicate and one hook (`absentGlobal` and `unresolvedNameIsAbsent` are gone).
+- No second ReferenceError constructor, and no backend change.
+- No export without a user.
+- from-ast grows by at most +3 lines, or by a granted +8 that the review accepts.
+- An adversarial review with fresh context records its verdict in the PR.
+
+**Agreed with S19 (2026-11-26).**
+
+1. 2a's unbound read: S19 passes its B.3.3 decision as `blockFunctionVar`; a `"skipped"` name then resolves through
+   the one collection (a home if written, else unbound), read by `lowerUnresolvableRead` / typed by
+   `lowerUnresolvableTypeofOperand`. It replaces the refusal "is read where no binding of it exists" in
+   `src/ir/annexb-block-function-values.ts`. (Revised after PRV: no by-name lookup.)
+2. **No absent home for an Annex B var.** An `"applied"` name (`annexBWritesScriptBinding`,
+   `src/shared/annexb-block-functions.ts`, from #7466/#7499) lives in S19's var home from instantiation; slice 3
+   answers nothing for it, so a write and a read of it never land in two homes. Whichever of slice 3 and S19's
+   slice 2 lands second wires the input.
+3. 2c's `lowerCreateGlobalVarBinding` is §9.1.1.4.17: `if flag == 0 then { value := undefined; flag := 1 }`. It never
+   keeps a stale value on the absent path; slice 4's delete also clears the value. An eval-created binding is
+   configurable, like an undeclared-assignment property, so one home class serves both.
+4. **Homes are keyed by program, not by source.** An A4-compiled eval makes the program two-source (#7363 Slice A).
+   The Wasm module stays one, so the globals are shared; which module-init stores first is A4's owner's question,
+   raised by S19 once A4's design is fixed. Until then slice 3 refuses a multi-source program by name, as F1b and H
+   do.
+
+#### Slice 3 measurements
+
+Main `1a726b3e64`, 2026-11-26; strict Prepared entry, standalone). The tool is
 `prepared-census.mts --harness real`, which skips negatives, so its counts are not the S3 runner's. Abort bodies are
 attributed by matching the trap frame to `requiredPreparedAbortBodies`.
 
@@ -156,226 +419,6 @@ attributed by matching the trap frame to `requiredPreparedAbortBodies`.
   - The TDZ throw (`__new_ReferenceError(null)`) is unusable on this path. Uncaught, it is not materialized
     (`runtime callable __new_ReferenceError needs runtime function materialization`); under a catch that reads `e`,
     it is `throw of a value outside the dynamic carrier's kinds`.
-
-**Semantics** (ES5 §8.7.1–2, §10.2.1.2, §11.4.3; ES2024 §6.2.5.5–6, §9.1.1.4, §13.15.2). A reference no
-environment binds is unresolvable.
-
-- GetValue throws ReferenceError, in sloppy and strict code; `typeof` answers `"undefined"`.
-- PutValue in sloppy code creates a writable, enumerable, **configurable** global property; in strict code it
-  throws ReferenceError.
-- The reference is resolved before the RHS runs. So a strict write whose name was absent then throws even if the
-  RHS creates it. V8 deviates and stores; that program is pinned to the spec.
-- Compound assignment and `++`/`--` run GetValue first, so they throw before the RHS when the name is absent.
-- Once created, the name is an ordinary global property; it differs from a `var` only in being deletable (slice 4).
-
-**Why a per-name home is exact.** Under the H2 invariant (`module-binding-script-var.ts` header), the global object
-never becomes a value on this path. Every route that would expose it refuses at its own site under its existing name:
-script or sloppy `this`, `globalThis`, `with`, direct `eval`, `Function(…)`. So identifier references are the only
-observers of a property an undeclared write creates. The slice needs nothing from Session B.
-
-**The home.** A name *N* gets one when some identifier write targets it as an unresolvable reference anywhere in the
-script: `=`, a compound assignment, or `++`/`--`. A name that is only read is **unbound**.
-
-- Storage: a dynamic value global *N* and an i32 flag *N*`$present`.
-- Invariant: flag 0 ⇒ value `undefined`. The flag starts at 0. The value starts at `undefined` through the
-  module-init prologue that `legalizeDynamicGlobals` already writes for every dynamic global.
-
-| operation | home | unbound |
-| --- | --- | --- |
-| read | flag 0 → throw; else the value | throw |
-| `typeof` operand | the value, unchecked | build-time `"undefined"` (today's fold) |
-| sloppy `=` | RHS; store; flag := 1 | — (any write makes a home) |
-| strict `=` | read the flag; RHS; flag was 0 → throw; store | — |
-| compound, `++`/`--` | flag 0 → throw; then the existing compound/update code on the value global | — |
-
-**The ReferenceError** is the realm's %ReferenceError% with the message `"N is not defined"`.
-
-- It is built by the IR that source `new ReferenceError(m)` lowers to: `lowerRealmIntrinsicRead(errorConstructorId
-  ("ReferenceError"))` and then `emitDynConstruct`, which the legalization turns into `js.object.create-error`
-  (`dynamic-error-constructors.ts`).
-- So `assert.throws` sees the right `constructor`, shadowing the global name changes nothing, and no second
-  constructor or backend change is needed.
-- `programObjects.namesErrors` (`source-plain-objects.ts:40`) also holds for a program with an unresolvable reference,
-  so that the realm holds the Error family.
-- A lane without function objects refuses by name: `ReferenceError for undeclared name 'N' needs the realm's Error
-  family`.
-
-**The shared module, `src/ir/absent-globals.ts`.** It is the only code that touches the two globals. API:
-
-```ts
-/** A global property no declaration creates (§9.1.1.4): made by a sloppy write; (2c) by an eval `var`. */
-export interface AbsentGlobalHome {
-  readonly name: string;
-  readonly value: IrGlobalRef; // dynamic carrier; `undefined` while absent
-  readonly present: IrGlobalRef; // i32; 0 = absent
-}
-/** How a reference no declaration binds resolves at run time. */
-export type UnresolvableName =
-  | { readonly kind: "home"; readonly home: AbsentGlobalHome }
-  | { readonly kind: "unbound"; readonly name: string };
-
-// Producer side: pure, backend-independent.
-/** The one rule: a value reference no declaration binds (no checker symbol; not inside `with`; not `arguments`;
- *  not a name the script declares at top level, which guards the checker's lib-merge answer; (S19) not a name an
- *  Annex B block function declares as a script var, `annexBWritesScriptBinding(sourceFile, name)`, whose var home
- *  exists from instantiation). */
-export function isUnresolvableReference(checker: ts.TypeChecker, node: ts.Identifier): boolean;
-export interface AbsentGlobals {
-  /** The program input's rows (value + flag), owned by the script's module-init. */
-  readonly globals: readonly ProgramSourceGlobal[];
-  /** The startup bindings (`initialization: "absent"`), numbered after the script's own. */
-  readonly bindings: (firstOrdinal: number, bindingId: (ordinal: number) => IrBindingId) => IrModuleInitBindingIntent[];
-  /** `node`'s resolution when `isUnresolvableReference`, else `undefined`. */
-  readonly resolve: (node: ts.Identifier) => UnresolvableName | undefined;
-  /** By name, for a reference the checker binds but the language leaves unbound (S19 2a, Annex B skipped var). */
-  readonly byName: (name: string) => UnresolvableName;
-}
-export function collectAbsentGlobals(input: {
-  readonly checker: ts.TypeChecker;
-  readonly sourceFiles: readonly ts.SourceFile[];
-  readonly identity: IrPlanningIdentityContext;
-}): AbsentGlobals;
-
-// Lowering side: one IrFunctionBuilder.
-export function lowerUnresolvableRead(b: IrFunctionBuilder, name: UnresolvableName, typeofOperand: boolean): IrValueId;
-/** `=`. `strict` is the strictness of the code holding the reference. Returns the stored value. */
-export function lowerAbsentGlobalWrite(b: IrFunctionBuilder, home: AbsentGlobalHome, strict: boolean, rhs: () => IrValueId): IrValueId;
-/** GetValue's presence check, then the value global as the existing compound/update code's storage. */
-export function absentGlobalStorage(b: IrFunctionBuilder, home: AbsentGlobalHome): { readonly globalRef: IrGlobalRef; readonly type: IrType };
-
-// Added by their own slices, in this file. Nothing is exported before its first user.
-// slice 4: lowerAbsentGlobalDelete(b, name): IrValueId
-//   home: flag := 0, value := undefined, `true`; unbound: `true`.
-//   A sloppy write re-creates; a strict write re-checks the flag after the RHS (stillExists, §9.1.1.4.5).
-// S19 2c: lowerCreateGlobalVarBinding(b, home): void
-//   CreateGlobalVarBinding (§9.1.1.4.17): if flag == 0 then { value := undefined; flag := 1 }; a present
-//   property is left as it is. 2c adds eval-declared names to `collectAbsentGlobals`.
-```
-
-**Where it plugs in.**
-
-- **Producer:** `prepareIrProgramSources` (`program-source.ts`, beside `functionDeclarationValues` at ~1643) calls
-  `collectAbsentGlobals`, which collects writes with `identifierWritesOf`.
-  - Its rows go into the input's `globals` and through `legalizeDynamicGlobals`, but **not** into module-init's
-    `moduleBindings` scope map (`program-source-units.ts` ~184). A home must never look like a plain `moduleGlobal`,
-    whose writes would not set the flag.
-  - If R1's registry (`program-source-globals.ts`, PR #7329) lands first, the rows join it instead.
-- **Startup:** the intents are appended in `buildIrModuleInitPlan` (`module-init-plan.ts` ~436), as F1b's are.
-  - `IrModuleInitBindingIntent` (`program/startup.ts`) gains `declarationKind: "global-property"` with
-    `initialization: "absent"`: R1's anticipated `global-object-property` kind.
-  - The flag rides in the `tdzBindingId` / `tdzGlobalRef` slot, which means "not usable while 0". So the input pair
-    check (`program/input.ts:51–68`) and the ABI storage (`program-abi-contracts.ts:107`) are unchanged;
-    `program/validation.ts:596` gains one row.
-- **Resolver:** `unresolvableName?(node): UnresolvableName | undefined` replaces `unresolvedNameIsAbsent?(node)`
-  (`from-ast.ts:976`).
-  - It is answered from `AbsentGlobals.resolve` in `lowerUnitOnce`, beside `resolveModuleBinding`.
-  - `absentGlobal` (`source-dynamic-contracts.ts:450`) is deleted. The ordinary pipeline never answers the hook.
-- **from-ast:** one call replaces each refusal or arm.
-  - `classifyIdentifierRead` returns `{ kind: "absent-global", name }` for every read the hook answers, not only a
-    `typeof` operand, and `absentGlobalTypeof` answers only for `unbound`.
-  - The read switch (`from-ast.ts:5253`) calls `lowerUnresolvableRead`.
-  - `lowerIdentifierAssignment` (:13239) calls `lowerAbsentGlobalWrite`, with the RHS boxed by
-    `boxForDynamicModuleStorage`.
-    - `strict` is `cx.functionCodeStrict`, which the producer sets for every unit and closure; undefined there is an
-      invariant error.
-  - `lowerCompoundAssignment` (:13342) and `lowerIncrementDecrement` (:13517) start from
-    `cx.scope.get(id.text) ?? <the home's absentGlobalStorage as a moduleGlobal binding>`.
-  - `from-ast.ts` is at 17,337 of its 17,340 ceiling. Target: net ≤ +3 lines; failing that, a dated grant of at most
-    +8 lines in this frontmatter.
-
-**Refused by name.** At the producer, before any body is lowered:
-
-- `undeclared global 'N' in a program of several scripts`;
-- `write to undeclared global 'N' through a pattern` (a destructuring target, or a `for-in`/`for-of` head).
-
-Unchanged, each at its own site:
-
-- the H2 routes;
-- `delete N` (until slice 4);
-- `arguments` (Session B);
-- names the lib declares (`Math = 1`);
-- a value-position update.
-
-**Reuse and the duplicate it removes.**
-
-- Reused:
-  - the dynamic carrier and its `undefined` prologue;
-  - F1b's startup numbering;
-  - `identifierWritesOf`;
-  - `codeStrictness` and `closureCodeStrictness`;
-  - the source path of `new ReferenceError(m)`;
-  - the existing compound/update arithmetic;
-  - the TDZ flag's storage path.
-- Removed: `absentGlobal` and the typeof-only `unresolvedNameIsAbsent` become one predicate and one hook, and the
-  file-wide `isUndeclaredInFile` test leaves that predicate.
-- Follow-up issue, which the dev files: the TDZ throw (`lowerResolvedModuleBindingTdzCheck`) is a second
-  ReferenceError emitter. Moving it to this realm error on the Prepared lane only would fix Prepared TDZ; that needs
-  its own byte checks, since the ordinary pipeline shares the code.
-
-**Tests:** `tests/issue-7372-absent-globals.test.ts`. Each program runs through `runPreparedScript`, with node's
-verdict asserted on the same source; the right check returns and a wrong one throws.
-
-1. `x = 1;` and `function f() { x = 1; } f();`, each against `x !== 1`.
-2. A read before the write: `try { x; } catch (e) { ok = e instanceof ReferenceError; } x = 2;`.
-3. An unbound read in a closure: `try { (function () { zz; })(); } catch (e) { ok = e.constructor ===
-   ReferenceError; }`.
-4. `typeof x` is `"undefined"` before `x = "s"` and `"string"` after it.
-5. `try { x += (n = 1); } catch (e) {} x = 0;`: a ReferenceError, and `n` stays `0`.
-6. `x = 1; x += 2; x++;` gives `4`.
-7. Strict writes:
-   - `(function () { "use strict"; y = 1; })()` throws ReferenceError;
-   - after a sloppy `y = 0`, the same write stores;
-   - `y = (n = 1)` runs its RHS first.
-8. **Spec, not node:** `function g() { z = 0; } (function () { "use strict"; z = (g(), 1); })();` throws.
-9. `function F() { var obj; } typeof obj === "undefined"` (the S13.2.2_A15_T1 shape).
-10. `function Error() {} typeof Error === "function"` (the top-level guard).
-
-Refusals pinned: two scripts, `[x] = [1]`, `this.x = 1`, `with ({}) { x = 1; }`, `Math = 1`, `x = 1; delete x;`,
-`'' + (x++)`.
-
-**Checks.**
-
-- Mutations, each to be killed by the test named:
-  - the read skips the flag (2);
-  - the sloppy write leaves the flag (1);
-  - `typeof` checks the flag (4);
-  - the strict write does not throw (7);
-  - the strict check runs after the RHS (8);
-  - the compound check runs after the RHS (5);
-  - the predicate keeps the file-wide test (9);
-  - the predicate drops the top-level guard (10);
-  - the home is put in module-init's scope map as a `moduleGlobal` (1).
-- Ordinary bytes, base vs head, on the JS environment, standalone and wasi: the `byte-diff-corpus.mts` sample corpus
-  and the 506 filtered ES5 files.
-- Prepared bytes by R1's corpus method: identical except programs with an unresolvable reference, each one named.
-- Yield: o411 through S3's runner, base vs head, every changed row named. Expected **+7**; the ES5 166 are re-measured.
-- Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports,
-  import-cycles; compiler-boundaries classifies the module with owner 7372.
-
-**Code-quality acceptance.**
-
-- One new module of at most ~200 lines, which alone touches the two globals; from-ast holds dispatch calls only.
-- One predicate and one hook (`absentGlobal` and `unresolvedNameIsAbsent` are gone).
-- No second ReferenceError constructor, and no backend change.
-- No export without a user.
-- from-ast grows by at most +3 lines, or by a granted +8 that the review accepts.
-- An adversarial review with fresh context records its verdict in the PR.
-
-**Agreed with S19 (2026-11-26).**
-
-1. 2a's unbound read is `byName(F)` → `lowerUnresolvableRead`: a ReferenceError, and `"undefined"` under `typeof`.
-   It replaces the refusal "is read where no binding of it exists" in `src/ir/annexb-block-function-values.ts`.
-2. **No absent home for an Annex B var.** A name an Annex B block function declares as a script var
-   (`annexBWritesScriptBinding`, `src/shared/annexb-block-functions.ts`, from #7466/#7499) lives in S19's var home
-   from instantiation. `isUnresolvableReference` excludes it, so a write and a read of it never land in two homes.
-   If slice 3 lands before #7499, the exclusion is added by whichever lands second.
-3. 2c's `lowerCreateGlobalVarBinding` is §9.1.1.4.17: `if flag == 0 then { value := undefined; flag := 1 }`. It never
-   keeps a stale value on the absent path; slice 4's delete also clears the value. An eval-created binding is
-   configurable, like an undeclared-assignment property, so one home class serves both.
-4. **Homes are keyed by program, not by source.** An A4-compiled eval makes the program two-source (#7363 Slice A).
-   The Wasm module stays one, so the globals are shared; which module-init stores first is A4's owner's question,
-   raised by S19 once A4's design is fixed. Until then slice 3 refuses a multi-source program by name, as F1b and H
-   do.
 
 ### Slice 4 — `delete` (planned)
 
