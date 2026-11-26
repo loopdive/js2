@@ -9,8 +9,7 @@ import {
   heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
-import { objectPrototypeMethodId } from "../../../ir/program/builtin-prototype-keys.js";
-import { NATIVE_OBJECT_PROTOTYPE_METHODS } from "../../../runtime/contracts/native-realm-catalog.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS, realmMethodId } from "../../../runtime/contracts/native-realm-catalog.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
 import { deriveNativeStringOutputRequirements } from "../../../ir/program/native-string-output-requirements.js";
 import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
@@ -149,7 +148,9 @@ import {
 } from "../resources/native-source-objects.js";
 
 /** (#7354 P1) The catalog ids of the Object.prototype methods the realm populates. */
-const OBJECT_PROTOTYPE_METHOD_IDS: readonly string[] = NATIVE_OBJECT_PROTOTYPE_METHODS.map(objectPrototypeMethodId);
+const OBJECT_PROTOTYPE_METHOD_IDS: readonly string[] = NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) =>
+  realmMethodId("Object.prototype", name),
+);
 
 function fail(detail: string): never {
   throw Error("native realm composition: " + detail);
