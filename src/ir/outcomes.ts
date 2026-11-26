@@ -21,6 +21,7 @@ export {
   IrUnsupportedError,
   IrInvariantError,
   demoteToLegacy,
+  refuseUnselected,
   classifyIrFailure,
 } from "../shared/contracts/ir-preparation-errors.js";
 

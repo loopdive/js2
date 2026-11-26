@@ -3332,6 +3332,7 @@ function planIrOverlay(
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
       jsDocParamLowersAsExternref: (parameter) => legacyParamSlotIsExternref(ctx, parameter),
+      resultWidensToDynamic: (fn) => functionReturnsWidenedValue(ctx, fn),
       resolveFnctorAdmission,
       ...(fnctorArgumentProjections.length > 0
         ? {
@@ -8056,13 +8057,10 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
 
     let current: Instr[] = [{ op: "ref.null.extern" }];
 
-    // (#3024) Pad a missing trailing method argument. The dispatcher calls
-    // `<struct>_next`/`<struct>_return` with only the receiver, so any declared
-    // formal (`next(value)`) needs a default. Iterator `.next()`/`.return()`
-    // invoked with no value → the value is `undefined`; for an externref (untyped
-    // JS) param emit the real host `undefined` when already imported (else
-    // `ref.null.extern`, byte-identical standalone). Numeric/ref params get the
-    // type's zero/f64-sentinel — matching the normal missing-arg convention.
+    // (#3024) Pad a missing trailing method argument: the dispatcher calls `<struct>_next`/`<struct>_return` with only
+    // the receiver, and the omitted value is `undefined` — the host one when imported, else the native `$undefined`
+    // singleton (#7413: `ref.null.extern` is JS null). Numeric/ref params get the type's zero/f64-sentinel, the
+    // normal missing-arg convention.
     const undefinedIdx = ctx.funcMap.get("__get_undefined");
     const padMissingArg = (pt: ValType): Instr[] => {
       switch (pt.kind) {
@@ -8081,7 +8079,9 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         case "ref_null":
           return [{ op: "ref.null", typeIdx: (pt as { typeIdx: number }).typeIdx }];
         default:
-          return undefinedIdx !== undefined ? [{ op: "call", funcIdx: undefinedIdx }] : [{ op: "ref.null.extern" }];
+          return undefinedIdx === undefined
+            ? canonicalUndefinedExternInstrs(ctx)
+            : [{ op: "call", funcIdx: undefinedIdx }];
       }
     };
 

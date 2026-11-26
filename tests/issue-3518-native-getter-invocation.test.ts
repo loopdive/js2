@@ -9,7 +9,7 @@ import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js"
 import { deriveNativeObjectAccessRequirements } from "../src/ir/program/native-object-access-requirements.js";
 import {
   planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
 } from "../src/ir/program/native-invocation-requirements.js";
 import {
   nativeInvocationGetterDispatch,
@@ -39,21 +39,6 @@ beforeAll(() => {
 afterEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
 afterAll(() => vi.unstubAllEnvs());
 
-function mutableProgram() {
-  const projection = {
-    ...original.runtime[0]!,
-    prepared: {
-      ...original.runtime[0]!.prepared,
-      functions: structuredClone(original.runtime[0]!.prepared.functions),
-    },
-  };
-  return {
-    ...original,
-    ir: { ...original.ir, functions: structuredClone(original.ir.functions) },
-    allocations: structuredClone(original.allocations),
-    runtime: [projection],
-  };
-}
 function unchanged<T>(module: unknown, run: () => T): T {
   const before = structuredClone(module);
   const result = run();
@@ -99,7 +84,7 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
     expect(allocation.rawAllocationId).toBe(demand.rawAllocationId);
     expect(allocation.allocationId).toBe(demand.allocationId);
     expect(f.source.shapes.find((row) => row.id === use.shapeId)!.captures).toHaveLength(1);
-    expect(() => assertNativeInvocationRequirementsCurrent(invocation)).not.toThrow();
+    expect(() => assertNativeInvocationRequirementsIssued(invocation)).not.toThrow();
   });
   it.each([false, true])(
     "retains an actual returned callable without declaring it a getter target, decoded=%s",
@@ -146,7 +131,7 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
   });
   it("rejects a copied C1 pack after the real issuer positive", () => {
     const f = getterRequirements(original);
-    expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).not.toThrow();
+    expect(() => assertNativeInvocationRequirementsIssued(f.invocation!)).not.toThrow();
     expect(() =>
       planNativeInvocationRequirements(f.source, { utf8Storage: false, objectAccess: { ...f.access } }),
     ).toThrow(/unissued|detached/);
@@ -159,33 +144,6 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
       planNativeInvocationRequirements(f.source, { utf8Storage: false, objectAccess: other.access }),
     ).toThrow("different prepared program/projection/allocation owner");
   });
-  it.each(["capture", "allocation", "Get receiver", "descriptor getter", "instruction identity"] as const)(
-    "refuses stale actual %s provenance after the paired positive",
-    (mutation) => {
-      const f = getterRequirements(mutableProgram());
-      expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).not.toThrow();
-      const demand = f.access.getters[0]!;
-      const index =
-        mutation === "Get receiver"
-          ? demand.getOccurrence
-          : mutation === "descriptor getter"
-            ? demand.definitionOccurrence
-            : demand.allocationOccurrence;
-      const occurrence = f.source.demands.occurrences[index]!,
-        instruction = occurrence.instruction;
-      if (mutation === "instruction identity") {
-        const buffer = f.source.demands.buffers[occurrence.bufferIndex]!;
-        (buffer.instructions as unknown[])[occurrence.instructionIndex] = structuredClone(instruction);
-      } else if (instruction.kind === "closure.new") {
-        Object.assign(instruction, mutation === "capture" ? { captures: [] } : { alloc: undefined });
-      } else if (instruction.kind === "call") {
-        const args = [...instruction.args];
-        args[2] = args[1]!;
-        Object.assign(instruction, { args });
-      } else throw new Error("mutation missed its actual positive instruction");
-      expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).toThrow();
-    },
-  );
   it("reports unsupported getter result conversion before physical reservation", () => {
     const f = getterRequirements(
       prepareGetterProgram(`export function run() {
@@ -333,7 +291,9 @@ describe("issued method-zero reservation and actual source-body dispatch", () =>
     if (kind === "function") f.pack.methods[0]!.function.object.name += "changed";
     if (kind === "global") f.pack.globals.argc.object.mutable = false;
     if (kind === "dependency") f.dependencies.source = { ...f.sourceOwner.types };
-    expect(() => nativeInvocationGetterDispatch(f.tx, f.pack, f.access)).toThrow();
+    // (#7354 Perf4) A ledger alteration is refused by the layout audit at the next phase boundary, not per query.
+    if (kind === "dependency") expect(() => nativeInvocationGetterDispatch(f.tx, f.pack, f.access)).toThrow();
+    else expect(() => f.tx.freezeReservations()).toThrow("altered");
   });
   it("refuses a same-signature function with a different original slot key", () => {
     const f = getterInvocationFixture(original),

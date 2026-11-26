@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { acceptPreparedIrProgram, emitAcceptedIrProgram } from "../ir/program-consumer.js";
+import { acceptPreparedIrProgram, emitAcceptedIrProgram, verifyEmittedLayout } from "../ir/program-consumer.js";
 import { prepareWholeIrProgram, type IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import { freezePreparedIrValue, type PreparedIrBackendOptions } from "../ir/program.js";
+import { validatePreparedStage } from "../ir/program/prepared-validator.js";
+import { assertPhysicalModule } from "../wasm/physical/validate-module.js";
 import { IrProgramDriverInvariantError, type IrProgramDriverResult } from "./ir-program-result.js";
 
 /**
@@ -31,5 +33,9 @@ export function runIrProgramDriver(
   }
   // C authenticates and consumes this exact token once. Exceptions stay fatal.
   const emission = emitAcceptedIrProgram(accepted);
+  validatePreparedStage("physical module", () => {
+    assertPhysicalModule(emission.module);
+    verifyEmittedLayout(emission);
+  });
   return Object.freeze({ kind: "emitted", program: prepared.program, emission });
 }

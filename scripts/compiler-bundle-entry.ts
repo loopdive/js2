@@ -47,6 +47,7 @@ export {
   requiredPreparedFinalArtifactObservation,
   requiredPreparedFailure,
   requiredPreparedFrontendFailure,
+  requiredPreparedAbortBodies,
 } from "../src/test262/test262-prepared-entry.ts";
 export {
   instantiatePreparedArtifact,

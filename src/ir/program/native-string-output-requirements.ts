@@ -17,9 +17,10 @@ import type { IrRuntimeCallableDeclaration } from "../runtime/callable-declarati
 import { STRING_CONCAT_MANY_NATIVE_ARITY, type RuntimeProviderDefinition } from "../runtime/contracts/manifest.js";
 import type { PreparedIrProgramFailure } from "./prepared-contracts.js";
 import { collectNativeStringValueDemands, type NativeStringValueDemands } from "./native-string-value-demands.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
+import { checkUnlessSettled, settledChecks, settledAtIssue, type PreparedIrSettlement } from "./settled-verdict.js";
 
 export interface NativeStringOutputOptions {
   readonly emptyIdentity: boolean;
@@ -40,8 +41,9 @@ export interface NativeStringOutputRequirements {
 interface IssuedRequirements {
   readonly demands: NativeStringValueDemands;
   readonly options: NativeStringOutputOptions;
-  readonly snapshot: unknown;
   readonly metadataCurrent: readonly (() => boolean)[];
+  /** The checks below, settled once the requirements (with their demands) and options can no longer change. */
+  readonly authentication: PreparedIrSettlement;
 }
 const issued = new WeakMap<NativeStringOutputRequirements, IssuedRequirements>();
 
@@ -87,7 +89,12 @@ function locate(demands: NativeStringValueDemands, occurrence: number, detail: s
   });
 }
 
+/** A census is a property of its demands, not of the derivation that reads it: authenticated once per demands. */
+const authenticatedCensus = settledChecks<NativeStringValueDemands>();
 function authenticateCensus(demands: NativeStringValueDemands): void {
+  authenticatedCensus.check(demands, () => checkCensus(demands));
+}
+function checkCensus(demands: NativeStringValueDemands): void {
   const current = collectNativeStringValueDemands(demands.program, demands.projection);
   same(demands, current, "stale or mismatched complete occurrence census");
   try {
@@ -285,7 +292,7 @@ function reconcileViews(
   }
 }
 
-/** Retain metadata identities as well as its lossless data snapshot. */
+/** Retain metadata identities: an equal-data replacement is not the selected metadata. */
 function metadataIdentityChecks(root: unknown): readonly (() => boolean)[] {
   const checks: (() => boolean)[] = [];
   const seen = new Set<object>();
@@ -383,8 +390,8 @@ export function deriveNativeStringOutputRequirements(
     issued.set(result, {
       demands,
       options,
-      snapshot: freezePreparedIrValue(demands),
       metadataCurrent: metadataIdentityChecks(demands.allocations),
+      authentication: settledAtIssue(Object.freeze([result, options])),
     });
   return result;
 }
@@ -393,9 +400,10 @@ export function deriveNativeStringOutputRequirements(
 export function assertNativeStringOutputRequirementsCurrent(requirements: NativeStringOutputRequirements): void {
   const source = issued.get(requirements);
   if (!source || requirements.demands !== source.demands) fail("unissued or foreign output requirements");
-  same(source.demands, source.snapshot, "borrowed program, instruction or metadata changed after selection");
-  if (source.metadataCurrent.some((check) => !check())) fail("borrowed allocation metadata identity changed");
-  const current = calculate(source.demands, source.options);
-  if (!("demands" in current)) fail("output requirements are no longer supported");
-  same(requirements, current, "stale output selections or options");
+  checkUnlessSettled(source.authentication, Object.freeze([requirements, source.options]), () => {
+    if (source.metadataCurrent.some((check) => !check())) fail("borrowed allocation metadata identity changed");
+    const current = calculate(source.demands, source.options);
+    if (!("demands" in current)) fail("output requirements are no longer supported");
+    same(requirements, current, "stale output selections or options");
+  });
 }

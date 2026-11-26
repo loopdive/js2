@@ -10,10 +10,12 @@
  * A carrier flows through parentheses, a member or element read, a method
  * call on it (`recv.m()` answers the carrier), the right side of a comma or
  * an `=` assignment, a conditional whose arms are both carriers, and a `+`
- * with a carrier operand.
+ * with a carrier operand. (#7354 W) `mayYieldCarrier` asks the "may" question
+ * over the same walk.
  */
 
 import { ts } from "../../ts-api.js";
+import { skipOuterExpressions } from "../../shared/binding-writes.js";
 import { isCarrierAddition } from "./operand-admissibility.js";
 
 /** What a side knows about the leaves of an expression. */
@@ -31,8 +33,26 @@ export interface CarrierLeaves {
   readonly addsAsCarrier?: (operand: ts.Expression) => boolean;
 }
 
+/** Every value `expression` can yield is the carrier. */
 export function producesCarrier(expression: ts.Expression, leaves: CarrierLeaves): boolean {
-  const carrier = (inner: ts.Expression) => producesCarrier(inner, leaves);
+  return yieldsCarrier(expression, leaves, "every");
+}
+
+/**
+ * (#7354 W) Some value `expression` can yield may be the carrier: the "may" dual of {@link producesCarrier}. A proof
+ * that an expression has one primitive representation fails when any of its values may be the carrier. Beyond the
+ * flows both questions share, a value also passes on as an operand of `&&` / `||` / `??` and through a type
+ * projection; `producesCarrier` does not join through those, as its callers' lowerings do not.
+ */
+export function mayYieldCarrier(expression: ts.Expression, leaves: CarrierLeaves): boolean {
+  return yieldsCarrier(expression, leaves, "some");
+}
+
+/** How the values an expression can yield combine: all of them, or any one. */
+type Quantifier = "every" | "some";
+
+function yieldsCarrier(expression: ts.Expression, leaves: CarrierLeaves, quantifier: Quantifier): boolean {
+  const carrier = (inner: ts.Expression) => yieldsCarrier(inner, leaves, quantifier);
   const leaf = (e: ts.Expression): boolean => {
     if (ts.isIdentifier(e) || e.kind === ts.SyntaxKind.ThisKeyword) return leaves.binding(e as ts.Identifier);
     if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return carrier(e.expression);
@@ -41,9 +61,14 @@ export function producesCarrier(expression: ts.Expression, leaves: CarrierLeaves
       if (answer !== undefined) return answer;
       return ts.isPropertyAccessExpression(e.expression) && carrier(e.expression.expression);
     }
+    if (quantifier === "some") {
+      const projected = skipOuterExpressions(e);
+      if (projected !== e) return carrier(projected);
+      if (ts.isBinaryExpression(e) && yieldsOperand(e.operatorToken.kind)) return carrier(e.left) || carrier(e.right);
+    }
     return isCarrierAddition(e, (operand) => carrier(operand) || leaves.addsAsCarrier?.(operand) === true);
   };
-  return everyYieldedValue(expression, leaf, leaves.conditional);
+  return yieldedValues(expression, leaf, quantifier, leaves.conditional);
 }
 
 /**
@@ -55,12 +80,33 @@ export function everyYieldedValue(
   leaf: (value: ts.Expression) => boolean,
   conditional?: (conditional: ts.ConditionalExpression) => boolean,
 ): boolean {
+  return yieldedValues(expression, leaf, "every", conditional);
+}
+
+function yieldedValues(
+  expression: ts.Expression,
+  leaf: (value: ts.Expression) => boolean,
+  quantifier: Quantifier,
+  conditional?: (conditional: ts.ConditionalExpression) => boolean,
+): boolean {
   let e = expression;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
-  const each = (inner: ts.Expression) => everyYieldedValue(inner, leaf, conditional);
-  if (ts.isConditionalExpression(e)) return (each(e.whenTrue) && each(e.whenFalse)) || conditional?.(e) === true;
+  const each = (inner: ts.Expression) => yieldedValues(inner, leaf, quantifier, conditional);
+  if (ts.isConditionalExpression(e)) {
+    const arms = quantifier === "every" ? each(e.whenTrue) && each(e.whenFalse) : each(e.whenTrue) || each(e.whenFalse);
+    return arms || conditional?.(e) === true;
+  }
   if (yieldsRight(e)) return each(e.right);
   return leaf(e);
+}
+
+/** `&&` / `||` / `??`: the value is one of the operands. */
+function yieldsOperand(op: ts.SyntaxKind): boolean {
+  return (
+    op === ts.SyntaxKind.AmpersandAmpersandToken ||
+    op === ts.SyntaxKind.BarBarToken ||
+    op === ts.SyntaxKind.QuestionQuestionToken
+  );
 }
 
 /** A comma or an `=` assignment: its value is its right side's. */

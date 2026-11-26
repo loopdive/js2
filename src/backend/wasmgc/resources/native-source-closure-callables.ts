@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
 import type { IrFunction } from "../../../ir/core/nodes.js";
@@ -14,7 +14,7 @@ import {
   type NativeSourceClosureTypes,
 } from "./native-source-closures.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 
@@ -92,17 +92,16 @@ function resolveEntries(
   requirements: NativeInvocationRequirements,
 ): NativeSourceClosureCallable[] {
   requireNativeSourceClosureTypes(tx, types, types.requirements);
-  assertNativeInvocationRequirementsCurrent(requirements);
+  assertNativeInvocationRequirementsIssued(requirements);
   if (requirements.source !== types.requirements) fail("selected invocation belongs to a different source owner");
-  return resolveSourceEntries(
-    tx,
-    types,
-    slots,
-    new Set([
-      ...requirements.uses.flatMap((use) => (use.liftedUnitId ? [use.liftedUnitId] : [])),
-      ...requirements.getterUses.map((use) => use.liftedUnitId),
-    ]),
-  );
+  // (#7354 F2) A call through a dynamic value may reach any source closure.
+  const selected = requirements.uses.some((use) => use.dynamicCallee)
+    ? types.requirements.units.map((unit) => unit.unitId)
+    : [
+        ...requirements.uses.flatMap((use) => (use.liftedUnitId ? [use.liftedUnitId] : [])),
+        ...requirements.getterUses.map((use) => use.liftedUnitId),
+      ];
+  return resolveSourceEntries(tx, types, slots, new Set(selected));
 }
 
 /** Associate the consumer's sole unit-slot population after reservation freeze. No allocation or fill. */
@@ -138,7 +137,7 @@ function realmEntries(
   realm: NativeRealmRequirements,
 ) {
   requireNativeSourceClosureTypes(tx, types, types.requirements);
-  assertNativeRealmRequirementsCurrent(realm);
+  assertNativeRealmRequirementsIssued(realm);
   if (realm.source !== types.requirements) fail("realm belongs to a different source owner");
   return resolveSourceEntries(tx, types, slots, new Set(realm.description.sourceUnits));
 }

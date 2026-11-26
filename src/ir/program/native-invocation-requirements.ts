@@ -4,21 +4,15 @@ import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
 import { closureSignatureEquals } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import {
-  IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
+  closureInvocationKind,
   closureMethodArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "./native-source-closure-requirements.js";
-import {
-  collectNativePromiseSourceCensus,
-  assertNativePromiseSourceCensusCurrent,
-  type NativePromiseSourceCensus,
-} from "./native-promise-inventory.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
+import { collectNativePromiseSourceCensus, type NativePromiseSourceCensus } from "./native-promise-inventory.js";
+import { freezePreparedIrValue } from "./data.js";
+import { issuedPacks } from "./issued-packs.js";
 import {
   deriveNativeObjectAccessRequirements,
   type NativeObjectAccessRequirements,
@@ -36,9 +30,14 @@ import {
 export interface NativeInvocationUse {
   readonly occurrence: number;
   readonly ownerUnitId: IrUnitId;
-  readonly kind: "method" | "apply-vector" | "undefined";
+  readonly kind: NonNullable<ReturnType<typeof closureInvocationKind>>;
   readonly arity?: number;
+  /**
+   * The callee's own allocation; absent for (#7354 F2) a call through a dynamic value (`dynamicCallee`), which the
+   * dispatcher answers over every source closure of the program.
+   */
   readonly liftedUnitId?: IrUnitId;
+  readonly dynamicCallee?: true;
   readonly callbacks?: readonly {
     readonly argument: number;
     readonly allocationOccurrence: number;
@@ -56,11 +55,15 @@ export interface NativeInvocationRequirements {
   readonly getterUses: readonly NativeGetterInvocationUse[];
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
+  /** (#7354 C2) Some unit reads the installed receiver (`js.closure.receiver`). */
+  readonly receiver: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
 }
-const owners = new WeakMap<NativeInvocationRequirements, unknown>();
+const invocationPacks = issuedPacks<NativeInvocationRequirements>(() =>
+  fail("unissued or copied invocation requirements"),
+);
 function fail(detail: string): never {
   throw new Error(`native invocation requirements: ${detail}`);
 }
@@ -72,6 +75,39 @@ function external(type: IrType | undefined): boolean {
   );
 }
 
+/**
+ * The packed callable `value` was erased from (its logical type and its pack's definition), which
+ * `callableAllocation` reconciles with its allocation; (#7354 F2) a callee without one is a dynamic value.
+ */
+function packedCallable(
+  value: IrValueId,
+  defs: ReadonlyMap<IrValueId, IrInstr>,
+  types: ReadonlyMap<IrValueId, IrType>,
+): { readonly type: Extract<IrType, { kind: "callable" }>; readonly pack: IrInstr | undefined } | undefined {
+  const erased = defs.get(value);
+  if (erased?.kind !== "coerce.to_externref") return undefined;
+  const type = types.get(erased.value);
+  return type?.kind === "callable" ? { type, pack: defs.get(erased.value) } : undefined;
+}
+
+/**
+ * (#7354 F2) A dynamic callee may be any source closure, so each one must be dispatchable: the fixed-parameter
+ * contract the dispatcher reads its arity from, and carrier (externref) parameters and result.
+ */
+function dynamicCalleeGaps(source: NativeSourceClosureRequirements): NativeInvocationRequirements["gaps"][number][] {
+  return source.units.flatMap(({ unitId }) => {
+    const closure = source.demands.owners.find((owner) => owner.unitId === unitId)?.projectedFunction.closureSubtype;
+    const { signature, parameters } = closure ?? {};
+    const dispatchable =
+      signature &&
+      parameters?.kind === "fixed" &&
+      parameters.count === signature.params.length &&
+      signature.params.every(external) &&
+      (signature.returnType === null || external(signature.returnType));
+    return dispatchable ? [] : [{ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` }];
+  });
+}
+
 /** Reconcile the actual pack graph with this projection's current allocation site. */
 function callableAllocation(
   source: NativeSourceClosureRequirements,
@@ -81,10 +117,9 @@ function callableAllocation(
   types: ReadonlyMap<IrValueId, IrType>,
   role: string,
 ) {
-  const erased = defs.get(value);
-  const packed = erased?.kind === "coerce.to_externref" ? defs.get(erased.value) : undefined;
-  const type = erased?.kind === "coerce.to_externref" ? types.get(erased.value) : undefined;
-  if (type?.kind !== "callable") fail(`${role} lost its actual logical callable signature`);
+  const callable = packedCallable(value, defs, types);
+  if (!callable) fail(`${role} lost its actual logical callable signature`);
+  const { type, pack: packed } = callable;
   const allocation = packed?.kind === "coerce.to_externref" ? defs.get(packed.value) : undefined;
   if (allocation?.kind !== "closure.new" || allocation.liftedFunc.binding.kind !== "unit")
     fail(`${role} is not its selected source allocation`);
@@ -155,7 +190,6 @@ function calculate(
   objectAccess?: NativeObjectAccessRequirements,
   objectResults?: NativeObjectResultRequirements,
 ) {
-  assertNativeSourceClosureRequirementsCurrent(source);
   const uses: NativeInvocationUse[] = [],
     gaps: NativeInvocationRequirements["gaps"][number][] = [];
   if (objectResults) {
@@ -173,16 +207,9 @@ function calculate(
     const call: IrInstrCall = row.instruction,
       binding = call.target.binding;
     if (binding.kind !== "intrinsic") continue;
-    const arity = closureMethodArity(binding.symbol);
-    const kind =
-      arity !== undefined
-        ? "method"
-        : binding.symbol === IR_CLOSURE_VECTOR_APPLY
-          ? "apply-vector"
-          : binding.symbol === IR_CLOSURE_UNDEFINED
-            ? "undefined"
-            : undefined;
+    const kind = closureInvocationKind(binding.symbol);
     if (!kind) continue;
+    const arity = closureMethodArity(binding.symbol);
     const unitId = buffer.ownerUnitId;
     let types = typeMaps.get(unitId);
     if (!types) {
@@ -192,8 +219,8 @@ function calculate(
     }
     if (call.result === null || !external(call.resultType ?? undefined))
       fail("semantic invocation result is not externref");
-    if (kind === "undefined") {
-      if (call.args.length) fail("canonical undefined callable takes no operands");
+    if (kind === "undefined" || kind === "receiver") {
+      if (call.args.length) fail(`canonical ${kind} callable takes no operands`);
       uses.push({ occurrence, ownerUnitId: unitId, kind });
       continue;
     }
@@ -218,6 +245,12 @@ function calculate(
           defs.set(candidate.instruction.result, candidate.instruction);
       }
       definitions.set(unitId, defs);
+    }
+    // (#7354 F2) A callee that is no packed allocation is a dynamic value: the dispatcher answers it over every source
+    // closure (each meets the contract `dynamicCalleeGaps` checks), or throws its TypeError.
+    if (kind === "method" && !packedCallable(callee, defs, types)) {
+      uses.push({ occurrence, ownerUnitId: unitId, kind, arity: arity!, dynamicCallee: true });
+      continue;
     }
     const { type: calleeType, liftedUnitId } = callableAllocation(
       source,
@@ -269,6 +302,7 @@ function calculate(
       callbacks,
     });
   }
+  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dynamicCalleeGaps(source));
   const getters = objectAccess
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
@@ -283,6 +317,7 @@ function calculate(
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
+    receiver: uses.some((use) => use.kind === "receiver"),
     gaps,
   };
 }
@@ -319,8 +354,7 @@ export function planNativeInvocationRequirements(
     ...(freezePreparedIrValue(data) as typeof data),
     completionScope: "selected-source-invocation" as const,
   });
-  owners.set(pack, freezePreparedIrValue(data));
-  return pack;
+  return invocationPacks.issue(pack);
 }
 
 function needsObjectResultProof(source: NativeSourceClosureRequirements): boolean {
@@ -346,29 +380,5 @@ function needsObjectResultProof(source: NativeSourceClosureRequirements): boolea
   return false;
 }
 
-export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocationRequirements): void {
-  const snapshot = owners.get(pack);
-  if (!snapshot) fail("unissued or copied invocation requirements");
-  assertNativePromiseSourceCensusCurrent(pack.runtimeCreated);
-  const data = calculate(pack.source, pack.objectAccess, pack.objectResults);
-  if (pack.runtimeCreated.required)
-    data.gaps.push({
-      unitId: pack.runtimeCreated.anchorUnitId,
-      detail: "runtime-created Promise settlement callables need their issued producer/fill association",
-    });
-  if (
-    pack.runtimeCreated.program !== pack.source.demands.program ||
-    pack.runtimeCreated.projection !== pack.source.demands.projection ||
-    pack.completionScope !== "selected-source-invocation" ||
-    pack.key !== `${pack.source.key}:invocation` ||
-    preparedIrDataMismatch(data, snapshot) !== undefined ||
-    preparedIrDataMismatch(data, {
-      uses: pack.uses,
-      getterUses: pack.getterUses,
-      methodArities: pack.methodArities,
-      applyVector: pack.applyVector,
-      gaps: pack.gaps,
-    }) !== undefined
-  )
-    fail("stale invocation source, population or scope");
-}
+/** A use checks only that the planner issued the pack (`issued-packs.ts`). */
+export const assertNativeInvocationRequirementsIssued = invocationPacks.assertIssued;

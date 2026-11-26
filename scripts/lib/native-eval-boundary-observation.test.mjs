@@ -8,7 +8,7 @@ import {
   NATIVE_EVAL_OBSERVATION_FIELD,
   NATIVE_EVAL_OBSERVATION_SOURCES,
 } from "./native-eval-boundary-observation.mjs";
-import { safeStringifyThrown } from "./wasm-exn-render.mjs";
+import { readThrownValue } from "./wasm-exn-render.mjs";
 
 // Source-only assembly for observer admission; never compile or execute this
 // original body. A missing/wrong pinned harness must fail, never skip controls.
@@ -32,20 +32,41 @@ const readerStart = worker.indexOf("function extractWasmExceptionMessage(");
 const readerEnd = worker.indexOf("/**\n * (#3469)", readerStart);
 assert(readerStart > 0 && readerEnd > readerStart);
 const readerSource = worker.slice(readerStart, readerEnd);
-const makeReader = (render = () => null, peers = [], boundaryObservation = null) =>
-  runInNewContext(
-    "let currentNativeEvalBoundaryObservation = boundaryObservation;\n" +
-      readerSource +
-      "\nextractWasmExceptionMessage;",
+// A module rendering served as `__exn_render_*` exports, so the shared reader reads it as it reads a real module.
+const rendering = (render, target) => {
+  let text = "";
+  return {
+    __exn_render_prepare(payload) {
+      const rendered = render(target, payload);
+      if (rendered == null) return 0;
+      text = rendered;
+      return rendered.length;
+    },
+    __exn_render_char: (i) => text.charCodeAt(i),
+  };
+};
+const makeReader = (
+  render = () => null,
+  peers = [],
+  boundaryObservation = null,
+  entry = "extractWasmExceptionMessage",
+) => {
+  const reader = runInNewContext(
+    "let currentNativeEvalBoundaryObservation = boundaryObservation;\n" + readerSource + `\n${entry};`,
     {
-      WebAssembly,
-      Error,
-      safeStringifyThrown,
-      tryNativeExnRender: render,
-      currentLinkedPeers: peers,
+      readThrownValue,
+      currentLinkedPeers: peers.map((peer) => rendering(render, { exports: peer })),
+      currentAbortBodies: [],
       boundaryObservation,
     },
   );
+  return (error, instance, ...rest) =>
+    reader(
+      error,
+      instance && { exports: Object.assign(Object.create(instance.exports), rendering(render, instance)) },
+      ...rest,
+    );
+};
 const eventValues = (snapshot, event) => snapshot.events.filter((e) => e.event === event).map((e) => e.value);
 
 function wasmCase(payload, mode = "matching") {
@@ -82,7 +103,13 @@ for (const [name, payload, mode, category, expected] of [
   ["actual undefined payload", undefined, "matching", "undefined", "TypeError (null/undefined access)"],
   ["actual null payload", null, "matching", "null", "TypeError (null/undefined access)"],
   ["known string payload", "known native text", "matching", "string", "known native text"],
-  ["mismatched consumer tag", "hidden", "mismatched", undefined, "TypeError (null/undefined access)"],
+  [
+    "mismatched consumer tag",
+    "hidden",
+    "mismatched",
+    undefined,
+    "unknown thrown value: the module's exception tag does not carry it",
+  ],
   ["missing consumer instance", "hidden", "no-instance", undefined, "wasm exception during module init"],
   ["non-Wasm thrown undefined", undefined, "non-wasm", undefined, "undefined"],
 ]) {
@@ -104,6 +131,34 @@ for (const [name, payload, mode, category, expected] of [
     if (mode === "non-wasm") assert.deepEqual(eventValues(snapshot, "exception-kind"), ["non-wasm"]);
   });
 }
+
+test("#7354 X: the worker reader reports a kind only for a value it read", () => {
+  // The reader runs in its own vm realm: copy its array into this one.
+  const kinds = (row, render) => [...makeReader(render, [], null, "readWorkerThrown")(row.error, row.instance).kinds];
+  // Not read: no tag export (the Prepared artifact), a foreign tag, no instance, a null payload.
+  for (const row of [
+    { error: wasmCase("hidden").error, instance: { exports: {} } },
+    wasmCase("hidden", "mismatched"),
+    wasmCase("hidden", "no-instance"),
+    wasmCase(null),
+  ])
+    assert.deepEqual(kinds(row), []);
+  // Read: a host error payload, a host object by its constructor, a module rendering, a host error.
+  assert.deepEqual(kinds(wasmCase(new RangeError("not a TypeError"))), ["RangeError", "RangeError"]);
+  class Test262Error extends Error {}
+  assert.deepEqual(kinds(wasmCase(new Test262Error())), ["Error", "Test262Error"]);
+  assert.deepEqual(
+    kinds(wasmCase(Object.create(null)), () => "Test262Error: TypeError"),
+    ["Test262Error"],
+  );
+  assert.deepEqual(
+    kinds(wasmCase(Object.create(null)), () => "TypeError"),
+    ["TypeError"],
+  );
+  assert.deepEqual(kinds({ error: new TypeError("x"), instance: null }), ["TypeError", "TypeError"]);
+  // A primitive has no kind, whatever its text says.
+  assert.deepEqual(kinds(wasmCase("TypeError: x")), []);
+});
 
 test("generic consumer yields to the existing successful peer and stops", () => {
   const peer1 = {},
@@ -167,14 +222,9 @@ test("fallback tag is read once and repeated readers keep separate ordinals", ()
   const reader = makeReader(undefined, [], observer);
   assert.equal(reader(row.error, row.instance), "TypeError known");
   assert.equal(reader(row.error, row.instance, observer.reader("deferred-module-init")), "TypeError known");
-  const matcherStart = worker.indexOf("function originalHarnessExceptionMatches(");
-  const matcherEnd = worker.indexOf("function extractWasmFuncName(", matcherStart);
-  assert(matcherStart > 0 && matcherEnd > matcherStart);
-  assert(
-    worker
-      .slice(matcherStart, matcherEnd)
-      .includes("  return extractWasmExceptionMessage(err, instance).includes(expectedErrorType);\n"),
-  );
+  // The negative-type matcher (scripts/test262-runtime-verdict.mjs) takes the
+  // reading the arm already made for its error text: one read per throw.
+  assert(worker.includes("runtimeNegativeThrowAccepted(initErr, thrown, throwRule)"));
   assert.deepEqual(row.calls, ["__exn_tag", "__tag", "getArg", "__exn_tag", "__tag", "getArg"]);
   const snapshot = observer.snapshot();
   assert.equal(snapshot.invocations, 2);

@@ -52,7 +52,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis } from "../shared/body-references-own-this.js";
 import { hasAsyncModifier } from "./ast-modifiers.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";

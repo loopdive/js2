@@ -111,7 +111,7 @@ describe("issued canonical narrow and wide BigInt carriers", () => {
     const f = complete();
     requireCompletedNativeBigInt(f.tx, f.pack, f.plan);
     f.pack.read.object.body.push({ op: "nop" });
-    expect(() => requireCompletedNativeBigInt(f.tx, f.pack, f.plan)).toThrow("altered completed function");
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
   it("rejects a repeated canonical fill", () => {
     const f = complete();

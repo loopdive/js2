@@ -103,6 +103,12 @@ export function realmFoundation(program: PreparedIrProgram, utf8Storage = false,
   const data = realmInput(program, utf8Storage),
     module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
+  // The program's one exception tag, reserved first as the consumer does; the realm kernel throws under it.
+  const exception = tx.reserveTag(
+    "physical:exception-tag",
+    { params: [{ kind: "externref" }], results: [] },
+    { kind: "defined", name: "__exn" },
+  );
   const prefix = displaced
     ? {
         type: tx.reserveType("realm-control:prefix-type", {
@@ -129,7 +135,16 @@ export function realmFoundation(program: PreparedIrProgram, utf8Storage = false,
   );
   if (!foundation.realm || !foundation.earlyStrings || !foundation.stringTypes)
     throw Error("selected realm foundation missing");
-  return { ...data, module, tx, prefix, foundation, realm: foundation.realm, strings: foundation.earlyStrings };
+  return {
+    ...data,
+    module,
+    tx,
+    exception,
+    prefix,
+    foundation,
+    realm: foundation.realm,
+    strings: foundation.earlyStrings,
+  };
 }
 export function realmSource(f: ReturnType<typeof realmFoundation>) {
   const { tx, requirements, foundation, realm, input } = f;
@@ -181,7 +196,7 @@ export function realmSource(f: ReturnType<typeof realmFoundation>) {
 }
 export function realmFixture(program: PreparedIrProgram, utf8Storage = false, displaced = false) {
   const f = realmSource(realmFoundation(program, utf8Storage, displaced));
-  const kernel = reserveNativeRealmKernel(f.tx, f.realm, f.source?.types);
+  const kernel = reserveNativeRealmKernel(f.tx, f.realm, f.exception, f.source?.types);
   return { ...f, kernel };
 }
 export type RealmFixture = ReturnType<typeof realmFixture>;

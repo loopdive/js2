@@ -8,7 +8,7 @@ import {
   bodyReferencesOwnThis,
   functionLikeReferencesOwnThis,
   readsAmbientThisGlobal,
-} from "../helpers/body-references-own-this.js";
+} from "../../shared/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
