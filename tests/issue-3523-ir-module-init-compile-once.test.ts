@@ -291,7 +291,8 @@ describe("#3523 direct-queue parity inventory", () => {
     expect(evidence).toBeDefined();
     expect(evidence!.plan).toMatchObject({
       executable: true,
-      invocation: { target: "host", kind: "deferred-export", exactlyOnce: true },
+      // The planner is asked for the standalone target unless the module is WASI: the JS-host lane is retired (#6708).
+      invocation: { target: "standalone", kind: "deferred-export", exactlyOnce: true },
     });
     expect(evidence!.parity.missingFromLegacy).toEqual([]);
     expect(evidence!.parity.extraInLegacy).toEqual([]);

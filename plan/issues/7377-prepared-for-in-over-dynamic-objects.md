@@ -13,14 +13,16 @@ task_type: feature
 area: ir, backend, runtime
 goal: ir-full-coverage
 depends_on: [7354]
-related: [7354, 3518, 2952, 2964]
+related: [7354, 3518, 2952, 2964, 7466, 7474, 7475]
 origin: "2026-11-19 #7354 slice O plan (O5, id reserved by ttraenkler/c-lead); assigned 2026-11-26 by the lead"
 # 2026-11-26 (implementation): growth the plan's "no growth grants" did not foresee, each reason below.
 # - src/ir/from-ast.ts +132: the for-in lowering's head, receiver and liveness arms (`forInHead`, `forInReceiver`), the
 #   identifier-write split (`identifierWriteTarget` / `storeIdentifierWrite`, which assignment and the for-in head
 #   share) and the module-init model read (`moduleInitScriptVarModel`). They sit beside the lowering they extend and use
-#   from-ast's private context (`LowerCtx`, `lowerExpr`, the scope); a module of their own would import from-ast and
-#   close an import cycle.
+#   from-ast's private context (`LowerCtx`, `lowerExpr`, `lowerStmt`, the scope and its binding readers). A module of
+#   their own would not close an import cycle (it could take from-ast's types and receive its lowering as callbacks, as
+#   function-object-lowering.ts does), but it would need about six injected callbacks for one caller: a wider seam
+#   than the code it moves (RV7428, 2026-11-26).
 # - src/ir/module-bindings.ts +23: the required script-var model threaded through the resolver's declaration helpers
 #   (one parameter line each); no logic moves.
 # - src/codegen/index.ts +2, src/ir/integration.ts +2, src/ir/program-source.ts +2, src/ir/select.ts +2: the model at
@@ -339,3 +341,11 @@ the #3518 contract table (three rows).
   moved: 8 pass, 12 stop at a later wall (a built-in global or class not in scope yet, `this` at script level, or an
   inferred `string[]`). The 6 left there are `with` rows: the 5 the Problem section counts and S13.2.2_A19_T8, a
   `var` inside `with` that the 21 above counted as for-in.
+
+### Follow-ups filed after RV7428 (2026-11-26)
+
+- [#7474](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7474-fold-inlined-argument-vector-accessors): the
+  argument-vector length and element pattern is still inlined in three runtime bodies. This PR added
+  `argumentVectorLength` / `argumentVectorElement` but did not fold those three into them.
+- [#7475](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7475-ordinary-standalone-forin-integer-key-order):
+  the ordinary standalone pipeline's for-in visits an object literal's integer keys in the wrong order.
