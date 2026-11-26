@@ -27,7 +27,10 @@ async function compileAndRun(
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   imports.setExports?.(instance.exports as Record<string, Function>);
   return {
-    imports: result.imports.map((entry) => `${entry.module}::${entry.name}`),
+    // The binary's own imports: `result.imports` lists host imports only, not the runtime-eval provider's module.
+    imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map(
+      (entry) => `${entry.module}::${entry.name}`,
+    ),
     value: (instance.exports as { test(): number }).test(),
     warnings: result.errors.filter((error) => error.severity === "warning").map((error) => error.message),
   };
@@ -95,7 +98,9 @@ describe("#3632 folded eval Script early errors", () => {
       `
         export function test(): number {
           const direct = eval("var public = 1; 3");
-          const indirect = (0, eval)("var public = 2; 4");
+          // An indirect eval that declares a global var belongs to the runtime-eval provider (#7106 A2c,
+          // providerOwnsEvalDeclarations), so this folded-only test's indirect row declares nothing.
+          const indirect = (0, eval)("LOCAL: { break LOCAL; } 4");
           const loop = eval("while (true) { break; } 5");
           const labelled = eval("LOCAL: { break LOCAL; } 6");
           return direct + indirect + loop + labelled;
