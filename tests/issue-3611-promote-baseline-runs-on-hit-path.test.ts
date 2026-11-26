@@ -64,9 +64,10 @@ describe("#3611 promote-baseline must survive the #3448 HIT path", () => {
   it("keeps the guards that predate this change", () => {
     // #2947 — an IR-first dispatch must never promote its pass-set.
     expect(promote).toContain("!(github.event_name == 'workflow_dispatch' && inputs.ir_first)");
-    // The bot-actor guard, and the event restriction.
+    // The bot-actor guard, and the event restriction — (#7551) the daily
+    // schedule, no longer every push.
     expect(promote).toContain("github.actor != 'github-actions[bot]'");
-    expect(promote).toContain("github.event_name == 'push'");
+    expect(promote).toContain("github.event_name == 'schedule'");
     expect(promote).toContain("needs: [merge-report, mg-artifact-probe]");
   });
 
@@ -85,15 +86,16 @@ describe("#3611 promote-baseline must survive the #3448 HIT path", () => {
   });
 });
 
-describe("#3611 queue pushes retain a live standalone baseline writer", () => {
-  it("retires the host cache writer while keeping queue actors admitted to common promotion", () => {
+describe("#3611 the standalone baseline keeps a live writer", () => {
+  it("retires the host cache writer; the common promotion runs on the daily schedule (#7551)", () => {
     expect(job("write-run-cache-bot")).toContain("if: false # Retired host cache writer");
     const code = promote
       .split("\n")
       .filter((line) => !/^\s*#/.test(line))
       .join("\n");
     const condition = code.slice(code.indexOf("if:"), code.indexOf("name:"));
-    expect(condition).toContain("github.event_name == 'push'");
+    expect(condition).toContain("github.event_name == 'schedule'");
+    expect(condition).not.toContain("github.event_name == 'push'");
     expect(condition).toContain("github.actor != 'github-actions[bot]'");
     expect(condition).not.toContain("github-merge-queue[bot]");
     expect(condition).toContain("!cancelled()");

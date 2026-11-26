@@ -97,24 +97,25 @@ describe("#4153 — the heavy test262 matrix is not PR-gated, and the header say
     }
   });
 
-  it("test262-shard runs only on push and workflow_dispatch — never on a pull_request", () => {
+  // (#7551) The legacy matrix runs daily (schedule) and on dispatch — never per
+  // PR, never per merge; the queue gates on the IR current edition instead.
+  it("test262-shard runs only on schedule and workflow_dispatch — never on a pull_request or a merge", () => {
     const condition = jobIf(jobBlock(WORKFLOW, "test262-shard"));
 
-    expect(condition).toContain("github.event_name == 'push'");
+    expect(condition).toContain("github.event_name == 'schedule'");
     expect(condition).toContain("github.event_name == 'workflow_dispatch'");
+    expect(condition).not.toContain("github.event_name == 'push'");
+    expect(condition).not.toContain("merge_group");
     expect(admitsPullRequest(condition)).toBe(false);
   });
 
-  it("test262-shard-mg is merge_group-only", () => {
-    const condition = jobIf(jobBlock(WORKFLOW, "test262-shard-mg"));
-
-    expect(condition).toContain("github.event_name == 'merge_group'");
-    expect(admitsPullRequest(condition)).toBe(false);
+  it("test262-shard-mg is retired from the merge queue (#7551)", () => {
+    expect(jobIf(jobBlock(WORKFLOW, "test262-shard-mg"))).toBe("false");
   });
 
   it("the predicate has teeth — a condition that DID admit pull_request is rejected", () => {
     const real = jobIf(jobBlock(WORKFLOW, "test262-shard"));
-    const mutated = real.replace("github.event_name == 'push'", "github.event_name == 'pull_request'");
+    const mutated = real.replace("github.event_name == 'schedule'", "github.event_name == 'pull_request'");
 
     // The mutation must actually have applied, or the assertion below is vacuous.
     expect(mutated).not.toBe(real);

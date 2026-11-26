@@ -7,7 +7,9 @@ name: Baseline floor staleness alert (#2178)
 # every PR against a *floor* stored in `loopdive/js2wasm-baselines`
 # (test262-standalone-current.json / test262-current.json, each carrying a
 # `baseline_sha` = the main commit it was promoted for). The floor is supposed
-# to advance on every push to main via test262-sharded.yml's promote-baseline.
+# to advance once a day via test262-sharded.yml's promote-baseline on the
+# daily schedule (#7551; it advanced on every push to main before that), so a
+# breach is an AGE above 30 h — a daily promotion that did not land.
 # When a rapid burst of main pushes (the merge-queue "thrash") drops the
 # promote run for a standalone-shifting change, the floor stops advancing and
 # every PR on current main fails the guard against a stale floor — the queue
@@ -37,10 +39,10 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
-      max_behind:
-        description: "Floor staleness threshold (test262-relevant commits behind main) before this is a breach"
+      max_age_hours:
+        description: "Floor staleness threshold (hours since the standalone floor was promoted) before this is a breach"
         required: false
-        default: "25"
+        default: "30"
         type: string
       auto_heal:
         description: "On breach, dispatch refresh-baseline.yml to force-promote a fresh floor"
@@ -66,9 +68,11 @@ jobs:
     # (the runs that are SUPPOSED to promote a floor). Ignore pull_request /
     # merge_group sharded runs — they never promote, so their completion says
     # nothing about floor freshness. schedule/workflow_dispatch always run.
+    # (#7551) The promoting run is now the daily `schedule` run, so its
+    # completion is the one that says something about floor freshness.
     if: >-
       github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.event == 'schedule' &&
        github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -91,7 +95,9 @@ jobs:
       - name: Compute floor staleness
         id: staleness
         env:
-          MAX_FLOOR_COMMITS_BEHIND: ${{ github.event_name == 'workflow_dispatch' && inputs.max_behind || '25' }}
+          # (#7551) The floor is promoted by the DAILY legacy run, so it trails
+          # main by up to a day of merges by design: breach on age, not count.
+          MAX_FLOOR_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_age_hours || '30' }}
         run: |
           set +e
           OUT=$(node scripts/check-baseline-floor-staleness.mjs --json --ref main 2>staleness.log)
@@ -114,10 +120,10 @@ jobs:
             if [ -f floor-staleness.json ]; then
               node -e "
                 const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
-                console.log('- breach: **'+j.breach+'**  (threshold '+j.maxBehind+' test262-relevant commits)');
+                console.log('- breach: **'+j.breach+'**  (threshold '+j.maxAgeHours+' h since promotion)');
                 for(const l of j.lanes||[]){
                   if(l.reachable){
-                    console.log('- '+l.lane+': floor '+String(l.floorSha).slice(0,8)+' is '+l.commitsBehindRelevant+' relevant ('+l.commitsBehindTotal+' total) commit(s) behind main'+(l.breach?' — **STALE**':''));
+                    console.log('- '+l.lane+': floor '+String(l.floorSha).slice(0,8)+' is '+l.ageHours+' h old, '+l.commitsBehindRelevant+' relevant ('+l.commitsBehindTotal+' total) commit(s) behind main'+(l.breach?' — **STALE**':''));
                   } else {
                     console.log('- '+l.lane+': staleness undetermined ('+(l.error||'floor SHA unreachable')+')');
                   }
@@ -179,8 +185,8 @@ jobs:
           [ -z "${NTFY_URL:-}" ] && exit 0
           MSG=$(node -e "
             const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
-            const stale=(j.lanes||[]).filter(l=>l.breach).map(l=>l.lane+' +'+l.commitsBehindRelevant).join(', ');
-            console.log('STALE baseline floor (#2178): '+stale+' commit(s) behind main — every PR may be blocked. Auto-heal dispatched.');
+            const stale=(j.lanes||[]).filter(l=>l.breach).map(l=>l.lane+' '+l.ageHours+' h old').join(', ');
+            console.log('STALE baseline floor (#2178): '+stale+' — the daily promotion did not land. Auto-heal dispatched.');
           " 2>/dev/null || echo "STALE baseline floor (#2178) — every PR may be blocked. Auto-heal dispatched.")
           curl -s --max-time 10 \
             -H "Title: js2wasm CI" \

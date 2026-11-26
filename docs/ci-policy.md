@@ -175,8 +175,10 @@ reviewer should require a normal CODEOWNER approval before merging.
 Two test262 workflows currently run on PRs:
 
 - **`test262-sharded.yml` is the authoritative PR gate.** The required
-  check is `merge shard reports`, fed by the 57-shard host and standalone
-  matrix.
+  check is `merge shard reports`. Since #7551 it carries the IR-path
+  current-edition gate in the merge queue, and the legacy matrix runs daily
+  (see "The merge-queue test262 gate" below). The queue-model notes that
+  follow describe the legacy matrix as it ran in the queue until then.
   - Queue model (#109 → #1956, see `plan/method/pr-drift-protocol.md`):
     every PR is validated on its own `merge_group` ref. Historically this
     was pinned to a `batch=1` serial queue because the regression gate diffed
@@ -440,27 +442,52 @@ wholly inside `promote-baseline`, and `write-run-cache-bot`, the only other
 side-effecting job, is `push` + `github-merge-queue[bot]` only and never fires
 on a dispatch.
 
-### Per-merge IR measurement: current edition only (#7551)
+### The merge-queue test262 gate: IR path × current edition (#7551)
 
-The IR-path (`TEST262_COMPILER_PATH=ir`, standalone) measurement in
-`test262-sharded.yml` has two scopes:
+Owner decision, 2026-11-26.
 
-- **Every merge to main (push):** only the current ES edition, set in
-  `scripts/test262-current-edition.json` (ES5, 8 shards). The job summary
-  shows pass, fail and compile_error counts and the per-test diff against the
-  nearest earlier IR measurement on the first-parent lineage. The artifact is
-  `test262-ir-standalone-edition-measurement`.
-  - `merge complete IR standalone measurement` fails when a test of that
-    edition went pass → not-pass.
-  - With no comparable earlier measurement, the summary says **"No baseline
-    — not compared"** and the job passes. That happens on the first run, or
-    after an edition switch or an eval-engine change.
-  - This job is not a required check and runs after the merge, so it reports
-    a regression; it does not block one.
-- **Daily (schedule) and dispatch:** the full corpus, 102 shards, artifact
-  `test262-ir-standalone-measurement`. This is the only IR artifact the site
-  reads (`deploy-pages.yml` lists artifacts by that name), so site IR numbers
-  are as of the last full run.
+**Per event, what runs:**
+
+| Event | test262 work | `merge shard reports` (required) |
+|---|---|---|
+| `pull_request` | none | green no-op |
+| `merge_group` | IR path (`TEST262_COMPILER_PATH=ir`, standalone), current edition only (`scripts/test262-current-edition.json`: ES5, 8 shards) | **gate**: fails when a test of that edition went pass → not-pass against the IR measurement of the group's `base_sha` |
+| `push` to main | nothing, when the queue already measured this SHA; a direct push runs the edition measurement | not run |
+| `schedule` (daily, 02:23 UTC) / dispatch | full legacy matrix (102 shards) with the high-water floor, edition ratchet and #1897 guard, then `promote-baseline`; full-corpus IR measurement | the legacy gates; a breach fails the scheduled run, blocks promotion, and names the commits since the last green daily run |
+
+**Edition measurement details:**
+
+- Edition runs upload `test262-ir-standalone-edition-measurement`. The job
+  summary of `merge complete IR standalone measurement` lists pass, fail and
+  compile_error counts, regressions and improvements.
+- The baseline is the measurement of `base_sha` (the predecessor group or
+  the main tip). Failing that, it is the nearest first-parent ancestor with
+  one, at most 25 commits back.
+- With no comparable baseline, the summary says **"No baseline — not
+  compared"** and the gate passes. That happens on the first run, after an
+  edition switch, or after an eval-engine change.
+- `pass → compile_timeout` is listed but not gated.
+- Auto-park copies the regressed-test annotation into its park comment. A
+  failed baseline download is classified as infra, so the queue retries it
+  instead of parking.
+
+**What this trades away:**
+
+- A legacy-lane regression, or one in another edition, is detected after
+  the fact (within a day), not blocked.
+- The landing page, `test262-current.json` and the js2wasm-baselines floor
+  are as of the last green daily run.
+- `refresh-baseline.yml` is dispatch-only. Its 8-hourly cron promoted
+  without gates.
+- `baseline-floor-staleness-alert.yml` breaches on floor **age** above 30 h.
+
+**Full-corpus IR runs** (daily, dispatch) upload
+`test262-ir-standalone-measurement`. That is the only IR artifact the site
+reads (`deploy-pages.yml` lists artifacts by that name), so site IR numbers
+are as of the last full run.
+
+**Rollback:** `git revert` the #7551 Part B commit. Required-check names and
+baseline files are unchanged, so nothing else needs to change.
 
 ### Pushing to `main` from a workflow — the rebuild tax (#3915)
 
@@ -745,7 +772,8 @@ much tighter floor.
 
 **Floor-holding, not absolute-target.** The standalone guard diffs against
 `test262-standalone-current.jsonl` — the moving standalone baseline that
-`promote-baseline` refreshes on every push to main. So it pins **whatever
+`promote-baseline` refreshes on every daily run (on every push to main before
+#7551, when this guard still gated PRs in the queue). So it pins **whatever
 floor standalone is currently at**: a PR that leaves standalone unchanged
 (net 0) or improves it (net > 0) always passes; only a PR that drops the
 standalone net below tolerance fails. As standalone fixes land and the
@@ -816,7 +844,7 @@ re-baseline branches (a genuinely new trap is a real regression regardless of an
 oracle bump; the trap categories are not touched by any oracle reclassification,
 so they stay comparable across a forward bump). **Decreases auto-bank** with no
 per-PR baseline-bump merge conflict: the ratchet reads the committed baseline
-jsonl that `promote-baseline` re-seeds on every push to main (#1528/#3131), so a
+jsonl that `promote-baseline` re-seeds on every daily run (#1528/#3131, #7551), so a
 trap fix lowers the floor automatically on the next promote — there is no
 separate ratchet baseline file. Byte-identical (`wasm_sha`-unchanged) pass→trap
 flips are excluded as CI runner noise, exactly like the `net_per_test` gate's

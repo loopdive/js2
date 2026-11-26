@@ -19,8 +19,14 @@
 // It does NOT promote anything; it only reports. A wrapping workflow decides
 // whether to alert / auto-heal based on the threshold breach (exit code 2).
 //
+// (#7551) Since the legacy lane runs daily, the breach is decided by the
+// floor's AGE (`baseline_generated_at`), not by the commit count, which is
+// still measured and reported. Only the standalone floor is checked; the host
+// floor is frozen (#6979).
+//
 // Inputs (env or flags):
-//   --max-behind N        commit threshold before staleness is a breach (default 25)
+//   --max-age-hours N     floor age before staleness is a breach (default 30; env MAX_FLOOR_AGE_HOURS)
+//   --max-behind N        cap on the reported commit walk (default 25)
 //   --repo loopdive/js2wasm-baselines   baselines repo (default)
 //   --ref main            git ref of `main` to measure against (default origin/main)
 //   --json                emit a machine-readable JSON line on stdout (for the workflow)
@@ -34,8 +40,8 @@
 // Exit codes:
 //   0 — floor is fresh (within threshold) OR staleness undetermined (floor SHA
 //       unreachable / fetch failed) — never blocks on uncertainty
-//   2 — a floor lags main by MORE than --max-behind test262-relevant commits
-//       (the deadlock signature — caller should alert / auto-heal)
+//   2 — the standalone floor is older than --max-age-hours (the daily
+//       promotion did not land — caller should alert / auto-heal)
 //   3 — internal/usage error
 
 import { execFileSync } from "node:child_process";
@@ -45,8 +51,23 @@ import { fileURLToPath } from "node:url";
 
 const RAW_BASE = (repo) => `https://raw.githubusercontent.com/${repo}/main`;
 
+// (#7551) The standalone floor is promoted by the DAILY legacy run, so it
+// legitimately trails main by a whole day's merges. Staleness is therefore an
+// AGE: one daily cadence plus a full matrix run plus slack. The relevant-commit
+// count is still reported, but no longer decides.
+export const DEFAULT_MAX_FLOOR_AGE_HOURS = 30;
+
+/** Age of a floor and whether it breaches; null when its timestamp is unusable (never a false breach). */
+export function floorAge(generatedAt, nowMs, maxAgeHours) {
+  const t = typeof generatedAt === "string" ? Date.parse(generatedAt) : NaN;
+  if (!Number.isFinite(t)) return null;
+  const ageHours = (nowMs - t) / 3_600_000;
+  return { ageHours, breach: ageHours > maxAgeHours };
+}
+
 function parseArgs(argv) {
   const args = {
+    maxAgeHours: Number(process.env.MAX_FLOOR_AGE_HOURS ?? DEFAULT_MAX_FLOOR_AGE_HOURS),
     maxBehind: Number(process.env.MAX_FLOOR_COMMITS_BEHIND ?? 25),
     repo: process.env.BASELINES_REPO ?? "loopdive/js2wasm-baselines",
     ref: process.env.MAIN_REF ?? "origin/main",
@@ -54,13 +75,14 @@ function parseArgs(argv) {
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--max-behind") args.maxBehind = Number(argv[++i]);
+    if (a === "--max-age-hours") args.maxAgeHours = Number(argv[++i]);
+    else if (a === "--max-behind") args.maxBehind = Number(argv[++i]);
     else if (a === "--repo") args.repo = argv[++i];
     else if (a === "--ref") args.ref = argv[++i];
     else if (a === "--json") args.json = true;
     else if (a === "--help" || a === "-h") {
       console.log(
-        "usage: check-baseline-floor-staleness.mjs [--max-behind N] [--repo owner/name] [--ref main] [--json]",
+        "usage: check-baseline-floor-staleness.mjs [--max-age-hours N] [--max-behind N] [--repo owner/name] [--ref main] [--json]",
       );
       process.exit(0);
     } else {
@@ -70,6 +92,10 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(args.maxBehind) || args.maxBehind < 0) {
     console.error(`--max-behind must be a non-negative number`);
+    process.exit(3);
+  }
+  if (!Number.isFinite(args.maxAgeHours) || args.maxAgeHours <= 0) {
+    console.error(`--max-age-hours must be a positive number`);
     process.exit(3);
   }
   return args;
@@ -253,10 +279,10 @@ async function main() {
   // Resolve main HEAD sha for reporting.
   const headSha = gitSafe(["rev-parse", args.ref]) ?? args.ref;
 
-  const lanes = [
-    { lane: "standalone", file: "test262-standalone-current.json" },
-    { lane: "host", file: "test262-current.json" },
-  ];
+  // The host floor (`test262-current.json`) is frozen since the JS-host lane
+  // was retired (#6979; generated 2026-10-11), so its age says nothing.
+  const lanes = [{ lane: "standalone", file: "test262-standalone-current.json" }];
+  const nowMs = Date.now();
 
   const results = [];
   let breach = false;
@@ -283,7 +309,8 @@ async function main() {
       );
       continue;
     }
-    const isBreach = drift.relevant > args.maxBehind;
+    const age = floorAge(floor.generatedAt, nowMs, args.maxAgeHours);
+    const isBreach = age?.breach === true;
     if (isBreach) breach = true;
     results.push({
       lane,
@@ -293,7 +320,8 @@ async function main() {
       commitsBehindTotal: drift.total,
       commitsBehindRelevant: drift.relevant,
       exactCount: drift.exact,
-      maxBehind: args.maxBehind,
+      ageHours: age === null ? null : Math.round(age.ageHours * 10) / 10,
+      maxAgeHours: args.maxAgeHours,
       breach: isBreach,
       pass: floor.pass,
       total: floor.total,
@@ -301,13 +329,14 @@ async function main() {
     });
     const level = isBreach ? "error" : "notice";
     const atLeast = drift.exact ? "" : "≥";
+    const ageText = age === null ? "of unknown age" : `${age.ageHours.toFixed(1)} h old`;
     console.error(
-      `::${level}::[${lane}] floor ${floor.sha.slice(0, 8)} is ${atLeast}${drift.relevant} test262-relevant commit(s) behind ${args.ref} (${atLeast}${drift.total} total, max ${args.maxBehind})${isBreach ? " — STALE FLOOR, promote-baseline likely dropped (#2178)" : ""}.`,
+      `::${level}::[${lane}] floor ${floor.sha.slice(0, 8)} is ${ageText} (max ${args.maxAgeHours} h) and ${atLeast}${drift.relevant} test262-relevant commit(s) behind ${args.ref}${isBreach ? " — STALE FLOOR, the daily promotion likely failed or was dropped (#2178, #7551)" : ""}.`,
     );
   }
 
   if (args.json) {
-    process.stdout.write(JSON.stringify({ breach, maxBehind: args.maxBehind, lanes: results }) + "\n");
+    process.stdout.write(JSON.stringify({ breach, maxAgeHours: args.maxAgeHours, lanes: results }) + "\n");
   }
 
   process.exit(breach ? 2 : 0);

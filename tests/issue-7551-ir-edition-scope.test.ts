@@ -8,12 +8,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { readJobAnnotations, renderFailureLines } from "../scripts/auto-park-merge-group-failure.mjs";
+import { DEFAULT_MAX_FLOOR_AGE_HOURS, floorAge } from "../scripts/check-baseline-floor-staleness.mjs";
 import {
   buildReport,
   compareEditionRuns,
   editionPaths,
   nearestBaseline,
+  REGRESSION_ANNOTATION_TITLE,
   readCurrentEdition,
+  regressionAnnotation,
   renderSummary,
   type ScopeMeta,
 } from "../scripts/test262-edition-scope.ts";
@@ -157,6 +161,52 @@ describe("#7551 baseline resolution", () => {
 
   it("returns null when nothing on the lineage was measured", () => {
     expect(nearestBaseline(["a", "b"], [art(1, "elsewhere", "2026-11-26T00:00:00Z")])).toBeNull();
+  });
+});
+
+describe("#7551 queue gate plumbing", () => {
+  it("the park comment lists the regressed tests the edition report annotated", () => {
+    const report = buildReport({
+      run: statuses({ [ES5_A]: "fail", [ES5_B]: "compile_error" }),
+      meta: meta(),
+      paths: new Set([ES5_A, ES5_B]),
+      baseline: { statuses: statuses({ [ES5_A]: "pass", [ES5_B]: "pass" }), meta: meta({ sourceSha: "base" }) },
+    });
+    const line = regressionAnnotation(report);
+    const match = /^::error title=([^:]+)::(.*)$/.exec(line);
+    expect(match).not.toBeNull();
+    // What GitHub stores: the workflow-command data, percent-decoded.
+    const annotation = {
+      title: match![1],
+      message: match![2]!.replace(/%0A/g, "\n").replace(/%0D/g, "\r").replace(/%25/g, "%"),
+    };
+    expect(annotation.title).toBe(REGRESSION_ANNOTATION_TITLE);
+    const { regressionNotes } = readJobAnnotations([annotation]);
+    const comment = renderFailureLines([
+      {
+        job: "merge complete IR standalone measurement",
+        url: null,
+        failedSteps: ["Fail on an edition regression (#7551)"],
+        notes: regressionNotes,
+      },
+    ]);
+    expect(comment).toContain(`  - ${ES5_A} -> fail`);
+    expect(comment).toContain(`  - ${ES5_B} -> compile_error`);
+  });
+
+  it("the floor goes stale by age, after a missed daily promotion, not by merge count", () => {
+    const now = Date.parse("2026-11-27T12:00:00Z");
+    expect(floorAge("2026-11-26T02:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 33.5,
+      breach: true,
+    });
+    expect(floorAge("2026-11-27T02:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 9.5,
+      breach: false,
+    });
+    // No usable timestamp is "undetermined", never a false breach.
+    expect(floorAge(null, now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toBeNull();
+    expect(floorAge("not a date", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toBeNull();
   });
 });
 

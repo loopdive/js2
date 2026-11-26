@@ -28,11 +28,13 @@ name: Baseline Refresh (scheduled + emergency)
 # Usage (scheduled): automatic; or Run workflow with force_baseline_refresh:false
 #   for a manual NORMAL refresh of current main (no confirmation needed).
 
+# (#7551) The 8-hourly cron is GONE. The daily `test262-sharded.yml` schedule
+# is now the single place the legacy lane runs: the same full matrix, but with
+# the floor, ratchet and #1897 gates before it promotes — this workflow
+# promotes without them, so running it on a timer between daily audits would
+# bank a regression unexamined. It stays dispatch-only: the manual NORMAL
+# refresh, the EMERGENCY refresh, and the staleness alert's auto-heal target.
 on:
-  schedule:
-    # Every 8 hours, offset to :17 to avoid the top-of-hour Actions rush and to
-    # not collide with baseline-summary-sync (:37) / floor-staleness (:23).
-    - cron: "17 */8 * * *"
   workflow_dispatch:
     inputs:
       force_baseline_refresh:

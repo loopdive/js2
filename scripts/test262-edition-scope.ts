@@ -354,9 +354,30 @@ function cmdReport(args: string[]): void {
   writeFileSync(required(args, "--json"), JSON.stringify(report, null, 2) + "\n");
   console.log(summary);
   if ((report.diff?.regressions.length ?? 0) > 0) {
-    console.error(`::error::${report.diff!.regressions.length} ${report.edition} test(s) regressed on the IR path`);
+    console.log(regressionAnnotation(report));
     process.exit(1);
   }
+}
+
+/** Title of the annotation auto-park copies into its park comment (scripts/auto-park-merge-group-failure.mjs). */
+export const REGRESSION_ANNOTATION_TITLE = "test262 regressions (#7551)";
+const ANNOTATION_LIST_LIMIT = 50;
+
+/**
+ * One error annotation naming the regressed tests. GitHub keeps at most 10
+ * annotations per step, so a single one carries the whole list.
+ */
+export function regressionAnnotation(r: Report): string {
+  const regressions = r.diff?.regressions ?? [];
+  const lines = [
+    `${regressions.length} ${r.edition} test(s) went pass -> not pass on the IR path (baseline ${r.baseline?.sha ?? "none"}):`,
+    ...regressions.slice(0, ANNOTATION_LIST_LIMIT).map((x) => `${x.file} -> ${x.now}`),
+    ...(regressions.length > ANNOTATION_LIST_LIMIT
+      ? [`... and ${regressions.length - ANNOTATION_LIST_LIMIT} more (see the job summary)`]
+      : []),
+  ];
+  const data = lines.join("\n").replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  return `::error title=${REGRESSION_ANNOTATION_TITLE}::${data}`;
 }
 
 function main(): void {

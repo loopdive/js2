@@ -326,10 +326,38 @@ test("a merge with an unusable current-edition config fails the plan instead of 
   for (const config of [{ edition: "ES5" }, { edition: "ES5", chunks: 0 }, { chunks: 8 }])
     await assert.rejects(planMeasurement("push", 3, { ACTOR: "a-developer", CURRENT_EDITION: JSON.stringify(config) }));
 });
-test("a bot push and the other events select no IR measurement", async () => {
+test("a bot push, a pull request and a test262-irrelevant queue group select no IR measurement", async () => {
   const none = { run: false, cells: [], promotion: false };
   assert.deepEqual(await selectMeasurement("push", 1, { ACTOR: "github-actions[bot]" }), none);
-  for (const event of ["merge_group", "pull_request"]) assert.deepEqual(await selectMeasurement(event, 1), none);
+  assert.deepEqual(await selectMeasurement("pull_request", 1), none);
+  assert.deepEqual(await selectMeasurement("merge_group", 1, { RUN_SHARDS: "false" }), none);
+});
+test("the merge queue measures the current edition; the push after it reuses that measurement", async () => {
+  const { edition, chunks } = JSON.parse(currentEdition);
+  const edition_cell = [{ compilerPath: "ir", target: "standalone", scope: "edition", edition, chunks }];
+  // run_shards true, or unknown because `changes` failed: measure (fail-safe).
+  for (const RUN_SHARDS of ["true", ""]) {
+    const { selected, outputs } = await planMeasurement("merge_group", 1, { RUN_SHARDS });
+    assert.deepEqual(selected.cells, edition_cell);
+    assert.equal(outputs.artifact, "test262-ir-standalone-edition-measurement");
+  }
+  // The queue already measured this exact commit: the push runs nothing.
+  assert.equal(
+    (await selectMeasurement("push", 1, { ACTOR: "github-merge-queue[bot]", QUEUE_MEASURED: "true" })).run,
+    false,
+  );
+  // A direct push, or a probe miss, measures.
+  assert.deepEqual(
+    (await selectMeasurement("push", 1, { ACTOR: "a-developer", QUEUE_MEASURED: "false" })).cells,
+    edition_cell,
+  );
+  // The probe looks for exactly the artifact name the plan assigns to edition runs.
+  const plan = workflow.slice(
+    workflow.indexOf("  compiler-path-measurement-plan:"),
+    workflow.indexOf("  test262-ir-measurement-shard:"),
+  );
+  assert.match(plan, /ART_NAME: test262-ir-standalone-edition-measurement\n/);
+  assert.match(plan, /QUEUE_MEASURED: \$\{\{ steps\.probe\.outputs\.measured \}\}/);
 });
 test("manual measurement is immediate, explicit and standalone only", async () => {
   assert.equal(
@@ -504,7 +532,13 @@ test("IR merge keeps the site-facing reports to the full scope and gates the edi
     "Record separate status and run history",
   ])
     assert.match(step(name), /if: env\.SCOPE == 'full'/);
-  assert.match(step("Fetch the nearest earlier IR measurement (#7551)"), /fetch-baseline --from HEAD\^/);
+  const fetch = step("Download the nearest earlier IR measurement (#7551)");
+  assert.match(fetch, /fetch-baseline --from "\$FROM"/);
+  // The queue diffs against the commit its group was built on; a push against its parent.
+  assert.match(
+    fetch,
+    /FROM: \$\{\{ github\.event_name == 'merge_group' && github\.event\.merge_group\.base_sha \|\| 'HEAD\^' \}\}/,
+  );
   const report = step("Report the edition against that baseline (#7551)");
   assert.match(report, /--baseline-dir ir-baseline/);
   assert.match(report, /GITHUB_STEP_SUMMARY/);

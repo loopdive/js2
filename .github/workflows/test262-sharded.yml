@@ -1,17 +1,24 @@
 name: Test262 Sharded
 
 on:
-  # (#4153) The shard matrix does NOT run at PR time. `test262-shard`'s `if:`
-  # admits only `push` and `workflow_dispatch`; the merged-state matrix
-  # `test262-shard-mg` is `merge_group`-only. So on a `pull_request` the two
+  # (#4153, #7551) test262 does NOT run at PR time: on a `pull_request` the two
   # REQUIRED contexts published from this workflow — `merge shard reports` and
-  # `check for test262 regressions` — green-SKIP with `SHARDS_RAN: false`, and
-  # JS-host Test262 is retired: `HOST_RAN=false` in every context, and the
-  # retained `regression-gate` check no-ops. A green PR-level test262
-  # check is therefore NOT conformance evidence; the real regression, trap
-  # (#3189) and standalone-floor gates run in the `merge_group` re-validation
-  # on the merged state, which is why `auto-park` (#2547) exists and why a
-  # fully-green PR can still be parked.
+  # `check for test262 regressions` — green-skip, and JS-host Test262 is
+  # retired (`HOST_RAN=false` everywhere; `regression-gate` no-ops). A green
+  # PR-level test262 check is therefore NOT conformance evidence.
+  #
+  # (#7551) Cadence since 2026-11-26:
+  #   merge_group → the IR path, CURRENT ES EDITION only
+  #     (scripts/test262-current-edition.json); `merge shard reports` fails on
+  #     a per-test pass → not-pass against the base commit's IR measurement,
+  #     and auto-park parks the PR with the regressed tests listed.
+  #   push        → nothing when the queue measured that SHA; a direct push
+  #     runs the same edition measurement.
+  #   schedule (daily) / dispatch → the full legacy matrix with its gates
+  #     (high-water floor, edition ratchet, #1897) and baseline promotion, plus
+  #     the full-corpus IR measurement. Legacy and other-edition regressions
+  #     are detected there, AFTER the fact, not blocked.
+  # Rollback: revert the #7551 Part B commit.
   #
   # This comment previously claimed "full 57-shard test262 runs at PR-time AND
   # in merge_group", describing the pre-#2519 serial-queue model. It outlived
@@ -635,9 +642,12 @@ jobs:
   # test262-shard's push arm), where the downstream jobs run under `always()`.
   mg-artifact-probe:
     name: probe merge_group baseline artifact
-    if: |
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      github.event_name == 'workflow_dispatch'
+    # (#7551) The queue no longer runs the legacy matrix, so no
+    # `test262-group-<sha>` artifact is produced and push no longer promotes.
+    # The probe stays on the two events that still run the legacy matrix
+    # (schedule, dispatch), where it always answers MISS, because
+    # `test262-shard` and `promote-baseline` gate on its success.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # actions:read — query the artifacts REST API of THIS repo (a cross-run
     # read), same permission the #1956 predecessor-group step already uses.
@@ -688,11 +698,12 @@ jobs:
     # read EMPTY — every step guard below is `run_standalone != 'false'`, which
     # an empty value satisfies, so a schedule run builds the provider. No
     # standalone shard runs on `schedule`; the provider is for native-first.
+    # (#7551) The legacy standalone matrix now runs only on schedule and
+    # dispatch — the merge queue and push measure the IR current edition, which
+    # links no provider — so the merge_group and push arms are gone.
     if: |
       always() &&
       (
-        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
-        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
         github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
@@ -822,11 +833,10 @@ jobs:
     # `schedule` the `changes` job is skipped, so its outputs read empty —
     # `run_host != 'false'` holds and the host provider is built, which is the
     # correct answer for a host-only lane.
+    # (#7551) Schedule and dispatch only, like `runtime-eval-provider`.
     if: |
       always() &&
       (
-        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
-        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
         github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
@@ -1903,18 +1913,29 @@ jobs:
   compiler-path-measurement-plan:
     name: select IR standalone measurement scope
     # #7551 — two scopes, one job graph:
-    #   push (every merge to main) → the CURRENT ES edition only
+    #   merge_group (the queue's gate) and push (a merge the queue did not
+    #     measure: a direct push) → the CURRENT ES edition only
     #     (scripts/test262-current-edition.json: edition + shard count), diffed
     #     per test against the nearest earlier IR measurement; uploaded as
-    #     `test262-ir-standalone-edition-measurement`.
+    #     `test262-ir-standalone-edition-measurement`. A queue run measures the
+    #     exact tree that lands, so the push after it reuses that artifact and
+    #     runs nothing.
     #   schedule (daily) / workflow_dispatch → the full corpus, 102 shards
     #     (~300 runner-min: a shard takes ~2 min because a file the IR does not
     #     fully lower is refused at compile time); uploaded as
     #     `test262-ir-standalone-measurement`, the only artifact the site reads.
     # The distinct artifact names are what keep an edition run from ever being
     # read as a whole-corpus measurement.
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [changes]
+    # always(): `changes` does not run on schedule.
+    if: |
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       run: ${{ steps.plan.outputs.run }}
       scope: ${{ steps.plan.outputs.scope }}
@@ -1928,6 +1949,19 @@ jobs:
         with:
           sparse-checkout: scripts/test262-current-edition.json
           sparse-checkout-cone-mode: false
+      - name: Did the merge queue already measure this commit?
+        id: probe
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The edition artifact name the plan below assigns.
+          ART_NAME: test262-ir-standalone-edition-measurement
+        run: |
+          # A miss (or an API error) measures again: running twice is cheap, not measuring is not.
+          FOUND=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_sha == \"${GITHUB_SHA}\")] | length" \
+            2>/dev/null || echo 0)
+          echo "measured=$([ "${FOUND:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Select automatic or explicit measurement
         id: plan
         env:
@@ -1936,20 +1970,26 @@ jobs:
           MEASUREMENT: ${{ inputs.compiler_path_measurement }}
           COMPILER_PATH: ${{ inputs.compiler_path }}
           MEASUREMENT_TARGET: ${{ inputs.measurement_target }}
+          RUN_SHARDS: ${{ needs.changes.outputs.run_shards }}
+          QUEUE_MEASURED: ${{ steps.probe.outputs.measured }}
         run: |
           export CURRENT_EDITION="$(cat scripts/test262-current-edition.json)"
           node --input-type=module <<'NODE'
           // IR_MEASUREMENT_PLAN_START
           const scheduled = process.env.EVENT_NAME === 'schedule';
-          const merged = process.env.EVENT_NAME === 'push' && process.env.ACTOR !== 'github-actions[bot]';
+          // A queue group that cannot move test262 (proven by `changes`) measures nothing.
+          const queued = process.env.EVENT_NAME === 'merge_group' && process.env.RUN_SHARDS !== 'false';
+          const merged = process.env.EVENT_NAME === 'push' && process.env.ACTOR !== 'github-actions[bot]' &&
+            process.env.QUEUE_MEASURED !== 'true';
           const manual = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.MEASUREMENT === 'true';
           if (manual && (process.env.COMPILER_PATH !== 'ir' || process.env.MEASUREMENT_TARGET !== 'standalone'))
             throw new Error('Only IR standalone is supported; JS Host results are historical');
-          const run = scheduled || merged || manual;
+          const run = scheduled || queued || merged || manual;
           const current = JSON.parse(process.env.CURRENT_EDITION);
-          if (merged && !(typeof current.edition === 'string' && Number.isInteger(current.chunks) && current.chunks > 0))
+          const perMerge = queued || merged;
+          if (perMerge && !(typeof current.edition === 'string' && Number.isInteger(current.chunks) && current.chunks > 0))
             throw new Error('scripts/test262-current-edition.json needs an edition and a positive chunk count');
-          const scope = merged ? 'edition' : 'full';
+          const scope = perMerge ? 'edition' : 'full';
           const chunks = scope === 'edition' ? current.chunks : 102;
           const edition = scope === 'edition' ? current.edition : '';
           const artifact = scope === 'edition' ? 'test262-ir-standalone-edition-measurement' : 'test262-ir-standalone-measurement';
@@ -2126,12 +2166,18 @@ jobs:
             import { writeFileSync } from 'node:fs';
             const { SCOPE: scope, EDITION: edition, SOURCE_SHA: sourceSha, TEST262_SHA: test262Sha, EVAL_ENGINE: evalEngine } = process.env;
             writeFileSync('ir-measurement/scope.json', JSON.stringify({ scope, ...(edition ? { edition } : {}), sourceSha, test262Sha, evalEngine }, null, 2));"
-      - name: Fetch the nearest earlier IR measurement (#7551)
+      # Named "Download …" on purpose: auto-park classifies a failure here as
+      # infra (the verdict never ran) and lets the queue retry instead of parking.
+      - name: Download the nearest earlier IR measurement (#7551)
         if: env.SCOPE == 'edition'
         env:
           GH_TOKEN: ${{ github.token }}
-        # Starts at the parent: this commit's own artifact is the one being made.
-        run: node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline --from HEAD^ --dest ir-baseline
+          # merge_group: the commit the group was built on — the predecessor
+          # group's head or the main tip (#1956), so the diff is this group's
+          # own delta. push: the parent, since this commit's own artifact is
+          # the one being made.
+          FROM: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'HEAD^' }}
+        run: node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline --from "$FROM" --dest ir-baseline
       - name: Report the edition against that baseline (#7551)
         id: edition_report
         if: env.SCOPE == 'edition'
@@ -2238,13 +2284,11 @@ jobs:
 
   test262-shard:
     # Heavy 102-shard standalone test262 (#2519) fires ONLY for baseline/manual contexts
-    # — NOT on every PR:
-    #   push to main → baseline update.
+    # — NOT on every PR and (#7551) NOT on every merge:
+    #   schedule (daily) → the legacy-lane audit + baseline update.
     #   workflow_dispatch → manual reruns.
-    # merge_group (the authoritative pre-merge gate, where the PR has reached
-    # the front of the queue and main-drift regressions on the merged state
-    # get caught) now runs the SEPARATE, consolidated `test262-shard-mg` job
-    # below instead of this one — see #3431.
+    # The merge queue gates on the IR current edition instead (#7551); the
+    # consolidated `test262-shard-mg` job below is retired.
     # Deliberately NOT on pull_request: the heavy matrix used to run twice per
     # PR (once at PR-time, once in merge_group), doubling the most expensive CI
     # cost and adding to the event volume that can soft-throttle merge_group
@@ -2260,16 +2304,19 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # the same 102 standalone shards for push baseline updates and manual reruns.
     needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline]
-    # #3448 — the push arm is now AND-ed with a MISS on the merge_group
-    # baseline-artifact probe: on a HIT the merge_group already produced the
-    # standalone JSONL for this exact SHA, so this 102-job matrix is SKIPPED and
-    # promote-baseline reuses that artifact. workflow_dispatch always runs the
-    # full matrix (the probe forces hit=false there). Both `changes` and
-    # `mg-artifact-probe` run+succeed on push and workflow_dispatch, so the
-    # implicit `success()` over `needs` holds for both arms.
+    # (#7551) The legacy lane runs ONCE A DAY (schedule) and on dispatch, no
+    # longer per merge: the merge queue gates on the IR current edition, and
+    # this run is the after-the-fact audit plus baseline promotion for
+    # everything else. `changes` does not run on schedule, hence always() and
+    # the explicit results of the jobs that do.
     if: |
-      ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
-      (github.event_name == 'workflow_dispatch' && !inputs.compiler_path_measurement)
+      always() &&
+      needs.mg-artifact-probe.result == 'success' &&
+      needs.runtime-eval-provider.result == 'success' &&
+      needs.temporal-provider.result == 'success' &&
+      needs.admit-measurement-baseline.result == 'success' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && !inputs.compiler_path_measurement))
     # Runs in PARALLEL with `gate` — both are independently required by the
     # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
     # so PRs still can't merge unless both pass, but they don't block each
@@ -2619,13 +2666,12 @@ jobs:
     # ancestor through the otherwise-successful provider job and silently
     # skips this entire matrix. Pin both direct dependencies to success so a
     # real provider/detection failure still blocks the required aggregate.
-    if: |
-      always() &&
-      github.event_name == 'merge_group' &&
-      needs.changes.result == 'success' &&
-      needs.runtime-eval-provider.result == 'success' &&
-      needs.temporal-provider.result == 'success' &&
-      needs.changes.outputs.run_shards == 'true'
+    #
+    # (#7551) Retired from the queue: `merge_group` gates on the IR current
+    # edition (`test262-ir-measurement-shard`, `merge complete IR standalone
+    # measurement`), and the legacy lane runs daily (`test262-shard` on
+    # schedule). Rollback is a revert of the #7551 Part B commit.
+    if: false
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
     # Same 40-min timeout as `test262-shard` (25 → 40 for the #4157 defaults
@@ -2851,19 +2897,31 @@ jobs:
     # this required check for a change that provably could not affect it.
     # Both flags are 'true' whenever a lane genuinely ran, so a full two-lane
     # run behaves exactly as before.
+    #
+    # (#7551) WHAT THIS CHECK GATES, PER EVENT:
+    #   pull_request → green no-op (unchanged).
+    #   merge_group  → the IR current-edition gate: green when the group cannot
+    #                  move test262, otherwise exactly the result of `merge
+    #                  complete IR standalone measurement` (a per-test pass →
+    #                  not-pass in the current edition fails it). The legacy
+    #                  matrix no longer runs in the queue.
+    #   schedule / workflow_dispatch → the legacy lane's gates on the daily
+    #                  full matrix (high-water floor, edition ratchet, #1897);
+    #                  a breach fails the scheduled run and names the commit
+    #                  range since the last green daily run. Detected after the
+    #                  fact, not blocked.
+    #   push → not run (no legacy shards on push any more).
     if: |
-      always() && github.event_name != 'schedule' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
+      always() && github.event_name != 'push' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement)
     name: merge shard reports
-    # #3448 — mg-artifact-probe added so SHARD_SKIP_OK can green-skip the
-    # push:main HIT path (the matrix is skipped; promote-baseline sources the
-    # baseline from the merge_group artifact instead). This job already runs
-    # under `always()`, so the probe being skipped on pull_request/merge_group
-    # cannot force-skip it, and its empty output leaves SHARD_SKIP_OK unchanged
-    # in those contexts.
-    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline]
+    needs:
+      [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline, merge-ir-measurement]
     runs-on: ubuntu-latest
+    # actions:read — the daily-breach summary looks up the last green scheduled run.
+    permissions:
+      contents: read
+      actions: read
     env:
       # 'true' when EITHER the static (test262-shard) or consolidated
       # (test262-shard-mg, #3431) matrix actually executed and produced
@@ -2872,13 +2930,9 @@ jobs:
       # can be 'success' in any real run; 'false' on the merge_group skip
       # path (no test262-relevant change).
       SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
-      # Green-skip when shards legitimately did not run: a merge_group with no
-      # test262-relevant change, OR any pull_request (heavy shards are
-      # merge_group-only under the #2519 slim-down), OR a push:main HIT where
-      # the merge_group's own baseline artifact is reused (#3448 — the matrix is
-      # skipped and promote-baseline sources the JSONLs from that artifact, so
-      # there are no shards to merge here and this required check green-skips).
-      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request' || (github.event_name == 'push' && needs.mg-artifact-probe.outputs.hit == 'true')) && 'true' || 'false' }}
+      # Legacy shards legitimately do not run on pull_request or (#7551) in the
+      # merge queue; there the IR current-edition gate step below decides.
+      SHARD_SKIP_OK: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'true' || 'false' }}
       # Per-lane variants of SHARDS_RAN. A merge_group whose queued change
       # cannot move one lane schedules no shards for it, so that lane has no
       # artifacts to merge and no report to gate — its steps must skip rather
@@ -2897,25 +2951,30 @@ jobs:
           exit 1
 
       - name: No-op pass (shards intentionally skipped)
-        if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true'
+        if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true' && github.event_name == 'pull_request'
         run: |
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo "-> merge_group queued only non-test262-relevant changes"
-            echo "   (changes.run_shards=='false'); the capacity-sized 102-job matrix (#3431,"
-            echo "   test262-shard-mg) was intentionally skipped. Reporting 'merge shard"
-            echo "   reports' green."
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            echo "-> push:main HIT (#3448): the merge_group that just landed already"
-            echo "   published its merged JSONLs as test262-group-${{ github.sha }}. The"
-            echo "   114-job test262-shard rerun was skipped; promote-baseline reuses that"
-            echo "   artifact. Reporting 'merge shard reports' green."
-          else
-            echo "-> pull_request: heavy test262 shards are merge_group-only under the"
-            echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
-            echo "   (typecheck + lint) validated this PR; the capacity-sized 106-job matrix"
-            echo "   (#3431, test262-shard-mg) runs in the merge_group when the PR reaches"
-            echo "   the front of the queue."
+          echo "-> pull_request: test262 does not run at PR-time (#2519). The cheap gate"
+          echo "   (typecheck + lint) validated this PR; the merge queue runs the IR"
+          echo "   current-edition gate (#7551) when the PR reaches the front of the queue."
+
+      - name: IR current-edition gate (#7551)
+        # The merge queue's test262 verdict. The regressed tests are listed in
+        # the summary of `merge complete IR standalone measurement` and in the
+        # auto-park comment.
+        if: github.event_name == 'merge_group'
+        env:
+          RUN_SHARDS: ${{ needs.changes.outputs.run_shards }}
+          IR_RESULT: ${{ needs.merge-ir-measurement.result }}
+        run: |
+          if [ "$RUN_SHARDS" = "false" ]; then
+            echo "-> the queued group cannot move test262 (changes.run_shards=='false'); nothing to measure."
+            exit 0
           fi
+          if [ "$IR_RESULT" != "success" ]; then
+            echo "::error::IR current-edition measurement result: '${IR_RESULT}'. A test of the current edition that passed on the base commit does not pass on the merged state, or the measurement did not complete — see 'merge complete IR standalone measurement'."
+            exit 1
+          fi
+          echo "-> IR current-edition measurement passed: no test of the current edition went pass -> not pass against the base commit (or no comparable baseline existed, which its summary says)."
 
       - name: Checkout
         if: env.SHARDS_RAN == 'true'
@@ -3613,6 +3672,32 @@ jobs:
           path: |
             merged-reports/test262-standalone-results-merged.jsonl
           if-no-files-found: error
+
+      # (#7551) The legacy lane is no longer a merge gate, so a breach found by
+      # the daily run is AFTER THE FACT: name what landed since the last green
+      # daily run, so it can be attributed without a bisect. The regressed
+      # tests themselves are listed by the guard steps above.
+      - name: Name the commits since the last green daily run (#7551)
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test262-sharded.yml/runs?event=schedule&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)
+          {
+            echo "## Daily legacy test262 run found a regression (#7551)"
+            echo ""
+            echo "The merge queue gates only on the IR current edition, so this was not blocked at merge time."
+            if [ -z "$PREV" ]; then
+              echo "No earlier green daily run was found; inspect the history before \`${GITHUB_SHA}\`."
+            else
+              echo "Merged since the last green daily run (\`${PREV}\` .. \`${GITHUB_SHA}\`):"
+              echo ""
+              gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_SHA}" \
+                --jq '.commits[] | select(.parents | length > 1) | "- \(.sha[0:10]) \(.commit.message | split("\n")[0])"' \
+                || echo "(the compare API failed; see the commit history)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   regression-gate:
     # Runs after merge-report in all gate-relevant contexts and compares the
@@ -4455,12 +4540,17 @@ jobs:
     # is that function — it re-enables the job while (unlike bare `always()`)
     # still honouring cancellation, and the explicit `needs.*.result` checks
     # below restore the failure semantics the implicit `success()` provided.
+    #
+    # (#7551) Promotion moved from push to the DAILY schedule (and dispatch):
+    # the legacy matrix no longer runs per merge, so the baseline, the landing
+    # page numbers and `runs/index.json` are as of the last green daily run.
+    # `merge-report` must succeed first, so a breached floor is never banked.
     if: |
       !cancelled() &&
       github.repository == 'loopdive/js2' &&
       needs.merge-report.result == 'success' &&
       needs.mg-artifact-probe.result == 'success' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&

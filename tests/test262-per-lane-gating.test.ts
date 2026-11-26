@@ -281,12 +281,12 @@ describe("test262 per-lane gating — workflow wiring", () => {
     expect(s).toContain('if [ "$RUN_STANDALONE" != "false" ]');
   });
 
-  it("the merge_group matrix cannot cascade-skip through the provider's skipped probe ancestor", () => {
-    const shardJob = job("test262-shard-mg");
-    expect(shardJob).toContain("needs: [changes, runtime-eval-provider, temporal-provider]");
+  it("the daily legacy matrix cannot cascade-skip through `changes`, which does not run on schedule (#7551)", () => {
+    expect(job("test262-shard-mg")).toContain("if: false");
+    const shardJob = job("test262-shard");
     expect(shardJob).toMatch(/if: \|\n\s+always\(\) &&/);
-    expect(shardJob).toContain("needs.changes.result == 'success'");
-    expect(shardJob).toContain("needs.runtime-eval-provider.result == 'success'");
+    for (const dep of ["mg-artifact-probe", "runtime-eval-provider", "temporal-provider", "admit-measurement-baseline"])
+      expect(shardJob).toContain(`needs.${dep}.result == 'success'`);
   });
 
   it("every lane flag treats a missing output as 'ran' (`!= 'false'`, never `== 'true'`)", () => {
@@ -359,8 +359,11 @@ describe("test262 per-lane gating — workflow wiring", () => {
       "env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK != 'true'",
     );
     expect(stepIf("merge-report", "No-op pass (shards intentionally skipped)")).toBe(
-      "env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true'",
+      "env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true' && github.event_name == 'pull_request'",
     );
+    // (#7551) In the merge queue the required context carries the IR
+    // current-edition verdict instead of the legacy shards'.
+    expect(stepIf("merge-report", "IR current-edition gate (#7551)")).toBe("github.event_name == 'merge_group'");
   });
 
   it("the push/workflow_dispatch matrix carries only standalone", () => {
