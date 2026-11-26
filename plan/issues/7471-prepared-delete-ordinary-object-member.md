@@ -266,7 +266,13 @@ What landed, and where it departs from the plan:
   swapped to `isStrictContext(site)` (`irDeleteSiteIsStrict`'s rule) 1 (the B1 test); row bound to `hasOwn` 13; the
   identifier arm answering `true` 6; the comma arm answering `false` 1; `arguments` not recognised 1. The `withField`
   refusal mutant fails nothing: unreachable today (see above).
-- **Yield** (`scripts/ir-census/prepared-census.mts --harness real`, base `41f0654e8` vs this branch): the three
-  Object rows go from `delete has no IR lowering` to `pass`. `S12.2_A2` now stops at `this["__variable"]` (`'this'
-  reference outside an instance method body`), `S15.1.1.1_A3_T2` at `delete of "NaN", which only the global object
-  holds`, `S11.13.2_A5.2_T2` at `with target/body outside the closed-object IR slice`: all Session B's.
+- **Yield** (`scripts/ir-census/prepared-census.mts --harness real` over the 411 o411 rows, main `1a726b3e64` vs this
+  branch merged with it, 2026-11-26; the census skips negatives, so its counts are not S3's runner's): pass 63 → 66,
+  six rows change and none regress. The three Object rows go from `delete has no IR lowering` to `pass`. `S12.2_A2`
+  now stops at `this["__variable"]` (`'this' reference outside an instance method body`), `S15.1.1.1_A3_T2` at
+  `delete of "NaN", which only the global object holds`, `S11.13.2_A5.2_T2` at `with target/body outside the
+  closed-object IR slice`: all Session B's. S3's real-runner command was not run.
+- **Ordinary bytes** (main `1a726b3e64` vs this branch merged with it): `scripts/byte-diff-corpus.mts` sample corpus
+  (JS environment + wasi) 2,226 identical binaries, 0 differ; a `delete` corpus (every test262 file whose AST holds
+  a `DeleteExpression`, 1,091 files, on the JS environment, standalone and wasi, the script's `regexp` corpus shape)
+  2,587 identical binaries, 0 differ, 0 crash or order-dependent rows.
