@@ -47,8 +47,8 @@ normally. Found by the plan review of #7488 (PRV-7488), 2026-11-26.
 
 ## Implementation Plan
 
-Written 2026-11-26, stacked on PR 7469 (#7500, head `995f3679`), whose `sourceOwner` and select-refusal module this
-uses.
+Written 2026-11-26, stacked on PR 7469 (#7500, head `9fd3eb18`), whose `ownerAt` / `nodeLocation` and select-refusal
+module this uses.
 
 ### Which pipeline, and what kind of error (measured)
 
@@ -71,27 +71,40 @@ and run, default and standalone; the Prepared path standalone, Script goal):
 - The Prepared path is wrong for the class forms, and right for the pattern forms only by accident (the destructuring
   producer is missing).
 
-### Decision: one pure function, used by the Prepared path now and by the ordinary pipeline in #7519
+### Decision: one walker, moved to `src/shared`; the predicate and the Prepared rule build on it
 
-- **`restrictedGlobalLexicalName(sourceFile): string | undefined`** in `src/shared/ambient-intrinsics.ts`, next to
-  `GLOBAL_CONSTANTS`. It returns `undefined` for a Module (a source with `externalModuleIndicator`). Otherwise it returns
-  the first top-level lexically declared name in `GLOBAL_CONSTANTS`, where the lexically declared names are the
-  BoundNames of every top-level `let`/`const` declaration (identifiers and binding patterns, nested) and the names of
-  class declarations. Pure: AST only, no checker.
-- **Prepared rule** in `src/ir/prepared-select-refusals.ts`, first in the function (instantiation precedes every
-  evaluation): if the function returns a name for a source, refuse with code `restricted-global-lexical`, stage
-  `select`, detail "`NaN` is lexically declared in a Script: a SyntaxError at instantiation, which the Prepared path
-  does not raise". It is located at that declaration's name through `sourceOwner` (#7500), because
-  GlobalDeclarationInstantiation is no unit's code. The function returns the name; the rule locates its first
-  top-level occurrence among the declarations.
-- **Ordinary pipeline unchanged in this PR** (byte-identical): it keeps `noteRestrictedGlobalLexicalName` for now.
-  #7519 switches it to the same function once per source and deletes the per-declarator call. The shared function
-  therefore has one caller here and gains its second in #7519; that is the planned migration, not a speculative
-  abstraction.
+- **One walker, moved.** `recordScriptGlobalLexicalBindingNames` (`src/codegen/source-scan-predicates.ts`) already
+  walks a Script's top-level lexical declarations: the BoundNames of every top-level `let`/`const` (identifiers and
+  nested binding patterns, holes skipped) and the names of class declarations. Its only caller is
+  `recordSourceGlobalEnvironment` (`src/codegen/index.ts`). It moves to `src/shared/script-lexical-names.ts` as the
+  pure `scriptGlobalLexicalNames(sourceFile): readonly ts.Identifier[]`, in source order. `recordSourceGlobalEnvironment`
+  adds each identifier's `.text` to its set, so that caller's output is byte-identical.
+- **The predicate on top.** `restrictedGlobalLexicalName(sourceFile): ts.Identifier | undefined`, next to the walker:
+  `undefined` for a Module (a source with `externalModuleIndicator`), else
+  `scriptGlobalLexicalNames(sourceFile).find((id) => GLOBAL_CONSTANTS.has(id.text))`. It returns the declaring
+  identifier, so a caller can locate it without a second walk.
+- **Prepared rule** in `src/ir/prepared-select-refusals.ts`, first in the per-source loop (instantiation precedes every
+  evaluation): when `restrictedGlobalLexicalName(file)` returns an identifier, refuse with code
+  `restricted-global-lexical`, stage `select`, detail "`NaN` is lexically declared in a Script: a SyntaxError at
+  instantiation, which the Prepared path does not raise", located at that identifier through the module's existing
+  `ownerAt(inventory, null, nodeLocation(sourceId, identifier))` (#7500). GlobalDeclarationInstantiation is no unit's
+  code.
+- **Ordinary pipeline unchanged in this PR** (byte-identical): `noteRestrictedGlobalLexicalName` stays for now.
+  [#7519](7519-ordinary-restricted-global-lexical-classes-and-patterns.md) switches `declarations.ts` to
+  `restrictedGlobalLexicalName(sourceFile)?.text`, once per source, and deletes the per-declarator call.
 - **Why a refusal, not the SyntaxError, on the Prepared path:** the Prepared path can lower
   `throw new SyntaxError(…)` (probed: it throws), but raising it at instantiation means a synthetic throw ahead of
   `<module-init>`'s population, a lowering arm of its own, with no measurable gain today (yield below). The refusal
   makes the path sound now.
+
+### Reuse and quality
+
+- Reuses: the existing lexical-name walker (moved, not copied), `GLOBAL_CONSTANTS`, `ownerAt` and `nodeLocation` from
+  #7500, the one select-refusal module.
+- Removes: the walker's private home in codegen; after #7519, the per-declarator three-name test in `declarations.ts`.
+- Quality acceptance: one walker for a Script's lexically declared names, used by `codegen/index.ts`, the Prepared
+  rule, and (in #7519) `declarations.ts`; one predicate built on it; no second walk to locate the name; no new owner
+  concept.
 
 ### Acceptance
 
@@ -101,8 +114,6 @@ and run, default and standalone; the Prepared path standalone, Script goal):
 - Not refused by this rule: `var NaN;`, a Module-goal `let NaN = 1` (with an `export`), `let x = 1`,
   `let {a: b} = {a:1}`, a `NaN` inside a function or block (`{ let NaN = 1; }`, not top-level).
 - Ordinary pipeline byte-identical on a sample × (default, standalone).
-- Code quality: one pure function for "the restricted global lexical name of a Script", next to the name set; the rule
-  sits in the one select-refusal module; no new owner concept.
 
 ### Yield (measured)
 

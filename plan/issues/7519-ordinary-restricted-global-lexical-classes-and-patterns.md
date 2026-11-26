@@ -37,9 +37,9 @@ plan review of #7499 (PRV-7499), 2026-11-26.
 
 ## Plan direction (lead decision, 2026-11-26)
 
-Switch the ordinary pipeline to `restrictedGlobalLexicalName(sourceFile)` (`src/shared/ambient-intrinsics.ts`,
-introduced by #7499 for the Prepared path), called once per source, and delete the per-declarator
-`noteRestrictedGlobalLexicalName` call. This changes gc/standalone output for the forms above (they gain the
+Switch the ordinary pipeline to `restrictedGlobalLexicalName(sourceFile)?.text` (`src/shared/script-lexical-names.ts`,
+introduced by #7499 for the Prepared path on top of the shared `scriptGlobalLexicalNames` walker), called once per
+source, and delete the per-declarator `noteRestrictedGlobalLexicalName` call. This changes gc/standalone output for the forms above (they gain the
 instantiation throw), so it is its own reviewed change with a byte diff limited to those programs.
 
 ## Acceptance criteria
