@@ -7176,7 +7176,8 @@ AND on the targeted 197-row set (the sample alone cannot show it).
 **L0a — comparisons (items 1, 2).** Legalization: one new sibling `src/ir/program/dynamic-comparisons.ts` with the
 relational and loose-equality expansions over `conversionBuilders`; two `case` lines in `expand`. Census/policy: the
 `stringCompare` row. from-ast: one call to a lane arm for mixed typed operands, placed in a sibling module; from-ast
-pays for it by moving `tryLowerDynamicRelational` + `relOperandToF64` (≈ 70 lines) into the same module unchanged.
+pays for it by moving `tryLowerDynamicRelational` + `relOperandToF64` (≈ 70 lines) into the same module (as built,
+`tryLowerDynamicRelational` changed on the move: the lane fallback, and the f64 path decided before anything is emitted).
 Gain: ≈ 17 of the 197 targeted rows' first blocker, 3 sample rows. Effort M.
 - Tests `tests/issue-7354-l0a-relational.test.ts`, `…-l0a-loose-equality.test.ts`: node agreement + wrong twin over
   {number, string, numeric string, "", boolean, undefined, null, object with `valueOf`/`toString` (order logged),
@@ -7260,7 +7261,8 @@ operands.
     string. The loop therefore always reads UTF-16 code units.
   - No `js.string.compare` policy is selected.
 - **Front end** (`src/ir/dynamic-comparison-lowering.ts`, new). It holds `comparisonTakesCarrier`, `carrierOperand`,
-  `relOperandToF64` and `tryLowerDynamicRelational` (moved out of from-ast), and `dynamicOperandsUnlowered`.
+  `relOperandToF64` and `tryLowerDynamicRelational` (moved out of from-ast and changed: the lane fallback, and the f64
+  path decided before anything is emitted), and `dynamicOperandsUnlowered` (removed in review round 1).
   - On the Prepared lane (`createsFunctionObjects`), every comparison pair goes into the carrier except:
     - two dynamic values, which already take the dynamic arm;
     - two numeric scalars of one kind;
@@ -7365,3 +7367,76 @@ Exit 0, against the merge base and against `LOC_GATE_BASE` = c3b7be667a:
 - Node 25 (not installed; Node 22).
 - The 344 ungenerated function pairs of the sweep (predicted aborts).
 - The full vitest suite: only the files listed above were run.
+
+### L0a review round 1 (PR 7513; `main` a9cdc8857a merged)
+
+**Blocker, fixed.** A Boolean data property of a function-local object refused the whole program, also where the
+function never ran. Example: `function t() { var o = { t: true, n: 1 }; return o.t == o.n; } var out = "ok";` →
+`semantic intrinsic js.boolean.unbox is unavailable under boolean-boundary policy`.
+- **Cause.** The typed read plan (`prepare-ordinary-object-access.ts`) types `o.t` as Boolean, and from-ast unboxes the
+  realm's [[Get]] result with `js.boolean.unbox`.
+  - The native unbox exists only with the keyed-Get result proof of the getter graph
+    (`native-object-result-requirements.ts`). Selecting `unbox: "native"` was tried: it then refuses with
+    `native Boolean extraction needs its exact keyed Get result proof`.
+  - On main the comparison refused inside `t` first, so `t` became an abort body and the program compiled. L0a lowered
+    the comparison and exposed the read.
+  - On main the same read already refused the whole program under `if (o.t)`, `o.t === true` and `o.t > o.f`.
+- **Fix.** On the Prepared lane the read is the dynamic value: the [[Get]] carrier boxed as `dynamic`. `carrierKindOf`
+  answers `dynamic` for a `js.object.get` result, and the box arm takes it as it is. Every use converts it: `==`, `>`,
+  ToBoolean, `===`.
+  - Off the lane the unbox stays.
+  - `check:prepared-bytes` shows no row change from this fix.
+- **Tests.** In the relational file: an uncalled function → `"ok"`; called → node's answer for `==`, `!=`, `>`, `>=`,
+  `===` and truthiness; both with wrong twins. o-objects' "Boolean unbox refuses" expectation is removed; the rest of
+  that test was red on main already.
+
+**Quality findings.**
+1. **One string compare on the Prepared lane.**
+   - `js.value.string_compare` now takes two native strings: `(string, string) -> i32`.
+   - Typed `string < string` calls it directly, without the carrier (`emitStringRelational`, moved to
+     `dynamic-comparison-lowering.ts`). `comparisonTakesCarrier` leaves two strings alone.
+   - The dynamic string arm reads each operand with `js.value.as_string` and calls the same intrinsic.
+   - The ordinary pipeline's `__str_compare` and the Prepared resource are one definition,
+     `buildStringCompareDefinition`. Ordinary bytes are identical.
+   - **Obstacle to dropping it for `js.string.compare`.** That seam is a `call` on the `IR_STRING_COMPARE_FN`
+     intrinsic func-ref. Only the ordinary integration (`resolveFunc`) and the linear backend resolve it. The Prepared
+     physical plan reserves a call only for a unit, an import or a native ABI binding row. The native string setup
+     serves its string operations through emitter hooks for instruction kinds (`string.eq`, `string.concat`) and
+     publishes no binding row for a call-shaped seam. Binding it would need a new resource pack plus a call-shaped ABI
+     binding with no precedent. The dynamic-value intrinsic family is the lane's existing route for such operations.
+     So the Prepared lane has one compare, the intrinsic; `js.string.compare` stays the ordinary lanes' seam.
+2. **`primitivesOf`** lives in the conversion builders. The addition and both comparisons use it.
+3. **`I32`** is exported from the chains and shared.
+4. **One relational table**, `RELATIONAL_OPERATORS` in `src/shared/contracts/dynamic-operator-helpers.ts`. It is keyed
+   by token and holds the helper, the f64 compare and the sign fold. The front end looks it up by token, the
+   legalization by helper.
+5. **`both()` is now `operandsHold(every | some)`.** It decides from the proven kinds before testing, which
+   `disjunction` does not.
+6. **`NativeDynamicValueStrings`** is `{ layout, flatten, equals }` with `equals` explicitly optional. Strict
+   equality's string arm is built from `strings.equals` in one place; the compare reads `layout` and `flatten`.
+7. **The `ComparisonLoweringHost` alias** is gone; the module uses `FunctionObjectLoweringHost`.
+8. **Doc text.** The overlong line is gone. The plan text now says `tryLowerDynamicRelational` changed on the move.
+9. **The `'<op>' operand has no dynamic carrier` refusal is removed.**
+   - No program reaches it: an array operand refuses earlier (`resolver cannot register vec`). An `undefined`-typed
+     local, closures, objects, strings, numbers and Booleans all box.
+   - The front end's dynamic arm ends at its original producer-promise invariant again.
+
+**Proof (round 1).**
+- Probes, base = main a9cdc8857a vs head: the 202 Phase-1 programs plus the reviewer's 141 (`probes2-4.json`).
+  - refused→right 89, abort→right 43, refused→abort 5;
+  - nothing right became anything else, no abort became a refusal;
+  - 0 wrong, 0 invalid, 0 exceptions.
+- The 33 condition programs, the 6 Boolean-property programs and the 4 Error programs: node's answer with twins.
+  Under `utf8Storage` the code-unit programs agree too.
+- Reduced sweep: 64 random programs of the 384. 50 agree with node; 14 end at the predicted function-ToPrimitive
+  abort, all function pairs. 16 of them were re-run with wrong twins, and every twin throws.
+- Ordinary pipeline: identical bytes on the 22 test262 comparison files and the 6 comparison probes, × default and
+  standalone (including standalone `string < string` through the shared body).
+- `check:prepared-bytes` vs main a9cdc8857a: the same 5 rows as before (205, 213, 237, 442, 579), all now node's
+  answer; no other row changes.
+- Tests: l0a-relational 9/9, l0a-loose-equality 5/5, d1 43, str 18, r census 117, str2c 32, t2 string-number 7, o2b 15.
+  - o-objects fails only at its first expectation, which is red on main.
+  - 3526 string-boundary-compare fails 2 on main and on head alike.
+- Gates exit 0, against the merge base and against `LOC_GATE_BASE` = a9cdc8857a: typecheck, LOC, function budget,
+  coercion sites, oracle ratchet, dead exports, import cycles, compiler boundaries (`--mode inventory`).
+- `from-ast.ts` is 17235 lines (main 17337).
