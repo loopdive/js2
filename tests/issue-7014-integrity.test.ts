@@ -186,7 +186,7 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       const raises = { "b.test.js": "Error: from b\n    at x", "d.test.js": "Error: from d\n    at y" };
       const errors = Object.values(raises);
       const calls: string[][] = [];
-      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, calls) };
+      const bisection = { budgetMs: 60_000, spentMs: 0, label: "t", runOnce: fakeRun(raises, calls) };
       const labels = await bisectUntaggedErrors(
         "/r",
         null,
@@ -202,10 +202,15 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       expect(calls.length).toBeLessThanOrEqual(6);
     });
 
-    it("stops at its deadline and says so", async () => {
+    it("stops when its budget is spent and says so", async () => {
       const errors = ["Error: from b"];
       const calls: string[][] = [];
-      const bisection = { deadline: Date.now() - 1, label: "t", runOnce: fakeRun({ "b.test.js": errors[0] }, calls) };
+      const bisection = {
+        budgetMs: 1_000,
+        spentMs: 1_000,
+        label: "t",
+        runOnce: fakeRun({ "b.test.js": errors[0] }, calls),
+      };
       const labels = await bisectUntaggedErrors(
         "/r",
         null,
@@ -222,7 +227,7 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
 
     it("skips tagged errors and batches that hit their timeout", async () => {
       const calls: string[][] = [];
-      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun({}, calls) };
+      const bisection = { budgetMs: 60_000, spentMs: 0, label: "t", runOnce: fakeRun({}, calls) };
       const tagged = ["[raised while running a.test.js] Error: x"];
       expect(
         (await bisectUntaggedErrors("/r", null, files, tagged, runOf(tagged), options, bisection, bisection.runOnce))
@@ -236,16 +241,12 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       expect(calls).toEqual([]);
     });
 
-    it("starts its deadline at the first bisection run, not before", async () => {
+    it("counts only time spent bisecting, so a later batch still bisects", async () => {
+      // Two batches share one budget of 2 s. Between them 2.5 s pass, standing in for the next batch's own vitest
+      // run; a wall-clock deadline would leave the second batch nothing.
       const errors = ["Error: from b"];
-      const bisection = {
-        budgetMs: 60_000,
-        deadline: undefined as number | undefined,
-        label: "t",
-        runOnce: fakeRun({ "b.test.js": errors[0] }, []),
-      };
-      const before = Date.now();
-      const labels = await bisectUntaggedErrors(
+      const bisection = { budgetMs: 2_000, spentMs: 0, label: "t", runOnce: fakeRun({ "b.test.js": errors[0] }, []) };
+      const first = await bisectUntaggedErrors(
         "/r",
         null,
         files,
@@ -255,15 +256,27 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
         bisection,
         bisection.runOnce,
       );
-      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces alone in: b.test.js)");
-      expect(bisection.deadline).toBeGreaterThanOrEqual(before + 60_000);
+      expect(first.get(errors[0])).toBe("(#7518 bisection: reproduces alone in: b.test.js)");
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      const second = await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        errors,
+        runOf(errors),
+        options,
+        bisection,
+        bisection.runOnce,
+      );
+      expect(second.get(errors[0])).toBe("(#7518 bisection: reproduces alone in: b.test.js)");
     });
 
     it("caps every bisection run's timeout at the time left", async () => {
       const timeouts: number[] = [];
       const run = fakeRun({ "b.test.js": "Error: from b" }, []);
       const bisection = {
-        deadline: Date.now() + 5_000,
+        budgetMs: 5_000,
+        spentMs: 0,
         label: "t",
         runOnce: (root: string, toRel: unknown, part: string[], opts: { timeoutMs: number }) => {
           timeouts.push(opts.timeoutMs);
@@ -284,13 +297,14 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       for (const timeout of timeouts) expect(timeout).toBeLessThanOrEqual(5_000);
     });
 
-    it("reports a last run that timed out at the deadline as a spent budget", async () => {
-      // Two files: the first half runs clean, the second (and last) times out at the deadline. No later deadline
+    it("reports a last run that timed out on the budget as a spent budget", async () => {
+      // Two files: the first half runs clean, the second (and last) times out on the budget. No later budget
       // check follows, so only the timed-out run itself can mark the budget spent.
       const errors = ["Error: from b"];
       let calls = 0;
       const bisection = {
-        deadline: Date.now() + 200,
+        budgetMs: 200,
+        spentMs: 0,
         label: "t",
         runOnce: async (_root: string, _toRel: unknown, part: string[]) => {
           if (calls++ === 0)
@@ -331,7 +345,7 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       // c.test.js raises "Error: noise" in smaller runs only; the batch's one error comes from b.test.js.
       const calls: string[][] = [];
       const raises = { "b.test.js": "Error: from b", "c.test.js": "Error: noise" };
-      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, calls) };
+      const bisection = { budgetMs: 60_000, spentMs: 0, label: "t", runOnce: fakeRun(raises, calls) };
       const errors = ["Error: from b"];
       const labels = await bisectUntaggedErrors(
         "/r",
@@ -350,7 +364,7 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
     it("says so when errors that share a first line reproduce in more than one file", async () => {
       const same = 'Error: [vitest-worker]: Timeout calling "onTaskUpdate"';
       const raises = { "a.test.js": same, "c.test.js": same };
-      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, []) };
+      const bisection = { budgetMs: 60_000, spentMs: 0, label: "t", runOnce: fakeRun(raises, []) };
       const labels = await bisectUntaggedErrors(
         "/r",
         null,

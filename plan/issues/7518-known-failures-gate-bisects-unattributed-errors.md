@@ -41,12 +41,13 @@ errors, until each error reproduces in a single-file run.
   apart: two RPC timeouts share their whole stack. Their label lists every
   file the first line reproduced in, and says it is shared.
 - **Hard time budget.** One budget per `runFiles` call
-  (`KNOWN_FAILURES_BISECT_BUDGET_S`, default 900 s), started by the first
-  bisection run. RV7478: a deadline started at the beginning of `runFiles`
-  would already be spent after a 25-minute batch. Each bisection run's timeout
-  is capped at the time left. When the budget is spent, including by a run that
-  timed out at the deadline, the label says so. Naming files can never cost a
-  shard its partial.
+  (`KNOWN_FAILURES_BISECT_BUDGET_S`, default 900 s). It counts only time
+  spent in bisection runs, so the batches' own vitest runs between bisections
+  do not use it. RV7478 found that a wall-clock deadline, even one started at
+  the first bisection, left later batches nothing. Each bisection run's timeout
+  is capped at what is left. When the budget is spent, including by a run that
+  timed out on it, the label says so. Naming files can never cost a shard its
+  partial.
 - **Skipped:**
   - errors the reporter already tagged (`[raised while running <file>]`);
   - batches that hit their own timeout, because each half would wait out the
@@ -86,9 +87,10 @@ timeout raises it, without any main-process load.
 - only the batch's own errors are followed, not new ones a smaller run raises;
 - errors that share a first line get the shared label;
 - a spent budget makes no runs and says so;
-- the deadline starts at the first bisection run;
+- only time spent bisecting counts, so a later batch still bisects (two
+  calls sharing a 2 s budget, 2.5 s apart);
 - every bisection run's timeout is capped at the time left;
-- a last run that timed out at the deadline is reported as a spent budget;
+- a last run that timed out on the budget is reported as a spent budget;
 - tagged errors and timed-out batches are skipped;
 - end to end through real vitest: a leaking file among three clean ones. The
   leak is tagged by the reporter, and the run's untagged `vitest exited 1`
@@ -97,8 +99,9 @@ timeout raises it, without any main-process load.
 Mutations checked, each failing at least one pin:
 - following every error a smaller run raises (`.filter(() => true)`);
 - removing the timeout cap;
-- dropping "timed out at the deadline → budget spent";
-- resetting the deadline on every run.
+- dropping "timed out on the budget → budget spent";
+- a wall-clock deadline instead of spent time;
+- not adding each run's time to the spent budget.
 
 ## Known limits
 
@@ -123,6 +126,6 @@ repro it took 134 s on top of one 65 s run.
 
 - Every untagged run error of a parallel-pass batch carries one of the three
   labels.
-- No bisection run starts after the deadline, and each run's timeout is capped
+- No bisection run starts once the budget is spent, and each run's timeout is capped
   at the time left.
 - The gate's integrity rule is unchanged: every unattributed error is refused.

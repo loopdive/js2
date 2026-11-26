@@ -73,7 +73,7 @@
 //   KNOWN_FAILURES_FORK_HEAP_MB  per-fork heap for the parallel pass (default 2048)
 //   KNOWN_FAILURES_RERUN_HEAP_MB per-fork heap for serial re-runs (default 4096)
 //   KNOWN_FAILURES_BATCH         files per vitest invocation (default 150)
-//   KNOWN_FAILURES_BISECT_BUDGET_S seconds runFiles may spend naming the file behind unattributed errors (default 900)
+//   KNOWN_FAILURES_BISECT_BUDGET_S seconds of bisection runs per runFiles call (default 900)
 //   KNOWN_FAILURES_CONFIRM_MAX   status changes re-run to confirm, per direction (default 25)
 //   KNOWN_FAILURES_ONLY          regex narrowing the population (local debugging only)
 //
@@ -439,11 +439,15 @@ const errorKey = (error) => error.split("\n", 1)[0];
  * (#7518) Names the file behind each unattributed run error of a parallel-pass batch, by re-running the batch in
  * halves. vitest attaches no file to some run errors: a worker RPC timeout (`Timeout calling "onTaskUpdate"`)
  * rejects inside the runner and reaches the main process bare. A file that blocks its worker past the RPC timeout
- * raises it again when it runs on its own. Errors are matched per first line, so two errors in one batch are traced
- * to their own files; errors that share a first line share their label, which says so. Skipped: errors the reporter already tagged with a file, and batches that hit their timeout,
- * whose halves would each wait out the timeout again. Every bisection run counts against one deadline per runFiles
- * call, started by the first one. Returns a label per error; the errors stay refused either way. `bisection` carries
- * the budget, the deadline once started and the log label. `runOnce` is vitestOnce; tests pass a stand-in.
+ * raises it again when it runs on its own.
+ *
+ * Errors are matched per first line, so two different errors in one batch are traced to their own files. Errors
+ * that share a first line share their label, which says so. Skipped: errors the reporter already tagged with a file,
+ * and batches that hit their timeout, whose halves would each wait out the timeout again.
+ *
+ * Every bisection run counts against one budget per runFiles call (`bisection.budgetMs`, `bisection.spentMs`), and
+ * each run's timeout is capped at what is left. Returns a label per error; the errors stay refused either way.
+ * `runOnce` is vitestOnce; tests pass a stand-in.
  */
 export async function bisectUntaggedErrors(
   root,
@@ -488,12 +492,12 @@ async function locateErrorFiles(search, files, keys) {
   const half = Math.ceil(files.length / 2);
   let exhausted = false;
   for (const part of [files.slice(0, half), files.slice(half)]) {
-    // The budget starts at the first bisection run, not at the start of runFiles: a long batch must not spend it.
-    bisection.deadline ??= Date.now() + bisection.budgetMs;
-    const remaining = bisection.deadline - Date.now();
+    // The budget counts only time spent bisecting: the batches' own vitest runs between bisections do not use it.
+    const remaining = bisection.budgetMs - bisection.spentMs;
     if (remaining <= 0) return true;
     const t0 = Date.now();
     const r = await runOnce(root, toRel, part, { ...options, timeoutMs: Math.min(options.timeoutMs, remaining) });
+    bisection.spentMs += Date.now() - t0;
     const seen = new Set(
       unaccountedRunErrors(r, part)
         .map(errorKey)
@@ -503,7 +507,7 @@ async function locateErrorFiles(search, files, keys) {
       `known-failures-gate: ${bisection.label} bisection: ${part.length} file(s), ${seen.size} of ${keys.size} ` +
         `error(s) reproduced${r.timedOut ? " (TIMED OUT)" : ""}, ${Math.round((Date.now() - t0) / 1000)}s`,
     );
-    if (r.timedOut) exhausted ||= Date.now() >= bisection.deadline;
+    if (r.timedOut) exhausted ||= bisection.spentMs >= bisection.budgetMs;
     else if (seen.size) exhausted ||= await locateErrorFiles(search, part, seen);
   }
   return exhausted;
@@ -522,9 +526,9 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
     heapMb: heap,
     timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
   };
-  // (#7518) One bisection budget per call, started by the first bisection run, so naming files can never cost a
+  // (#7518) One bisection budget per call, counting only time spent bisecting, so naming files can never cost a
   // shard its partial.
-  const bisection = { budgetMs: envInt("KNOWN_FAILURES_BISECT_BUDGET_S", 900) * 1000, deadline: undefined, label };
+  const bisection = { budgetMs: envInt("KNOWN_FAILURES_BISECT_BUDGET_S", 900) * 1000, spentMs: 0, label };
   let pending = serial ? [] : [...files];
   let pass = 0;
   while (pending.length) {
