@@ -266,7 +266,10 @@ with a logging copy of the head (`.tmp/instr`, not committed) over the gate-4 co
   the value first (`moduleBindingWrite`, `moduleBindingTakes`). Probes that would produce it (a `const` written in a
   function; `let x: number` written with a string) are not claimed: `g` is absent from `irCompiledFuncs`.
 - **Prepared path.** `resolveBinding` ignores the value except to refuse an immutable binding itself, so it can never
-  answer "readable but not writable".
+  answer "readable but not writable". Since #7434 (merged into this branch from main `1a726b3e64e`) a `const` does not
+  get that far: every identifier write first asks `refuseImmutableWrite` (`const-binding-writes.ts`), which refuses a
+  write to a `const` or a named function expression's own name by name (`const-write: <what> "n"`). The resolver's
+  own immutable refusal is left for an imported binding.
 
 So this is neither case the lead's note anticipated: the ordinary pipeline does call the classifier, but no caller
 receives `readonly`. The kind is dropped: the classifier answers `scope`, `module-binding` or `undeclared`, and the
@@ -284,7 +287,9 @@ expects it (PRV-7462 note b).
   as `=` does: `f++` and `f -= 1` give node's `NaN`, and `f += ''` ends at the run-time abort where `f + ''` already
   does (a function's ToPrimitive). The H2 test states these three instead of the two refusals.
 - **The `const` pin.** The checker's `Cannot assign to 'n' because it is a constant.` is an error diagnostic, so the
-  row compiles with it and asserts both, not through `abortBodies` (which expects no diagnostics).
+  row compiles with it and asserts both, not through `abortBodies` (which expects no diagnostics). After the merge of
+  #7434 the abort is `const-write: increment/decrement of "n"` (the name refusal) instead of the resolver's
+  `write to immutable module binding n`, so the pin no longer proves that the update passes a write value.
 
 ### Code-quality acceptance criterion
 

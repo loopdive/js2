@@ -68,11 +68,11 @@ describe("#7462 — the shapes this slice leaves out, by name", () => {
     expect(await abortBodies(source)).toEqual([row]);
   });
 
-  it("aborts an update of a const beside the checker's error (the update passes a write value)", async () => {
+  it("aborts an update of a script const by name (#7434), beside the checker's error", async () => {
     const result = await compile("const n = 0; var f = function(){ n++; }; f();", preparedOptions());
     expect(result.errors.map((error) => error.message)).toEqual(["Cannot assign to 'n' because it is a constant."]);
     expect(requiredPreparedAbortBodies(result)!.map((row) => `${row.name}: ${row.detail}`)).toEqual([
-      "<module-init>__closure_0: write to immutable module binding n",
+      '<module-init>__closure_0: const-write: increment/decrement of "n" (<module-init>__closure_0)',
     ]);
   });
 

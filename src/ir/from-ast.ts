@@ -63,6 +63,7 @@ import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
+import { refuseImmutableWrite } from "./const-binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -13206,31 +13207,26 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
   return functionObjects.storedCarrierValue(value, rhs, functionObjectLoweringHost(cx));
 }
 
-/**
- * A write to a binding the mutation pre-pass gave no slot. (#7354 T) A named function expression's own name is such a
- * binding by design: immutable (§9.1.1.1.5), so a sloppy write is ignored and a strict one throws; it refuses by name.
- * Anything else is the pre-pass's broken promise.
- */
+/** A write to a binding the mutation pre-pass gave no slot: the pre-pass's broken promise. */
 function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): never {
-  const declaration = cx.checker?.getSymbolAtLocation(id)?.valueDeclaration;
-  if (declaration && ts.isFunctionExpression(declaration))
-    demoteToLegacy("property-write-unsupported", `ir/from-ast: write to the function expression name "${id.text}"`);
   // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
   throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
 }
 
 /**
- * (#7462) The binding a write to `id` targets. A module binding only the resolver answers (a function writing a script
- * `var`) is its global with `resolved` set, and is never cached in scope: every later access keeps the resolver's TDZ
- * and owner checks.
+ * (#7462) The binding a write to `id` targets, after (#7434) an immutable binding is refused by name, whatever its
+ * storage. A module binding only the resolver answers (a function writing a script `var`) is its global with
+ * `resolved` set, and is never cached in scope: every later access keeps the resolver's TDZ and owner checks.
  */
 function identifierWriteTarget(
   id: ts.Identifier,
   writeValue: ts.Expression,
   label: "property-write-unsupported" | "compound-assign-unsupported",
+  what: string,
   undeclared: string,
   cx: LowerCtx,
 ): { readonly binding: ScopeBinding; readonly resolved?: ModuleBindingGlobal } {
+  refuseImmutableWrite(id, what, cx);
   const answer = classifyIdentifierWrite(id, writeValue, cx);
   if (answer.kind === "scope") return { binding: answer.binding };
   if (answer.kind === "module-binding") {
@@ -13246,6 +13242,7 @@ function identifierWriteTarget(
  */
 function readModifyWriteStorage(
   id: ts.Identifier,
+  what: string,
   undeclared: string,
   nonSlot: string,
   cx: LowerCtx,
@@ -13254,7 +13251,8 @@ function readModifyWriteStorage(
   capturedCellType?: Extract<IrType, { kind: "boxed" }>;
   resolved?: ModuleBindingGlobal;
 } {
-  const target = identifierWriteTarget(id, id.parent as ts.Expression, "compound-assign-unsupported", undeclared, cx);
+  const writeValue = id.parent as ts.Expression;
+  const target = identifierWriteTarget(id, writeValue, "compound-assign-unsupported", what, undeclared, cx);
   const storage = target.binding;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
   if (!(storage.kind === "slot" || storage.kind === "moduleGlobal" || (storage.kind === "local" && capturedCellType)))
@@ -13286,6 +13284,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     id,
     rhs,
     "property-write-unsupported",
+    "assignment to",
     "assignment to undeclared identifier",
     cx,
   );
@@ -13387,6 +13386,7 @@ function lowerCompoundAssignment(
   }
   const { storage, capturedCellType, resolved } = readModifyWriteStorage(
     id,
+    "compound assignment to",
     "compound assign to undeclared identifier",
     "compound assign to non-slot binding",
     cx,
@@ -13532,6 +13532,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   }
   const { storage, capturedCellType } = readModifyWriteStorage(
     id,
+    "increment/decrement of",
     "increment/decrement of undeclared",
     "increment/decrement of non-slot",
     cx,

@@ -90,6 +90,7 @@ import { ensureDateStruct } from "./expressions/builtins.js";
 import { getOrRegisterDvWindowType } from "./dataview-native.js";
 import { addFuncType, getOrRegisterTaDynViewType, getOrRegisterTaViewType, TA_CTOR_KINDS } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js"; // (#5406) boundary-carrier arm
 import { emitObjectProtoToStringSymbolTagConsult } from "./object-proto-tostring-carriers.js"; // (#6674)
 
@@ -354,14 +355,11 @@ export function emitObjectProtoToStringClassifier(
   );
   emittedAnyArm = true;
 
-  const undefIdx = ctx.funcMap.get("__typeof_undefined");
-  if (undefIdx !== undefined) {
-    fctx.body.push(
-      { op: "local.get", index: receiverIndex },
-      { op: "call", funcIdx: undefIdx },
-      { op: "if", blockType: { kind: "empty" }, then: returnTag("Undefined") },
-    );
-  }
+  fctx.body.push(
+    { op: "local.get", index: receiverIndex },
+    { op: "call", funcIdx: requireHelper(ctx, "__typeof_undefined") },
+    { op: "if", blockType: { kind: "empty" }, then: returnTag("Undefined") },
+  );
 
   // Recover one anyref once for all WasmGC-native exotic classifiers below.
   const nativeAnyLocal = allocLocal(fctx, `__opts_native_${fctx.locals.length}`, { kind: "anyref" });

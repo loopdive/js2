@@ -3,10 +3,11 @@
 /**
  * (#7462) Which provider resolves an identifier write: the write twin of `identifier-read.ts`. A binding the unit's
  * scope holds wins; otherwise a module binding the resolver answers for this write (a function writing a script
- * `var`). Pure: it emits nothing, but the resolver may refuse the write itself (the Prepared path's immutable module
- * binding), and that refusal propagates unchanged. A module binding the resolver will not take this value into is
- * never asked here: the ordinary selector claims a module-binding `=` only through `moduleBindingWrite`, which asks
- * the same resolver with the value, and refuses a module-binding compound or update outside module-init.
+ * `var`). Pure: it emits nothing, but the resolver may refuse the write itself (the Prepared path's imported binding;
+ * a `const` its caller has refused by name first, #7434), and that refusal propagates unchanged. A module binding the
+ * resolver will not take this value into is never asked here: the ordinary selector claims a module-binding `=` only
+ * through `moduleBindingWrite`, which asks the same resolver with the value, and refuses a module-binding compound or
+ * update outside module-init.
  */
 import type ts from "typescript";
 import type { IrFromAstResolver } from "./from-ast.js";
