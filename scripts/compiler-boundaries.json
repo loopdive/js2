@@ -2033,6 +2033,22 @@
       "nextBoundary": "Frontend switch case-test admission shared by the selector and from-ast; moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/direct-call-arity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "The arity plan of a direct call whose argument count differs from its callee's formals (#7106 S1i, #7354 L0b); the TypeScript half moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/switch-dispatch.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "The discriminant a lowered switch dispatches on: the typed comparison, or the clause index by string or carrier dispatch (#7354 L0b); the TypeScript half moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/identifier-read.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

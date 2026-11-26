@@ -481,16 +481,16 @@ export function additionBuilder(builders: ChainBuilders, conversions: ReturnType
       kinds.learn(result, ["string"]);
       return [...prelude, ...concat(instr, operands, result)];
     }
-    // The front end makes a `+` dynamic only over an operand of unknown kind (`emitDynamicAdd` in from-ast), which
-    // may hold a string (an object's primitive may too), so at least one operand is tested here.
-    const { instrs, cond } = disjunction(
-      operands.flatMap((value) =>
-        kinds
-          .kindsOf(value)
-          .filter((kind) => ADD_ROLE[kind] === "concat")
-          .map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
-      ),
+    // Only a side that may hold a string is tested. (#7354 L0b) Since the Prepared lane boxes a known primitive (a
+    // `null`, a Boolean) into the `+`, neither side may: then the addition is the sum.
+    const tests = operands.flatMap((value) =>
+      kinds
+        .kindsOf(value)
+        .filter((kind) => ADD_ROLE[kind] === "concat")
+        .map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
     );
+    if (tests.length === 0) return [...prelude, ...sum(instr, operands, result)];
+    const { instrs, cond } = disjunction(tests);
     return [
       ...prelude,
       ...instrs,
