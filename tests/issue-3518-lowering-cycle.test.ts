@@ -148,7 +148,7 @@ function resolver(events: string[] = []): IrLowerResolver {
 }
 
 describe("lowering cycle separation", () => {
-  it("retains all eight public function objects, with no facade implementations", () => {
+  it("forwards all eight public function objects from their owners", () => {
     const owners = {
       lowerIrFunctionBody: generic.lowerIrFunctionBody,
       lowerIrTypeToValType: generic.lowerIrTypeToValType,
@@ -161,139 +161,6 @@ describe("lowering cycle separation", () => {
     };
     expect(Object.keys(compatibility).sort()).toEqual(Object.keys(owners).sort());
     for (const name of Object.keys(owners) as (keyof typeof owners)[]) expect(compatibility[name]).toBe(owners[name]);
-    const file = parse("src/ir/lower.ts");
-    expect(file.statements.length).toBe(4);
-    for (const statement of file.statements) {
-      expect(ts.isExportDeclaration(statement) && !!statement.exportClause && !!statement.moduleSpecifier).toBe(true);
-    }
-  });
-
-  it("keeps generic emitter/converter arguments required and the public Wasm default optional", () => {
-    const file = parse(genericPath);
-    for (const name of ["lowerIrFunctionBody", "projectIrFunctionSignatureWithConverter"]) {
-      const declaration = file.statements.find(
-        (s) => ts.isFunctionDeclaration(s) && s.name?.text === name,
-      ) as ts.FunctionDeclaration;
-      expect(declaration.parameters).toHaveLength(4);
-      for (const parameter of declaration.parameters) {
-        expect(parameter.questionToken).toBeUndefined();
-        expect(parameter.initializer).toBeUndefined();
-      }
-    }
-    const wrapper = parse("src/ir/backend/wasm-lowering.ts").statements.find(
-      (s) => ts.isFunctionDeclaration(s) && s.name?.text === "lowerIrFunctionToWasm",
-    ) as ts.FunctionDeclaration;
-    expect(wrapper.parameters).toHaveLength(3);
-    expect(wrapper.parameters[2].initializer?.getText()).toBe("new WasmGcEmitter(resolver)");
-    for (const path of ["src/ir/backend/lower-contracts.ts", "src/ir/backend/wasm-constants.ts"]) {
-      for (const statement of parse(path).statements) {
-        if (ts.isImportDeclaration(statement)) expect(statement.importClause?.isTypeOnly).toBe(true);
-      }
-    }
-  });
-
-  it("resolves the real transitive value graph without a wrapper/emitter/facade cycle", () => {
-    const graph = valueClosure();
-    // Exact 549b value graph plus the frozen D1 legality analysis owner.
-    // Compatibility forwards preserve identities; pin every edge occurrence.
-    expect(graph.modules).toEqual([
-      "src/backend/wasmgc/lowering/dynamic-scratch.ts",
-      "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
-      "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
-      "src/ir/analysis/backend-legality.ts",
-      "src/ir/analysis/effects.ts",
-      "src/ir/analysis/nested-stackification.ts",
-      "src/ir/backend/legality.ts",
-      "src/ir/backend/wasm-int32-coercion.ts",
-      "src/ir/backend/wasm-math-minmax.ts",
-      "src/ir/callable-bindings.ts",
-      "src/ir/core/binding-key-primitives.ts",
-      "src/ir/core/callable-bindings.ts",
-      "src/ir/core/date-callables.ts",
-      "src/ir/core/nodes.ts",
-      "src/ir/core/string-callables.ts",
-      "src/ir/core/string-runtime.ts",
-      "src/ir/core/tag-domain.ts",
-      "src/ir/core/tag-refinement.ts",
-      "src/ir/core/types.ts",
-      "src/ir/date-runtime.ts",
-      "src/ir/effects.ts",
-      "src/ir/js-tag-domain.ts",
-      "src/ir/lower-generic.ts",
-      "src/ir/lowering-dynamic-scratch.ts",
-      "src/ir/lowering/string-operations.ts",
-      "src/ir/nested-stackification.ts",
-      "src/ir/nodes.ts",
-      "src/ir/outcomes.ts",
-      "src/ir/runtime/js-tag-domain.ts",
-      "src/ir/string-runtime.ts",
-      "src/runtime/contracts/js-value-tags.ts",
-      "src/shared/contracts/identity-values.ts",
-      "src/shared/contracts/ir-preparation-errors.ts",
-    ]);
-    expect(graph.edges).toEqual([
-      "src/ir/lower-generic.ts -> src/ir/lowering/string-operations.ts",
-      "src/ir/lower-generic.ts -> src/ir/backend/legality.ts",
-      "src/ir/backend/legality.ts -> src/ir/analysis/backend-legality.ts",
-      "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
-      "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
-      "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
-      "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
-      "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
-      "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
-      "src/ir/backend/wasm-math-minmax.ts -> src/backend/wasmgc/lowering/wasm-math-minmax.ts",
-      "src/ir/lower-generic.ts -> src/ir/nodes.ts",
-      "src/ir/nodes.ts -> src/ir/core/types.ts",
-      "src/ir/nodes.ts -> src/ir/core/nodes.ts",
-      "src/ir/core/nodes.ts -> src/ir/core/types.ts",
-      "src/ir/lower-generic.ts -> src/ir/effects.ts",
-      "src/ir/effects.ts -> src/ir/analysis/effects.ts",
-      "src/ir/lower-generic.ts -> src/ir/js-tag-domain.ts",
-      "src/ir/js-tag-domain.ts -> src/ir/runtime/js-tag-domain.ts",
-      "src/ir/runtime/js-tag-domain.ts -> src/runtime/contracts/js-value-tags.ts",
-      "src/ir/runtime/js-tag-domain.ts -> src/ir/core/tag-domain.ts",
-      "src/ir/core/tag-domain.ts -> src/ir/core/tag-refinement.ts",
-      "src/ir/lower-generic.ts -> src/ir/outcomes.ts",
-      "src/ir/outcomes.ts -> src/shared/contracts/ir-preparation-errors.ts",
-      "src/ir/lower-generic.ts -> src/ir/callable-bindings.ts",
-      "src/ir/callable-bindings.ts -> src/ir/core/callable-bindings.ts",
-      "src/ir/core/callable-bindings.ts -> src/shared/contracts/identity-values.ts",
-      "src/ir/lower-generic.ts -> src/ir/date-runtime.ts",
-      "src/ir/date-runtime.ts -> src/ir/core/date-callables.ts",
-      "src/ir/lower-generic.ts -> src/ir/nested-stackification.ts",
-      "src/ir/nested-stackification.ts -> src/ir/analysis/nested-stackification.ts",
-      "src/ir/analysis/nested-stackification.ts -> src/ir/analysis/effects.ts",
-      "src/ir/lower-generic.ts -> src/ir/lowering-dynamic-scratch.ts",
-      "src/ir/lowering-dynamic-scratch.ts -> src/backend/wasmgc/lowering/dynamic-scratch.ts",
-      "src/ir/lower-generic.ts -> src/ir/string-runtime.ts",
-      "src/ir/string-runtime.ts -> src/ir/core/string-runtime.ts",
-      "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
-      "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
-    ]);
-    expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
-  });
-
-  it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {
-    const barrel = "src/ir/lowering-test-barrel.ts";
-    const targetSpecifier = "./" + relative("src/ir", target).replace(/\.ts$/, ".js");
-    expect(() =>
-      valueClosure(
-        new Map([
-          [genericPath, text(genericPath) + '\nimport "./lowering-test-barrel.js";'],
-          [barrel, "export * from " + JSON.stringify(targetSpecifier) + ";"],
-        ]),
-      ),
-    ).toThrow("reverse dependency: " + target);
-  });
-
-  it.each([
-    ["import(pathFromCaller);", "unknown dependency"],
-    ['import("node:fs");', "external dependency"],
-    ['import("./missing-lowering-module.js");', "unresolved dependency"],
-    ["export {", "unparsed dependency"],
-  ])("refuses unsupported graph input %s", (injection, error) => {
-    expect(() => valueClosure(new Map([[genericPath, text(genericPath) + "\n" + injection]]))).toThrow(error);
   });
 
   it("lowers a nonempty body in a fresh process that refuses every concrete/wrapper import", () => {

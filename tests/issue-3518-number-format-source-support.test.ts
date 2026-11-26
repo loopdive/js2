@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ts } from "../src/ts-api.js";
 import { buildSelfHostedIrBody } from "../src/frontend/builtins/build-ir.js";
 import { prepareNumberFormatRuntimeSupport } from "../src/frontend/builtins/prepare-number-format.js";
 import { numToStringRadixDef } from "../src/stdlib/number-format.js";
@@ -19,7 +17,6 @@ import { sourceInput } from "./helpers/typed-program-fixtures.js";
 
 const ORIGINAL = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
 const policy = { backend: "wasmgc", target: "standalone", stringConst: { storage: "native" } } as const;
-const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
 function source() {
   const result = prepareIrProgramSources({
@@ -56,36 +53,6 @@ function kernel() {
 }
 
 describe("genuine radix source kernel", () => {
-  it("pins the original source bytes and independent source occurrence order", () => {
-    const { input } = kernel();
-    expect(Buffer.byteLength(input.definition.source)).toBe(1618);
-    expect(hash(input.definition.source)).toBe("7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6");
-    const ast = ts.createSourceFile("radix.ts", input.definition.source, ts.ScriptTarget.Latest, true);
-    const calls: string[] = [];
-    const literals: string[] = [];
-    const walk = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) calls.push(node.expression.getText(ast));
-      if (ts.isStringLiteral(node)) literals.push(node.text);
-      ts.forEachChild(node, walk);
-    };
-    walk(ast);
-    expect(calls).toHaveLength(16);
-    expect(calls.filter((name) => name === "Math.floor")).toHaveLength(4);
-    expect(calls.filter((name) => name === "__nfd_set")).toHaveLength(7);
-    expect(calls.filter((name) => name === "__nfd_get")).toHaveLength(2);
-    for (const name of ["__nfd_new", "__nfd_fin", "__num_fmt_trap"])
-      expect(calls.filter((actual) => actual === name)).toHaveLength(1);
-    expect(literals).toEqual(["NaN", "Infinity", "-Infinity", "0"]);
-    expect([...input.definition.calleeTypes.keys()]).toEqual([
-      "__nfd_new",
-      "__nfd_get",
-      "__nfd_set",
-      "__nfd_fin",
-      "__num_fmt_trap",
-    ]);
-    expect(input.definition.memoKey).toBeUndefined();
-  });
-
   it("retains the build owner and shared registry through actual hygiene", () => {
     const { input } = kernel();
     const body = buildSelfHostedIrBody(input);

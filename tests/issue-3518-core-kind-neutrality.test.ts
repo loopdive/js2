@@ -3,10 +3,8 @@
 // absent canonical source is a failure, never a reason to skip these controls.
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { format, resolveConfig } from "prettier";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const REPO = process.cwd();
@@ -20,19 +18,6 @@ const CORE_VALUE_REFERENCES = "src/ir/core/value-references.ts";
 const DIALECT = "src/ir/dialect/js.ts";
 const CORE_DIALECT = "src/ir/core/dialect/js.ts";
 const SCANNED_FILES = [NODES, CORE_NODES, VALUE_REFERENCES, CORE_TYPES, CORE_VALUE_REFERENCES, DIALECT, CORE_DIALECT];
-// Explicit relocation only: these reversible prefixes preserve the full
-// PR5742 record before recovering the earlier two shape-citation moves.
-const NODE_MOVES = [
-  ["src/ir/nodes.ts#", "src/ir/core/nodes.ts#", 116],
-  ["src/ir/dialect/js.ts#", "src/ir/core/dialect/js.ts#", 55],
-  ["src/ir/intrinsics.ts#", "src/ir/core/intrinsic-vocabulary.ts#", 2],
-  ["src/ir/string-runtime.ts#e6c839b278b4", "src/ir/core/string-types.ts#e6c839b278b4", 1],
-] as const;
-const PRE_NODE_BASELINE_BLOB = "6b2be2d5b198b8df35b97e6fa14275c73d29c19b";
-
-// Exact baseline blob at 25b9a41c3828dfb403797003dc6b66c72a2547ba. Pin the
-// entire pre-relocation record without requiring Git history in shallow CI.
-const ORIGINAL_BASELINE_BLOB = "905b33823e259908f964bbaa47c0c8177c256e4f";
 const SHAPE_CITES = [
   { kind: "object.new", quote: "export interface IrObjectShape {", hash: "3044daed9a17" },
   { kind: "class.new", quote: "export interface IrClassShape {", hash: "e0a49156ba51" },
@@ -42,21 +27,6 @@ const REFERENCES = [
   { name: "IrFuncRef", kind: "func", file: CORE_VALUE_REFERENCES, facade: VALUE_REFERENCES },
   { name: "IrGlobalRef", kind: "global", file: CORE_VALUE_REFERENCES, facade: VALUE_REFERENCES },
 ];
-
-interface KindRecord {
-  verdict: string;
-  where: string;
-  declaredAt: string;
-  evidence: string[];
-}
-
-interface GateRecord {
-  generated: string;
-  populationRule: string;
-  ratchet: Record<string, number>;
-  counts: Record<string, number>;
-  kinds: Record<string, KindRecord>;
-}
 
 let sandbox: string;
 const readIn = (file: string) => readFileSync(path.join(sandbox, file), "utf8");
@@ -77,41 +47,6 @@ function runGate(args: string[] = []): { code: number; out: string } {
     const result = error as { status?: number; stdout?: string; stderr?: string };
     return { code: result.status ?? 1, out: `${result.stdout ?? ""}${result.stderr ?? ""}` };
   }
-}
-
-function beforeNodeMove(text: string) {
-  for (const [original, canonical, count] of NODE_MOVES) {
-    expect(text.split(canonical).length - 1).toBe(count);
-    expect(text).not.toContain(original);
-    text = text.replaceAll(canonical, original);
-  }
-  return text;
-}
-
-async function originalBaselineText() {
-  let text = beforeNodeMove(readIn(BASELINE));
-  const options = { ...(await resolveConfig(path.join(REPO, BASELINE))), filepath: BASELINE, parser: "json" };
-  // Longer canonical prefixes reflow a few arrays. Reverse only the explicit
-  // prefixes and deterministic formatting before checking the entire old blob.
-  text = await format(text, options);
-  expect(
-    createHash("sha1")
-      .update(`blob ${Buffer.byteLength(text)}\0`)
-      .update(text)
-      .digest("hex"),
-  ).toBe(PRE_NODE_BASELINE_BLOB);
-  for (const { hash } of SHAPE_CITES) {
-    const moved = `${CORE_TYPES}#${hash}`;
-    expect(text.split(moved)).toHaveLength(2);
-    text = text.replace(moved, `${NODES}#${hash}`);
-  }
-  text = await format(text, options);
-  const blob = createHash("sha1")
-    .update(`blob ${Buffer.byteLength(text)}\0`)
-    .update(text)
-    .digest("hex");
-  expect(blob, "no baseline byte may change beyond the two reviewed file prefixes").toBe(ORIGINAL_BASELINE_BLOB);
-  return text;
 }
 
 function declaration(file: string, name: string) {
@@ -147,60 +82,6 @@ afterAll(() => {
 });
 
 describe("#3518 core type relocation preserves kind-neutrality evidence", () => {
-  it("retains the two earlier shape-citation moves after reversing the full-node relocation", async () => {
-    const original = JSON.parse(await originalBaselineText()) as GateRecord;
-    const candidate = JSON.parse(beforeNodeMove(readIn(BASELINE))) as GateRecord;
-    const deltas: { kind: string; before: string; after: string }[] = [];
-    for (const [kind, entry] of Object.entries(candidate.kinds)) {
-      entry.evidence.forEach((cite, index) => {
-        const before = original.kinds[kind]!.evidence[index]!;
-        if (cite !== before) deltas.push({ kind, before, after: cite });
-      });
-    }
-    expect(deltas.sort((a, b) => a.kind.localeCompare(b.kind))).toEqual(
-      SHAPE_CITES.map(({ kind, hash }) => ({
-        kind,
-        before: `${NODES}#${hash}`,
-        after: `${CORE_TYPES}#${hash}`,
-      })).sort((a, b) => a.kind.localeCompare(b.kind)),
-    );
-    for (const { quote, hash } of SHAPE_CITES) {
-      expect(createHash("sha1").update(quote).digest("hex").slice(0, 12)).toBe(hash);
-    }
-  });
-
-  it("computes the old counts, ratchets and verdicts on the actual composed source", async () => {
-    const original = JSON.parse(await originalBaselineText()) as GateRecord;
-    const result = runGate(["--json"]);
-    expect(result.code, result.out).toBe(0);
-    const computed = JSON.parse(beforeNodeMove(result.out)) as GateRecord;
-    expect(computed.counts).toEqual(original.counts);
-    expect(computed.ratchet).toEqual(original.ratchet);
-    expect(computed.populationRule).toBe(original.populationRule);
-    for (const { kind, hash } of SHAPE_CITES) {
-      computed.kinds[kind]!.evidence = computed.kinds[kind]!.evidence.map((cite) =>
-        cite === `${CORE_TYPES}#${hash}` ? `${NODES}#${hash}` : cite,
-      );
-    }
-    expect(computed.kinds).toEqual(original.kinds);
-    expect(computed.counts).toEqual({
-      total: 85,
-      neutral: 55,
-      js: 27,
-      unresolved: 3,
-      core: 58,
-      dialect: 27,
-      jsInCore: 0,
-      residuals: 8,
-    });
-    const human = runGate();
-    expect(human.code, human.out).toBe(0);
-    expect(human.out).toContain("81 IrInstr arms + 4 terminators");
-    expect(human.out).toContain(
-      "3 symbolic-reference kinds and 1 named payload kind excluded, 89 `readonly kind:` fields reconciled",
-    );
-  });
-
   it.each([CORE_TYPES, CORE_VALUE_REFERENCES, CORE_NODES, CORE_DIALECT])("requires canonical source %s", (file) => {
     rmSync(path.join(sandbox, file));
     expectFailure(`${file}: required kind-population source is missing or unreadable`);

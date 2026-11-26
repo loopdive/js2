@@ -30,9 +30,9 @@ import {
   buildJoinBoxedElementToString,
   stringJoinElement,
   CLOSURE_ARRAY_METHODS,
-  isAnyStringSubtype,
   nativeJoinProbeExpr,
 } from "./array-join-element.js"; // (#4560, #7146)
+import { isAnyStringSubtype } from "./native-strings-shared.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addStringImports,

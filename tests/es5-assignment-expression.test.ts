@@ -66,12 +66,14 @@ for (const [name, body, code] of [
   ["any", "let x: any = 0; return (x = 7) + 1;", "unboxed-number-local-unprovable"],
 ] as const) {
   it(`keeps existing prepared ${name} storage boundary explicit`, async () => {
-    const result = await compile(`export function run(): number { ${body} }`, {
+    // (#7354 U) Without abort bodies, under which the refusal would be `run`'s abort body.
+    const options = {
       target: "standalone",
       wholeProgram: { kind: "prepared-program-required", version: 1 },
       sourceMap: false,
       optimize: false,
-    });
+    } as const;
+    const result = await compile(`export function run(): number { ${body} }`, options, undefined, "refuse");
     expect(result.success).toBe(false);
     expect(result.errors.some((error) => error.code === code)).toBe(true);
   });

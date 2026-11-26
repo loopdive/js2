@@ -2,6 +2,7 @@
 
 import { IR_CLASS_SHAPE_CELL } from "../core/types.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { preparedValidationEnabled } from "../../shared/contracts/prepared-validation.js";
 
 class FrozenMap<K, V> implements ReadonlyMap<K, V> {
   readonly #map: Map<K, V>;
@@ -117,6 +118,8 @@ export function preparedIrDataMismatch(left: unknown, right: unknown): string | 
     if (expected === null || actual === null || typeof expected !== "object" || typeof actual !== "object") {
       return Object.is(expected, actual) ? undefined : path;
     }
+    // Deeply frozen prepared data holds only data, so it equals itself without a walk.
+    if (expected === actual && deeplyFrozen.has(expected)) return undefined;
     const prior = visited.get(expected);
     if (prior?.has(actual)) return undefined;
     if (prior) prior.add(actual);
@@ -180,42 +183,38 @@ function isRecursiveIrClassShape(value: object): boolean {
   );
 }
 
-function immutableCopy(
-  value: unknown,
-  ancestors = new Set<object>(),
-  activeCopies = new Map<object, unknown>(),
-): unknown {
+/**
+ * Every value `immutableCopy` returned and every object `freezePreparedIrRuntimeValue` froze. Each is deeply frozen
+ * prepared data and freezing cannot be undone, so membership is permanent: copying such a value again would rebuild an
+ * equal tree (it is returned as is), and a walk asking whether it can still change has its answer.
+ */
+const deeplyFrozen = new WeakSet<object>();
+
+export function isDeeplyFrozenPreparedIrValue(value: object): boolean {
+  return deeplyFrozen.has(value);
+}
+
+function immutableCopy(value: unknown, ancestors: Set<object>, activeCopies: Map<object, unknown>): unknown {
   if (typeof value === "function") invalidPreparedData("prepared data cannot contain executable functions");
-  if (value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== "object" || deeplyFrozen.has(value)) return value;
   if (ancestors.has(value)) {
     const recursiveShapeCopy = activeCopies.get(value);
     if (recursiveShapeCopy !== undefined && isRecursiveIrClassShape(value)) return recursiveShapeCopy;
     invalidPreparedData("prepared data must be acyclic outside exact IR class shapes");
   }
-  const nextAncestors = new Set(ancestors).add(value);
-  if (FrozenMap.branded(value)) {
-    return preparedIrReadonlyMap(
-      [...value].map(
-        ([key, item]) =>
-          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
-      ),
-    );
-  }
-  if (FrozenSet.branded(value)) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  }
-  if (Array.isArray(value)) return Object.freeze(value.map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  if (value instanceof Map) {
-    return preparedIrReadonlyMap(
-      [...value].map(
-        ([key, item]) =>
-          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
-      ),
-    );
-  }
-  if (value instanceof Set) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  }
+  ancestors.add(value);
+  const copy = copyChildren(value, ancestors, activeCopies);
+  ancestors.delete(value);
+  deeplyFrozen.add(copy);
+  return copy;
+}
+
+function copyChildren(value: object, ancestors: Set<object>, activeCopies: Map<object, unknown>): object {
+  const copyItem = (item: unknown) => immutableCopy(item, ancestors, activeCopies);
+  if (FrozenMap.branded(value) || value instanceof Map)
+    return preparedIrReadonlyMap([...value].map(([key, item]) => [copyItem(key), copyItem(item)] as const));
+  if (FrozenSet.branded(value) || value instanceof Set) return new FrozenSet([...value].map(copyItem));
+  if (Array.isArray(value)) return Object.freeze(value.map(copyItem));
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
     invalidPreparedData(`prepared data contains unsupported mutable ${prototype?.constructor?.name ?? "object"}`);
@@ -228,7 +227,7 @@ function immutableCopy(
       invalidPreparedData(`prepared data property ${String(key)} must be a non-executable data property`);
     }
     Object.defineProperty(copy, key, {
-      value: immutableCopy(descriptor.value, nextAncestors, activeCopies),
+      value: copyItem(descriptor.value),
       enumerable: descriptor.enumerable,
       configurable: false,
       writable: false,
@@ -242,7 +241,7 @@ function immutableCopy(
 }
 
 export function freezePreparedIrValue(value: unknown): unknown {
-  return immutableCopy(value);
+  return immutableCopy(value, new Set(), new Map());
 }
 
 // Internal collection slots cannot change on an existing object. Only that
@@ -252,11 +251,19 @@ const nativeCollectionBrand = Object.freeze({
   get: WeakMap.prototype.get,
   set: WeakMap.prototype.set,
   apply: Reflect.apply,
+  isArray: Array.isArray,
   probes: Object.freeze([Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]),
 });
 
 function hasNativeCollectionState(value: object): boolean {
-  const { cache, get, set, apply, probes } = nativeCollectionBrand;
+  // Both callers also refuse a non-array whose prototype is neither Object's nor null, which covers every genuine
+  // collection (an array has no collection slot). The thrown probes add only a collection whose prototype was
+  // replaced or erased: a forged input, so they run only with the self-checks on (#7380).
+  if (!preparedValidationEnabled()) return false;
+  const { cache, get, set, apply, isArray, probes } = nativeCollectionBrand;
+  // An Array exotic object (or a proxy for one) is created without collection slots, and slots never appear later;
+  // this answers without a probe that throws on every array.
+  if (isArray(value)) return false;
   const cached = apply(get, cache, [value]) as boolean | undefined;
   if (cached !== undefined) return cached;
   let hasSlots = false;
@@ -278,6 +285,9 @@ function hasNativeCollectionState(value: object): boolean {
 export function freezePreparedIrRuntimeValue<T>(value: T): T {
   const visited = new Set<object>();
   const active = new Set<object>();
+  // Whether every frozen object also has the shape the settled verdicts accept (a genuine frozen collection, or the
+  // array/record prototype); a foreign array prototype is frozen but must not be reported as deeply frozen data.
+  let settledShapes = true;
   const freeze = (item: unknown): void => {
     if (typeof item === "function") invalidPreparedData("runtime data cannot contain executable functions");
     if (item === null || typeof item !== "object") return;
@@ -286,14 +296,16 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
         invalidPreparedData("runtime data must be acyclic outside exact IR class shapes");
       return;
     }
-    if (visited.has(item)) return;
+    if (visited.has(item) || deeplyFrozen.has(item)) return;
     active.add(item);
     if (FrozenMap.branded(item)) {
+      settledShapes &&= preparedIrFrozenCollectionMembers(item) !== undefined;
       for (const [key, entry] of item) {
         freeze(key);
         freeze(entry);
       }
     } else if (FrozenSet.branded(item)) {
+      settledShapes &&= preparedIrFrozenCollectionMembers(item) !== undefined;
       for (const entry of item) freeze(entry);
     } else {
       const prototype = Object.getPrototypeOf(item);
@@ -302,6 +314,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
         (!Array.isArray(item) && prototype !== Object.prototype && prototype !== null)
       )
         invalidPreparedData("runtime data contains mutable or executable context state");
+      settledShapes &&= !Array.isArray(item) || prototype === Array.prototype || prototype === null;
       for (const key of Reflect.ownKeys(item)) {
         const descriptor = Object.getOwnPropertyDescriptor(item, key);
         if (!descriptor || !("value" in descriptor))
@@ -314,5 +327,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     visited.add(item);
   };
   freeze(value);
+  // Only after the whole walk: a refusal part-way leaves an ancestor of a visited object unfrozen.
+  if (settledShapes) for (const item of visited) deeplyFrozen.add(item);
   return value;
 }

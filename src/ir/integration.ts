@@ -7212,6 +7212,7 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
+    nativeRegExpCompiles: standaloneStaticRegExpCompiles,
     isNativeRegExpReceiver(receiver: ts.Expression) {
       return (
         supportsBackendCapability("native-regexp") &&

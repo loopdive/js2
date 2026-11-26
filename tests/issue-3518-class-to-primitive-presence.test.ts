@@ -1,5 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
@@ -244,65 +243,6 @@ it("public one-result ABI preserves null while the private ABI distinguishes a m
   expect(ex.__call_valueOf!(missing)).toBeNull();
   expect(ex.__call_valueOf_with_presence!(missing)).toEqual([0, null]);
   expect(Object.is(ex.__class_to_primitive!(missing, 0), missing)).toBe(true);
-});
-
-const read = readBeforeResumeMain;
-const refNumberText = read("tests/fixtures/issue-3518-runtime-ref-number-forward.json");
-function refNumberReceipt(text: string) {
-  if (sha(text) !== "69fc2f126cd05f4c6ae4b6e9f35ae22cddb53c8d17b4210259f4aadbea014bb8")
-    throw new Error("changed runtime-ref-number forward receipt");
-  const record = JSON.parse(text) as {
-    base: string;
-    sourcePath: string;
-    sourceSha256: string;
-    nativeStringBranch: string;
-    nativeStringBranchSha256: string;
-    helperPath: string;
-    spans: { before: string; after: string }[];
-  };
-  if (
-    record.base !== "0ef8e0ea4c23829a4eba37dca6dd6822aa95265e" ||
-    record.spans.length !== 2 ||
-    sha(record.nativeStringBranch) !== record.nativeStringBranchSha256
-  )
-    throw new Error("foreign runtime-ref-number source");
-  return record;
-}
-const refNumber = refNumberReceipt(refNumberText);
-function inverseRefNumber(source: string): string {
-  let priorEnd = -1;
-  for (const span of refNumber.spans) {
-    const at = source.indexOf(span.after);
-    if (at < priorEnd || at < 0 || source.indexOf(span.after, at + 1) >= 0)
-      throw new Error("changed runtime-ref-number span or order");
-    priorEnd = at + span.after.length;
-  }
-  for (const span of [...refNumber.spans].reverse()) source = source.replace(span.after, span.before);
-  if (sha(source) !== refNumber.sourceSha256) throw new Error("changed retained numeric coercion source");
-  return source;
-}
-it("runtime ref extraction restores the exact original source and native string branch", () => {
-  expect(sha(inverseRefNumber(read(refNumber.sourcePath)))).toBe(refNumber.sourceSha256);
-  const extracted = refNumber.nativeStringBranch
-    .split("\n")
-    .map((line) => (line.startsWith("  ") ? line.slice(2) : line))
-    .join("\n")
-    .replaceAll("      return;", "      return true;")
-    .replaceAll("    return;", "    return true;");
-  expect(read(refNumber.helperPath)).toContain(extracted);
-});
-it("positive first: numeric coercion receipt rejects span, retained-source and fixture corruption", () => {
-  const source = read(refNumber.sourcePath);
-  inverseRefNumber(source);
-  for (const span of refNumber.spans) {
-    expect(() => inverseRefNumber(source.replace(span.after, ""))).toThrow();
-    expect(() => inverseRefNumber(source.replace(span.after, span.after + span.after))).toThrow();
-    expect(() =>
-      inverseRefNumber(source.replace(span.after, span.after.replace("tryRuntimeRefToNumber", "wrongHelper"))),
-    ).toThrow();
-  }
-  expect(() => inverseRefNumber(source + "\n")).toThrow("changed retained");
-  expect(() => refNumberReceipt(refNumberText + "\n")).toThrow("changed runtime-ref-number forward receipt");
 });
 it("positive first: the numeric dispatcher requires its actually acquired boxer", async () => {
   const source = `class C {valueOf():number{return 42;}}

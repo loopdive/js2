@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { irValueTypes } from "./analysis/value-types.js";
 import {
   arePairedIrModuleGlobalBindingIds,
   irClassTypeRef,
@@ -447,24 +448,6 @@ function collectClassShape(shape: IrClassShape, classes: Map<IrClassId, IrClassS
   }
   for (const param of shape.constructorParams) collectIrTypeClasses(param, classes, seen);
   if (shape.parent) collectClassShape(shape.parent, classes, seen);
-}
-
-function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
-  const types = new Map<IrValueId, IrType>();
-  for (const param of fn.params) types.set(param.value, param.type);
-  for (const value of fn.asyncPlan?.values ?? []) types.set(value.value, value.type);
-  for (const block of fn.blocks) {
-    block.blockArgs.forEach((value, index) => {
-      const type = block.blockArgTypes[index];
-      if (type) types.set(value, type);
-    });
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        if (nested.result !== null && nested.resultType !== null) types.set(nested.result, nested.resultType);
-      });
-    }
-  }
-  return types;
 }
 
 function reachableAsyncPlanVecTypes(fn: IrFunction): ReadonlySet<IrType> {
@@ -1251,7 +1234,7 @@ function collectFunctionEvidence(
     externalCallables: new Map(),
     failures: new Map(),
   };
-  const valueTypes = valueTypesOf(fn);
+  const valueTypes = irValueTypes(fn);
   const classes = new Map<IrClassId, IrClassShape>();
   const seenTypes = new Set<IrType>();
   const seenImplicitTypes = new Set<IrType>();

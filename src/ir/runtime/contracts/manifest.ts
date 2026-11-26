@@ -38,6 +38,7 @@ export type RuntimeFeature =
   | "js.closure.method"
   | "js.closure.apply-vector"
   | "js.closure.undefined"
+  | "js.closure.receiver"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
   | NumberRemainderRuntimeFeature
@@ -126,9 +127,15 @@ export type ExternBoundaryRuntimeProviderId = (typeof EXTERN_BOUNDARY_RUNTIME_PR
 
 /** (#7354 D1) The dynamic-value operations have one native arm each. */
 export const DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.js.value.as_string",
+  "native.js.value.is_boolean",
+  "native.js.value.is_function",
+  "native.js.value.is_number",
+  "native.js.value.is_string",
   "native.js.value.strict_eq",
   "native.js.value.to_boolean",
   "native.js.value.undefined",
+  "native.js.value.unsupported",
 ] as const);
 
 export type DynamicValueRuntimeProviderId = (typeof DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS)[number];
@@ -419,6 +426,18 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.define-attributes",
   "js.object.get",
   "js.object.has",
+  "js.object.create-type-error",
+  "js.object.set",
+  "js.object.is-error",
+  "js.object.create-error",
+  "js.object.error-to-string",
+  "js.object.init-function",
+  "js.object.inherits",
+  "js.object.descriptor-define",
+  "js.object.descriptors-define",
+  "js.object.own-descriptor",
+  "js.object.intrinsic",
+  "js.object.has-own",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -430,6 +449,18 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.define-attributes",
   "native.js.object.get",
   "native.js.object.has",
+  "native.js.object.create-type-error",
+  "native.js.object.set",
+  "native.js.object.is-error",
+  "native.js.object.create-error",
+  "native.js.object.error-to-string",
+  "native.js.object.init-function",
+  "native.js.object.inherits",
+  "native.js.object.descriptor-define",
+  "native.js.object.descriptors-define",
+  "native.js.object.own-descriptor",
+  "native.js.object.intrinsic",
+  "native.js.object.has-own",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

@@ -20,13 +20,14 @@ import { buildTemporalProvider, compileWithTemporalGlobal, type TemporalProvider
 import { buildImports, markCoherentBuiltinRealm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
+import { runtimeNegativeThrowAccepted } from "../scripts/test262-runtime-verdict.mjs";
 // (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
 // Two copies "kept in sync" by a comment is exactly how the local lane came to
 // report the opaque #2870 label where CI reported the real assertion text.
 import {
+  readThrownValue,
   renderHarnessThrownText,
   safeStringifyThrown as sharedSafeStringifyThrown,
-  tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal, isScriptGoal } from "../scripts/test262-module-goal.mjs";
 // (#5353) ONE Temporal gate + ONE cache-dir rule, shared with the sharded lane.
@@ -4125,52 +4126,9 @@ function decodeVLQSegment(segment: string): number[] {
 // cannot drift again. The doc comment above is retained for the #2870 history.
 const safeStringifyThrown = sharedSafeStringifyThrown;
 
-/**
- * (#2962) Render a natively-thrown Wasm-GC payload through the module's own
- * `__exn_render_prepare` / `__exn_render_char` exports (standalone/wasi
- * binaries emit them at finalize). The module runs the payload through the
- * same `__any_to_string` chain its in-module `String(x)` uses — so an
- * `$Error_struct` renders "TypeError: boom" per §20.5.3.4 and a Test262Error
- * yields its real assertion message — then exposes the flat string one code
- * unit at a time (WasmGC arrays are not host-indexable). Returns `null`
- * when the exports are absent (JS-host binaries), the payload renders empty,
- * or anything throws — the caller then falls back to the #2870 opaque label.
- * The 64k cap is defensive (a corrupt length must not build a giant string).
- */
-// (#3613) See safeStringifyThrown above — one implementation, both lanes.
-const tryNativeExnRender = sharedTryNativeExnRender;
-
-export function extractWasmExceptionMessage(err: any, instance: any): string {
-  if (typeof WebAssembly !== "undefined" && err instanceof (WebAssembly as any).Exception) {
-    let payload: any = null;
-    if (instance) {
-      try {
-        const tag = instance.exports?.__exn_tag ?? instance.exports?.__tag;
-        if (tag) payload = err.getArg(tag, 0);
-      } catch {
-        // Tag lookup failed — fall through to generic message.
-      }
-    }
-    if (payload instanceof Error) {
-      return payload.message ?? safeStringifyThrown(payload);
-    }
-    if (payload != null) {
-      // (#2962) A host-opaque GC payload (typeof "object"/"function") renders
-      // through the module's own exports before falling back to the #2870
-      // label. Host-readable primitives keep the direct String() path.
-      const t = typeof payload;
-      if (t === "object" || t === "function") {
-        const native = tryNativeExnRender(instance, payload);
-        if (native != null) return native;
-      }
-      return safeStringifyThrown(payload);
-    }
-    return instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
-  }
-  if (err instanceof Error) {
-    return err.message ?? safeStringifyThrown(err);
-  }
-  return safeStringifyThrown(err);
+/** (#3613, #7354 X) The text of a thrown value, by the one reader every test262 lane uses. */
+export function extractWasmExceptionMessage(err: unknown, instance: unknown): string {
+  return readThrownValue(err, { instance }).text;
 }
 
 /**
@@ -4276,36 +4234,6 @@ interface OriginalVariantResult {
   detail?: string;
   timing: TestTiming;
   wasm_sha?: string;
-}
-
-/**
- * (#3613) Now a thin alias over the SHARED renderer
- * (`scripts/lib/wasm-exn-render.mjs`).
- *
- * The local copy this replaces was missing the `tryNativeExnRender` step the
- * CI worker has always taken, so on the standalone lane every `Test262Error`
- * surfaced here as the opaque #2870 label ("uncaught Wasm-GC exception
- * (non-stringifiable payload)") while CI reported the real assertion text.
- * Consequences: message-derived triage against the local runner saw one giant
- * undifferentiated bucket, and a standalone runtime-negative test could not
- * match its expected error TYPE (`originalNegativeMatches` searches the
- * detail for `meta.negative.type`, which the opaque label does not contain).
- *
- * `oracle-version-exempt:` this is the LOCAL in-process runner only. The
- * committed baseline rows are produced exclusively by
- * `scripts/test262-worker.mjs`, whose behaviour is byte-unchanged — the shared
- * policy IS the worker's existing policy. No baseline row can reclassify; the
- * change only makes the local lane stop disagreeing with CI.
- */
-const originalHarnessThrownText = renderHarnessThrownText as (
-  error: unknown,
-  instance?: WebAssembly.Instance,
-) => string;
-
-function originalNegativeMatches(meta: Test262Meta, detail: string): boolean {
-  const expected = meta.negative?.type;
-  if (!expected) return Boolean(meta.negative);
-  return detail.includes(expected);
 }
 
 function appendOriginalHarnessFailureContext(detail: string, source: string): string {
@@ -4523,7 +4451,7 @@ async function runOriginalHarnessVariant(
       }
     } catch (error) {
       compileMs = performance.now() - compileStarted;
-      const detail = originalHarnessThrownText(error);
+      const detail = renderHarnessThrownText(error);
       const isCompileNegative = Boolean(meta.negative) && meta.negative?.phase !== "runtime";
       return {
         pass: isCompileNegative && negativeCompileErrorMatches(meta.negative?.type, [], detail),
@@ -4551,12 +4479,12 @@ async function runOriginalHarnessVariant(
           .join("; ") ||
         result.errors.map((error) => error.message).join("; ") ||
         "compile failed";
-      const syntaxPhase =
-        meta.negative?.phase === "parse" || meta.negative?.phase === "early" || meta.negative?.phase === "resolution";
+      // A compile failure never matches a runtime negative; a parse/early/resolution negative is scored by the
+      // compile-phase rule the worker uses.
       const pass =
         Boolean(meta.negative) &&
         meta.negative?.phase !== "runtime" &&
-        (originalNegativeMatches(meta, detail) || (meta.negative?.type === "SyntaxError" && syntaxPhase));
+        negativeCompileErrorMatches(meta.negative?.type, [], detail);
       return { pass, phase: "compile", detail, timing: timing() };
     }
 
@@ -4724,7 +4652,7 @@ async function runOriginalHarnessVariant(
           // the test's real async outcome instead of the generic "not observed".
           detail:
             standaloneDrainError != null
-              ? `async continuation threw before completion: ${originalHarnessThrownText(standaloneDrainError, instance)}`
+              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance)}`
               : "async completion marker not observed",
           timing: timing(),
           wasm_sha,
@@ -4733,15 +4661,17 @@ async function runOriginalHarnessVariant(
       return { pass: true, phase: "runtime", timing: timing(), wasm_sha };
     } catch (error) {
       executeMs = Math.max(executeMs, performance.now() - started - compileMs - instantiateMs);
-      const enriched = enrichErrorMessage(
-        originalHarnessThrownText(error, instance),
-        error,
-        result.sourceMap,
-        variant.bodyLineOffset,
-      );
+      const thrown = readThrownValue(error, { instance });
+      const enriched = enrichErrorMessage(thrown.text, error, result.sourceMap, variant.bodyLineOffset);
       const detail = appendOriginalHarnessFailureContext(enriched, originalSource);
       return {
-        pass: meta.negative?.phase === "runtime" && originalNegativeMatches(meta, detail),
+        pass:
+          meta.negative?.phase === "runtime" &&
+          runtimeNegativeThrowAccepted(error, thrown, {
+            expectedErrorType: meta.negative.type,
+            originalHarness: true,
+            prepared: false,
+          }),
         phase: "runtime",
         detail,
         timing: timing(),
