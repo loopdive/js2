@@ -92,7 +92,7 @@ Reproduced on main 6694a8b839: six of the seven rows of
 declared before its call site, passed.
 
 The fix registers the helper in one place, `registerCallbackBoxNumber` (new module
-`src/codegen/array-callback-box-number.ts`). `setupArrayCallback` calls it after the callback and `thisArg` are
+`src/codegen/array/array-callback-box-number.ts`). `setupArrayCallback` calls it after the callback and `thisArg` are
 compiled, so before any loop body is built. It runs `ensureLateImport` and then `flushLateImportShifts`, and only
 when the loop will box a number:
 

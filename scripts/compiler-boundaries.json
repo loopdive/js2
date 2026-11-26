@@ -16496,7 +16496,7 @@
       "layer": "native-runtime"
     },
     {
-      "path": "src/codegen/array-callback-box-number.ts",
+      "path": "src/codegen/array/array-callback-box-number.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

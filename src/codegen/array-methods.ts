@@ -153,7 +153,7 @@ const {
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 import { callbackClosureInfo } from "./closures/closure-type-sources.js"; // (#6913)
-import { registerCallbackBoxNumber } from "./array-callback-box-number.js";
+import { registerCallbackBoxNumber } from "./array/array-callback-box-number.js";
 import { requireHelper } from "./helpers/required-helper.js";
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)

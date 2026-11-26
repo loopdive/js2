@@ -5,9 +5,9 @@
  * late import cannot shift, so `setupArrayCallback` registers the helper while `fctx.body` still owns the code, and the
  * arms only `requireHelper` it. A callback declared after its call site used to find the helper unregistered and box null.
  */
-import type { ValType } from "../ir/types.js";
-import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import type { ValType } from "../../ir/types.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { ensureLateImport, flushLateImportShifts } from "../shared.js";
 
 /** Register `__box_number` when the callback's loop boxes a number (fewer than two formals, or the externref bridge). */
 export function registerCallbackBoxNumber(
