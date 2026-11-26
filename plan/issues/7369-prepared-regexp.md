@@ -240,7 +240,7 @@ both the merge base and `LOC_GATE_BASE=origin/main`.
 
 - **R0 follow-up: byte-diff-corpus nits** (review RV7337, 2026-11-26).
   `scripts/byte-diff-corpus.mts` now (1) makes an order-dependent row turn the
-  verdict `INCONCLUSIVE` with exit 2, as a crash row does, instead of
+  verdict `INCONCLUSIVE` (exit 3, its own code, apart from a usage error's 2), as a crash row does, instead of
   `IDENTICAL`; (2) stores every message of a failed compile in full, as an
   `errors` array, and compares all of them, where it compared only the first
   120 characters of the first; (3) requires `INPUT_ROOT`, named in the usage

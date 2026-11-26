@@ -11,7 +11,7 @@
 // full, so two failures are equal only when all their messages are.
 //
 // Exit codes of `--compare`: 0 IDENTICAL; 1 FAILED, some row differs;
-// 2 INCONCLUSIVE, no row differs but some crashed or are order-dependent.
+// 3 INCONCLUSIVE, no row differs but some crashed or are order-dependent.
 // Every mode exits 2 on a usage error or a missing INPUT_ROOT.
 //
 // Corpora:
@@ -70,7 +70,8 @@ import ts from "typescript";
 
 const USAGE =
   "usage: INPUT_ROOT=<dir> byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N] [--cache <dir>]\n" +
-  "       INPUT_ROOT=<dir> byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp]";
+  "       INPUT_ROOT=<dir> byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp]\n" +
+  "exit: 0 IDENTICAL, 1 FAILED, 2 usage error or bad INPUT_ROOT, 3 INCONCLUSIVE (--compare)";
 
 /** The input tree named by INPUT_ROOT; exits 2 unless it holds test262/test. */
 function inputRoot(): string {
@@ -358,7 +359,7 @@ async function compare(baseFile: string, headFile: string, trees: Trees): Promis
   const inconclusive = crashes.length + orderDependent.length;
   const verdict = differ > 0 ? "FAILED" : inconclusive > 0 ? "INCONCLUSIVE" : "IDENTICAL";
   console.log(`${verdict} — ${differ} rows differ; ${tail}`);
-  return differ > 0 ? 1 : inconclusive > 0 ? 2 : 0;
+  return differ > 0 ? 1 : inconclusive > 0 ? 3 : 0;
 }
 
 const argv = process.argv.slice(2);
