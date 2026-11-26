@@ -43,7 +43,9 @@ describe("#7364 — Prepared-path refusals instead of invariant crashes", () => 
       ["regexp-constructor-unsupported", expect.stringContaining("RegExp literal has no provider")],
     ]);
   });
+});
 
+describe("#7364 — the Object.defineProperty case #7354 O1 admitted", () => {
   // (#7354 O1) Object.defineProperty is now an admitted Object static on the Prepared path; its behaviour is pinned
   // by tests/issue-7354-o1-define-property.test.ts. What stays here is that the program no longer refuses.
   it("compiles an Object.defineProperty the Object statics table now admits", async () => {

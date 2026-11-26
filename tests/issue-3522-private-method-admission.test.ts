@@ -375,17 +375,6 @@ describe("#3522 W1-A negative controls keep their pre-slice verdict", () => {
     },
   );
 
-  // The static private method was a negative control here: refused by the
-  // static defer in `buildIrClassShapes`. (#7227, PR #7054, bc2fb7f8ca)
-  // admitted private static methods into the IR class-member family, so it is
-  // now emitted, and the program still runs.
-  it.each(TARGETS)("emits the static private method #7227 admitted on %s", async (target) => {
-    const result = await compilePlain(STATIC_PRIVATE, `w1a-static-private-${target}.ts`, target);
-    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-    expect(outcomeCode(result, "Animal___priv_make")).toBe("emitted");
-    expect((await instantiate(result)).run!()).toBe(1);
-  });
-
   it.each(TARGETS)("leaves object-literal members untouched on %s", async (target) => {
     // `memberBaseName` is shared with `objectMemberDisplayName`. An object
     // literal cannot carry a private name AT ALL (asserted below), so the new
@@ -431,6 +420,19 @@ describe("#3522 W1-A negative controls keep their pre-slice verdict", () => {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
       else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
     }
+  });
+});
+
+describe("#3522 W1-A the static private method #7227 admitted", () => {
+  // The static private method was a negative control here: refused by the
+  // static defer in `buildIrClassShapes`. (#7227, PR #7054, bc2fb7f8ca)
+  // admitted private static methods into the IR class-member family, so it is
+  // now emitted, and the program still runs.
+  it.each(TARGETS)("emits the static private method #7227 admitted on %s", async (target) => {
+    const result = await compilePlain(STATIC_PRIVATE, `w1a-static-private-${target}.ts`, target);
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(outcomeCode(result, "Animal___priv_make")).toBe("emitted");
+    expect((await instantiate(result)).run!()).toBe(1);
   });
 });
 
