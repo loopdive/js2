@@ -2048,6 +2048,22 @@
       "nextBoundary": "Frontend function declarations read as values (the walk, their startup homes and module-init trampolines); moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/annexb-block-function-values.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7372",
+      "nextBoundary": "Frontend Annex B block functions of a script on the Prepared path (selection, named refusals, startup homes, the position split of a reference); moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/annexb-block-function-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7372",
+      "nextBoundary": "The two run-time steps of an Annex B block function (instantiation at scope entry, the var write at evaluation), called from from-ast; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/program-source-direct-calls.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -3168,12 +3184,12 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/annexb-cancel.ts",
+      "path": "src/shared/annexb-block-functions.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "destination": "frontend-ts",
+      "owner": "7372",
+      "nextBoundary": "Frontend source-shape analysis: the Annex B §B.3.2 block-function conditions (declaring scope, var-binding eligibility, unbound reads), pure AST, asked by the IR and by legacy codegen (#7372); moves with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/codegen/annexb-escape-call.ts",
@@ -6952,12 +6968,12 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/helpers/is-strict-function.ts",
+      "path": "src/shared/is-strict-function.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "destination": "frontend-ts",
+      "owner": "7372",
+      "nextBoundary": "Frontend source-shape predicate: the strictness of a piece of code, pure AST, asked by the Annex B analysis and by legacy codegen (#7372); moves with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/codegen/helpers/host-date-parse.ts",
@@ -7024,12 +7040,12 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/helpers/use-strict-directive.ts",
+      "path": "src/shared/use-strict-directive.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "destination": "frontend-ts",
+      "owner": "7372",
+      "nextBoundary": "Frontend source-shape predicate: the raw `use strict` directive test behind is-strict-function.ts (#7372); moves with it."
     },
     {
       "path": "src/codegen/hof-native.ts",

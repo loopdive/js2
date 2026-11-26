@@ -23,7 +23,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureLateImport, emitUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitAnnexBUnboundReferenceError } from "./js-errors.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { ensureWithHasBindingNative } from "./with-has-binding-native.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { compileExpression, compileStatement, coerceType, valTypesMatch } from "./shared.js";

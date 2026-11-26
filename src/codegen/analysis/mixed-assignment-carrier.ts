@@ -12,7 +12,7 @@ import { ts, forEachChild } from "../../ts-api.js";
 import { identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
-import { annexBExistingVarUpdateNames } from "../../ir/analysis/annexb-block-functions.js";
+import { annexBExistingVarUpdateNames } from "../../shared/annexb-block-functions.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { readEnv } from "../../env.js";

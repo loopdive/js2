@@ -6,7 +6,7 @@ import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "./identity.js";
 import { functionValueBindings } from "./function-declaration-values.js";
 import { blockFunctionBindings, blockFunctionFirstOrdinal } from "./annexb-block-function-values.js";
-import type { AnnexBBlockFunction } from "./analysis/annexb-block-functions.js";
+import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import { moduleBindingDeclarations } from "./module-bindings.js";
 import { isModuleInitGlobalDeclaration, moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";

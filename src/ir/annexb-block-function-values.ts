@@ -4,7 +4,7 @@
  * `{ function f() {} }` at script level has two bindings:
  *   - its block binding, a lexical binding of the declaring scope (a Block, a `switch`'s CaseBlock, or an `if` clause)
  *     that BlockDeclarationInstantiation sets to a new function object when the scope is entered;
- *   - where §B.3.2.2 allows it (`writesVar`, `analysis/annexb-block-functions.ts`), a script `var` of the same name,
+ *   - where §B.3.2.2 allows it (`writesVar`, `shared/annexb-block-functions.ts`), a script `var` of the same name,
  *     `undefined` from instantiation, set to the block binding's current value when the declaration is evaluated.
  *
  * Both are homes in the dynamic carrier: module-init globals with `var` startup intents, numbered after the script's
@@ -20,7 +20,7 @@
  */
 import { ts } from "../ts-api.js";
 import { irModuleGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
-import { annexBBlockFunctions, type AnnexBBlockFunction } from "./analysis/annexb-block-functions.js";
+import { annexBBlockFunctions, type AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { FunctionValueGlobal } from "./function-declaration-values.js";
 import { moduleBindingDeclarationOrder } from "./module-init-vars.js";

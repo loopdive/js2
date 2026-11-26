@@ -25,7 +25,7 @@ import { symbolShadowsBuiltinGlobal } from "../../checker/builtin-shadow.js";
 import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import { allocLocal } from "../context/locals.js";
-import { isStrictFunction } from "../helpers/is-strict-function.js";
+import { isStrictFunction } from "../../shared/is-strict-function.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "../shared.js";
 import { bound } from "./ports.js"; // (#6770/#6797) core helpers, injected — keeps this leaf out of the import SCC

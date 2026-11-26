@@ -60,7 +60,7 @@ import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.j
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
-import type { AnnexBBlockFunction } from "./analysis/annexb-block-functions.js";
+import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import { scriptBlockFunctions } from "./annexb-block-function-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";

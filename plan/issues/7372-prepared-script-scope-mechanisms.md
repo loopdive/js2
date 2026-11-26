@@ -18,7 +18,7 @@ related: [7354, 7106]
 # module-init global rule (`isModuleInitGlobalDeclaration`): an ES module's nested `var` / `for` head is a
 # module-init local, not a global. The rule itself lives in src/ir/module-init-vars.ts.
 # 2026-11-26 (slice 2a-1): src/codegen/expressions/identifiers.ts +4, formatting only. Its import of the Annex B
-# analysis now names the lifted module (src/ir/analysis/annexb-block-functions.ts); the longer path makes prettier
+# analysis now names the lifted module (src/shared/annexb-block-functions.ts); the longer path makes prettier
 # wrap the one-line import over five lines. No code added.
 # 2026-11-26 (slice 2a-2): src/ir/from-ast.ts +16, the dispatch the Annex B lowering needs and nothing else. The
 # two steps live in src/ir/annexb-block-function-lowering.ts; from-ast keeps the three call sites (Block entry,
@@ -258,7 +258,7 @@ CaseClause/DefaultClause, or the sole statement of an `if` clause (§B.3.3, its 
   already import from `src/codegen`, so that import is not a new layering edge. Moving the strictness helper to
   `src/shared` is a separate cleanup, which I'll file.
 
-  2a-1 moves the module to **`src/ir/analysis/annexb-block-functions.ts`**, beside `ast-scope.ts`. The legacy callers
+  2a-1 moves the module to **`src/shared/annexb-block-functions.ts`** (as built; the plan first said `src/ir/analysis/`). The legacy callers
   import it from there; there are 8 of them: `annexb-global-live-binding.ts`, `statements.ts`,
   `statements/nested-declarations.ts`, `expressions/identifiers.ts`, `expressions/call-identifier.ts`,
   `function-declaration-observation.ts`, `nested-function-name-scope.ts`, `analysis/mixed-assignment-carrier.ts`.
@@ -393,6 +393,16 @@ dispatch.
 
 `blockFunctionBindings` lands in 2a-2 with its first caller, so 2a-1 exports nothing unused (dead-exports gate).
 
+2a-1 as built (review RV7447):
+- The module, `is-strict-function.ts` and `use-strict-directive.ts` move to `src/shared/`, not `src/ir/analysis/`.
+  The analysis needs the strictness helpers, which lived in `src/codegen/helpers`. With all three in `src/shared/`,
+  neither pipeline imports the other for them: `check:ir-layering` and `check:import-cycles` stay at their baselines,
+  with no grant.
+- The plan's per-variant unit fixtures are already covered end to end by `tests/issue-3980.test.ts` and
+  `tests/issue-4166.test.ts` (block / `if` / `switch` positions, loop heads, catch patterns, parameters, strict code).
+  2a-1 adds the CaseBlock rule's pins and an end-to-end program (`class f` and an `if`-clause `function f` in sibling
+  clauses), which compiled to invalid Wasm on main.
+
 #### Order (small PRs, each with pin tests that fail on main)
 
 1. **2a-1. Lift [B1].**
@@ -426,6 +436,56 @@ dispatch.
   - No second var-hoisting or home mechanism.
   - `from-ast.ts` grows by at most the granted 8 dispatch lines.
   - The lowering lives in its own module.
+
+#### 2a-2 result (2026-11-26, branch `claude/annexb-prepared-block-fn-2a2`, stacked on 2a-1)
+
+Built as planned:
+- **New modules.** `src/ir/annexb-block-function-values.ts` (selection, named refusals, startup intents, homes, the
+  position split of a reference) and `src/ir/annexb-block-function-lowering.ts` (instantiation at Block / CaseBlock
+  entry, after the discriminant, and the var write by declaration identity).
+- **Shared analysis.** It gains `annexBBlockFunctions` (with `writesVar` and `varExists`). `scopeBindsName` is split
+  into its parameter, lexical and var/function parts, with no behaviour change.
+
+Deviations, with reasons:
+- **Distinct storage name.** A block home's adapter name is `F$block<n>`: the backend keys a source global by that
+  name, and a block home named `F` shared storage with a script `let F`. Pinned.
+- **References with no checker symbol.** The compiler's checker binds a block function to its block, so a reference
+  outside it has no symbol. `resolve` takes such a reference by name: the var home, or a named refusal.
+- **Refusals run under the module-init's diagnostic owner.** They sit in `scriptBlockFunctionHomes`, not in the
+  dynamic contracts, which have no owner.
+- **The closure** goes through `lowerClosureExpression`'s existing dynamic arm. `IrClosureLiteral` gains
+  `FunctionDeclaration`, with an invariant after that arm. A function outside the dynamic subset refuses at selection.
+- **from-ast.ts grows by +16**, not +8 (grant in the frontmatter).
+
+Refused by name in 2a-2 (each pinned):
+- a name a script `var` or function also binds (2a-3);
+- a built-in global's name;
+- a loop body;
+- two declarations in one scope;
+- a generator or async function;
+- a typed or defaulted parameter;
+- a read no binding covers.
+
+Measured (578 ES5 files, real harness; base 2a-1 on main `c3b7be66`):
+- **Census:** pass 42 → 78, 0 lost, no crash, no new trap. Every new stop is a named Annex B refusal.
+- **The 36 new passes** are all in `annexB/language/global-code`, 6 each of: `update`, `existing-block-fn-update`,
+  `existing-block-fn-no-init`, `block-scoping`, `no-skip-try`, `skip-early-err`.
+- **Legacy bytes:** 956 files × {gc, standalone} identical, base vs head.
+
+Tests:
+- `tests/issue-7372-annexb-script-block-functions.test.ts`: 16 cases. Each fails on 2a-1, node agrees, and every
+  wrong twin throws.
+- The H2 routes test gains the Annex B route (still refused or aborted). The H2 written-declaration pin now names
+  the new refusal.
+- `tests/helpers/prepared-script-run.ts` takes the test262 worker's options (`TEST262_SCRIPT`).
+
+Prepared suites (`issue-7354-*`, `issue-7372-*`, `issue-7188-*`, prepared entry and runtime): 2,165 of 2,167 pass.
+- One failure is the updated H2 pin.
+- The other is `issue-7354-o-objects` "refuses what the later steps build, by name", which fails identically on main
+  `c3b7be66`.
+
+Found, not fixed: `checkSwitchLexicalLeak` (`src/compiler/early-errors/duplicates.ts`) warns that an Annex B function
+declared in a `case` "does not leak" when it is read after the switch. Sloppy code's var binding does leak.
 
 ### Slice 3 — sloppy write to an undeclared name (planned)
 
