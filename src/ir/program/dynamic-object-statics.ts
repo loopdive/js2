@@ -38,7 +38,6 @@ const served = (kind: CarrierKind): boolean =>
 export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
   const [first, second, third] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
   const undefinedValue = (r: IrValueId) => b.intrinsic(instr, "js.value.undefined", [], r);
-  const throwing = (message: string, r: IrValueId) => throwingArm(b, instr, message)(r);
   /**
    * A chain over the kinds `value` may hold: `object` answers a served object ((#7354 G1) an error is one), and
    * `other` answers each remaining kind (a primitive, `undefined`, `null`).
@@ -72,14 +71,14 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         undefinedMap === "none" && kind === "undefined"
           ? [carried(object, s)]
           : nullish(kind)
-            ? throwing("Cannot convert undefined or null to object", s)
+            ? throwingArm(b, instr, "Cannot convert undefined or null to object")(s)
             : kind === "string"
               ? b.abort(instr, s)
               : [carried(object, s)],
       r,
     );
   const onObject = (object: Arm) =>
-    byKind(first, object, (_kind, r) => throwing(`Object.${name} called on non-object`, r), instr.result!);
+    byKind(first, object, (_kind, r) => throwingArm(b, instr, `Object.${name} called on non-object`)(r), instr.result!);
   switch (name) {
     case "defineProperty":
       return onObject((r) =>
@@ -93,7 +92,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         (r) => withKey(second, (key) => [realmCall("js.object.own-descriptor", [first, key], r)]),
         (kind, r) =>
           nullish(kind)
-            ? throwing("Cannot convert undefined or null to object", r)
+            ? throwingArm(b, instr, "Cannot convert undefined or null to object")(r)
             : withKey(second, () => (kind === "string" ? b.abort(instr, r) : [undefinedValue(r)])),
         instr.result!,
       );
@@ -113,7 +112,9 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
                 ? realmCall("js.object.create-null", [], object)
                 : undefined;
           if (create) return [create, ...defineAll(object, second, r, "none")];
-          return served(kind) ? b.abort(instr, r) : throwing("Object prototype may only be an Object or null", r);
+          return served(kind)
+            ? b.abort(instr, r)
+            : throwingArm(b, instr, "Object prototype may only be an Object or null")(r);
         },
         b.kinds.kindsOf(first),
         CARRIER,

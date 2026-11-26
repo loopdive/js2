@@ -139,7 +139,7 @@ function functionCodeStrict(
  * A function whose name is a computed key the compiler cannot evaluate refuses by name.
  *
  * (#7489) A sloppy plain function (a declaration or expression, neither a generator nor async: the functions §17.1 lets
- * an implementation extend) owns V8's `caller`, read only and `null`; every other function's `caller` is
+ * an implementation extend) owns node 22's `caller`, read only and `null`; every other function's `caller` is
  * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`); where
  * it has no answer for a function declaration or expression the function refuses by name, since a guess would answer
  * a sloppy function's `caller` with the accessor's TypeError.

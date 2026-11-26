@@ -28,9 +28,9 @@ const CALLER_DESCRIPTOR = 0xb8;
  * `js.object.init-function(closure, name, length, constructor, ownsCaller)`: the bag, an ordinary object with a null
  * [[Prototype]] (the closure's own [[Prototype]] is %Function.prototype%, which the kernel answers); then
  * OrdinaryFunctionCreate's `length` and SetFunctionName's `name` (the builtin seeding); then (#7489), for a sloppy plain
- * function, V8's own `caller` (`null`, read only); then, for a constructor (a function declaration or expression; not
+ * function, node 22's own `caller` (`null`, read only); then, for a constructor (a function declaration or expression; not
  * an arrow, method or accessor), MakeConstructor's `prototype`, a fresh ordinary object whose `constructor` is the
- * closure. Own keys are therefore in the specification's order, with `caller` where V8 puts it.
+ * closure. Own keys are therefore in the specification's order, with `caller` where node 22 puts it.
  */
 export function buildSourceFunctionInitDefinition(d: {
   readonly kernel: BuiltinFunctionPrototypeOperands;

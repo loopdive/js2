@@ -113,11 +113,17 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
 const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
 /**
- * (#7489) What an access of a function's `arguments` lacks: a sloppy function's own `arguments` is V8's live arguments
- * object, which no Prepared function owns, so the realm's accessor would answer a sloppy function with a TypeError.
+ * (#7489) The key an implementation may give a sloppy plain function as its own (§17.1): `arguments`, V8's live
+ * arguments object, which no Prepared function owns. Its access takes the run-time split of
+ * `dynamic-member-access.ts` (`withoutOwnCaller`).
  */
-export const functionOwnKeyGap = (name: string): string | undefined =>
-  name === "arguments" ? "a sloppy function's own arguments object" : undefined;
+export const SLOPPY_FUNCTION_ARGUMENTS_KEY = "arguments";
+
+/**
+ * (#7489) The own key that marks a sloppy plain function: the `caller` `js.object.init-function` gives exactly the
+ * functions slice A's rule names (`emitFunctionObjectInit`), the one place the rule is written.
+ */
+export const SLOPPY_FUNCTION_OWN_CALLER_KEY = "caller";
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [

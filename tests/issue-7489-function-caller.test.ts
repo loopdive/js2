@@ -3,12 +3,18 @@
 // #7489 slice A — a function's `caller` on the Prepared path. The realm's Function.prototype holds the `caller` /
 // `arguments` accessors with %ThrowTypeError% as getter and setter (§10.2.4), and a sloppy plain function owns V8's
 // read-only `caller`, which is `null` here. Where V8 answers a sloppy caller this answers `null`: the value is
-// implementation-defined and §17.1 forbids only a strict function. `arguments` keeps its refusal: a sloppy function's own
-// is its arguments object.
+// implementation-defined and §17.1 forbids only a strict function. (#7489 C.5) A sloppy function's `arguments` takes the
+// run-time abort; every other function's throws the accessor's TypeError.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emitFunctionObjectInit } from "../src/ir/function-object-lowering.js";
 import { ts } from "../src/ts-api.js";
-import { agreesWithNode, gapText, refusal, runPrepared, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import {
+  abortsAtRunTime,
+  agreesWithNode,
+  refusal,
+  runPrepared,
+  runnerOptions,
+} from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -86,26 +92,31 @@ if (h() !== null) throw new Error("caller");`;
   );
 });
 
-describe("#7489 A — refusals that stay", () => {
+describe("#7489 C.5 — a function's arguments: sloppy aborts, strict throws", () => {
+  // A sloppy plain function's own `arguments` is implementation-defined (V8: its live arguments object), so it takes the
+  // run-time abort; every other function's is Function.prototype's %ThrowTypeError% accessor, as in node.
+  it.each([
+    ["a sloppy declaration's read", "function f(){} var a = f.arguments;"],
+    ["a sloppy declaration's write", "function f(){} f.arguments = 1;"],
+    ["a sloppy expression's read", "var f = function(){}; var a = f.arguments;"],
+    ["a sloppy expression's write", "var f = function(){}; f.arguments = 1;"],
+  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
+
   it.each([
     [
-      "a read of a function's arguments",
-      "function f(){} var a = f.arguments;",
-      gapText("member read 'arguments' of a function needs a sloppy function's own arguments object"),
+      "a strict declaration's read and write throw TypeError, from sloppy code",
+      `function s() { "use strict"; }
+var out = ${caught("s.arguments")} + ${caught("s.arguments = 1")};`,
     ],
     [
-      "a write of a function's arguments",
-      "function f(){} f.arguments = 1;",
-      gapText("member write 'arguments' of a function needs a sloppy function's own arguments object"),
+      "a strict expression's read and write throw TypeError, from strict code",
+      `var s = function () { "use strict"; };
+var out = (function () { "use strict"; return ${caught("s.arguments")} + ${caught("s.arguments = 1")}; })();`,
     ],
-  ])(
-    "refuses %s",
-    async (_label, source, text) => {
-      expect(await refusal(source, runnerOptions())).toContain(text);
-    },
-    SLOW,
-  );
+  ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
+});
 
+describe("#7489 A — refusals that stay", () => {
   it.each([
     ["a generator", "function* g() {} var c = g.caller;"],
     ["an async function", "async function g() {} var c = g.caller;"],

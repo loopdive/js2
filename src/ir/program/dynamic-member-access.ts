@@ -8,10 +8,12 @@
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
+import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import {
   BUILTIN_REACHABLE_KEYS,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
-  functionOwnKeyGap,
+  SLOPPY_FUNCTION_ARGUMENTS_KEY,
+  SLOPPY_FUNCTION_OWN_CALLER_KEY,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
@@ -35,6 +37,13 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly admitted: readonly CarrierKind[];
   /** (#7354 P1, G1) The realm's built-in function object `id` into `result`. */
   readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
+  /** (#7489) The realm's `feature` with an i32 selector after `args` (`js.object.has-own`). */
+  readonly selectorCall: (
+    feature: OrdinaryObjectRuntimeFeature,
+    args: readonly IrValueId[],
+    selector: number,
+    result: IrValueId,
+  ) => IrInstr[];
   /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
   readonly errors: boolean;
   readonly branch: (
@@ -76,7 +85,7 @@ interface Access {
   /** (#7354 C2) `abort`: the run-time abort, for an answer only a built-in prototype the realm lacks holds. */
   readonly object: (result: IrValueId, abort: Abort, throwTypeError: ThrowTypeError) => IrInstr[];
   /** (#7354 F1b) A function value: the object's access, but its own `length` and `name` are read only. */
-  readonly function: (result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
+  readonly function: (result: IrValueId, abort: Abort, throwTypeError: ThrowTypeError) => IrInstr[];
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
@@ -132,7 +141,7 @@ function memberAccess(
       case "object":
         return access.object(r, abort, throwTypeError);
       case "function":
-        return access.function(r, throwTypeError);
+        return access.function(r, abort, throwTypeError);
       // Only this arm assumes the built-in prototypes are the specification's (the object arm is the realm's own
       // [[Get]] / [[Set]]): no Prepared program can obtain one to change it (M1, C1; the premise test pins it).
       case "primitive":
@@ -154,6 +163,32 @@ const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
   "stackTraceLimit",
   "prepareStackTrace",
 ]);
+
+/**
+ * (#7489) A function's `arguments`: a sloppy plain function's is implementation-defined (V8's live arguments object, which
+ * no Prepared function owns), every other function's is Function.prototype's %ThrowTypeError% accessor. Which one the
+ * value is shows only at run time, by the own `caller` slice A gives exactly the sloppy plain functions: that one takes
+ * the run-time abort, never a guessed value; any other takes `access`, the realm's [[Get]] or [[Set]]. Every other key
+ * is `access` alone.
+ */
+function withoutOwnCaller(
+  b: MemberAccessBuilders,
+  instr: MemberGet | MemberSet,
+  name: string,
+  abort: Abort,
+  access: (result: IrValueId) => IrInstr[],
+): (result: IrValueId) => IrInstr[] {
+  if (name !== SLOPPY_FUNCTION_ARGUMENTS_KEY) return access;
+  return (result) => {
+    const [text, key, owns] = [b.fresh(), b.fresh(), b.fresh()];
+    return [
+      b.text(SLOPPY_FUNCTION_OWN_CALLER_KEY, text),
+      { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },
+      ...b.selectorCall("js.object.has-own", [instr.recv, key], 0, owns),
+      b.branch(owns, abort, access, result, b.carrier),
+    ];
+  };
+}
 
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
 export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, result: IrValueId): IrInstr[] {
@@ -180,10 +215,7 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       if (kind === "object")
         return OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name) ? "Object.prototype's accessor" : undefined;
       if (kind === "function")
-        return (
-          functionOwnKeyGap(name) ??
-          (BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined)
-        );
+        return BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined;
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       // A string's own `length` and indexed characters come with arrays (#7352).
@@ -202,7 +234,10 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       const found = b.fresh();
       return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
     },
-    function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
+    function: (r, abort) =>
+      withoutOwnCaller(b, instr, name, abort, (s) => [
+        realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s),
+      ])(r),
     primitive: (_kind, r) => inherited(r),
   };
   return memberAccess(b, instr, access, result);
@@ -238,17 +273,17 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     resultType: b.carrier,
     // (#7354 F1, D4) Every key Object.prototype holds but its accessor is a writable data property, so OrdinarySet
     // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only an accessor's setter
-    // would run code the realm lacks: Object.prototype's. (#7489) A function's `caller` is the realm's: a sloppy
-    // function's own read-only one, else Function.prototype's %ThrowTypeError% setter; its `arguments` refuses.
-    missing: (kind) => {
-      if (MEMBER_ACCESS_ARM[kind] === "type-error") return undefined;
-      if (OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)) return "Object.prototype's accessor";
-      return kind === "function" ? functionOwnKeyGap(name) : undefined;
-    },
+    // would run code the realm lacks: Object.prototype's. (#7489) A function's `caller` / `arguments` are the realm's: a
+    // sloppy function's own read-only `caller`, else Function.prototype's %ThrowTypeError% setter (`withoutOwnCaller`).
+    missing: (kind) =>
+      MEMBER_ACCESS_ARM[kind] !== "type-error" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
+        ? "Object.prototype's accessor"
+        : undefined,
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
-    function: (r, throwTypeError) => putValue("function", r, throwTypeError),
+    function: (r, abort, throwTypeError) =>
+      withoutOwnCaller(b, instr, name, abort, (s) => putValue("function", s, throwTypeError))(r),
     primitive: (kind, r, throwTypeError) =>
       instr.sloppy === true ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
   };
