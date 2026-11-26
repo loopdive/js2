@@ -201,6 +201,23 @@ declares its own *F*) it is the block binding; elsewhere it is the var binding.
   `function outer(){ function g(){return 2} return g(); }` runs on main. Until then the function-level arm keeps
   aborting by name, with one named reason instead of today's five.
 
+- **Eval code (2c, §B.3.2.3, EvalDeclarationInstantiation), after eval A4 (#7363) runs the literal as a called
+  script source.** Lead's note (2026-11-26, from lane S2's census): 93 `annexB/language/eval-code/direct/global-*`
+  files and their 90 indirect twins stop at block functions (`f` not in scope ×48, FunctionDeclaration body ×30), so
+  about 183 more files ride on this mechanism once eval runs; S2 holds the lists. The same analysis carries it with
+  two inputs that differ from a script:
+  - **Outer lexical names.** A direct eval's conflict check also walks the caller's enclosing lexical scopes
+    (`{ let f; eval('{ function f(){} }') }` creates no var); an indirect eval has none. So `blockFunctionBindings`
+    takes the var-scope root plus an "outer lexical names" set, empty for a script, a function body and an indirect
+    eval.
+  - **When the var binding comes into being.** A script's or function's var exists from entry. An eval's new
+    global var exists only once the eval runs: before it, `f` throws ReferenceError and `typeof f` is
+    `"undefined"` (`…-skip-early-err*` checks exactly that). The binding is configurable (deletable), unlike a
+    script var. So the analysis reports the creation point ("var-scope entry" vs "eval instantiation"), and the
+    home of an eval-created global starts in lane S10's absent state (#7372 slice 3's absent marker), which the
+    eval's instantiation sets to `undefined`. No third home kind.
+  - A direct eval in a function (the `func-*` files, 144) is function level: it waits for 2b as well.
+
 Still refused by name in 2a: a block function in a script-level loop body; a labelled function declaration; a
 generator or async function in a block; a block function whose closure the dynamic-closure planner refuses (its own
 reason); a script with a `with` or direct `eval` (H2 invariant).
@@ -213,6 +230,7 @@ reason); a script with a `with` or direct `eval` (H2 invariant).
 2. **2a-2** script level: block home + function object at block entry + var write + resolution. Pins: each program
    run through the strict Prepared entry and node, right answer returns, a wrong twin throws.
 3. **2b** function level, after nested function declarations land.
+4. **2c** eval code, after eval A4 (#7363) and slice 3's absent global; re-measured on S2's 183-file list first.
 
 #### Acceptance
 
