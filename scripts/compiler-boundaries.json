@@ -2040,6 +2040,14 @@
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/identifier-write.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend identifier-write classification (scope, module binding, undeclared), the twin of identifier-read, shared by from-ast's three identifier writers; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/function-declaration-values.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
