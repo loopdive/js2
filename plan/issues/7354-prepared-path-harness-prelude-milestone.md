@@ -7237,3 +7237,131 @@ that fails; all gates incl. `LOC_GATE_BASE` = main.
 - The AST scan's types are the checker's view of untyped JS (`any` for parameters and properties), close to but not
   the compiler's own carrier typing; "built-in-free" misses RegExp literals and member-only built-ins (`x.toString`).
 - Node 25 (not installed; Node 22).
+
+## Slice L0a result (2026-11-26, branch `claude/7354-l0`; `main` c3b7be667a with G1 and O2 merged)
+
+Comparisons over values of any kind on the Prepared lane: `<` `>` `<=` `>=`, `==` `!=`, typed strings, mixed typed
+operands.
+
+### Built
+
+- **Legalization** (`src/ir/program/dynamic-comparisons.ts`, new, 184 lines; two `case` arms in
+  `dynamic-value-legalization.ts`).
+  - IsLessThan for the front end's `__ir_dyn_lt/le/gt/ge`, and IsLooselyEqual for `dyn.eq` with `loose`.
+  - ToPrimitive is F2's `primitiveOf` and ToNumber is `toNumber` (`conversionBuilders`). There is no second
+    ToPrimitive.
+  - Kind tests fold where the proven kinds decide them.
+  - C2's `holds` moved into the chain builders, so the two modules share it; it now reports `known`.
+- **String compare** (`js.value.string_compare`). It is a new intrinsic of the dynamic-value family, which takes two
+  string carriers and answers -1/0/1. It has a native provider and a resource row in `native-dynamic-values.ts`.
+  - The body is the ordinary pipeline's `__str_compare` loop, moved to `src/runtime/wasmgc/values/string-compare-body.ts`
+    with parameterised locals. Codegen now calls it, and its bytes are identical.
+  - Both operands are flattened first: a rope, or a UTF-8 string under `--utf8-storage`, becomes a flat WTF-16
+    string. The loop therefore always reads UTF-16 code units.
+  - No `js.string.compare` policy is selected.
+- **Front end** (`src/ir/dynamic-comparison-lowering.ts`, new). It holds `comparisonTakesCarrier`, `carrierOperand`,
+  `relOperandToF64` and `tryLowerDynamicRelational` (moved out of from-ast), and `dynamicOperandsUnlowered`.
+  - On the Prepared lane (`createsFunctionObjects`), every comparison pair goes into the carrier except:
+    - two dynamic values, which already take the dynamic arm;
+    - two numeric scalars of one kind;
+    - two strings under `==`/`===`.
+  - An `externref` scalar (an object) is not a fast path.
+  - The concrete side goes into the carrier through `storedCarrierValue`. That also covers a closure's function value
+    and an ordinary object.
+  - A relational operator that has a dynamic operand against a number keeps the ToNumber + `f64` compare.
+  - Off the lane nothing changes.
+- **Leave it better.** `src/shared/contracts/dynamic-add-helper.ts` became `dynamic-operator-helpers.ts`, which now
+  holds the four relational helper names too (codegen re-exports them). The equality body's flatten preamble is
+  `flattenLocals`/`castFlatReads`, which the compare reuses.
+- Size: `from-ast.ts` 17340 → 17269. `lowerBinary` is at its budget. There is no grant.
+
+### Condition D: what refuses or aborts, and why
+
+- **A function operand that needs ToPrimitive** (relational; `==` against a non-nullish primitive) is the run-time
+  abort. Function.prototype.toString is the source text, which no closure carries (F1b). Strict equality, and loose
+  equality against `null`/`undefined`/objects, answer node's value.
+- **A program that names `Symbol`** refuses by name. That is the existing ToPrimitive gap: `@@toPrimitive` is
+  reachable.
+- **BigInt, Symbol, wrapper objects (`new Number`) and Date** never enter the carrier on this lane. They refuse at
+  their own site.
+- **A concrete operand with no carrier kind** refuses by name: `'<op>' operand has no dynamic carrier`.
+- **Errors** (G1): ordinary realm objects, converted by their own `toString` (`e == "TypeError: m"` is true).
+
+### Proof
+
+- **Probes.** The 202 Phase-1 programs, base = main c3b7be667a (base re-run after the merge, same tallies as before
+  it) vs head:
+  - refused→right 18, abort→right 4, refused→abort 3 (`log += …` inside a closure, which is L0c);
+  - nothing right became anything else;
+  - 0 wrong, 0 invalid, 0 exceptions.
+  - Plus 33 condition programs (A/B/C, all node's answer with their twin) and 5 Error programs (4 right; 1 still
+    refuses on `null.x`'s `null`, which is L0b).
+- **Operand sweep.** 20 kinds × 20 × 8 operators × {top level, inside a function}, one program per (operator,
+  position, left operand), 384 programs:
+  - 5,992 comparisons equal node's answer.
+  - 64 comparisons end at the function-ToPrimitive abort: all are function pairs, and all predicted.
+  - 344 function pairs were not generated. Each needs the function's ToPrimitive, so each is a predicted abort.
+  - 0 wrong.
+  - 32 random programs re-run with a wrong twin: all 32 twins throw.
+  - In a function, `null` comes through `id(null)`: a `null` literal under a number hint is L0b's refusal.
+- **Code units.** `"𐀀" < "￿"` is true. So are `"a" < "B"` false, `"" < "a"`, the prefix cases, and
+  `<=`/`>=` on equal strings. Checked typed and dynamic, and with `utf8Storage: true`.
+- **Mutations** (each alone): killed / survived.
+  - Converting the right operand first: killed, 8 order programs wrong.
+  - ToPrimitive on two objects: killed (`eq-objobj`).
+  - Treating a conversion's `null` like any primitive: **survived** the first test set. A test was added
+    (`z == 0` with `valueOf` → `null`); now killed.
+  - Dropping `externref` from the carrier rule: killed (the new object-locals test).
+- **Ordinary pipeline.** Identical bytes, base vs head, on two sets:
+  - 22 test262 comparison files × default/standalone;
+  - 6 ordinary-pipeline comparison probes × 2, including standalone `string < string` through the relocated
+    `__str_compare` body.
+- **`check:prepared-bytes`.** 804 rows; 5 differ, all compiling now and all run:
+  - 205 and 442 (`lt('a','b')` on typed strings): refused → `main=1`.
+  - 213, 237 and 579 (loose `==` of dynamic values): before, they compiled with an abort body; now they return
+    node's answer.
+- **Tests.**
+
+  | file | tests | exit |
+  |---|---:|---:|
+  | issue-7354-l0a-relational (new) | 8 | 0 |
+  | issue-7354-l0a-loose-equality (new) | 5 | 0 |
+
+  - Pins moved: Str (typed string compare now runs; the loose-equality refusal row removed), R census (no
+    `js.string.compare` selected, the compare runs), T truthiness and D1 (the loose-equality refusal rows removed),
+    D1 (the selection gains `stringCompare`).
+  - Every other `issue-7354-*` file (64), each alone, exits 0 except `o-objects` "refuses what the later steps build".
+    That one fails on main c3b7be667a too.
+  - 3526 string-boundary const, 3518 vocabulary/verification, 3526 runtime-manifest pass.
+  - 3526 boundary-residuals (4) and boolean-boundary-intrinsic (2) fail identically on main.
+
+### Sample (411 rows, real runner, base = main c3b7be667a)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| base | 82 | 25 | 304 |
+| L0a | **85** | 25 | 301 |
+
+- The three new passes are exactly the rows Phase 1 predicted: equals S11.9.1_A2.4_T2, greater-than-or-equal
+  S11.8.4_A4.12_T1 and relational S9.1_A1_T4. No other row changed.
+- **Targeted set** (the 197 built-in-free L0 rows outside the sample): 16 → **30** pass, no pass lost.
+  - New passes: does-not-equals A7.8; equals A3.2, A5.3, A7.9; greater-than-or-equal A2.2_T1, A4.11; greater-than
+    11.8.2-1, A2.4_T2, A3.1_T1.3; less-than-or-equal 11.8.3-2, A2.3_T1, A4.11; less-than A3.1_T1.3, A4.10.
+  - 3 rows moved to a later blocker: L0b's `null`, and `.toString()` on an object local, twice.
+- **Twins.** All 17 new passes have a mutated twin, written next to the original, run through the same runner and
+  deleted. The twin is the last `!==` flipped, or else the last `assert.sameValue` Boolean flipped, or else the last
+  `if` negated. All 17 twins FAIL.
+
+### Gates
+
+Exit 0, against the merge base and against `LOC_GATE_BASE` = c3b7be667a:
+- typecheck, LOC budget, function budget, coercion sites, oracle ratchet;
+- dead exports, import cycles;
+- compiler boundaries (`--mode inventory`): `dynamic-comparisons.ts` is clean ir-program, `string-compare-body.ts` is
+  clean native-runtime, and `dynamic-comparison-lowering.ts` is mixed-needs-split like `realm-static-call.ts`.
+
+### Not verified
+
+- Node 25 (not installed; Node 22).
+- The 344 ungenerated function pairs of the sweep (predicted aborts).
+- The full vitest suite: only the files listed above were run.
