@@ -13,7 +13,7 @@ import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { carrierOperand } from "./dynamic-comparison-lowering.js";
 import type { FunctionObjectLoweringHost } from "./function-object-lowering.js";
-import { stringCaseTestValue, type SwitchCaseTests } from "./switch-case-tests.js";
+import { stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 const I32 = irVal({ kind: "i32" });
 
@@ -26,16 +26,18 @@ export interface SwitchDiscriminant {
 /**
  * Lower the discriminant once (§14.12.9 step 1), with the hint the tests imply. Numeric literal tests compare an i32/f64
  * discriminant directly; string literal tests compare a string one by `string.eq`. (#7354 L0b) On the Prepared lane
- * any other discriminant, and mixed or non-literal tests, take the carrier dispatch.
+ * any other discriminant, and mixed or non-literal tests, take the carrier dispatch. So does an `i32` discriminant
+ * there: it may be a Boolean, which strict equality never equates with a number (`switch (true) { case 1: }`).
  */
 export function switchDiscriminant(
   stmt: ts.SwitchStatement,
-  caseTests: SwitchCaseTests,
   host: FunctionObjectLoweringHost,
   lowerDisc: (hint: IrType) => IrValueId,
 ): SwitchDiscriminant {
-  const carrierLane = host.createsFunctionObjects() && host.dynamicCarrierIsExternref();
-  if (caseTests.kind === "rejected" && (!carrierLane || caseTests.reason === "switch-multiple-defaults"))
+  // The selector's own predicate: the Prepared path has no selector, and the string dispatch skips non-literals.
+  const caseTests = switchCaseTests(stmt);
+  const lane = host.onPreparedDynamicLane();
+  if (caseTests.kind === "rejected" && (!lane || caseTests.reason === "switch-multiple-defaults"))
     throw new IrUnsupportedError(
       "body-shape-rejected",
       "build",
@@ -52,8 +54,9 @@ export function switchDiscriminant(
   const discKind = asVal(discType)?.kind ?? discType.kind;
   if (caseTests.kind === "string" && discKind === "string")
     return { disc: stringDispatch(disc, stmt, host.builder), byIndex: true };
-  if (caseTests.kind === "numeric" && (discKind === "f64" || discKind === "i32")) return { disc, byIndex: false };
-  const carrier = carrierLane ? carrierOperand(disc, stmt.expression, host) : null;
+  if (caseTests.kind === "numeric" && (discKind === "f64" || (discKind === "i32" && !lane)))
+    return { disc, byIndex: false };
+  const carrier = lane ? carrierOperand(disc, stmt.expression, host) : null;
   if (carrier !== null) return { disc: carrierDispatch(carrier, stmt, host), byIndex: true };
   if (caseTests.kind === "string")
     // Selector mirror (`switch-disc-not-string`): a named Unsupported reason demotes cleanly under IR-first (#2138).

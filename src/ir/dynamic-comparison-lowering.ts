@@ -38,7 +38,7 @@ export function comparisonTakesCarrier(
   rt: IrType,
   host: FunctionObjectLoweringHost,
 ): boolean {
-  if (!host.createsFunctionObjects() || (relationalOperator(op) === undefined && !isEqualityOperator(op))) return false;
+  if (!host.onPreparedDynamicLane() || (relationalOperator(op) === undefined && !isEqualityOperator(op))) return false;
   if ((lt.kind === "dynamic" && rt.kind === "dynamic") || (lt.kind === "string" && rt.kind === "string")) return false;
   const [lv, rv] = [asVal(lt), asVal(rt)];
   return lv === null || rv === null || lv.kind !== rv.kind || lv.kind === "externref";
@@ -107,7 +107,7 @@ export function tryLowerDynamicRelational(
     const rf = relOperandToF64(rhs, rt, host.builder)!;
     return host.builder.emitBinary(relational.number, lf, rf, I32);
   }
-  if (!host.createsFunctionObjects()) return null;
+  if (!host.onPreparedDynamicLane()) return null;
   const dynL = carrierOperand(lhs, expr.left, host);
   const dynR = carrierOperand(rhs, expr.right, host);
   return dynL === null || dynR === null ? null : helper(dynL, dynR);
@@ -127,7 +127,7 @@ export function emitStringRelational(
   host: FunctionObjectLoweringHost,
 ): IrValueId {
   const relational = relationalOperator(op)!;
-  const sign = host.createsFunctionObjects()
+  const sign = host.onPreparedDynamicLane()
     ? host.builder.emitIntrinsic("js.value.string_compare", [lhs, rhs])
     : host.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], I32);
   if (sign === null) {

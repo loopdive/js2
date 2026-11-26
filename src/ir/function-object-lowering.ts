@@ -50,6 +50,8 @@ export interface FunctionObjectLoweringHost {
    * closures are function objects, a call through a value is the native dispatcher `js.closure.call:N`.
    */
   readonly createsFunctionObjects: () => boolean;
+  /** (#7354 L0a, L0b) `onPreparedDynamicLane` of the resolver. */
+  readonly onPreparedDynamicLane: () => boolean;
   /** (#7354 O1) The identifier reads the unchanged global built-in of its name (`builtin-global-binding.ts`). */
   readonly isPristineGlobal: (identifier: ts.Identifier) => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;

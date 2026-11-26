@@ -450,8 +450,9 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
-import { numericCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
+import { numericCaseTestValue } from "./switch-case-tests.js";
 import { switchDiscriminant } from "./switch-dispatch.js";
+import { onPreparedDynamicLane } from "./prepared-dynamic-lane.js";
 import { directCallArityPlan } from "./direct-call-arity.js";
 
 interface ResolvedIrVecType {
@@ -534,7 +535,7 @@ function unsupportedVoidCallExpression(detail: string): never {
  * `undefined` (§10.2.1.4), the carrier's; elsewhere the shape refuses with `detail`.
  */
 function voidCallValue(detail: string, cx: LowerCtx): IrValueId {
-  if (!functionObjects.createsFunctionObjects(cx.resolver)) unsupportedVoidCallExpression(detail);
+  if (!onPreparedDynamicLane(cx.resolver)) unsupportedVoidCallExpression(detail);
   return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
 }
 
@@ -1027,6 +1028,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
+  preparedDynamicLane?(): boolean; // (#7354 L0a, L0b) `prepared-dynamic-lane.ts`
   isPristineBuiltinGlobal?(identifier: ts.Identifier): boolean; // (#7354 O1) `builtin-global-binding.ts`
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
   readonly closureCodeStrictness?: CodeStrictness;
@@ -2351,7 +2353,7 @@ function terminateTailFallOut(cx: LowerCtx): void {
 
 function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): void {
   // (#7354 L0b) An EmptyStatement completes empty (§14.4); on the Prepared lane it neither lowers nor is the tail.
-  const stmts = functionObjects.createsFunctionObjects(cx.resolver)
+  const stmts = onPreparedDynamicLane(cx.resolver)
     ? statements.filter((statement) => !ts.isEmptyStatement(statement))
     : statements;
   if (stmts.length < 1) {
@@ -5187,7 +5189,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     // (#7354 L0b) On the Prepared lane a `null` no reference hint admits is the carrier's, for its user to convert.
     const admissible = nullValueAdmissible(irOperandFamily(hint, expr));
     const dynamicNull =
-      (hint.kind === "dynamic" || (!admissible && functionObjects.createsFunctionObjects(cx.resolver))) &&
+      (hint.kind === "dynamic" || (!admissible && onPreparedDynamicLane(cx.resolver))) &&
       cx.resolver?.dynamicCarrierIsExternref?.() === true;
     if (dynamicNull || admissible) {
       const ty = dynamicNull || hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
@@ -5349,8 +5351,9 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     }
     return p.value;
   }
-  const postfix = ts.isPostfixUnaryExpression(expr) ? lowerValueUpdate(expr, cx) : null;
-  if (postfix !== null) return postfix;
+  const update =
+    ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr) ? lowerValueUpdate(expr, cx) : null;
+  if (update !== null) return update;
   if (ts.isPrefixUnaryExpression(expr)) {
     return lowerPrefixUnary(expr, cx);
   }
@@ -6283,7 +6286,7 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
     if (value === null) throw new Error("ordinary Get contract returned no value");
     if (result.kind === "callable") return cx.builder.emitOrdinaryGetCallableResult(value, result.signature);
     if (boolean)
-      return functionObjects.createsFunctionObjects(cx.resolver)
+      return onPreparedDynamicLane(cx.resolver)
         ? cx.builder.emitBox(value, irDynamic())
         : cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
     return cx.builder.emitIntrinsic("js.number.unbox", [value]);
@@ -7734,6 +7737,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
     createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
+    onPreparedDynamicLane: () => onPreparedDynamicLane(cx.resolver),
     isPristineGlobal: (identifier) => cx.resolver?.isPristineBuiltinGlobal?.(identifier) === true,
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
@@ -7980,7 +7984,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // time to one IR arg per literal element. The pre-expansion arity
   // check below counts spread elements as their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
-  const arity = directCallArityPlan(expr, direct, cx.identityContext?.declarationByUnitId, lane);
+  const arity = directCallArityPlan(expr, direct, cx.identityContext?.declarationByUnitId, cx.resolver);
   if (expandedArgExprs.length !== calleeSig.params.length && arity === null) {
     demoteToLegacy(
       "call-arity-unsupported",
@@ -12642,7 +12646,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     withNodeSourceSite(cx, stmt, () => lowerStmt(stmt, cx));
     return;
   }
-  if (ts.isEmptyStatement(stmt) && functionObjects.createsFunctionObjects(cx.resolver)) return;
+  if (ts.isEmptyStatement(stmt) && onPreparedDynamicLane(cx.resolver)) return;
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
     lowerBodyStatements(stmt.statements, childCx);
@@ -12979,11 +12983,8 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     return;
   }
   const clauses = stmt.caseBlock.clauses;
-  const { disc: discRaw, byIndex } = switchDiscriminant(
-    stmt,
-    switchCaseTests(stmt),
-    functionObjectLoweringHost(cx),
-    (hint) => lowerExpr(stmt.expression, cx, hint),
+  const { disc: discRaw, byIndex } = switchDiscriminant(stmt, functionObjectLoweringHost(cx), (hint) =>
+    lowerExpr(stmt.expression, cx, hint),
   );
   const discT = asVal(cx.builder.typeOf(discRaw))!;
   const discSlot = cx.builder.declareSlot("__switch_disc", discT);
@@ -13379,20 +13380,12 @@ function lowerCompoundAssignment(
 }
 
 /**
- * Slice 12 (#1280): `<id>++` / `<id>--` / `++<id>` / `--<id>` as an
- * expression statement. Lowers to a slot read, +/- 1, slot write.
- * Result value is discarded (we're in expression-statement position).
- *
- * Both i32 and f64 slots are supported — the typical loop counter is
- * f64 (typed `number`) but `type i32 = number` annotated counters use
- * i32. The binop dispatches on the slot ValType.
- */
-/**
  * (#7354 L0b) `++x` / `x--` in value position on the Prepared lane: the update, then the new value (prefix) or the old
- * value's ToNumeric (postfix), §13.4.2-13.4.5. Any other operand keeps its refusal (`null`).
+ * value's ToNumeric (postfix), §13.4.2-13.4.5. Any other unary expression or operand is not an update here (`null`).
  */
 function lowerValueUpdate(expr: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression, cx: LowerCtx): IrValueId | null {
-  if (!ts.isIdentifier(expr.operand) || !functionObjects.createsFunctionObjects(cx.resolver)) return null;
+  const update = expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken;
+  if (!update || !ts.isIdentifier(expr.operand) || !onPreparedDynamicLane(cx.resolver)) return null;
   const { old, updated } = lowerIncrementDecrement(expr.operand, expr.operator, cx);
   const value = ts.isPrefixUnaryExpression(expr) ? updated : old;
   return asVal(cx.builder.typeOf(value))?.kind === "i32"
@@ -13406,6 +13399,11 @@ interface UpdatedValues {
   readonly updated: IrValueId;
 }
 
+/**
+ * Slice 12 (#1280): `<id>++` / `<id>--` / `++<id>` / `--<id>`: a slot read, +/- 1, slot write. Both i32 and f64 slots
+ * are supported (a `type i32 = number` counter uses i32); the binop dispatches on the slot ValType. In statement
+ * position the {@link UpdatedValues} are discarded.
+ */
 function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: LowerCtx): UpdatedValues {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id)
     return withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
@@ -13597,8 +13595,7 @@ function lowerToStringOperand(operand: ts.Expression, cx: LowerCtx): IrValueId {
   // A string, a boolean (branded, or (#7354 L0b) on the Prepared lane proven by its expression) or an f64; another
   // `i32` may be a number.
   const boolean =
-    irTypeIsBoolean(type) ||
-    (functionObjects.createsFunctionObjects(cx.resolver) && irOperandFamily(type, operand) === "boolean");
+    irTypeIsBoolean(type) || (onPreparedDynamicLane(cx.resolver) && irOperandFamily(type, operand) === "boolean");
   if (type.kind === "string" || boolean || asVal(type)?.kind === "f64")
     return lowerPrimitiveToString(cx.builder, value, boolean ? "boolean" : carrierStringFamily(type))!;
   demoteToLegacy(
@@ -13863,16 +13860,14 @@ function lowerCarrierConditional(expr: ts.ConditionalExpression, cx: LowerCtx): 
  * `c ? "s" : null`) joins on the carrier.
  */
 function laneMixedConditional(expr: ts.ConditionalExpression, cx: LowerCtx): boolean {
-  const kind = (arm: ts.Expression): string | null => {
-    const e = peelParensExpr(arm);
-    if (e.kind === ts.SyntaxKind.NullKeyword) return "null";
-    if (ts.isVoidExpression(e) || isUnshadowedGlobalExpression(e, "undefined", cx)) return "undefined";
-    const family = checkerOperandFamily(e, cx);
+  if (!onPreparedDynamicLane(cx.resolver)) return false;
+  const typed = (arm: ts.Expression): OperandFamily | null => {
+    if (isUnshadowedGlobalExpression(arm, "undefined", cx)) return "undefined";
+    const family = checkerOperandFamily(arm, cx);
     return isSupportedPrimitiveFamily(family) ? family : null;
   };
-  if (!functionObjects.createsFunctionObjects(cx.resolver)) return false;
-  const [whenTrue, whenFalse] = [kind(expr.whenTrue), kind(expr.whenFalse)];
-  return whenTrue !== null && whenFalse !== null && whenTrue !== whenFalse;
+  const [whenTrue, whenFalse] = [expr.whenTrue, expr.whenFalse].map((arm) => conditionalJoinArmFamily(arm, typed));
+  return whenTrue !== null && whenFalse !== null && conditionalJoinFamily(whenTrue, whenFalse) === "unknown";
 }
 
 /**
@@ -14116,13 +14111,10 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
   // (#7354 D1) Deferred: the selector never claims one.
   if (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
-    return (
-      lowerValueUpdate(expr, cx) ??
-      refuseUnselected(
-        cx.unselected,
-        "body-shape-rejected",
-        `ir/from-ast: value-position prefix update in ${cx.funcName}`,
-      )
+    refuseUnselected(
+      cx.unselected,
+      "body-shape-rejected",
+      `ir/from-ast: value-position prefix update in ${cx.funcName}`,
     );
   // #2135 — capability-table invariant, mirroring `lowerBinary`. A deferred
   // prefix op post-claim is a selector↔table disagreement (compiler bug).
@@ -14306,19 +14298,16 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): PrimitiveProof
  * discharged by a proof on the TS *type*, never the Wasm kind: number /
  * boolean / symbol all collapse to f64 / i32 (the Row-7 trap). The pair must
  * satisfy the shared `+` rule ({@link additiveOperandsProvable}, #7066);
- * anything else demotes to the SAFE legacy dynamic `+` (`emitAnyAdd`). No
- * checker → `undefined`, and the kind-based dispatch stands (#2780).
+ * anything else demotes to the SAFE legacy dynamic `+` (`emitAnyAdd`), or
+ * (#7354 L0b) on the Prepared lane takes the carrier's `+` itself. No checker
+ * → no proofs, and the kind-based dispatch stands (#2780).
  */
-function provenAdditiveOperands(
-  expr: ts.BinaryExpression,
-  cx: LowerCtx,
-): readonly [AdditiveProof, AdditiveProof] | "carrier" | undefined {
+function provenAdditiveOperands(expr: ts.BinaryExpression, cx: LowerCtx): AdditivePlan {
   const lProof = additiveOperandProof(expr.left, cx);
   const rProof = additiveOperandProof(expr.right, cx);
-  if (lProof === null || rProof === null) return undefined;
+  if (lProof === null || rProof === null) return UNPROVEN_ADDITION;
   if (!additiveOperandsProvable(expr, lProof, rProof, additiveLaneOf(cx))) {
-    // (#7354 L0b) The Prepared lane has the dynamic `+` itself: both operands take the carrier.
-    if (functionObjects.createsFunctionObjects(cx.resolver)) return "carrier";
+    if (onPreparedDynamicLane(cx.resolver)) return { proofs: undefined, carrier: true };
     throw new IrUnsupportedError(
       "operand-coercion-unsupported",
       "build",
@@ -14327,8 +14316,16 @@ function provenAdditiveOperands(
         `(emitAnyAdd) in ${cx.funcName}`,
     );
   }
-  return [lProof, rProof];
+  return { proofs: [lProof, rProof], carrier: false };
 }
+
+/** How a `+` lowers: by its operands' proofs, or with both operands in the carrier. */
+interface AdditivePlan {
+  readonly proofs: readonly [AdditiveProof, AdditiveProof] | undefined;
+  readonly carrier: boolean;
+}
+
+const UNPROVEN_ADDITION: AdditivePlan = { proofs: undefined, carrier: false };
 
 /** (#7066) How this compile judges a `+`: the selector's `additiveLane`, from the resolver and the checker. */
 function additiveLaneOf(cx: LowerCtx): AdditiveLane {
@@ -14982,8 +14979,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   const undefCompare = tryLowerUndefinedCompare(expr, op, cx);
   if (undefCompare !== null) return undefCompare;
 
-  const additive = op === ts.SyntaxKind.PlusToken ? provenAdditiveOperands(expr, cx) : undefined;
-  const additiveProofs = additive === "carrier" ? undefined : additive;
+  const additive = op === ts.SyntaxKind.PlusToken ? provenAdditiveOperands(expr, cx) : UNPROVEN_ADDITION;
 
   // (#3741) i32 fast paths that need to choose the OPERANDS' representation:
   // slot-promotion fusion, and the `x | 0` identity. Null ⇒ nothing applied
@@ -15004,7 +15000,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     isIrBitwiseOperatorToken(op) &&
     isI32PureExprIR(expr.left, cx.i32PureNames, cx.provenCharReads) &&
     isI32PureExprIR(expr.right, cx.i32PureNames, cx.provenCharReads);
-  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, additiveProofs, cx);
+  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, additive.proofs, cx);
   const lt = typeOfValue(lhs, cx);
   const rt = typeOfValue(rhs, cx);
 
@@ -15027,7 +15023,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     irOperandFamily(rt, expr.right),
   );
   const host = functionObjectLoweringHost(cx);
-  if (additive === "carrier")
+  if (additive.carrier)
     return emitDynamicAdd(carrierOperand(lhs, expr.left, host)!, carrierOperand(rhs, expr.right, host)!, cx);
   if (
     ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) ||
@@ -15095,8 +15091,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     }
     switch (op) {
       case ts.SyntaxKind.PlusToken: {
-        const left = lowerConcatOperand(cx.builder, lhs, additiveProofs?.[0]);
-        const right = lowerConcatOperand(cx.builder, rhs, additiveProofs?.[1]);
+        const left = lowerConcatOperand(cx.builder, lhs, additive.proofs?.[0]);
+        const right = lowerConcatOperand(cx.builder, rhs, additive.proofs?.[1]);
         if (left === null || right === null) {
           const detail = `ir/from-ast: '+' operand ${describeIrType(left === null ? lt : rt)} has no ToString in ${cx.funcName}`;
           throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
@@ -15861,7 +15857,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // arm and surfacing an "identifier not in scope" invariant.
   if (ts.isIdentifier(other) && other.text === "undefined" && !cx.scope.has("undefined")) {
     // (#7354 L0b) The Prepared lane has both values in the carrier: the comparison is the carrier's.
-    if (functionObjects.createsFunctionObjects(cx.resolver)) return null;
+    if (onPreparedDynamicLane(cx.resolver)) return null;
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",

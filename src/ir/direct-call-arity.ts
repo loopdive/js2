@@ -7,6 +7,7 @@ import { ts } from "../ts-api.js";
 import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrUnitId } from "./identity.js";
 import { directCallPublishesArgc } from "./select.js";
+import { onPreparedDynamicLane } from "./prepared-dynamic-lane.js";
 
 /**
  * The plan of a call (without spread arguments) that is not exactly the callee's arity, or `null` when this lowering
@@ -23,13 +24,14 @@ export function directCallArityPlan(
   expr: ts.CallExpression,
   direct: IrDirectCallLoweringPlan,
   declarationByUnitId: ReadonlyMap<IrUnitId, ts.Node> | undefined,
-  lane: boolean,
+  resolver: { preparedDynamicLane?(): boolean } | undefined,
 ): { readonly publishArgc: boolean } | null {
   const params = direct.signature.params;
   const actual = expr.arguments.length;
   if (actual === params.length || expr.arguments.some(ts.isSpreadElement)) return null;
   const over = actual > params.length;
-  if (over ? !lane : params.slice(actual).some((param) => param.kind !== "dynamic")) return null;
+  if (over && !onPreparedDynamicLane(resolver)) return null;
+  if (params.slice(actual).some((param) => param.kind !== "dynamic")) return null;
   const binding = direct.target.binding;
   const declaration = binding.kind === "unit" ? declarationByUnitId?.get(binding.unitId) : undefined;
   if (
