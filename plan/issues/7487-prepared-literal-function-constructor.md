@@ -12,8 +12,8 @@ reasoning_effort: high
 task_type: feature
 area: ir
 goal: ir-full-coverage
-depends_on: [7363]
-related: [7354, 7350, 7349, 2924]
+depends_on: [7363, 7350, 7354]
+related: [7349, 2924]
 ---
 
 # #7487: the `Function` constructor with all-literal arguments on the Prepared path
@@ -32,7 +32,8 @@ On the Prepared whole-program path (`TEST262_COMPILER_PATH=ir`, standalone), eve
 | `unknown class "Function"` (`new Function`) | test | 64 |
 | `instanceof RHS class "Function" has no projected shape` | test | 2 |
 
-The `Function` sites in those 334 files sort as follows:
+The `Function` sites in those files sort as follows (per file:
+`plan/log/7487-function-ctor-yield/first-gap-function.tsv`):
 
 | class | files | owner |
 | --- | ---: | --- |
@@ -48,27 +49,38 @@ environment. When every argument is a literal, that text is known at compile tim
 
 ## Yield (measured, main `c3b7be667a`)
 
-**Method.** I used a step-past rewrite in a scratch checkout. Each all-literal site was replaced by a reference to a
-hoisted top-level `function __dynfn_N(<params>\n) {\n<body>\n}`; value uses and computed sites were left alone. I
-then re-ran `scripts/ir-census/prepared-census.mts --tree` on the 197 rewritten files, with both harnesses. Without
-the rewrite, all 197 pass 0.
+**Method.** The tool is `plan/log/7487-function-ctor-yield/step-past.mjs`; the exact commands are in that folder's
+`README.md`, and the 197-file list is `files.txt`.
 
-| group | files | pass, stand-in | pass, real harness |
-| --- | ---: | ---: | ---: |
-| literal `Function(...)` calls | 64 | 25 | 20 |
-| literal `new Function(...)` | 31 | 7 | 7 |
-| both literal forms | 2 | 0 | 0 |
-| literal + value use | 11 | 0 | 0 |
-| `fnGlobalObject.js` only | 89 | 0 (see below) | 0 |
-| **total** | 197 | **32** | **27** |
+1. Each all-literal site becomes a reference to a hoisted top-level `function __dynfn_N(<params>\n) {\n<body>\n}`,
+   in a scratch tree whose `test262/` the tool builds itself from real copies.
+2. Value uses and computed sites are left alone.
+3. `scripts/ir-census/prepared-census.mts --tree` runs on those files with both harnesses, and once without the
+   rewrite.
 
-The rewrite is a bound, not the mechanism. It shares one function object across evaluations, and it makes the body
-strict when the program is strict. So:
+| group | files | pass now (real) | pass, stand-in | pass, real harness |
+| --- | ---: | ---: | ---: | ---: |
+| literal `Function(...)` calls | 64 | 0 | 25 | 20 |
+| literal `new Function(...)` | 31 | 0 | 7 | 7 |
+| both literal forms | 2 | 0 | 0 | 0 |
+| literal + value use | 11 | 0 | 0 | 0 |
+| `fnGlobalObject.js` only | 89 | 0 | 0 | 0 |
+| **total** | 197 | 0 | **32** | **27** |
 
-- 9 rows of the 165 that still fail are rewrite artifacts in the 16 strict programs: `Cannot assign to … in strict
-  mode`, `Duplicate parameter name`, `Binding … in strict mode`. The mechanism compiles each body in its own
-  strictness.
-- The real-harness figure is the one CI measures.
+**The rewrite is a bound, not the mechanism.** It differs from CreateDynamicFunction in four ways:
+
+- one function object is shared across evaluations;
+- the body is strict when the program is (`onlyStrict`, 16 files);
+- `toString`, `name` and `length` read the hoisted declaration;
+- RV7432's B1/B2 effects are absent from the rewrite but present in the mechanism until the A1–A4 fixes land (see
+  P3, P4).
+
+Consequences:
+
+- The 9 rows that fail only in the 16 strict programs are counted **unknown**, not as failures. They are `Cannot
+  assign to … in strict mode` ×4, `Duplicate parameter name` ×3 and `Binding … in strict mode` ×2.
+- The yield is **re-measured with this tool after the A1–A4 B1/B2 fixes land**, and again after this arm. The arm
+  then replaces the rewrite.
 
 What stands next behind the rewrite (stand-in):
 
@@ -83,102 +95,166 @@ What stands next behind the rewrite (stand-in):
 **`fnGlobalObject.js` (89 files): yield not measurable yet.** A sloppy function called directly must get the global
 object as `this`. No construct can name the global object on this path today. I checked both stand-ins: top-level
 `this` refuses (`'this' reference outside an instance method body`), and `globalThis` refuses (`identifier
-"globalThis" is not in scope`). Those 89 files therefore need, in addition:
+"globalThis" is not in scope`). Those 89 files therefore need:
 
 - the global object as a value (#7350 B2b, `js.object.global`);
-- C2's known limit, the sloppy direct-call receiver (#7354 C2, "a direct call … installs no receiver for its
-  `this`").
+- the sloppy direct-call receiver (#7354 C2's known limit).
 
-Their yield is re-measured once both land.
+Both are listed in `depends_on`.
 
 ## Dependency
 
 The arm is built on the **literal dynamic-code source seam of #7363 slice A, in its A1–A4 PR**, not on #7432. #7432
 lands only the `src/frontend/eval` move and the dedupe; the seam (A1–A3) lands together with A4, and A4 waits on
-#7350 B2b.
+#7350 B2b. The plan below is concrete about this arm, but its seam-facing details are checked against A1–A4's design
+once that design is concrete. The plan review waits for that (lead, 2026-11-26).
 
-What the arm uses from that PR:
+The arm needs three things, in this order:
 
-- `present()` (`src/test262/test262-prepared-entry.ts`) turns each qualifying literal site into a virtual script
-  source, before checking;
-- the relation travels `PipelineInput` → `IrProgramSourceInput`;
-- `src/ir/eval-literal.ts` holds the site predicate and the receipt;
-- the site's run-time identity test (global `eval` === %eval%, through `js.object.global`) comes with A4.
+1. #7439, the `src/frontend/eval` move;
+2. the A1–A4 PR, on branch `claude/prepared-eval-a7`, carrying RV7432's B1 fix (diagnostics in a virtual source
+   refuse the site) and B2 fix (write analyses walk virtual sources);
+3. S5's #7350 B2b on main, which A4 waits for.
 
-Agreed with S2, who owns #7363 slice A, on 2026-11-26. S2 reviews this plan.
+The arm stacks on `claude/prepared-eval-a7` once S2 reports its head.
+
+**Landed early, separately.** One CreateDynamicFunction text assembler, `functionSourceText(name, params, body)`, in
+the import-free leaf `src/interp/function-source-text.ts`. It is listed in the provider's `INTERP_FILES`, the
+interpreter and the legacy literal fold share it, and the legacy fold's template, which had no newline before `)`, is
+removed. That is PR #7441, which addresses review P1.
 
 ## Implementation Plan
 
 ### Target structure
 
-1. **One relation, two kinds.** Generalise slice A's `literalEvalSources: {call, source}[]` into literal
-   dynamic-code sources, `{site, kind: "eval" | "function", source}`. It lives in the same module
-   (`src/ir/eval-literal.ts`, renamed to `src/ir/literal-dynamic-code.ts` in the same PR when the name no longer
-   fits), with the same receipt (`verifyLiteralEvalSources`, generalised), and enters through the same one place in
-   `present()`. There is no second pipeline, no second predicate module and no second receipt.
-2. **The site predicate.** It sits next to the eval predicate and has the same shape:
-   - a call or `new` whose callee is the unshadowed global `Function`, resolved the way `resolvesToSourceBinding`
-     resolves `eval`;
-   - every argument is a string literal (`ts.isStringLiteralLike`), and zero arguments count;
-   - a computed argument keeps today's named refusal.
-   The text is CreateDynamicFunction's: parameters joined with `,`, body last.
-3. **One §20.2.1.1.1 assembler.** `dynamicFunctionSource(paramString, bodyString)` moves from
-   `src/interp/dynamic-function.ts` to a pure module beside slice A's eval sources under `src/frontend/eval/`. Three
-   callers import it:
-   - the interpreter (unchanged behaviour);
-   - this arm;
-   - the legacy fold `synthesizeStaticNewFunction` (`src/codegen/expressions/eval-inline.ts`).
+1. **One relation, two kinds.** Slice A's literal-source relation becomes `{site, kind: "eval" | "function",
+   source}`:
+   - one site-predicate module: `src/ir/eval-literal.ts`, renamed to `src/ir/literal-dynamic-code.ts` when the
+     `function` kind enters;
+   - one receipt: `verifyLiteralEvalSources`, generalised to the kind;
+   - one entry in `present()`.
 
-   The legacy fold currently has its own template, which lacks the `\n` before `)`, so a trailing `//` comment in the
-   parameter text swallows the `)`. That template is removed. The legacy fold keeps its synthesized name; the shared
-   assembler takes the name as a parameter, defaulting to `anonymous`.
-4. **The virtual source binds no global name.** A `function` kind source holds the assembled text as its single
-   top-level `FunctionDeclaration`. Two places treat it as such:
-   - the global-binding collection skips it, because CreateDynamicFunction creates no binding, so `typeof anonymous`
-     stays `"undefined"` and several sites do not collide on `anonymous`;
-   - the source's plan is "value": startup does not run the source; the site evaluates to a fresh closure of that
-     declaration's unit, so each evaluation is a new object, `name` is `"anonymous"`, and the scope is global.
-   The body's strictness comes from the body's own directive, not from the caller (§20.2.1.1.1). The unit is
-   lowered with that strictness, through O3's `codeStrictness`.
-5. **The site.** The site test is global `Function` === %Function%, through `js.object.global` and
-   `js.value.strict_eq`, the same shape as A4's %eval% test:
-   - equal: the site evaluates to the closure;
-   - unequal: the site is an ordinary call or `new` of the value.
-   `new` and a call give the same result, since CreateDynamicFunction ignores `new.target` for this kind.
-6. **Static SyntaxError.** When the assembled text does not parse as one function declaration, the site throws a
-   SyntaxError when run. This reuses slice A's static-SyntaxError arm (`foldedEvalStaticSyntaxError` /
-   `parseEvalSource`), with no new error path.
+   There is no second pipeline. Everything in items 3–6 lives in the `function` arm of those same three places.
+2. **The site predicate.** It sits next to the eval predicate and has the same shape:
+   - a call or `new` whose callee is the unshadowed global `Function`, resolved as `resolvesToSourceBinding` resolves
+     `eval`;
+   - every argument is `ts.isStringLiteralLike`, and zero arguments count;
+   - a computed argument keeps today's named refusal.
+3. **Parsing (P2).** CreateDynamicFunction parses the parameters and the body as **separate goals** before the whole
+   text (§20.2.1.1.1: `ParseText(P, FormalParameters)`, `ParseText(body, FunctionBody)`), so this arm does the same:
+   - **Each piece in its own wrapper.** The parameter text is checked as `(<P>\n) => 0`, and the body as
+     `function f() {\n<body>\n}`. Each must parse as exactly that wrapper, with the piece's end where the wrapper put
+     it, and the assembled text must parse as exactly **one** `FunctionDeclaration` whose parameter-list and body spans
+     equal the two inputs. Three examples, as in node:
+     - `Function("/*", "*/){")` fails at the parameter piece;
+     - the injections `Function("}; function x(){")` (body) and `Function("a){};(function(", "")` (params) fail;
+     - they never become two declarations.
+   - **HTML-like comments.** A piece containing `<!--` or a line-leading `-->` (Annex B.1.1) refuses by name
+     (`dynamic function source uses an HTML-like comment`), since TS's parser does not implement them (TS1109).
+   - **Early errors TS's parser misses.** These refuse by name (`dynamic function early error not covered: <rule>`):
+     a strict body with non-simple parameters (default, rest, pattern), a duplicate label, strict `with`, strict
+     legacy octal literals and escapes, and `eval`/`arguments` as strict parameter names. The covered set is the
+     shared one, not a second copy:
+     - slice A's `foldedEvalEarlyError` is split into a text-level `staticEarlyError(source, goal)` and the
+       eval-site wrapper (`foldedEvalStaticSyntaxError`, which needs a `CallExpression` and the eval caller's
+       capabilities, so P2's signature mismatch disappears);
+     - this arm calls the text-level part only.
+   - **A text that parses and passes the early-error set** becomes the virtual source. A text that fails throws a
+     catchable SyntaxError at the site when the site runs: the same static-SyntaxError lowering slice A uses for a
+     literal eval, reached through the text-level function.
+4. **The virtual source and its name (P3).** The `function` source holds one top-level `FunctionDeclaration` named
+   with a **unique synthesized name**, `__js2wasm_dynamic_function_<siteIndex>`, built by `functionSourceText`.
+   - **No collision.** The name is never `anonymous`, so the checker never binds a global `anonymous` that a caller's
+     `typeof anonymous`, a user `var anonymous` (TS2300) or another site could collide with.
+   - **The global-binding collection skips the declaration.** CreateDynamicFunction creates no binding. Because the
+     synthesized name is never written by user code, no entry read resolves to it by symbol. Two sites are two
+     distinct names, so neither can raise a duplicate-declaration diagnostic that, after RV7432's B1 fix, would
+     refuse the other's site.
+   - **The observable name is `"anonymous"`.** SetFunctionName gives it, so `emitFunctionObjectInit` (item 5) takes
+     the name as an argument instead of deriving it from the declaration.
+   - **`toString`** returns the exact assembled text with `anonymous`, i.e. `functionSourceText("anonymous", P,
+     body)`, which the arm records as the function's source text. Until `Function.prototype.toString` exists on this
+     path, it refuses by name (see Gaps).
+   - **Cross-source type checking.** RV7432's B1 checker effects, such as a body's `x = "s"` against a caller's
+     `var x = 1` (TS2322), are not specific to this kind. This arm takes the B1 remedy A1–A4 adopts for every virtual
+     source and adds nothing of its own.
+5. **The value at the site (P5).**
+   - **The unit.** The declaration's unit is an ordinary source function unit. There is **no new invocation kind**:
+     a `function` source is declaration-only, so its module-init is already non-executable (A1's verifier: kind
+     `"none"` exactly when not executable) and startup runs nothing. The relation's `kind` alone decides what the site
+     does.
+   - **The site.** It lowers through the closure-literal path of #7354 F1b in `src/ir/function-object-lowering.ts`:
+     - `builder.emitClosureNew(<the unit's ref>, <signature>, [], [])` with no captures, since the scope is global;
+     - then `emitFunctionObjectInit(builder, closure, declaration, "anonymous")`, gaining an optional `name`
+       parameter (the only change to that module).
+
+     Each evaluation is therefore a fresh object with its own `length` (§15.1.5 count, so default and rest
+     parameters stop it), its own `name`, and MakeConstructor's own `prototype`.
+   - **No new closure path.** This is the same sequence a function expression uses.
+   - **Strictness.** The unit's strictness is the body's own directive, given through O3's `codeStrictness`, never
+     the caller's.
+6. **Writes in the body (P4).** RV7432 B2 applies unchanged:
+   - writes in a virtual source are invisible to `identifierWrites`, F1b, Fa and the homes analysis;
+   - a `function` source's body runs at each call, not at the site.
+
+   This arm takes the B2 fix A1–A4 adopts: those analyses walk virtual sources. Because this kind's source is a
+   function declaration, its body is analysed as call-time code, the case they already model for any declaration.
+   Nothing kind-specific is added.
+7. **The site's identity test.** The site tests global `Function` === %Function% through `js.object.global` and
+   `js.value.strict_eq`, the A4 shape for %eval%:
+   - equal: the site evaluates to item 5's closure;
+   - unequal: the site is a generic call or construct of the value, through C2's `lowerDynamicConstruct` / the
+     dynamic call path.
+
+### Gaps: each gets a JS answer or a named refusal, and an acceptance row
+
+| gap | answer here |
+| --- | --- |
+| sloppy body's `this` | the global object, once #7350 B2b and #7354 C2's direct-call receiver land; until then C2's named refusal (`a direct call … installs no receiver for its 'this'`) |
+| `toString()` | the exact assembled text with `anonymous` (item 4); a named refusal until `Function.prototype.toString` exists on this path |
+| constructing the result (`new (Function("this.a = 1"))()`) | C2's constructor path: every function value here is a constructor |
+| `length` with default / rest parameters | the §15.1.5 count from `emitFunctionObjectInit` (`Function("a", "b = 1", "...c", "")` → 1) |
+| generic construct in the unequal arm | C2's `lowerDynamicConstruct`, or its named refusal |
+| `%Function%` itself as a value | #7350 |
 
 ### Out of scope
 
 - Computed arguments (35 files): they need a run-time compiler, which nobody has scoped.
 - `Function` as a value (102 files, plus the value half of the 11 mixed files): #7350.
-- `fnGlobalObject.js`'s receiver: #7350 B2b and the sloppy direct-call `this` from #7354 C2.
 - `GeneratorFunction` / `AsyncFunction`: separate kinds, and no ES5 file needs them.
 
 ### Acceptance
 
-Correctness:
+Correctness, with pin tests through the strict Prepared entry (standalone), each row compared with node or checked
+for the named refusal:
 
-- Pin tests through the strict Prepared entry (standalone) on these programs, each compared with node:
-  - `new Function("a", "b", "return a + b")(1, 2) === 3`;
-  - `Function("return 1")() === 1`;
-  - two evaluations of one site give different objects;
-  - `.name === "anonymous"`;
-  - `typeof anonymous === "undefined"` after a site runs;
-  - a sloppy body inside a strict program, and a strict body (`"use strict"` in the body) inside a sloppy program;
-  - a local `var Function` shadow stays an ordinary call;
-  - a reassigned global `Function` takes the unequal arm;
-  - unparsable text throws a catchable SyntaxError;
-  - a computed argument still refuses by name.
-- The census, re-run on the rewrite set (`--harness real`), passes at least the measured 27 files minus any whose
-  next gap is a rewrite artifact. Each shortfall is named.
-- JS-environment output stays byte-identical. The one shared-code change is the assembler move, and the legacy fold's
-  text gains `\n` before `)`. I will compare bytes on a corpus of literal `new Function` programs before and after.
+- `new Function("a", "b", "return a + b")(1, 2) === 3`, and `Function("return 1")() === 1`;
+- two evaluations of one site give different objects; `.name === "anonymous"`;
+- `typeof anonymous === "undefined"` both after a site runs **and inside the body**
+  (`Function("return typeof anonymous")() === "undefined"`); a user `var anonymous = 1` beside a site compiles; two
+  sites in one program both compile;
+- `length`: `Function("a", "b = 1", "...c", "").length === 1`;
+- `new (Function("this.a = 1"))().a === 1`;
+- a sloppy body inside a strict program, and a strict body inside a sloppy program;
+- P2's rows:
+  - `Function("/*", "*/){")` throws SyntaxError;
+  - the injections `Function("}; function x(){")` and `Function("a){};(function(", "")` throw SyntaxError;
+  - an HTML-like comment refuses by name;
+  - `Function("a = 1", "'use strict'")` throws SyntaxError;
+  - `Function("l: l: ;")` throws SyntaxError;
+- a write in the body to a caller-visible global is seen by the caller (B2);
+- a local `var Function` shadow stays an ordinary call;
+- a reassigned global `Function` takes the generic arm;
+- a computed argument still refuses by name;
+- sloppy `this` and `toString()`: their named refusals until #7350 and #7354 C2 provide them, then node's answer.
+
+Yield: the tool re-run on `files.txt` passes at least the measured 27 (real harness). Each shortfall is named; the 9
+unknown strict rows are reported separately.
 
 Code quality:
 
-- One relation, one predicate module, one receipt, one assembler (net −1 template).
+- One relation, one predicate module, one receipt, one assembler, one early-error set (split, not copied), one
+  closure path.
 - No new entry in `present()` beyond the kind.
 - No `loc-budget-allow` / `func-budget-allow` grants.
 - An adversarial review with fresh context, given the diff and this plan, finds no duplication of slice A's eval arm.
