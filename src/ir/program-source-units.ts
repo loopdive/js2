@@ -66,7 +66,7 @@ export interface SourceUnitLowering {
   readonly sourceMap: ((unit: TerminalUnit) => IrFunctionSourceMapContext) | undefined;
   /** (#7354 U) The `unlowerableBodies` policy, when switched on. */
   readonly abortBodies: AbortBodies | undefined;
-  /** (#7363) The literal eval sites whose text is a called source (`src/ir/eval-literal.ts`). */
+  /** (#7363) The literal eval sites whose text is a called source (`src/ir/literal-dynamic-code.ts`). */
   readonly literalEvalCalls: ReadonlySet<ts.CallExpression>;
 }
 

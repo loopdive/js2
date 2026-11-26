@@ -11,7 +11,7 @@
 // A site after `break` is never lowered, so its program compiles on main.
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
-import { literalEvalFileName, literalEvalTexts } from "../src/ir/eval-literal.js";
+import { literalDynamicCodeFileName, literalDynamicCodeTexts } from "../src/ir/literal-dynamic-code.js";
 import { preparedBindingRewritten } from "../src/ir/module-binding-script-var.js";
 import {
   compile,
@@ -20,6 +20,9 @@ import {
 } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { ts } from "../src/ts-api.js";
+
+const literalEvalFileName = (index: number) => literalDynamicCodeFileName("eval", index);
+const literalEvalTexts = (file: string, text: string) => literalDynamicCodeTexts(file, text).map((row) => row.text);
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),

@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource, analyzeSource } from "../src/checker/index.js";
 import { absoluteFuncIndex } from "../src/emit/resolve-layout.js";
-import { literalEvalFileName, pairLiteralEvalSources } from "../src/ir/eval-literal.js";
+import { literalDynamicCodeFileName, pairLiteralDynamicCodeSources } from "../src/ir/literal-dynamic-code.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
 import {
   buildIrModuleInitPlan,
@@ -27,6 +27,8 @@ import { compileMulti, type Test262CompileOptions } from "../src/test262/test262
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { replayOptions } from "./helpers/ir-whole-program-replay.js";
 import { requireProgram, typedOptions } from "./helpers/typed-program-fixtures.js";
+
+const literalEvalFileName = (index: number) => literalDynamicCodeFileName("eval", index);
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -56,7 +58,7 @@ function adapterTargets(related: boolean) {
       checker: ast.checker,
       policy: typedOptions.policy,
       deferTopLevelInit: false,
-      literalEvalSources: related ? pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, 1) : [],
+      literalDynamicCodeSources: related ? pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, 1) : [],
     }),
   );
   const accepted = acceptPreparedIrProgram(program, replayOptions("wasmgc", "standalone"));

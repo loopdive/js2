@@ -16,7 +16,12 @@ import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-progra
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
-import { literalEvalFileName, literalEvalTexts, pairLiteralEvalSources } from "../ir/eval-literal.js";
+import {
+  type LiteralDynamicCodeText,
+  literalDynamicCodeTexts,
+  pairLiteralDynamicCodeSources,
+  usesReservedDynamicFunctionPrefix,
+} from "../ir/literal-dynamic-code.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
 import { AbortBodies, type AbortBodyRow } from "../ir/abort-bodies.js";
@@ -373,35 +378,34 @@ function adapterRefusal(entryFile: string, code: string, detail: string, message
   ]);
 }
 /**
- * (#7363) `files` plus one `<eval:N>.js` script per qualifying literal eval site of the entry, with its analysis, when
- * the scripts add nothing that fails the compile and change no other source's diagnostics; otherwise `files` and
- * `without`, its analysis, and every site keeps its slice-1 refusal at select. A script fails the compile exactly as a
- * JavaScript entry does, through the compile's own gates: a syntax error outside the tolerated list, a hard type error
- * or an ES early error. Any other diagnostic of a text, such as a read of an undeclared global, is tolerated as in an
- * entry. A text reaches another source's diagnostics when a member store in it declares a JS expando property of a
- * caller binding; such a change names no text, so then none joins.
+ * (#7363, #7487) `files` plus one script per qualifying literal dynamic-code site of the entry (`<eval:N>.js`,
+ * `<function:N>.js`), with its analysis, when the scripts add nothing that fails the compile and change no other
+ * source's diagnostics; otherwise `files` and `without`, its analysis, and every site keeps its refusal at select. A
+ * script fails the compile exactly as a JavaScript entry does, through the compile's own gates: a syntax error outside
+ * the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a read of an
+ * undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member store in
+ * it declares a JS expando property of a caller binding; such a change names no text, so then none joins.
  */
-function withLiteralEvalSources(
+function withLiteralDynamicCodeSources(
   files: Record<string, string>,
   without: MultiTypedAST,
-  texts: readonly string[],
+  texts: readonly LiteralDynamicCodeText[],
   analyze: (graph: Record<string, string>) => MultiTypedAST,
   options: Test262CompileOptions,
 ): { readonly graph: Record<string, string>; readonly ast: MultiTypedAST } {
   if (texts.length === 0) return { graph: files, ast: without };
   const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
-  const evalNames = new Set(texts.map((_, index) => normalizeMultiFileName(literalEvalFileName(index))));
+  const codeNames = new Set(texts.map(({ name }) => normalizeMultiFileName(name)));
   const graph: Record<string, string> = Object.create(null);
   Object.assign(graph, files);
-  texts.forEach((text, index) => {
-    const name = literalEvalFileName(index);
+  for (const { kind, name, text } of texts) {
     if (supplied.has(normalizeMultiFileName(name)))
-      invalidRequest(`source name ${name} is reserved for a literal eval source`);
+      invalidRequest(`source name ${name} is reserved for a literal ${kind} source`);
     Object.defineProperty(graph, name, { value: text, enumerable: true });
-  });
+  }
   const ast = analyze(graph);
-  const isEvalSource = (file: ts.SourceFile | undefined) =>
-    file !== undefined && evalNames.has(normalizeMultiFileName(file.fileName));
+  const isCodeSource = (file: ts.SourceFile | undefined) =>
+    file !== undefined && codeNames.has(normalizeMultiFileName(file.fileName));
   const failsCompile = (source: ts.SourceFile) =>
     ast.syntacticDiagnostics.some(
       (diagnostic) =>
@@ -413,14 +417,14 @@ function withLiteralEvalSources(
     sourceEarlyErrors(source, options).some((error) => error.severity !== "warning");
   const othersReport = (diagnostics: readonly ts.Diagnostic[]) =>
     diagnostics
-      .filter((diagnostic) => !isEvalSource(diagnostic.file))
+      .filter((diagnostic) => !isCodeSource(diagnostic.file))
       .map(({ file, start, code, messageText }) =>
         [file?.fileName, start, code, ts.flattenDiagnosticMessageText(messageText, "\n")].join(":"),
       )
       .sort()
       .join("\n");
   const quiet =
-    !ast.sourceFiles.some((source) => isEvalSource(source) && failsCompile(source)) &&
+    !ast.sourceFiles.some((source) => isCodeSource(source) && failsCompile(source)) &&
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
   return quiet ? { graph, ast } : { graph: files, ast: without };
 }
@@ -460,27 +464,37 @@ function present(
   const suppliedAst = analyze(exactFiles);
   const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
   const analyzedAst = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
-  // (#7363) The eval sources join after F0, which elides only a one-source graph and keeps every name a literal eval
-  // text mentions; so the sites are the elided entry's.
+  // (#7363) The dynamic-code sources join after F0, which elides only a one-source graph and keeps every name a
+  // literal eval or Function text mentions; so the sites are the elided entry's.
   const entryKey = Object.keys(analyzedFiles).find(
     (key) => normalizeMultiFileName(key) === normalizeMultiFileName(entryFile),
   )!;
-  // Module code is strict, so no direct eval in it runs as a sloppy Script; and a text is a JavaScript root, which
-  // only an allowJs program holds.
-  const evalTexts =
+  // Module code is strict, so no direct eval in it runs as a sloppy Script, and a Script source beside a Module entry
+  // is a program shape this path does not take; a text is a JavaScript root, which only an allowJs program holds.
+  const codeTexts =
     options.inferModuleStrictArguments === true || options.allowJs !== true
       ? []
-      : literalEvalTexts(entryKey, analyzedFiles[entryKey]!);
-  const { graph, ast } = withLiteralEvalSources(analyzedFiles, analyzedAst, evalTexts, analyze, options);
+      : literalDynamicCodeTexts(entryKey, analyzedFiles[entryKey]!);
+  // (#7487) A dynamic function's synthesized name must be no name the program's own code can spell.
+  if (
+    codeTexts.some(({ kind }) => kind === "function") &&
+    analyzedAst.sourceFiles.some(usesReservedDynamicFunctionPrefix)
+  )
+    return adapterRefusal(
+      entryFile,
+      "prepared-reserved-dynamic-function-prefix",
+      "identifier uses the reserved dynamic-function prefix",
+    );
+  const { graph, ast } = withLiteralDynamicCodeSources(analyzedFiles, analyzedAst, codeTexts, analyze, options);
   if (!completeAnalyzedGraph(graph, entryFile, ast))
     return adapterRefusal(
       entryFile,
       "prepared-source-graph-incomplete",
       "frontend did not retain the complete supplied name/text graph",
     );
-  const literalEvalSources =
-    graph === analyzedFiles ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, evalTexts.length);
-  // (#7363) An eval source's supplied text is its own; the entry's is the unelided one.
+  const literalDynamicCodeSources =
+    graph === analyzedFiles ? [] : pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, codeTexts.length);
+  // (#7363) A dynamic-code source's supplied text is its own; the entry's is the unelided one.
   const supplied = new Map(
     [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [
       normalizeMultiFileName(file),
@@ -515,7 +529,7 @@ function present(
     diagnosticAnchor: ast.entryFile,
     runEarlyErrorsOnAllowJs: singleSource || options.enforceJsEarlyErrors === true,
     options: pipelineOptions,
-    literalEvalSources,
+    literalDynamicCodeSources,
     },
     abortBodies,
   );

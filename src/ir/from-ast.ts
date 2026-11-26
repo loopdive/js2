@@ -596,7 +596,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
   /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
-  /** (#7363 A2) This direct eval's literal text is a called script of the program (`src/ir/eval-literal.ts`). */
+  /** (#7363 A2) This direct eval's literal text is a called script of the program (`literal-dynamic-code.ts`). */
   literalEvalHasCalledSource?(call: ts.CallExpression): boolean;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;

@@ -347,9 +347,10 @@ export interface RefusalOwners {
 /**
  * `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. `input` is
  * the producer's: its checker, policy and the compiler's answer to the strictness of a piece of code. (#7363 A3)
- * `startupSources` are the sources startup runs, every one but the called eval sources. The answers that need the
- * program's only script to run first are asked over them: the script-var homes (`irOwnedScriptVarHome`), the function
- * declarations read as values and the static function values. Every other answer here reads the whole program.
+ * `startupSources` are the sources startup runs, every one but the literal dynamic-code sources (#7487). The answers
+ * that need the program's only script to run first are asked over them: the script-var homes
+ * (`irOwnedScriptVarHome`), the function declarations read as values and the static function values. Every other
+ * answer here reads the whole program.
  */
 export function programDynamicContracts(
   input: {

@@ -6,7 +6,7 @@
 import { ts } from "../typescript.js";
 import { isUseStrictDirectiveExpression } from "../use-strict-directive.js";
 import type { FoldedEvalDeclarationNames } from "./declaration-names.js";
-import { evalCallerCapabilities, foldedEvalEarlyError } from "./early-errors.js";
+import { evalCallerCapabilities, foldedEvalEarlyError, SLOPPY_SCRIPT_GOAL, staticEarlyError } from "./early-errors.js";
 
 /**
  * Synthetic file name for the foreign `SourceFile` an eval source is parsed into. Nodes in this file are absent from
@@ -67,6 +67,31 @@ export function parseEvalSource(source: string, inheritedStrict: boolean, caller
 }
 
 /**
+ * (#7487) Whether a sloppy global Script text, such as a dynamic function's assembled declaration, has a static
+ * SyntaxError: a parse failure or an early error of the shared check.
+ */
+export function sloppyScriptHasStaticSyntaxError(sourceFile: ts.SourceFile): boolean {
+  return hasParseDiagnostics(sourceFile) || staticEarlyError(sourceFile, SLOPPY_SCRIPT_GOAL) !== undefined;
+}
+
+/**
+ * (#7487) Whether the code around a `super` keyword supplies it: a property in a method, a call in a derived
+ * constructor. The shared check does not ask inside a function, which supplies its own `super` only as a method.
+ */
+export function superIsSupplied(superKeyword: ts.Node): boolean {
+  const caller = evalCallerCapabilities(superKeyword, true);
+  const call = ts.isCallExpression(superKeyword.parent) && superKeyword.parent.expression === superKeyword;
+  return call ? caller.superCall : caller.superProperty;
+}
+
+/** Whether the parser reported a syntax error in a foreign Script. */
+function hasParseDiagnostics(sourceFile: ts.SourceFile): boolean {
+  // `parseDiagnostics` is an internal field on SourceFile.
+  const parseDiag = (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
+  return parseDiag !== undefined && parseDiag.length > 0;
+}
+
+/**
  * The SyntaxError message PerformEval raises before running the Script, in
  * spec order: a parse failure, a Script early error, then (§19.2.1.3 step 5.a)
  * a VarDeclaredName that collides with a global lexical binding. The last
@@ -81,9 +106,7 @@ export function foldedEvalStaticSyntaxError(
   declarationNames: EvalDeclarationNames,
   globalLexicals: ReadonlySet<string> | undefined,
 ): string | undefined {
-  // `parseDiagnostics` is an internal field on SourceFile.
-  const parseDiag = (script.sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
-  if (parseDiag && parseDiag.length > 0) return "Invalid eval source";
+  if (hasParseDiagnostics(script.sourceFile)) return "Invalid eval source";
   // (#5157) §15.1.1 NewTarget / SuperProperty / SuperCall admissibility is a
   // property of the CALL SITE, not of the eval source.
   const earlyError = foldedEvalEarlyError(

@@ -1135,7 +1135,7 @@ function runPipeline(input: PipelineInput): CompileResult {
  * abort-body policy (#7354 U, `ir/abort-bodies.ts`) and records its functions.
  */
 export function runPreparedIrPipelinePresentation(
-  input: PipelineInput & Pick<IrWholeProgramPreparationInput, "literalEvalSources">,
+  input: PipelineInput & Pick<IrWholeProgramPreparationInput, "literalDynamicCodeSources">,
   unlowerableBodies?: AbortBodies,
 ): PreparedIrPipelinePresentationResult {
   const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
@@ -1181,10 +1181,10 @@ export function runPreparedIrPipelinePresentation(
   };
   const prepared = prepareIrProgramPresentation({
     preparation: {
-      // (#7363) A single-source program is its entry and the called sources of its literal eval sites.
+      // (#7363, #7487) A single-source program is its entry and the sources of its literal dynamic-code sites.
       sourceFiles: multiAst?.sourceFiles ?? [
         entryAst.sourceFile,
-        ...(snapshot.literalEvalSources ?? []).map((row) => row.source),
+        ...(snapshot.literalDynamicCodeSources ?? []).map((row) => row.source),
       ],
       entrySource: entryAst.sourceFile,
       checker: entryAst.checker,
@@ -1192,7 +1192,7 @@ export function runPreparedIrPipelinePresentation(
       deferTopLevelInit: options.deferTopLevelInit === true,
       codeStrictness: preparedCodeStrictness(options.inferModuleStrictArguments),
       unlowerableBodies,
-      literalEvalSources: snapshot.literalEvalSources,
+      literalDynamicCodeSources: snapshot.literalDynamicCodeSources,
     },
     backendOptions,
     output: {
