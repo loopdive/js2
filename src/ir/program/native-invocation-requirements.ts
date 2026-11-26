@@ -99,15 +99,20 @@ function packedCallable(
 }
 
 /**
- * (#7354 F2) A dynamic callee may be any source closure, so each one must be dispatchable: the fixed-parameter
- * contract the dispatcher reads its arity from, and carrier (externref) parameters and result.
+ * (#7354 F2, O2) The source closures the dispatcher can call, and a gap for each one it cannot, in one pass. A dynamic
+ * callee may be any source closure, so each one must be dispatchable: the fixed-parameter contract the dispatcher
+ * reads its arity from, and carrier (externref) parameters and result. The realm's accessor calls take the
+ * dispatchable ones.
  */
-function dynamicCalleeGaps(source: NativeSourceClosureRequirements): NativeInvocationRequirements["gaps"][number][] {
-  return source.units.flatMap(({ unitId }) =>
-    dispatchable(source, unitId)
-      ? []
-      : [{ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` }],
-  );
+function dispatchPartition(source: NativeSourceClosureRequirements): {
+  readonly dispatchable: readonly IrUnitId[];
+  readonly gaps: NativeInvocationRequirements["gaps"][number][];
+} {
+  const result = { dispatchable: [] as IrUnitId[], gaps: [] as NativeInvocationRequirements["gaps"][number][] };
+  for (const { unitId } of source.units)
+    if (dispatchable(source, unitId)) result.dispatchable.push(unitId);
+    else result.gaps.push({ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` });
+  return result;
 }
 function dispatchable(source: NativeSourceClosureRequirements, unitId: IrUnitId): boolean {
   const closure = source.demands.owners.find((owner) => owner.unitId === unitId)?.projectedFunction.closureSubtype;
@@ -317,12 +322,12 @@ function calculate(
       callbacks,
     });
   }
-  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dynamicCalleeGaps(source));
+  const dispatch = dispatchPartition(source);
+  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dispatch.gaps);
   const getters = objectAccess
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
   gaps.push(...getters.gaps);
-  const accessorUnits = source.units.flatMap(({ unitId }) => (dispatchable(source, unitId) ? [unitId] : []));
   return {
     uses,
     getterUses: getters.getterUses,
@@ -335,7 +340,7 @@ function calculate(
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
     receiver: uses.some((use) => use.kind === "receiver"),
-    ...(realmAccessors ? { realmAccessors: { units: accessorUnits } } : {}),
+    ...(realmAccessors ? { realmAccessors: { units: dispatch.dispatchable } } : {}),
     gaps,
   };
 }

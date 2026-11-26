@@ -129,13 +129,13 @@ export function emitFunctionObjectInit(
   if (ts.isAccessor(fn) && type.signature.returnType?.kind !== "dynamic") return;
   const key =
     ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
-  const name = key === undefined ? key : (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
-  if (name === undefined)
+  if (key === undefined)
     throw new IrUnsupportedError(
       "type-resolution-unsupported",
       "build",
       "the name of a function under a computed key needs the key's value",
     );
+  const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),

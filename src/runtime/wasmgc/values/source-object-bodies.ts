@@ -135,7 +135,20 @@ export const CREATE_DATA_PROPERTY =
  * setter call traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
  * (`Object.preventExtensions`, slice O3).
  */
-export function buildSourceObjectSetDefinition(d: BuiltinFunctionPrototypeOperands): SourceObjectDefinition {
+/** The kernel operands OrdinarySet reads: its walk, its define, and (#7354 O2) the accessor call's dispatch. */
+type SourceObjectSetOperands = Pick<
+  BuiltinFunctionPrototypeOperands,
+  | "lookup"
+  | "findOrdinary"
+  | "defineData"
+  | "bag"
+  | "entryTypeIdx"
+  | "objectTypeIdx"
+  | "accessorCalls"
+  | "match"
+  | "entries"
+>;
+export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): SourceObjectDefinition {
   const [status, entry, storage, setter] = [4, 5, 6, 7];
   const calls = d.accessorCalls;
   const entryFlag = (flag: number): Instr[] => [

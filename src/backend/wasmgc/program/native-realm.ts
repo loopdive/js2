@@ -475,7 +475,7 @@ function reserveKernelResources(
     descriptorDependencies,
     exception,
     ...(pack.errorCreate ? { errorCreate: pack.errorCreate } : {}),
-    ...(accessorCalls && { accessorCalls }),
+    ...(accessorCalls ? { accessorCalls } : {}),
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
   const sourceObjects = reserveNativeSourceObjectResources(
