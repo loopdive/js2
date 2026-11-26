@@ -16,6 +16,7 @@ import {
   compile,
   compileMulti,
   createIncrementalCompiler,
+  requiredPreparedAbortBodies,
   requiredPreparedEmission,
   requiredPreparedFailure,
   requiredPreparedFrontendFailure,
@@ -654,10 +655,11 @@ describe("Test262 strict prepared entry", () => {
       "./entry.ts",
       options(),
     );
-    expect(resolution.success).toBe(false);
-    expect(resolution.errors.some((error) => error.code === 2307)).toBe(true);
+    // TS2307 is reported but not hard, as in the ordinary compiler; the call to the unresolved binding aborts when run.
+    expect(resolution.success).toBe(true);
+    expect(resolution.errors.map((error) => error.code)).toEqual([2307]);
     expect(requiredPreparedFrontendFailure(resolution)).toBeUndefined();
-    expect(requiredPreparedEmission(resolution)).toBeUndefined();
+    expect(requiredPreparedAbortBodies(resolution)?.map((row) => row.name)).toEqual(["read"]);
   });
 
   it("does not mint frontend ownership for an actual engine-rejected final binary", async () => {
