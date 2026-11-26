@@ -58,7 +58,7 @@ export const F_PROPS = 31; // 1 when the General_Category table is linked in
 const ARR_FIELDS = new Set([F_NODES, F_RP, F_NAMES, F_PROG, F_CTAB, F_PEND]);
 export const STATE_FIELD_COUNT = 32;
 
-// ---- AST node kinds (mirror regex/parse.ts ReNode) ------------------------
+// ---- AST node kinds (mirror regexp-compiler/parse.ts ReNode) ---------------
 export const K_CHAR = 0; // a = code point
 export const K_ANY = 1; // non-u `.`
 export const K_CLASS = 2; // a = pool start, b = pair count, c = negated, child = cached ctab offset

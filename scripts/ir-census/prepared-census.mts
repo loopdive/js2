@@ -25,78 +25,25 @@
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { childLoop, errorText, runPool } from "./pool.mts";
+import {
+  type Assembly,
+  type Entry,
+  loadToolchain,
+  type Meta,
+  options,
+  realAssembly,
+  type Toolchain,
+} from "./prepared-toolchain.mts";
 import { assembleStandIn } from "./stand-in-harness.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SELF), "../..");
 const DETAIL_CAP = 600;
 
-type Entry = typeof import("../../src/test262/test262-prepared-entry.ts");
-type Runtime = typeof import("../../src/test262/test262-prepared-runtime.ts");
-type Runner = typeof import("../../tests/test262-runner.ts");
-type Harness = typeof import("../../tests/test262-original-harness.ts");
-
-interface Toolchain {
-  readonly tree: string;
-  readonly entry: Entry;
-  readonly runtime: Runtime;
-  readonly runner: Runner;
-  readonly harness: Harness;
-}
-
-const REQUEST = { kind: "prepared-program-required", version: 1 } as const;
-/** The options scripts/test262-worker.mjs passes for an original-harness row under `TEST262_COMPILER_PATH=ir`. */
-const options = (scriptGoal: boolean) =>
-  ({
-    wholeProgram: REQUEST,
-    allowJs: true,
-    fileName: "test.js",
-    sourceMap: false,
-    emitWat: false,
-    skipSemanticDiagnostics: true,
-    target: "standalone",
-    inferModuleStrictArguments: false,
-    scriptGoal,
-    deferTopLevelInit: true,
-    hostBridge: "always",
-    trackIrOutcomes: true,
-  }) as const;
-
-async function loadToolchain(tree: string): Promise<Toolchain> {
-  const load = (path: string) => import(pathToFileURL(join(tree, path)).href);
-  const [entry, runtime, runner, harness] = await Promise.all([
-    load("src/test262/test262-prepared-entry.ts"),
-    load("src/test262/test262-prepared-runtime.ts"),
-    load("tests/test262-runner.ts"),
-    load("tests/test262-original-harness.ts"),
-  ]);
-  return { tree, entry, runtime, runner, harness };
-}
-
-interface Assembly {
-  readonly source: string;
-  readonly starts: readonly [number, string][];
-  readonly bodyLine: number;
-  readonly unmodelled?: boolean;
-}
-
-function realAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner["parseMeta"]>): Assembly {
-  const variant = tools.harness.assembleOriginalHarness(source, meta).primary;
-  const starts: [number, string][] = [];
-  let line = variant.strict ? 2 : 1;
-  if (variant.bodyLineOffset > 0) {
-    for (const part of tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true)) {
-      starts.push([line, part.name]);
-      line += part.source.split("\n").length - 1;
-    }
-  }
-  return { source: variant.source, starts, bodyLine: variant.bodyLineOffset + 1 };
-}
-
-function standInAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner["parseMeta"]>): Assembly {
+function standInAssembly(tools: Toolchain, source: string, meta: Meta): Assembly {
   const strict = meta.flags?.includes("onlyStrict") === true;
   if (meta.flags?.includes("raw")) return { source, starts: [], bodyLine: 1 };
   const parts = tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true);
@@ -152,7 +99,7 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
   const flags = { ...(assembly.unmodelled ? { unmodelled: true } : {}) };
   let result: Awaited<ReturnType<Entry["compile"]>>;
   try {
-    result = await tools.entry.compile(assembly.source, options(!meta.flags?.includes("module") && !meta.flags?.includes("raw")));
+    result = await tools.entry.compile(assembly.source, options(meta));
   } catch (error) {
     return { file, status: "crash", ...flags, detail: errorText(error) };
   }
@@ -179,7 +126,8 @@ if (argv[0] === "--child") {
     return index >= 0 ? argv[index + 1] : fallback;
   };
   const harness = value("--harness", "real")!;
-  if (harness !== "real" && harness !== "stand-in") throw new Error(`--harness must be real or stand-in, got ${harness}`);
+  if (harness !== "real" && harness !== "stand-in")
+    throw new Error(`--harness must be real or stand-in, got ${harness}`);
   const tree = resolve(value("--tree", REPO_ROOT)!);
   await runPool({
     files: resolve(value("--files")!),

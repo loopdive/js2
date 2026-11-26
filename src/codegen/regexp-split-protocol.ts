@@ -77,7 +77,7 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { reserveNativeConstructDriver } from "./native-construct.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
-import { RE_FLAG_Y } from "./regex/bytecode.js";
+import { RE_FLAG_Y } from "../regexp-compiler/bytecode.js";
 import {
   type BuiltinExecEmitter,
   type MatchLoopDeps,

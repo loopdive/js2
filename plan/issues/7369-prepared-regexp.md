@@ -221,13 +221,15 @@ number below was measured on that head unless it is labelled **estimate**.
 
 | Step | Content | Gate |
 | --- | --- | --- |
-| R1a | **Move + merge**: the compiler into `regexp-compiler`; one static-pair predicate; one i32-array builder; the Prepared mode of `byte-diff-corpus` | — |
+| R1a | **Move + merge**: the compiler into `regexp-compiler`; one static-pair predicate; one i32-array builder; the Prepared mode of `byte-diff-corpus`. The reference VM stays in `src/codegen/regex/` (R1w). | — |
+| R1v | **Script PR**: the dead-export audit (`scripts/audit-legacy-reachability.mjs`) also covers `src/regexp-compiler/`, or follows the `moves` of `compiler-boundaries.json`, so a module that leaves `src/codegen/` keeps its baseline entries | R1a |
+| R1w | **Move**: the reference VM (`vm`, `linear`, `match-units`) to `src/regexp-compiler/reference/`; byte-identical, the dead-export baseline unchanged | R1v |
 | R1e | **Behaviour change, its own PR**: the early-error rule (`node-checks.ts:1310`) takes its verdict from `staticRegExpPairSyntaxError` instead of the host engine | R1a; every parser/node difference in the verdict table is reviewed as a behaviour change |
 | R1 | Realm RegExp object, creation, `RegExp.prototype.test`, `lastIndex`; the refusal disappears | R1a (not R1e: R1's per-source outcomes hold under either verdict source) |
 | R1b | `%RegExp.prototype%` accessors (`source`, `flags`, `global`, `ignoreCase`, `multiline`) and `toString`, which covers ToPrimitive and `+` (the old "R3") | R1 |
 | R2 | `RegExp.prototype.exec` | **Parked** until Prepared arrays reach `main`. It is not stacked on S13's suspended branch. |
 
-R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 → R1b → R2 (Q6).
+R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 → R1b → R2 (Q6). R1v → R1w touches no provider code, so it runs beside them in any order after R1a.
 
 #### R1a — move + merge (no behaviour change)
 
@@ -240,8 +242,8 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
     - The backend may import neither `src/frontend` nor `src/compiler`.
 - **Moved files**:
   - `parse`, `compile`, `bytecode`, `casefold`, `unicode`, `unicode-string-properties`, `unicode-string-data.generated`.
-  - The reference VM (`vm`, `linear`, `match-units`) goes to `src/regexp-compiler/reference/`. It is the executable specification of the same bytecode, so it stays with the compiler that owns that bytecode. Only tests import it.
   - Each path is recorded in `moves` and marked `clean`.
+  - **The reference VM (`vm`, `linear`, `match-units`) does not move in R1a (deferred, lead decision 2026-11-26).** It belongs in `src/regexp-compiler/reference/`: it is the executable specification of the same bytecode, so it stays with the compiler that owns that bytecode, and only tests import it. But `check:dead-exports` (`audit-legacy-reachability.mjs`) scans only `src/codegen/`, and its preservation contract requires an unchanged `scripts/dead-export-baseline.json`. The VM's 14 test-only exports are baseline entries, so moving them out of `src/codegen/` fails the gate unless the baseline is edited, which a PR does not do. The way out is R1v, a small script PR that widens the audit to `src/regexp-compiler/` (or makes it follow moved paths); the VM then moves in R1w.
   - `regex-runtime/unicode.ts` and about 10 `tests/*regex*` imports are repointed, with no re-export shim (RV7337).
 - **Merge 1: one static-pair predicate.**
   - `src/regexp-compiler/static-pair.ts` exports `staticRegExpPairCompiles` and `staticRegExpPairSyntaxError`.
@@ -389,7 +391,7 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
 
 ### Code-quality acceptance (next to correctness)
 
-- **One engine.** R0's three builders and one `compilePattern`. A grep for `ReOp.` dispatch outside `regexp-vm-arms.ts` and `src/regexp-compiler/reference/` finds nothing new.
+- **One engine.** R0's three builders and one `compilePattern`. A grep for `ReOp.` dispatch outside `regexp-vm-arms.ts` and the reference VM (`src/codegen/regex/{vm,linear,match-units}.ts`; `src/regexp-compiler/reference/` after R1w) finds nothing new.
 - **One admission rule.** `regexp-literal-admission.ts` serves the selector, from-ast and Prepared through one capability. `from-ast.ts` and `lower-generic.ts` gain no branch.
 - **Siblings in the same shape.** The contracts sit in `DECLARATIONS` / `ROWS`; the family in the catalog beside Error's; the layout after `createPrimitiveWrapperDeclaration`; the table as a `runtime-support.ts` batch; the legalization next to `dynamic-prototype-methods.ts`.
 - **Duplicates removed.**
@@ -410,7 +412,7 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
 | # | Settled |
 | --- | --- |
 | Q1 | The legalization rewrite to `i32.const k; call create-regexp`; the table is a `runtime-support.ts` batch. |
-| Q2 | Layer `regexp-compiler`, `src/regexp-compiler/`; the reference VM in `reference/`. |
+| Q2 | Layer `regexp-compiler`, `src/regexp-compiler/`; the reference VM in `reference/`, moved by R1w once R1v has widened the dead-export audit. |
 | Q3 | R0's `$__StandaloneRegExp` fields 6–9 (`lastIndex` state) are unused on the Prepared path, and that is accepted. **Follow-up:** split the struct into a matcher and a legacy shell, which changes legacy bytes and so is its own change. |
 | Q4 | In-module parser verdict, host engine only for `u`/`v`, pinned by the verdict table and the 132 negative tests. TypeScript's regex diagnostics are unavailable for `.js` (measured, TS 5.9.3). |
 | Q5 | Allocation per call is fine for R1; program and class-table arrays are globals built once per pair; capture-array pooling after a measurement. |
@@ -419,3 +421,109 @@ R1a, R1 and R1b are judged on the wider ES5 measure (below). The order is R1 →
 - **Risk — the `'+'` stop.** 81 of the 606 stop at `'+' operands not provably …` before any RegExp. R1 does not change that count; it belongs to #7354's dynamic `+` work.
 - **Risk — the early-error rule.** Moving `node-checks.ts`'s rule to the parser verdict changes build verdicts, and bytes on every lane, wherever the parser and the host disagree. It is therefore its own PR, R1e, whose listed differences are reviewed as a behaviour change; R1a leaves the rule alone.
 - **Pins marked "(run by R2)"** pin nothing in R1. R1's unit file (`tests/issue-7369-test-lastindex.test.ts`) carries those cases until R2 lands.
+
+## Result (R1a)
+
+Measured 2026-11-26 on branch `claude/7369-r1a-regexp-compiler` (R0's
+byte-diff-corpus follow-up, #7421's branch `claude/7369-byte-diff-corpus-nits`
+`75e91932f2`, is merged in because it was not on `main` yet), against a
+`git archive` of `origin/main` `41f0654e8c`. Every run used `--jobs 1`.
+
+**What moved.** `git mv`, so history follows; every importer is repointed, with
+no re-export shim.
+
+| From `src/codegen/regex/`                                   | To                                 |
+| ----------------------------------------------------------- | ---------------------------------- |
+| `parse`, `compile`, `bytecode`, `casefold`, `unicode`, `unicode-string-properties`, `unicode-string-data.generated` | `src/regexp-compiler/`             |
+| `vm`, `linear`, `match-units` (the reference VM)            | stays; deferred to R1w             |
+
+`wasm-array-literal.ts` stays: it needs a `CodegenContext`. The layer
+`regexp-compiler` is active in `scripts/compiler-boundaries.json`, with the
+edges of the plan and 8 modules (the seven moved files and `static-pair.ts`);
+each moved path is in `moves` and classified `clean`.
+
+**The reference VM is deferred (lead decision, 2026-11-26).** A first cut moved
+it to `src/regexp-compiler/reference/` as planned. `check:dead-exports` then
+failed: the audit scans only `src/codegen/`, so the VM's 14 test-only exports
+(`linear.ts` 4, `match-units.ts` 7, `vm.ts` 3) left its view, and its
+preservation contract requires an unchanged `scripts/dead-export-baseline.json`.
+The VM went back with `git mv` under its original names, with its original
+classification (`mixed-needs-split`); its imports of `regexp-compiler` are a
+legacy → `regexp-compiler` edge, which is allowed. R1v widens the audit and R1w
+moves the VM (see the steps table).
+
+**Merge 1 — one static-pair predicate.** `src/regexp-compiler/static-pair.ts`
+(71 lines) holds `REGEXP_ENGINE_FLAGS`, `staticRegExpPairSyntaxError`,
+`staticRegExpPairEngineCompiles` and `staticRegExpPairCompiles`. They replace
+`SUPPORTED_STANDALONE_FLAGS`, `hostRegExpSyntaxErrorMessage`,
+`isSupportedStaticRegExpCandidate` and `standaloneStaticRegExpCompiles`, and
+the body of `nativeRegExpPatternCompiles`, which repeated
+`isSupportedStaticRegExpCandidate` line for line, now calls it (it keeps its
+memo). `regexp-standalone.ts` loses 58 lines. The legacy resolver
+(`codegen/index.ts`) and both IR resolvers (`ir/integration.ts`) take
+`nativeRegExpCompiles` from it. The syntax verdict is still the host
+engine's, and the early-error rule (`node-checks.ts`) is untouched, so nothing
+in R1a consumes a `RegexSyntaxError` / `RegexUnsupportedError` split: it stays
+with R1e.
+
+**Merge 2 — one i32-array builder.** `regExpI32ArrayInstrs(i32ArrayTypeIdx,
+values, scratchLocal?)` in `regexp-carrier-layouts.ts`. `pushRegexI32Array`
+keeps only the legacy local allocation (`wasm-array-literal.ts`, 41 → 24
+lines);
+`i32ArrayLiteralInstrs` (18 lines) is removed and its three callers call the
+builder. The scratch local is requested only for the chunked form, so local
+indices do not move.
+
+**Prepared toolchain.** `loadToolchain`, `realAssembly` and `options` moved
+from `prepared-census.mts` into `scripts/ir-census/prepared-toolchain.mts`,
+which the census and `byte-diff-corpus --corpus prepared` import.
+
+**Byte identity, ordinary pipeline.** `byte-diff-corpus --corpus regexp`, once
+per tree, then `--compare`: 2,691 files × 3 targets = 8,073 comparisons,
+`IDENTICAL`, exit 0: **0 differences**, 0 crash rows, 0 order-dependent rows,
+6,478 identical binaries.
+
+| Target       | Compiled on base | Failed on base | Failed on both | Differ on head |
+| ------------ | ---------------: | -------------: | -------------: | -------------: |
+| default      |            2,159 |            532 |            532 |              0 |
+| `standalone` |            2,160 |            531 |            531 |              0 |
+| `wasi`       |            2,159 |            532 |            532 |              0 |
+
+**Byte identity, Prepared.** `byte-diff-corpus --corpus prepared`: the 995
+distinct files of `plan/samples/7354-o411.txt` and
+`plan/samples/7369-es5-regexp-606.txt` (22 are in both), `IDENTICAL`, exit 0:
+89 identical binaries, 906 failed on both with the same diagnostics and the
+same refusal (code, stage, detail, location), 0 crash rows, 0 order-dependent
+rows. The base run was replayed from `--cache`.
+
+**Tests.** The 66 `tests/*regex*` / `*regexp*` files plus
+`issue-7364-prepared-named-refusals`, `issue-7106-lever-r`,
+`issue-7106-regexp-literal-host-free`, `issue-2134` and the four that import
+the moved modules without the word in their name (`issue-3549`, `issue-3652`,
+`issue-3665`, `issue-6978-host-accelerators`), 73 files, `--maxWorkers=1`, on
+head and on the base tree: 1,304 tests, 1,254 pass, 37 skipped, and the **same
+13 failures on both** (in `issue-1472`, `issue-5198`, `issue-6649`,
+`issue-6651-b10`, `issue-7106-regexp-literal-host-free`, `issue-7364` and
+`regexp-host-static-inheritance`; all already failing on `main`).
+
+**Negative literals.** The 132 negative tests directly under
+`language/literals/regexp/` (the `named-groups/` subdirectory excluded), on the
+Prepared lane (`TEST262_COMPILER_PATH=ir TEST262_TARGET=standalone`,
+`scripts/run-test262-vitest.sh` with a path-filter file, 2 workers): **131 / 132
+pass**, as before. The one failure is still `S7.8.5_A2.2_T2`, the TypeScript
+"Expression expected." parse error.
+
+**Gates.** `check-loc-budget`, `check-func-budget` (against the merge base
+and with `LOC_GATE_BASE=origin/main`), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check-compiler-boundaries --mode
+inventory` against `origin/main` (inventory valid, 0 errors, no enforced
+forbidden edge), `lint`, `format:check`, prettier on the `.mts` scripts and this
+file, `typecheck`, `check:import-cycles`, `check:ir-layering`, `check:issues`
+and `check:orphaned-scripts` pass, with no grant and no baseline edit.
+
+**Re-validation after the VM went back.** Every figure above was measured
+again on the commit that returns the reference VM: the regexp corpus (8,073
+rows) and the Prepared corpus (995 rows) are `IDENTICAL` against the same base
+(both base runs replayed from `--cache`), and the 73 test files fail the same
+13 tests as the base tree. The 131/132 negative-literal pin comes from the
+first cut; the VM is used only by tests, so that commit cannot change it.

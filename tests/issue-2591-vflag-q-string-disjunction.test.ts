@@ -16,8 +16,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { RE_FLAG_V } from "../src/codegen/regex/bytecode.js";
-import { parsePattern } from "../src/codegen/regex/parse.js";
+import { RE_FLAG_V } from "../src/regexp-compiler/bytecode.js";
+import { parsePattern } from "../src/regexp-compiler/parse.js";
 
 /** Compile `/pattern/flags.test(input)` standalone and run it. `input` is
  *  embedded as a string literal to avoid JS↔standalone string marshaling. */

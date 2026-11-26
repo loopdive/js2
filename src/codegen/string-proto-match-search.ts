@@ -105,7 +105,7 @@ import {
   regexI32ArrayType,
 } from "./native-regex.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { RE_FLAG_G, RE_FLAG_Y } from "./regex/bytecode.js";
+import { RE_FLAG_G, RE_FLAG_Y } from "../regexp-compiler/bytecode.js";
 import {
   RE_FIELD_CLASS_TABLE,
   RE_FIELD_FLAGS,

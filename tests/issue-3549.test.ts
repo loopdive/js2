@@ -17,8 +17,8 @@ import {
   REGEX_STEP_CAP_LEN_SATURATION,
   REGEX_STEP_CAP_PER_UNIT,
 } from "../src/runtime/contracts/regexp-bytecode.js";
-import { compilePattern } from "../src/codegen/regex/compile.js";
-import { RE_FLAG_U } from "../src/codegen/regex/bytecode.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
+import { RE_FLAG_U } from "../src/regexp-compiler/bytecode.js";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 

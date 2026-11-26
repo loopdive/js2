@@ -17,12 +17,13 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { makeHelperFctx, reservePlaceholder } from "./helpers/reserved-helper-funcs.js";
 import { emitAnyAddFromExternTemps } from "./native-addition.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
-import { i32ArrayLiteralInstrs } from "./native-regex.js";
+import { regexI32ArrayType } from "./native-regex.js";
+import { regExpI32ArrayInstrs } from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addFuncType } from "./registry/types.js";
-import { RE_FLAG_G } from "./regex/bytecode.js";
-import { compilePattern } from "./regex/compile.js";
+import { RE_FLAG_G } from "../regexp-compiler/bytecode.js";
+import { compilePattern } from "../regexp-compiler/compile.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import {
   IR_DYN_CALL_ARGUMENT_FN,
@@ -428,8 +429,8 @@ function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void
   const regexpInstrs: Instr[] = [
     { op: "i32.const", value: compiledRegExp.flags },
     { op: "i32.const", value: compiledRegExp.nGroups },
-    ...i32ArrayLiteralInstrs(ctx, compiledRegExp.prog),
-    ...i32ArrayLiteralInstrs(ctx, compiledRegExp.classTable),
+    ...regExpI32ArrayInstrs(regexI32ArrayType(ctx), compiledRegExp.prog),
+    ...regExpI32ArrayInstrs(regexI32ArrayType(ctx), compiledRegExp.classTable),
     ...nativeStringLiteralInstrs(ctx, "_"),
     { op: "i32.const", value: compiledRegExp.nScratch },
     { op: "f64.const", value: 0 },

@@ -119,7 +119,7 @@ export const UNICODE_STRING_PROPERTY_DATA = {
 ${entries}
 } as const;
 `;
-  const outputPath = fileURLToPath(new URL("../src/codegen/regex/unicode-string-data.generated.ts", import.meta.url));
+  const outputPath = fileURLToPath(new URL("../src/regexp-compiler/unicode-string-data.generated.ts", import.meta.url));
   await writeFile(outputPath, output);
   for (const name of PROPERTY_NAMES) {
     console.log(`${name}: ${merged.get(name).size} sequences, ${encoded[name].length} encoded bytes`);
