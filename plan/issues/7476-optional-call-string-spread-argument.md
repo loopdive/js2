@@ -1,6 +1,6 @@
 ---
 id: 7476
-title: "Optional call with a string spread argument (`o?.f?.(...s)`) gives the wrong arguments (legacy)"
+title: "A call with a string spread argument (`o.f(...s)`, `o?.f?.(...s)`) gives the wrong arguments (legacy)"
 status: ready
 sprint: Backlog
 created: 2026-11-26
@@ -15,7 +15,7 @@ goal: core-semantics
 related: [7430, 7469]
 ---
 
-# #7476: optional call with a string spread argument
+# #7476: a call with a string spread argument
 
 ## Problem
 
@@ -29,7 +29,8 @@ var o = new C(); var s = "xy";
 o?.f?.(...s); // node: "xy"
 ```
 
-- **Legacy:** the result does not match node. A string spread must pass one
+- **Legacy:** the result does not match node, and the plain call `o.f(...s)` is wrong
+  too (RV7437), so the defect is not specific to optional calls. A string spread must pass one
   argument per code point. That PR makes `compileOptionalPropertyValueCall`
   use the shared `tryEmitSpreadHostArgs` → `buildSpreadArgList` expander, so
   the defect is in how that expander treats a string iterable, not in the

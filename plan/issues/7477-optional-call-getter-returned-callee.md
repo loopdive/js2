@@ -1,6 +1,6 @@
 ---
 id: 7477
-title: "Optional call on a getter-returned callee (`o?.g?.()` with `get g()`) is wrong (legacy)"
+title: "A callee returned by a getter: `o?.g?.()` never runs the getter, `o.g()` calls with the wrong `this` (legacy)"
 status: ready
 sprint: Backlog
 created: 2026-11-26
@@ -29,16 +29,22 @@ var o = new C();
 o?.g?.(); // node: true (getter runs once, the result is called with this === o)
 ```
 
-- **Legacy:** the result does not match node when the callee comes from an
-  accessor rather than a field or method.
+- **Legacy, two defects (RV7437):**
+  - `o?.g?.()` never runs the getter;
+  - the plain call `o.g()` runs it, but calls the result with the wrong `this`.
+
+  Both are wrong on main without that PR.
 
 ## Acceptance criteria
 
-- A pin test on gc, standalone and wasi, checked against node, covers:
+- A pin test on gc, standalone and wasi, checked against node, covers both
+  `o?.g?.()` and `o.g()`:
   - the getter running exactly once;
-  - `this === o` inside the returned function;
-  - a getter returning `undefined`, which short-circuits to `undefined`.
+  - `this === o` inside the returned function.
 
   The test fails on main.
+- A getter returning `undefined` (which should short-circuit `o?.g?.()` to
+  `undefined`) is a TypeScript compile error in a `.js` input, so pin it in a
+  `.ts` input only.
 - The fix reads the callee through the existing accessor read and then reuses
   `compileOptionalPropertyValueCall`. It adds no new call path.

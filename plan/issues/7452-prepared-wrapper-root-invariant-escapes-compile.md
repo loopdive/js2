@@ -42,12 +42,13 @@ under both `unlowerableBodies` policies, as `test.js` and `test.ts`.
 - **The throw.** `compile()` threw `PreparedIrProgramInvariantError … native dynamic value resources: the function
   test needs the source closures' wrapper root` when `g` became an abort body holding the program's only function
   value and a lowered `typeof` on a dynamic value elsewhere requested the function test. For example, `g` uncalled
-  plus `var q = {}; var out = typeof q.v;`. 3408858181 (#7354 G1) fixed it: the test falls back to the realm's own
-  wrapper root.
+  plus `var q = {}; var out = typeof q.v;`. Two #7354 G1 commits fix it, 3408858181 and the later fd529937ec. With
+  them the test falls back to the realm's own wrapper root. Each is enough on its own: on `main` the pin goes red only
+  when both are reverted (RV7437).
 - **Pin:** `tests/issue-7452-prepared-property-function-value.test.ts`. Both shapes, both variants, both policies and
   both file names. Every row asserts `compile()` returns, plus the exact abort-table row, refusal code and message,
-  and, for the second shape, node's answer. The pin is red at `120979fa6e` (the parent of 3408858181), where the
-  expression variant of the second shape throws, and green at 3408858181.
+  and, for the second shape, node's answer. The pin is red at `120979fa6e` (the parent of 3408858181, before both
+  fixes), where the expression variant of the second shape throws, and green at 3408858181 and on `main`.
 
 Returning `"functiontrue"` would need `===` between a dynamic home's value and a closure value. That is a separate
 task and has not been started.
