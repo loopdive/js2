@@ -134,3 +134,15 @@ The 39 nested-function files, by what else their test body uses: plain 18, `this
 4. Quality: one closure creation path. `lowerStatementListPrefix` has no arm that `lowerStmt` also has.
    from-ast.ts does not grow. The new module stays below 100 lines.
 5. Pin tests in `tests/issue-7492-prepared-nested-function-declarations.test.ts` that fail on main.
+
+## Left open
+
+Non-blocking follow-ups from the adversarial review (PRV-7492, 2026-11-26):
+
+- **Dead code after a `return`.** A `return` before the last statement now lowers through `lowerStmt`'s early
+  return, so the statements after it are lowered too. An unsupported statement there aborts the function, though
+  it never runs: a missed gain, not a wrong value.
+- **`analyseCaptures` runs twice for a hoisted declaration**: once for the closure-capture refusal in
+  `makeHoistedClosures`, once inside `lowerClosureExpressionWithSignature`. Fold the refusal into the shared closure
+  lowering in the follow-up that gives function expressions the native closure-typed capture carrier, or the same
+  refusal.
