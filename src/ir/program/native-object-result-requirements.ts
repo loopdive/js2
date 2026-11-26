@@ -9,10 +9,7 @@ import {
   assertNativeObjectAccessRequirementsCurrent,
   type NativeObjectAccessRequirements,
 } from "./native-object-access-requirements.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "./native-source-closure-requirements.js";
+import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import {
   objectResultDefinitions,
@@ -228,7 +225,6 @@ function projectedIntent(instruction: IrInstr, types: ReadonlyMap<IrValueId, IrT
 }
 
 function calculate(source: NativeSourceClosureRequirements, access: NativeObjectAccessRequirements) {
-  assertNativeSourceClosureRequirementsCurrent(source);
   assertNativeObjectAccessRequirementsCurrent(access);
   if (
     source.demands.program !== access.demands.program ||

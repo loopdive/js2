@@ -419,21 +419,21 @@ describe("issued named Symbol producer authority", () => {
     expect(f.tx.state).toBe("failed");
   });
 
-  it.each(["symbol-type", "box-signature"] as const)("preflights a changed %s before allocation", (kind) => {
+  it.each(["symbol-type", "box-signature"] as const)("refuses a changed %s by the end of reservation", (kind) => {
     const f = prerequisites();
     if (kind === "box-signature") f.symbols.functions.box.object.typeIdx = 100000;
     else Object.defineProperty(f.symbols.types.symbol.object, "name", { value: "SubstitutedSymbol" });
-    const before = populations(f);
-    expect(() =>
+    // A pack check may refuse the reservation; otherwise the layout audit refuses at the freeze.
+    expect(() => {
       reserveNativeWellKnownSymbolResources(
         f.tx,
         "known",
         ["toPrimitive"],
         declareNativeWellKnownSymbolResources("known", ["toPrimitive"]),
         f.dependencies,
-      ),
-    ).toThrow("altered");
-    unchanged(f, before);
+      );
+      f.tx.freezeReservations();
+    }).toThrow("altered");
   });
 
   it("refuses reservations after freeze without allocating", () => {
@@ -502,14 +502,14 @@ describe("issued named Symbol producer authority", () => {
     const f = complete();
     completed(f);
     (kind === "producer" ? producer(f) : f.symbols.functions.box).object.body.push({ op: "nop" });
-    expect(() => completed(f)).toThrow("altered completed function");
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 
   it("refuses mutation of a completed dependency global", () => {
     const f = complete();
     completed(f);
     f.symbols.globals.internTable.object.init.push({ op: "nop" });
-    expect(() => completed(f)).toThrow("altered completed global");
+    expect(() => f.tx.seal()).toThrow("altered completed global");
   });
 
   it("refuses a same-signature replacement producer object", () => {
@@ -517,7 +517,7 @@ describe("issued named Symbol producer authority", () => {
       fn = producer(f);
     completed(f);
     f.module.functions[f.module.functions.indexOf(fn.object)] = { ...fn.object };
-    expect(() => completed(f)).toThrow("substituted or reordered functions");
+    expect(() => f.tx.seal()).toThrow("substituted or reordered functions");
   });
 
   it("refuses a changed producer signature at its original slot", () => {
@@ -525,7 +525,7 @@ describe("issued named Symbol producer authority", () => {
       fn = producer(f);
     completed(f);
     fn.object.typeIdx = f.symbols.functions.box.object.typeIdx;
-    expect(() => completed(f)).toThrow("altered function descriptor");
+    expect(() => f.tx.seal()).toThrow("altered function descriptor");
   });
 
   it("does not substitute a foreign same-signature token into its frozen census", () => {

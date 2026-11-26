@@ -322,6 +322,7 @@ test("actual worker admission refuses missing strict APIs before any compiler ca
     "requiredPreparedEmission",
     "requiredPreparedFinalArtifactObservation",
     "requiredPreparedFrontendFailure",
+    "requiredPreparedAbortBodies",
   ];
   const complete = Object.fromEntries(names.map((name) => [name, () => {}]));
   for (const missing of ["all", ...names]) {

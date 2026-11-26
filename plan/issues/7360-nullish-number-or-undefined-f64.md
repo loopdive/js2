@@ -122,3 +122,20 @@ exact-bits `f64.const` of `UNDEF_F64_BITS` or a module-init store; not taken her
 
 Also seen while testing finding 1, already on main: `b === 1n` with `b: number | bigint` folds to `false` (the
 value is a correct BigInt box; `typeof b` answers `"bigint"`). The BigInt test row therefore checks `typeof`.
+
+## Review round 2 (RV7307, 2026-11-19, on b210f2d40b)
+
+| finding | answer |
+| --- | --- |
+| `f64MayHoldUndefined` peels with `skipOuterExpressions` (`shared/binding-writes.ts`), not codegen's designated `skipTransparentExpressions`. | Switched. The two peel the same five wrappers (parentheses, `as`, `<T>x`, `satisfies`, `!`), so nothing else changes. `skipOuterExpressions` stays: `shared/intrinsic-prototype-writes.ts` and `binding-writes.ts` itself still use it. Folding the two helpers into one is a separate cleanup. |
+| `(x!) ??= 7` stays NaN for `undefined` (also on main). | Fixed, and it was not the predicate. `compileLogicalAssignment` chose its arm from the raw `expr.left`, so a wrapped target (`(x)`, `x!`, `(o.a!)`) matched no arm and reported "Logical assignment only supported for simple identifiers…". `compileExpressionBody` discards that diagnostic together with the body when an expression yields no value, and pushes a default instead. The statement compiled to `f64.const 0; drop`: no assignment at all, for `??=`, `\|\|=` and `&&=`, on any target type. It now peels the target once with `skipTransparentExpressions` and dispatches on what it wraps; the identifier arm hands that same node to `f64MayHoldUndefined`. Tests: `(x!)`, `(x)`, `x!` and `(o.a!)` under `??=`, defined / `undefined` / NaN input, both targets. |
+
+Not fixed here, same family, already on main:
+
+- `(x as number) ??= 7`: TypeScript accepts it; `isInvalidAssignmentTarget` (`compiler/early-errors/predicates.ts`)
+  peels only parentheses and `!`, so it is refused as "Invalid left-hand side in assignment". No test row.
+- `(x) += 1` and `(x!) = 5` are dropped the same silent way: `compileCompoundAssignment` peels nothing and
+  `compileAssignment` peels parentheses only. Measured: `(x) += 1` leaves `x` at 2 (node 3), `(x!) = 5` leaves 2
+  (node 5).
+- The silent part is the wider defect: any expression arm that reports an error and returns `null` compiles to a
+  default value with no diagnostic, unless the error is marked sticky.

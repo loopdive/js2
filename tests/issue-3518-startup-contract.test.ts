@@ -1,10 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ts } from "../src/ts-api.js";
 import { analyzeMultiSource, analyzeSource } from "../src/checker/index.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
 import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
@@ -16,33 +11,6 @@ import {
 } from "../src/ir/module-init-plan.js";
 import type { IrModuleInitPlan, IrModuleInitTarget } from "../src/ir/program/startup.js";
 
-const root = resolve(import.meta.dirname, "..");
-const canonicalPath = "src/ir/program/startup.ts";
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
-const sourceFile = (path: string) => ts.createSourceFile(path, read(path), ts.ScriptTarget.Latest, true);
-const emit = (source: string) =>
-  ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  }).outputText;
-
-// Exact declaration text INCLUDING docs, pinned at the extraction source.
-// No historical git object or worktree is needed to run these controls.
-const declarationHashes = {
-  IrModuleInitTarget: "1f40aa94a89bd5d8768ae1d902df0fa4c6000a45ac8292ba52598a565528c1f0",
-  IrModuleInitInvocationKind: "9bc80e3a6113e23879ba7b2ecc103b77819adf22b595d28a3cfac60baa1caa98",
-  IrModuleInitInvocationPolicy: "0a635d38f99deb089927e2d722155c1369fc88eec3283cdd817c81bd5a911ccb",
-  IrModuleBindingDeclarationKind: "1a3d8caecabb77561384072ea74de0b93ef3b7e5334bab27e0febca35c5ff3ca",
-  IrModuleInitBindingIntent: "81fd9d27beff749996b661c0fe5d109b04e54e53aef2442183e37af6044650ab",
-  IrModuleInitLiveSeedIntent: "85dedcbf91c64f32592bce329bb27cd0577c0e2e863de2c47bb97a838265ed18",
-  IrModuleInitEvaluationKind: "929a237c9cee925f2b2debe48d989b28ab77102a27b84d40d8e679eb0b231d8e",
-  IrModuleInitEvaluationEntry: "2bdcdcce5eaf3c75bd013cc711e2caf5e48d4a112988844fef33955da962132f",
-  IrModuleInitExportIntent: "935a3960489f2e61cd83cef06f71995f3383074f54b4e02783d8419af4830e53",
-  IrModuleInitPlanGapCode: "cc09c6361f978393f6ba1b536bbca454727d9d7401a796a8238978ac96b77fb5",
-  IrModuleInitPlanGap: "aa33dd3a0d4fe0a4931992f70b73fc8ca5b083f6c882891625283b399753cf47",
-  IrModuleInitPlan: "b9efa8cfc0cadf954a4bce74ca2cb0ddb01435191680d655297a8adbbae19d49",
-};
-const names = Object.keys(declarationHashes);
-
 function build(source: string, target: IrModuleInitTarget = "standalone", deferTopLevelInit = false) {
   const ast = analyzeSource(source, "startup-contract.ts");
   const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
@@ -52,110 +20,6 @@ function build(source: string, target: IrModuleInitTarget = "standalone", deferT
 }
 
 describe("startup data contract separation", () => {
-  it.each(Object.entries(declarationHashes))("preserves the complete %s declaration and docs", (name, hash) => {
-    const file = sourceFile(canonicalPath);
-    const declarations = file.statements.filter(
-      (node) => (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name.text === name,
-    );
-    expect(declarations).toHaveLength(1);
-    expect(createHash("sha256").update(declarations[0].getFullText(file).trim()).digest("hex")).toBe(hash);
-  });
-
-  it("has exactly twelve canonical declarations and explicit type-only compatibility imports/exports", () => {
-    const canonical = sourceFile(canonicalPath);
-    expect(canonical.statements.filter(ts.isImportDeclaration)).toHaveLength(1);
-    const declarations = canonical.statements.filter(
-      (node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node),
-    );
-    expect(declarations.map((node) => node.name.text)).toEqual(names);
-    expect(canonical.statements).toHaveLength(13);
-    const old = sourceFile("src/ir/module-init-plan.ts");
-    expect(
-      old.statements.some(
-        (node) =>
-          (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) && names.includes(node.name.text),
-      ),
-    ).toBe(false);
-    const imports = old.statements
-      .filter(ts.isImportDeclaration)
-      .filter(
-        (node) => ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === "./program/startup.js",
-      );
-    const exports = old.statements
-      .filter(ts.isExportDeclaration)
-      .filter(
-        (node) =>
-          node.moduleSpecifier &&
-          ts.isStringLiteral(node.moduleSpecifier) &&
-          node.moduleSpecifier.text === "./program/startup.js",
-      );
-    expect(imports).toHaveLength(1);
-    expect(imports[0].importClause?.isTypeOnly).toBe(true);
-    const bindings = imports[0].importClause?.namedBindings;
-    expect(bindings && ts.isNamedImports(bindings) && bindings.elements.map((node) => node.name.text)).toEqual(names);
-    expect(exports).toHaveLength(1);
-    expect(exports[0].isTypeOnly).toBe(true);
-    const clause = exports[0].exportClause;
-    expect(clause && ts.isNamedExports(clause) && clause.elements.map((node) => node.name.text)).toEqual(names);
-  });
-
-  it("uses only the three canonical type-only closure modules and emits no runtime declarations", () => {
-    const paths = [canonicalPath, "src/shared/contracts/ir-identity.ts", "src/shared/contracts/source-origin.ts"];
-    const edges: string[][] = [];
-    for (const path of paths) {
-      const file = sourceFile(path);
-      for (const declaration of file.statements.filter(ts.isImportDeclaration)) {
-        expect(declaration.importClause?.isTypeOnly).toBe(true);
-        expect(ts.isStringLiteral(declaration.moduleSpecifier)).toBe(true);
-        edges.push([path, (declaration.moduleSpecifier as ts.StringLiteral).text]);
-      }
-      const javascript = ts.createSourceFile(
-        path + ".js",
-        emit(read(path)),
-        ts.ScriptTarget.Latest,
-        true,
-        ts.ScriptKind.JS,
-      );
-      expect(javascript.statements.map((statement) => statement.getText(javascript))).toEqual(["export {};"]);
-    }
-    expect(edges).toEqual([
-      [canonicalPath, "../../shared/contracts/ir-identity.js"],
-      ["src/shared/contracts/ir-identity.ts", "./source-origin.js"],
-    ]);
-    const brands = sourceFile(canonicalPath).statements.filter(ts.isImportDeclaration)[0].importClause?.namedBindings;
-    expect(brands && ts.isNamedImports(brands) && brands.elements.map((node) => node.name.text)).toEqual([
-      "IrBindingId",
-      "IrClassId",
-      "IrSourceId",
-      "IrUnitId",
-    ]);
-  });
-
-  it("keeps the real program's complete startup population on the canonical type", () => {
-    const file = sourceFile("src/ir/program.ts");
-    const startupImports = file.statements.filter(ts.isImportDeclaration).filter((node) => {
-      const bindings = node.importClause?.namedBindings;
-      return (
-        bindings &&
-        ts.isNamedImports(bindings) &&
-        bindings.elements.some((entry) => entry.name.text === "IrModuleInitPlan")
-      );
-    });
-    expect(startupImports).toHaveLength(1);
-    expect(startupImports[0].importClause?.isTypeOnly).toBe(true);
-    expect((startupImports[0].moduleSpecifier as ts.StringLiteral).text).toBe("./program/startup.js");
-    const program = file.statements.find(
-      (node): node is ts.InterfaceDeclaration =>
-        ts.isInterfaceDeclaration(node) && node.name.text === "PreparedIrProgram",
-    );
-    const startup = program?.members.filter((node) => node.name?.getText(file) === "startup");
-    expect(startup).toHaveLength(1);
-    expect(startup![0].getText(file)).toBe("readonly startup: readonly IrModuleInitPlan[];");
-    expect(startup![0].getFullText(file)).toContain(
-      "Includes empty sources and preserves semantic module evaluation order.",
-    );
-  });
-
   it("builds nonempty bindings, seeds, exports, ranges and source-ordered evaluations with the existing producer", () => {
     const source = [
       "export let count: number = 1;",

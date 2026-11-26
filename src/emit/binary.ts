@@ -16,6 +16,7 @@ import { indexPhysicalTypes, planPhysicalTypeSection } from "../wasm/physical/ty
 import { writeFileSync } from "node:fs";
 import { emitWat } from "./wat.js";
 import { WasmEncoder } from "./encoder.js";
+import { withoutSymbolIds } from "./debug-names.js";
 import { GC, OP, SECTION, SIMD, TYPE } from "./opcodes.js";
 import { resolveLayout, type ModuleLayout } from "./resolve-layout.js";
 import { readEnv } from "../env.js";
@@ -641,9 +642,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boo
     }
     // Local functions
     for (const f of mod.functions) {
-      if (f.name) {
-        nameEntries.push({ index: funcIdx, name: f.name });
-      }
+      if (f.name) nameEntries.push({ index: funcIdx, name: withoutSymbolIds(f.name) });
       funcIdx++;
     }
     if (nameEntries.length > 0) {

@@ -34,11 +34,13 @@ import {
   isStringType,
   isStringWrapperType,
 } from "../checker/type-mapper.js";
+import type { TypeOracle } from "../checker/oracle.js";
+import { functionNameForKey } from "../checker/well-known-symbol-keys.js";
 import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { widenBooleanDynamicAccess } from "./dyn-read.js";
-import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { expectedArgumentCountOfSignature } from "../shared/function-expected-argument-count.js"; // (#4436) §15.1.5
 import { arrayLibMethodSpecLength } from "./array-method-value.js"; // (#4765)
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { promiseProtoMemberSpecLength } from "./promise-dynamic-member-read.js"; // (#6651 D5)
@@ -2621,15 +2623,17 @@ function symbolIsPropertyDescriptorAccessorSlot(symbol: ts.Symbol | undefined): 
 }
 
 /**
- * The enumerated set of type symbols whose NAME is a declaration/checker
- * artefact rather than the function value's own `.name`, so the §20.2.4.2
- * `.name` fold has no static answer and must fall through to the runtime read:
- * TypeScript's `__computed` placeholder for a symbol-keyed member (#5149
- * cluster B) and a §6.2.6 descriptor's accessor slot (#6651 B18, above).
+ * The `.name` the §20.2.4.2 fold may publish for a function's type symbol, or undefined when the symbol's name is a
+ * declaration/checker artefact and the fold must fall through to the runtime read: TypeScript's `__computed`
+ * placeholder for a symbol-keyed member (#5149 cluster B), a §6.2.6 descriptor's accessor slot (#6651 B18, above),
+ * and a symbol key whose escaped `__@k@<id>` name carries a process-global id (#7410) — except a well-known symbol
+ * key of a source-declared function, which folds to the spec's `[Symbol.replace]`.
  */
-function nameFoldTypeSymbolIsDeclarationArtefact(objType: ts.Type): boolean {
+function foldableTypeSymbolName(oracle: TypeOracle, objType: ts.Type): string | undefined {
   const symbol = objType.getSymbol();
-  return symbol?.name === "__computed" || symbolIsPropertyDescriptorAccessorSlot(symbol);
+  if (symbol === undefined) return "";
+  if (symbol.name === "__computed" || symbolIsPropertyDescriptorAccessorSlot(symbol)) return undefined;
+  return functionNameForKey(oracle, symbol);
 }
 
 /**
@@ -2977,16 +2981,10 @@ export function tryLengthAndNameReads(
           }
         }
       }
-      // (#5149 cluster B) A SYMBOL-keyed member's type symbol carries
-      // TypeScript's internal placeholder name `__computed`, which this fold
-      // published verbatim: `({ [Symbol('test262')]() {} })[s].name` answered
-      // `"__computed"` — a compiler-internal identifier as an observable value,
-      // worse than the miss it replaced. There is no static answer here (the
-      // key is a runtime symbol), so fall through to the ordinary property read
-      // and let the closure's own `$fnmeta` name it.
-      if (hasFuncSig && nameFoldTypeSymbolIsDeclarationArtefact(objType)) {
-        // no static fold — the runtime read below answers it
-      } else if (hasFuncSig && !objType.isUnion()) {
+      // (#5149 cluster B, #7410) A type symbol named by a checker artefact (`__computed`, `__@k@<id>`) is never
+      // published: the ordinary property read below lets the closure's own `$fnmeta` name the function.
+      const foldedName = hasFuncSig ? foldableTypeSymbolName(ctx.oracle, objType) : undefined;
+      if (foldedName !== undefined && !objType.isUnion()) {
         // Resolve the function name from the type symbol or the expression.
         //
         // UNION-typed receivers are excluded in BOTH lanes: a union (e.g.
@@ -2997,7 +2995,7 @@ export function tryLengthAndNameReads(
         // real per-value name: the `$__ta_ctor` meta arm host-free, and
         // `__extern_get(v, "name")` in the JS-host lane. (#4433 excluded the
         // host-free lanes; #4650 measured the same `""` in the host lane.)
-        let funcName = objType.getSymbol()?.name ?? "";
+        let funcName = foldedName;
         // __type, __function, __class, __object are anonymous type names from TS checker
         if (funcName === "__type" || funcName === "__function" || funcName === "__class" || funcName === "__object")
           funcName = "";

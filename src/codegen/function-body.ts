@@ -11,7 +11,7 @@ import { initializeOrdinaryNewTarget } from "./closures/ordinary-new-target.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import { functionLikeReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { functionLikeReferencesOwnThis } from "../shared/body-references-own-this.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";

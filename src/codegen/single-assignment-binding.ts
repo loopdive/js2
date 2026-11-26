@@ -49,6 +49,7 @@
  * the caller's conservative direction.
  */
 import { ts } from "../ts-api.js";
+import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import type { CodegenContext } from "./context/types.js";
 
 /** Per-file, per-spelling: identifiers that WRITE some binding of that name. */
@@ -68,8 +69,10 @@ function writingOccurrences(sourceFile: ts.SourceFile): Map<string, ts.Identifie
       record(target);
       return;
     }
-    if (ts.isParenthesizedExpression(target)) {
-      recordAssignmentTarget(target.expression);
+    // (#7394) `(s!) += "cd"` writes `s`: parentheses and the type-erased wrappers are transparent around a target.
+    const unwrapped = ts.isExpression(target) ? skipTransparentExpressions(target) : target;
+    if (unwrapped !== target) {
+      recordAssignmentTarget(unwrapped);
       return;
     }
     if (ts.isBindingElement(target)) {

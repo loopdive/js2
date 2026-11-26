@@ -1,0 +1,1225 @@
+annexB/built-ins/Date/prototype/getYear/this-not-date.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/built-ins/Date/prototype/setYear/this-not-date.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/built-ins/Date/prototype/setYear/year-to-number-err.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/built-ins/Function/createdynfn-no-line-terminator-html-close-comment-params.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-block-decl-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-block-decl-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-decl-b-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-case-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-case-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-no-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/func-switch-dflt-eval-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-block-decl-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-block-decl-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-block-decl-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-block-decl-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-block-decl-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-block-decl-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/callexpression-as-for-in-lhs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/callexpression-as-for-of-lhs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/callexpression-in-compound-assignment.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/callexpression-in-postfix-update.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/callexpression-in-prefix-update.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/callexpression.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/expressions/assignmenttargettype/cover-callexpression-and-asyncarrowhead.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-skip-arguments.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/block-decl-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/block-decl-nostrict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-a-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-decl-b-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-else-stmt-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-else-stmt-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-decl-no-else-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-decl-no-else-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/if-stmt-else-decl-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/if-stmt-else-decl-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-decl-nostrict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-case-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-case-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-decl-nostrict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-block-scoping.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-existing-block-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-existing-block-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-existing-fn-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-existing-fn-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-existing-var-no-init.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-existing-var-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-init.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-no-skip-try.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-skip-dft-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/function-code/switch-dflt-func-skip-early-err.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-skip-param.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/function-code/switch-dflt-func-update.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+annexB/language/global-code/block-decl-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/block-decl-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/block-decl-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/block-decl-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/block-decl-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/block-decl-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-a-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-a-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-a-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-a-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-a-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-a-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-b-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-b-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-b-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-b-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-b-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-decl-b-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-stmt-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-stmt-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-stmt-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-stmt-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-stmt-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-else-stmt-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-no-else-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-no-else-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-no-else-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-no-else-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-no-else-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-decl-no-else-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/script-decl-lex-collision.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-case-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-case-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-case-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-case-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-case-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-case-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-dflt-global-skip-early-err-block.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-dflt-global-skip-early-err-for-in.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-dflt-global-skip-early-err-for-of.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-dflt-global-skip-early-err-for.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-dflt-global-skip-early-err-switch.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/global-code/switch-dflt-global-skip-early-err-try.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+annexB/language/statements/for-in/nonstrict-initializer.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Array/isArray/15.4.3.2-1-13.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Array/length/15.4.5.1-3.d-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/length/15.4.5.1-3.d-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/every/15.4.4.16-4-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/every/15.4.4.16-4-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/every/15.4.4.16-4-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/every/15.4.4.16-4-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/every/15.4.4.16-4-6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/every/15.4.4.16-4-7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-3-22.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-4-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-4-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-4-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-4-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-4-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Array/prototype/forEach/15.4.4.18-4-6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Error/prototype/S15.11.4_A3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Error/prototype/S15.11.4_A4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.2.1-10-6gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.2.1-11-1-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.2.1-11-3-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.2.1-11-5-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5-1gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5-2gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-10gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-11gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-13gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-15gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-16gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-17gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-18gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-19gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-1gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-20gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-21gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-22gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-23gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-24gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-25gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-26gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-27gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-28gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-29gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-2gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-30gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-31gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-32gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-33gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-34gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-35gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-36gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-37gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-38gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-39gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-3gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-40gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-41gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-42gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-43gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-44gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-45gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-46gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-47gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-48gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-49gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-4gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-50gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-51gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-56gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-57gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-58gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-59gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-5gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-60gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-61gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-62gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-63gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-64gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-65gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-66gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-67gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-68gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-69gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-6gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-70gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-71gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-72gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-73gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-74gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-7gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-8gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-94gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-95gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-96gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-97gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/15.3.5.4_2-9gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/S15.3.5_A2_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/S15.3.5_A2_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/S15.3.4_A5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T7.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T8.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T7.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T8.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5-2-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-11.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-2-7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-20-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-20-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-21-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/15.3.4.5-21-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/S15.3.4.5_A1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/S15.3.4.5_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/S15.3.4.5_A14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/S15.3.4.5_A15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/bind/S15.3.4.5_A2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/call/S15.3.4.4_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/call/S15.3.4.4_A14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/call/S15.3.4.4_A15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/call/S15.3.4.4_A3_T7.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A3_T8.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A6_T7.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A6_T8.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Function/prototype/toString/S15.3.4.2_A12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/toString/S15.3.4.2_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/toString/S15.3.4.2_A14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Function/prototype/toString/S15.3.4.2_A16.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/15.12-0-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/15.12-0-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-0-8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g1-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g1-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g1-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g2-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g2-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g2-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g4-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g4-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g4-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g4-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g5-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.1.1-g5-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/15.12.2-2-9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/JSON/parse/invalid-whitespace.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-1-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-1-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-1-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-122.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-147.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-175.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-201.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-226.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-254.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-258.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-259.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-260.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-261.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-262.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-289.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-293.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-294.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-295.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-296.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-297.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-300.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-301.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-302.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-303.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-304.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-38.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/create/15.2.3.5-4-41.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-42.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-43.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-44.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/create/15.2.3.5-4-45.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-1-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-1-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-1-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-2-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-2-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-218.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-219.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-220.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-221.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-222.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-253.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-254.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-255.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-256.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-257.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-261.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-262.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-263.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-264.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-5-b-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-113.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-116.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-117.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-118.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-121.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-129.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-130.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-131.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-132.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-134.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-135.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-136.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-137.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-141.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-146.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-148.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-149.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-152.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-153.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-166.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-168.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-169.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-170.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-172.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-173.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-188.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-189.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-192.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-193.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-194.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-25.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperties/15.2.3.7-6-a-314.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-1-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-1-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-1-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-2-47.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-11.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-16.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-17.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-18.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-19.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-3-9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-117.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-120.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-121.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-122.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-123.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-125.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-133.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-134.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-135.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-136.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-138.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-139.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-140.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-141.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-145.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-150.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-152.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-153.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-156.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-157.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-168.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-170.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-172.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-173.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-174.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-176.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-177.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-192.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-193.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-196.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-197.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/defineProperty/15.2.3.6-4-198.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/freeze/15.2.3.9-2-d-9.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-1-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-46.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-13.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/getOwnPropertyNames/15.2.3.4-1-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/getPrototypeOf/15.2.3.2-0-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/getPrototypeOf/15.2.3.2-1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/isFrozen/15.2.3.12-2-a-11.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/Object/keys/15.2.3.14-1-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/keys/15.2.3.14-1-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/preventExtensions/15.2.3.10-3-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/S15.2.4_A3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/S15.2.4_A4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/hasOwnProperty/S15.2.4.5_A12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/hasOwnProperty/S15.2.4.5_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/toLocaleString/S15.2.4.3_A12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/toLocaleString/S15.2.4.3_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/valueOf/S15.2.4.4_A12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/valueOf/S15.2.4.4_A13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/valueOf/S15.2.4.4_A14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/Object/prototype/valueOf/S15.2.4.4_A15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/15.10.2.15-6-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/15.10.2.5-3-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/15.10.4.1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/15.10.4.1-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T11.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T16.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.1_A1_T9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T11.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T14.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T15.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T16.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T17.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T18.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T19.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T20.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T21.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T22.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T23.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T24.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T25.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T26.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T27.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T28.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T29.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T30.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T31.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T32.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T33.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T34.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T35.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T36.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T37.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T38.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T39.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T40.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T41.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2.15_A1_T9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.2_A1_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.3.1_A2_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.3.1_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A5_T9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A8_T12.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A8_T13.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A8_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A8_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A8_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A9_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A9_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.4.1_A9_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.7_A1_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.7_A1_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.7_A2_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/S15.10.7_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A1_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A1_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A4_T11.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/exec/S15.10.6.2_A7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A1_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A1_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T10.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A2_T9.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/RegExp/prototype/test/S15.10.6.3_A7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/String/S15.5.5_A1_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/charAt/S15.5.4.4_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/concat/S15.5.4.6_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/lastIndexOf/S15.5.4.8_A7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/String/prototype/match/S15.5.4.10_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/replace/S15.5.4.11_A1_T4.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/replace/S15.5.4.11_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/search/S15.5.4.12_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/slice/S15.5.4.13_A1_T4.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/slice/S15.5.4.13_A7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/String/prototype/split/argument-is-null-and-instance-is-function-call-that-returned-string.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/substring/S15.5.4.15_A1_T4.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-1-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-1-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-2-42.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-2-44.js	dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-2-51.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-1.js	dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-3-2.js	dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-4-1.js	dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-4-59.js	dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic
+built-ins/global/10.2.1.1.3-4-16-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/global/10.2.1.1.3-4-18-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/global/S15.1_A1_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/global/S15.1_A1_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+built-ins/global/S15.1_A2_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-custom-typeerror.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-custom.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-incorrect-ctor.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-native.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-no-arg.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-no-error.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-null-fn.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-null.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-primitive.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-same-realm.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/assert-throws-single-arg.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/compare-array-different-elements.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/compare-array-different-length.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/compare-array-same-elements-different-order.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/compare-array-samevalue.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/compare-array-sparse.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/deepEqual-array.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/deepEqual-deep.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/deepEqual-mapset.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/deepEqual-object.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/deepEqual-primitives.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+harness/fnGlobalObject.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+intl402/Collator/prototype/this-value-not-collator.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/Date/prototype/this-value-non-date.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/Date/prototype/throws-same-exceptions-as-DateTimeFormat.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/DateTimeFormat/prototype/format/throws-value-non-finite.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/DateTimeFormat/prototype/this-value-not-datetimeformat.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/DateTimeFormat/timezone-invalid.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/Number/prototype/toLocaleString/this-number-value.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/Number/prototype/toLocaleString/throws-same-exceptions-as-NumberFormat.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/NumberFormat/currency-code-invalid.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/NumberFormat/test-option-currency.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/NumberFormat/test-option-useGrouping.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/NumberFormat/throws-for-currency-style-without-currency-option.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/String/prototype/localeCompare/return-abrupt-this-value.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+intl402/String/prototype/localeCompare/throws-same-exceptions-as-Collator.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/arguments-object/10.5-1-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/arguments-object/10.5-7-b-1-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/arguments-object/10.6-13-c-1-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/arguments-object/10.6-14-c-4-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/arguments-object/10.6-2gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/arguments-object/10.6-6-3.js	ir/from-ast: only direct calls supported in Phase 2 (testcase)
+language/arguments-object/10.6-6-4.js	ir/from-ast: only direct calls supported in Phase 2 (testcase)
+language/asi/S7.9_A5.5_T3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/asi/S7.9_A5.5_T4.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/asi/S7.9_A5.5_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/asi/S7.9_A7_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/10.1.1-14-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/10.1.1-30-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/10.1.1-5-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/10.1.1-8-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/func-decl-inside-func-decl-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/func-decl-no-semi-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/func-decl-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/func-expr-final-runtime.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/directive-prologue/func-expr-inside-func-decl-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/func-expr-no-semi-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/func-expr-not-first-runtime.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/directive-prologue/func-expr-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/get-accsr-inside-func-expr-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/get-accsr-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/set-accsr-inside-func-expr-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/set-accsr-not-first-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/directive-prologue/set-accsr-runtime.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/direct/parse-failure-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/direct/var-env-func-non-strict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/direct/var-env-var-strict-caller-2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/indirect/cptn-nrml-empty-block.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-do-while.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-empty.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-for.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-if.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-switch.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-var.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-empty-while.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/cptn-nrml-expr-prim.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/non-string-primitive.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/parse-failure-1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/indirect/parse-failure-3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/indirect/parse-failure-4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/indirect/parse-failure-5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/eval-code/indirect/var-env-func-non-strict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/var-env-func-strict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/eval-code/indirect/var-env-var-non-strict.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/assignment/11.13.1-1-6-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-3-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-4-14-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-4-27-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-4-28gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-4-29gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-4-3-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/11.13.1-4-6-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/8.14.4-8-b_2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/assignment/S11.13.1_A6_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testAssignment)
+language/expressions/assignment/S11.13.1_A6_T2.js	ir/from-ast: only direct calls supported in Phase 2 (testAssignment)
+language/expressions/call/11.2.3-3_1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/call/11.2.3-3_2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/call/11.2.3-3_3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/call/11.2.3-3_5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/call/11.2.3-3_8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/call/S11.2.3_A3_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A3_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A3_T3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A3_T5.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A4_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A4_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A4_T3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/call/S11.2.3_A4_T4.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/compound-assignment/11.13.2-1-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-10-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-11-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-2-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-4-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-45-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-46-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-47-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-48-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-49-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-5-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-50-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-51-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-52-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-53-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-54-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-55-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-6-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-8-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/11.13.2-9-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/compound-assignment/S11.13.2_A6.10_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.11_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.1_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.2_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.3_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.4_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.5_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.6_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.7_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.8_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/compound-assignment/S11.13.2_A6.9_T1.js	ir/from-ast: only direct calls supported in Phase 2 (testCompoundAssignment)
+language/expressions/function/S10.1.1_A1_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/expressions/function/name-eval-stricteval.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/function/param-eval-stricteval.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/expressions/object/prop-dup-get-set-get.js	value requires one non-constructible callable signature or a supported primitive
+language/expressions/object/prop-dup-set-get-set.js	value requires one non-constructible callable signature or a supported primitive
+language/expressions/void/S11.4.2_A2_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/function-code/10.4.3-1-11-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-11gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-12-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-12gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-29-s.js	ir/from-ast: only direct calls supported in Phase 2 (f1)
+language/function-code/10.4.3-1-29gs.js	ir/from-ast: only direct calls supported in Phase 2 (f1)
+language/function-code/10.4.3-1-33-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-33gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-34-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-34gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-35-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-35gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-38-s.js	ir/from-ast: only direct calls supported in Phase 2 (f1)
+language/function-code/10.4.3-1-38gs.js	ir/from-ast: only direct calls supported in Phase 2 (f1)
+language/function-code/10.4.3-1-42-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-42gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-43-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-43gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-44-s.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-44gs.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/function-code/10.4.3-1-47-s.js	ir/from-ast: only direct calls supported in Phase 2 (f1)
+language/function-code/10.4.3-1-47gs.js	ir/from-ast: only direct calls supported in Phase 2 (f1)
+language/function-code/10.4.3-1-54-s.js	value requires one non-constructible callable signature or a supported primitive
+language/function-code/10.4.3-1-54gs.js	value requires one non-constructible callable signature or a supported primitive
+language/function-code/10.4.3-1-55-s.js	value requires one non-constructible callable signature or a supported primitive
+language/function-code/10.4.3-1-55gs.js	value requires one non-constructible callable signature or a supported primitive
+language/function-code/S10.4.3_A1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/literals/numeric/7.8.3-3gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T3.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T4.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T6.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/literals/numeric/S7.8.3_A4.1_T8.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/block/S12.1_A2.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/break/S12.8_A4_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/break/S12.8_A4_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/break/S12.8_A4_T3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/break/S12.8_A9_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/break/S12.8_A9_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/continue/S12.7_A9_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/continue/S12.7_A9_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/do-while/S12.6.1_A14_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/for/S12.6.3_A2.1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/for/S12.6.3_A2.2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/for/S12.6.3_A2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/for/S12.6.3_A3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/for/S12.6.3_A6.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/function/13.0-13-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.0-14-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.0-15-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.0-16-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.0-7-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.0-8-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-19-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-2-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-21-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-22-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-23-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-25-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-27-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-29-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-31-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-33-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-39-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-4-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.1-41-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-10-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-13-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-14-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-17-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-18-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-19-b-3gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-2-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-21-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-22-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-25-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-26-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-4-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-5-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-6-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/13.2-9-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/S13.2.1_A1_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/function/S13_A19_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/function/S13_A2_T1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/function/S13_A2_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/function/S13_A2_T3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/function/name-eval-stricteval.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/function/param-eval-stricteval.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/if/S12.5_A10_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/if/S12.5_A3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/if/S12.5_A4.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/return/12.9-1.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/return/S12.9_A3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/return/line-terminators.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/try/12.14-13.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/variable/12.2.1-18-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-19-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-2-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-22-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-3-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-4-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-7-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/12.2.1-8-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/S12.2_A1.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/variable/S12.2_A3.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/variable/S12.2_A5.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/while/S12.6.2_A14_T2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/while/S12.6.2_A2.js	ir/from-ast: only direct calls supported in Phase 2 (<module-init>)
+language/statements/with/12.10.1-10-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/with/12.10.1-12-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/with/12.10.1-4-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/statements/with/12.10.1-8-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/types/object/S8.6.2_A7.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/types/reference/8.7.2-1-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/types/reference/8.7.2-3-a-1gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/types/reference/8.7.2-3-a-2gs.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic
+language/types/reference/8.7.2-5-s.js	dynamic operation __ir_dyn_call_value has no Prepared intrinsic

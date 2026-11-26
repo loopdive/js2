@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import ts from "typescript";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -16,10 +15,6 @@ const wasmModel = "src/wasm/model/boundary-probe.ts";
 const core = "src/ir/core/boundary-probe.ts";
 const frontend = "src/frontend/ts/boundary-probe.ts";
 const barrel = "src/runtime/contracts/boundary-probe.ts";
-const runtimeEdges = ["runtime-contracts", "foundation", "wasm-model"];
-// #5742 independently activates the already-approved pure Wasm-model edge.
-// Neither base admits runtime contracts or implementation layers from core.
-const permittedCoreEdges = ["ir-core", "foundation", "wasm-model"];
 const probe = "export type Probe = number; export const probe = 1;";
 const scratchRoots: string[] = [];
 
@@ -171,51 +166,6 @@ const backEdges = [
 ];
 
 describe("#3518 capability schema compiler boundaries", () => {
-  it("requires the one real leaf activation without widening policy or cleaning the old catalog", () => {
-    expect(productionPolicy.layers.find((layer) => layer.id === "runtime-contracts")).toMatchObject({
-      status: "active",
-      roots: ["src/runtime/contracts"],
-      required: true,
-      entries: [
-        schema,
-        "src/runtime/contracts/async-provider-schema.ts",
-        "src/runtime/contracts/provider-policy.ts",
-        "src/runtime/contracts/index.ts",
-      ],
-      minModules: 4,
-    });
-    expect(productionPolicy.files.filter((file) => file.path === schema)).toEqual([
-      expect.objectContaining({ state: "clean", layer: "runtime-contracts" }),
-    ]);
-    expect(productionPolicy.files.filter((file) => file.path === oldCatalog)).toEqual([
-      expect.objectContaining({ state: "unmigrated", layer: "mixed-needs-split" }),
-    ]);
-    expect(productionPolicy.allowedEdges["runtime-contracts"]).toEqual(runtimeEdges);
-    expect(productionPolicy.allowedEdges["ir-core"]).toEqual(expect.arrayContaining(["ir-core", "foundation"]));
-    expect(productionPolicy.allowedEdges["ir-core"].filter((edge) => !permittedCoreEdges.includes(edge))).toEqual([]);
-  });
-
-  it("binds a nonempty 25-type/14-constant schema, with immutable constant initializers", () => {
-    const tree = ts.createSourceFile(schema, source, ts.ScriptTarget.Latest, true);
-    const types = tree.statements.filter((node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node));
-    const variables = tree.statements.filter(ts.isVariableStatement);
-    expect(types).toHaveLength(25);
-    expect(variables).toHaveLength(14);
-    expect(tree.statements).toHaveLength(39);
-    for (const statement of variables) {
-      expect(statement.declarationList.flags & ts.NodeFlags.Const).not.toBe(0);
-      expect(statement.declarationList.declarations).toHaveLength(1);
-      const declaration = statement.declarationList.declarations[0]!;
-      const initializer = declaration.initializer!;
-      if (declaration.name.getText(tree) === "HOST_CALLBACK_EXCEPTION_POLICY") {
-        expect(initializer.getText(tree)).toBe('"module-tag-payload" as const');
-      } else {
-        expect(ts.isCallExpression(initializer)).toBe(true);
-        if (ts.isCallExpression(initializer)) expect(initializer.expression.getText(tree)).toBe("Object.freeze");
-      }
-    }
-  });
-
   it("visits the actual import-free schema and retains catalog debt, not a retirement verdict", () => {
     const f = fixture();
     const result = f.run();

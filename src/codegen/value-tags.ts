@@ -23,10 +23,10 @@
  * Full design: plan/log/analysis-2026-06/02-value-representation-spec.md §2.1-2.2.
  */
 import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
-import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../shared/contracts/f64-value-markers.js";
+import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 /**
@@ -111,7 +111,7 @@ export function emitIsUndefF64(body: Instr[]): void {
 export function f64MayHoldUndefined(ctx: CodegenContext, expr: ts.Expression, type: ValType): boolean {
   if (type.kind !== "f64") return false;
   // A type-only wrapper (`x!`, `x as number`) narrows the static type, not the slot: ask the wrapped operand too.
-  const operand = skipOuterExpressions(expr);
+  const operand = skipTransparentExpressions(expr);
   return (
     type.undefSentinel === true ||
     ctx.oracle.nullabilityOf(expr).undefinable ||

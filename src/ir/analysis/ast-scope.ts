@@ -100,15 +100,7 @@ export function collectFunctionOwnLocals(funcLike: ts.Node, out: Set<string>): v
   if (!isFunctionScopeBoundary(funcLike)) return;
   const decl = funcLike as ts.SignatureDeclaration;
   // Params (including destructuring binding identifiers)
-  if (decl.parameters) {
-    for (const p of decl.parameters) {
-      if (ts.isIdentifier(p.name)) {
-        out.add(p.name.text);
-      } else if (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) {
-        collectBindingPatternNames(p.name, out);
-      }
-    }
-  }
+  for (const p of decl.parameters ?? []) addBindingNames(p.name, out);
   // Body var/function/class decls. Concise arrow bodies are expressions — no decls.
   const body = (decl as { body?: ts.Node | undefined }).body;
   if (body && ts.isBlock(body)) {
@@ -124,6 +116,19 @@ export function collectFunctionOwnLocals(funcLike: ts.Node, out: Set<string>): v
 // (and across all other lowerings) reuse a single computed set.
 registerOwnLocalsCollector(collectFunctionOwnLocals);
 
+function isVarList(list: ts.VariableDeclarationList): boolean {
+  return !(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+}
+
+function addBindingNames(name: ts.BindingName, out: Set<string>): void {
+  for (const bound of collectPatternBindingNames(name)) out.add(bound);
+}
+
+/** Every name a declaration list binds, through its binding patterns. */
+function addDeclaratorNames(list: ts.VariableDeclarationList, out: Set<string>): void {
+  for (const declaration of list.declarations) addBindingNames(declaration.name, out);
+}
+
 /**
  * Recursively collect `var` declarations (function-scoped) and top-level
  * `function`/`class` declarations from a node tree, without crossing nested
@@ -132,15 +137,7 @@ registerOwnLocalsCollector(collectFunctionOwnLocals);
 function collectVarAndTopLevelDecls(node: ts.Node, out: Set<string>, atTopLevel: boolean): void {
   if (isFunctionScopeBoundary(node)) return; // do not cross
   if (ts.isVariableStatement(node)) {
-    const isVar = !(node.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-    if (isVar) {
-      for (const d of node.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) out.add(d.name.text);
-        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-          collectBindingPatternNames(d.name, out);
-        }
-      }
-    }
+    if (isVarList(node.declarationList)) addDeclaratorNames(node.declarationList, out);
     // Initializers may contain nested functions — keep walking but we won't
     // descend into their bodies (boundary check above).
     for (const d of node.declarationList.declarations) {
@@ -149,26 +146,10 @@ function collectVarAndTopLevelDecls(node: ts.Node, out: Set<string>, atTopLevel:
     return;
   }
   if (ts.isForStatement(node) && node.initializer && ts.isVariableDeclarationList(node.initializer)) {
-    const isVar = !(node.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-    if (isVar) {
-      for (const d of node.initializer.declarations) {
-        if (ts.isIdentifier(d.name)) out.add(d.name.text);
-        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-          collectBindingPatternNames(d.name, out);
-        }
-      }
-    }
+    if (isVarList(node.initializer)) addDeclaratorNames(node.initializer, out);
   }
   if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && ts.isVariableDeclarationList(node.initializer)) {
-    const isVar = !(node.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-    if (isVar) {
-      for (const d of node.initializer.declarations) {
-        if (ts.isIdentifier(d.name)) out.add(d.name.text);
-        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-          collectBindingPatternNames(d.name, out);
-        }
-      }
-    }
+    if (isVarList(node.initializer)) addDeclaratorNames(node.initializer, out);
   }
   if (ts.isFunctionDeclaration(node) && node.name && atTopLevel) {
     out.add(node.name.text);
@@ -249,4 +230,72 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
     return;
   }
   forEachChild(node, (child) => collectReferencedIdentifiers(child, names, shadowed));
+}
+
+/**
+ * (#7363) Whether `identifier` resolves to a binding that its own source declares in an enclosing scope. The
+ * question is lexical and needs no checker: it covers the JavaScript declaration forms, with hoisting. False means
+ * the name is read from the global environment, whatever that holds at run time.
+ *
+ * Where hoisting depends on strictness the answer leans to yes: a function declaration in a block counts for its
+ * whole function or file, because Annex B.3.3 makes it a `var` there in sloppy code.
+ */
+export function resolvesToSourceBinding(identifier: ts.Identifier): boolean {
+  for (let scope = identifier.parent; scope; scope = scope.parent) {
+    if (scopeNames(scope).has(identifier.text)) return true;
+  }
+  return false;
+}
+
+/**
+ * The names `scope` binds itself; empty for a node that opens no scope. A function or the file binds its `var`s and
+ * function declarations (`declaresFunction` adds block-nested ones by name); a block, switch, loop head or catch
+ * binds its lexical declarations.
+ */
+function scopeNames(scope: ts.Node): ReadonlySet<string> {
+  const names = new Set<string>();
+  if (isFunctionScopeBoundary(scope)) collectFunctionOwnLocals(scope, names);
+  if (ts.isSourceFile(scope))
+    for (const statement of scope.statements) collectVarAndTopLevelDecls(statement, names, true);
+  if ((ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) && scope.name) names.add(scope.name.text);
+  for (const declaration of lexicalDeclarations(scope)) addLexicalNames(declaration, names);
+  if (isFunctionScopeBoundary(scope) || ts.isSourceFile(scope)) declaredFunctionNames(scope, names);
+  return names;
+}
+
+/** The declarations whose bindings belong to `scope` itself: a block's, a switch's, a loop head's, a catch's. */
+function lexicalDeclarations(scope: ts.Node): readonly ts.Node[] {
+  if (ts.isBlock(scope) || ts.isSourceFile(scope)) return scope.statements;
+  if (ts.isCaseBlock(scope)) return scope.clauses.flatMap((clause) => clause.statements);
+  if (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) {
+    return scope.initializer ? [scope.initializer] : [];
+  }
+  if (ts.isCatchClause(scope)) return scope.variableDeclaration ? [scope.variableDeclaration] : [];
+  return [];
+}
+
+function addLexicalNames(declaration: ts.Node, names: Set<string>): void {
+  if (ts.isVariableStatement(declaration)) addDeclaratorNames(declaration.declarationList, names);
+  else if (ts.isVariableDeclarationList(declaration)) addDeclaratorNames(declaration, names);
+  else if (ts.isVariableDeclaration(declaration)) addBindingNames(declaration.name, names);
+  else if (ts.isClassDeclaration(declaration) && declaration.name) names.add(declaration.name.text);
+  else if (ts.isImportDeclaration(declaration) && declaration.importClause) {
+    const { name, namedBindings } = declaration.importClause;
+    if (name) names.add(name.text);
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) names.add(namedBindings.name.text);
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) names.add(element.name.text);
+    }
+  }
+}
+
+/**
+ * Every function declaration under `scope` at any block depth, outside nested functions: Annex B.3.3 makes a sloppy
+ * block function a `var` of its function or file, so the walk leans to "bound".
+ */
+function declaredFunctionNames(scope: ts.Node, names: Set<string>): void {
+  forEachChild(scope, (child) => {
+    if (ts.isFunctionDeclaration(child) && child.name) names.add(child.name.text);
+    else if (!isFunctionScopeBoundary(child)) declaredFunctionNames(child, names);
+  });
 }

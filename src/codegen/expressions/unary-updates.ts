@@ -72,17 +72,10 @@ import { emitStructMemberIncDec } from "./host-bigint-updates.js";
  */
 function emitSymbolUpdateThrow(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
   // (#1930 Slice 2) oracle fold: was a direct isSymbolType check on the
-  // checker type of the paren-unwrapped operand.
-  if (ctx.oracle.staticJsTypeOf(unwrapParens(operand)) !== "symbol") return false;
+  // checker type of the unwrapped operand.
+  if (ctx.oracle.staticJsTypeOf(skipTransparentExpressions(operand)) !== "symbol") return false;
   emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
   return true;
-}
-
-function unwrapParens(node: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(node)) {
-    node = node.expression;
-  }
-  return node;
 }
 
 /**
@@ -559,7 +552,7 @@ function compileMemberIncDec(
   const i32Op = arithOp === "add" ? "i32.add" : "i32.sub";
 
   // Unwrap parenthesized expressions: ++(obj.x) -> ++obj.x
-  operand = unwrapParens(operand);
+  operand = skipTransparentExpressions(operand);
   // (#7164) `arr.length++`: the static length store, so a grow fills its new slots.
   const step = { kind: "step", delta: arithOp === "add" ? 1 : -1, postfix: mode === "postfix" } as const;
   const lengthUpdate = tryCompileArrayLengthUpdate(ctx, fctx, operand, step);
@@ -1049,7 +1042,7 @@ function compilePrefixUpdate(
   // A pre-scanned sloppy implicit global is the one exception: its property
   // already exists on the realm global object and is handled by the dedicated
   // read-modify-write arm below.
-  const updateOperand = unwrapParens(expr.operand);
+  const updateOperand = skipTransparentExpressions(expr.operand);
   if (!(ts.isIdentifier(updateOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, updateOperand.text))) {
     const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, updateOperand);
     if (unresolvablePre !== undefined) return unresolvablePre;
@@ -1063,19 +1056,18 @@ function compilePrefixUpdate(
   }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
-      const ppOperand = unwrapParens(expr.operand);
-      if (ts.isIdentifier(ppOperand)) {
-        if (fctx.localMap.get(ppOperand.text) === undefined) {
+      if (ts.isIdentifier(updateOperand)) {
+        if (fctx.localMap.get(updateOperand.text) === undefined) {
           // (#3039) ++x on a boxed captured global — update through the cell.
-          const ppBox = getCapturedBoxGlobal(ctx, ppOperand.text);
+          const ppBox = getCapturedBoxGlobal(ctx, updateOperand.text);
           if (ppBox !== undefined) return emitCapturedBoxGlobalIncDec(ctx, fctx, ppBox, "f64.add", true);
         }
-        const idx = fctx.localMap.get(ppOperand.text);
+        const idx = fctx.localMap.get(updateOperand.text);
         if (idx !== undefined) {
-          const boxedPP = fctx.boxedCaptures?.get(ppOperand.text);
+          const boxedPP = fctx.boxedCaptures?.get(updateOperand.text);
           if (boxedPP) {
             // ++x through ref cell (null-guarded #702)
-            emitConditionalCaptureBoxRepair(fctx, ppOperand.text, idx);
+            emitConditionalCaptureBoxRepair(fctx, updateOperand.text, idx);
             // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
             // before arithmetic to avoid f64.add on non-f64 operand (#816)
             const needsCoerce = boxedPP.valType.kind !== "f64" && boxedPP.valType.kind !== "i32";
@@ -1192,12 +1184,12 @@ function compilePrefixUpdate(
           return { kind: "f64" };
         }
         // Check module globals for prefix ++
-        const ppModIdx = ctx.moduleGlobals.get(ppOperand.text);
+        const ppModIdx = ctx.moduleGlobals.get(updateOperand.text);
         if (ppModIdx !== undefined) {
           return compileGlobalIncDec(ctx, fctx, ppModIdx, "f64.add", "prefix");
         }
         // Check captured globals for prefix ++
-        const ppCapIdx = ctx.capturedGlobals.get(ppOperand.text);
+        const ppCapIdx = ctx.capturedGlobals.get(updateOperand.text);
         if (ppCapIdx !== undefined) {
           const ppCapGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, ppCapIdx)];
           if (ppCapGlobalDef?.type.kind === "externref") {
@@ -1225,7 +1217,7 @@ function compilePrefixUpdate(
           return compileGlobalIncDec(ctx, fctx, ppCapIdx, "f64.add", "prefix");
         }
         // (#3966) sloppy implicit global — see the postfix arm below.
-        const implicit = compileImplicitGlobalIncDec(ctx, fctx, ppOperand, "f64.add", "prefix");
+        const implicit = compileImplicitGlobalIncDec(ctx, fctx, updateOperand, "f64.add", "prefix");
         if (implicit !== undefined) return implicit;
       }
       // ++obj.prop or ++obj[idx] — delegate to member increment helper
@@ -1236,19 +1228,18 @@ function compilePrefixUpdate(
       const arithOp = isIncrement ? "f64.add" : "f64.sub";
       const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
-      const mmOperand = unwrapParens(expr.operand);
-      if (ts.isIdentifier(mmOperand)) {
-        if (fctx.localMap.get(mmOperand.text) === undefined) {
+      if (ts.isIdentifier(updateOperand)) {
+        if (fctx.localMap.get(updateOperand.text) === undefined) {
           // (#3039) --x on a boxed captured global — update through the cell.
-          const mmBox = getCapturedBoxGlobal(ctx, mmOperand.text);
+          const mmBox = getCapturedBoxGlobal(ctx, updateOperand.text);
           if (mmBox !== undefined) return emitCapturedBoxGlobalIncDec(ctx, fctx, mmBox, "f64.sub", true);
         }
-        const idx = fctx.localMap.get(mmOperand.text);
+        const idx = fctx.localMap.get(updateOperand.text);
         if (idx !== undefined) {
-          const boxed = fctx.boxedCaptures?.get(mmOperand.text);
+          const boxed = fctx.boxedCaptures?.get(updateOperand.text);
           if (boxed) {
             // ++x / --x through ref cell (null-guarded #702)
-            emitConditionalCaptureBoxRepair(fctx, mmOperand.text, idx);
+            emitConditionalCaptureBoxRepair(fctx, updateOperand.text, idx);
             // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
             // before arithmetic to avoid f64.sub on non-f64 operand (#816)
             const needsCoerce = boxed.valType.kind !== "f64" && boxed.valType.kind !== "i32";
@@ -1365,12 +1356,12 @@ function compilePrefixUpdate(
           return { kind: "f64" };
         }
         // Check module globals for prefix --
-        const mmModIdx = ctx.moduleGlobals.get(mmOperand.text);
+        const mmModIdx = ctx.moduleGlobals.get(updateOperand.text);
         if (mmModIdx !== undefined) {
           return compileGlobalIncDec(ctx, fctx, mmModIdx, arithOp, "prefix");
         }
         // Check captured globals for prefix --
-        const mmCapIdx = ctx.capturedGlobals.get(mmOperand.text);
+        const mmCapIdx = ctx.capturedGlobals.get(updateOperand.text);
         if (mmCapIdx !== undefined) {
           const mmCapGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, mmCapIdx)];
           if (mmCapGlobalDef?.type.kind === "externref") {
@@ -1398,7 +1389,7 @@ function compilePrefixUpdate(
           return compileGlobalIncDec(ctx, fctx, mmCapIdx, arithOp, "prefix");
         }
         // (#3966) sloppy implicit global — see the postfix arm below.
-        const implicit = compileImplicitGlobalIncDec(ctx, fctx, mmOperand, arithOp, "prefix");
+        const implicit = compileImplicitGlobalIncDec(ctx, fctx, updateOperand, arithOp, "prefix");
         if (implicit !== undefined) return implicit;
       }
       // --obj.prop or --obj[idx] — delegate to member decrement helper
@@ -1427,7 +1418,7 @@ function compilePostfixUnary(
   const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
   // Unwrap parenthesized expressions: (x)++ -> x++
-  const postOperand = unwrapParens(expr.operand);
+  const postOperand = skipTransparentExpressions(expr.operand);
 
   // (#2663 Slice 3) `with` Object Environment Record precedence — see with-rmw.ts.
   if (ts.isIdentifier(postOperand)) {
