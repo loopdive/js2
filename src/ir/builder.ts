@@ -1206,14 +1206,14 @@ export class IrFunctionBuilder {
   }
 
   /**
-   * Wrap a primitive value in a fresh ref cell. The SSA def's type is
+   * Wrap a value in a fresh ref cell. The SSA def's type is
    * `{ kind: "boxed", inner }`. #1926 — the `boxed` IrType carries an IrType
-   * `inner`, so the ValType arg is wrapped with `irVal` here; the resolver
-   * unwraps it back to the ValType at lowering time.
+   * `inner` (a scalar, or (#7354 L0c) the dynamic carrier on the Prepared
+   * lane); the resolver lowers it to the cell's ValType.
    */
-  emitRefCellNew(value: IrValueId, inner: ValType): IrValueId {
+  emitRefCellNew(value: IrValueId, inner: IrType): IrValueId {
     const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "boxed", inner: irVal(inner) };
+    const resultType: IrType = { kind: "boxed", inner };
     this.valueTypes.set(result, resultType);
     const alloc = this.allocId("refcell", resultType);
     this.pushInstr({

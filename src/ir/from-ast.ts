@@ -4242,7 +4242,7 @@ function bindOrdinaryDescriptorCapture(
     return false;
   const scalar = asVal(inferred);
   if (!scalar) demoteToLegacy("body-shape-rejected", "ordinary descriptor capture requires a scalar refcell");
-  const cell = cx.builder.emitRefCellNew(value, scalar);
+  const cell = cx.builder.emitRefCellNew(value, irVal(scalar));
   cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: inferred } });
   return true;
 }
@@ -4903,6 +4903,20 @@ function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
 }
 
 /** Emit the exact legacy module-global TDZ guard before a read or write. */
+/**
+ * (#7354 L0c) On the Prepared lane, the script binding a function's compound or update write targets when its scope does
+ * not hold the name (`log += v`, `n++` on a module `var`): the resolver's module binding, after its TDZ check. A plain
+ * assignment resolves it in `lowerIdentifierAssignment`, where the stored value decides the representation.
+ */
+function laneModuleBinding(id: ts.Identifier, cx: LowerCtx): ScopeBinding | undefined {
+  const binding = functionObjects.onPreparedDynamicLane(cx.resolver)
+    ? cx.resolver?.resolveModuleBinding?.(id)
+    : undefined;
+  if (!binding) return undefined;
+  lowerResolvedModuleBindingTdzCheck(id.text, binding, cx);
+  return { kind: "moduleGlobal", globalRef: binding.globalRef, type: binding.type };
+}
+
 function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): void {
   requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
@@ -8344,7 +8358,7 @@ function lowerNestedFuncCall(
             `ir/from-ast: mutable nested capture "${cap.name}" must be a primitive (${cx.funcName})`,
           );
         }
-        const cell = cx.builder.emitRefCellNew(live.value, innerVal);
+        const cell = cx.builder.emitRefCellNew(live.value, irVal(innerVal));
         // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
         cx.scope.set(cap.name, { kind: "local", value: cell, type: { kind: "boxed", inner: irVal(innerVal) } });
         args.push(cell);
@@ -13216,7 +13230,7 @@ function lowerCompoundAssignment(
     return withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
   }
   refuseImmutableWrite(id, "compound assignment to", cx);
-  const binding = cx.scope.get(id.text);
+  const binding = cx.scope.get(id.text) ?? laneModuleBinding(id, cx);
   if (!binding) {
     demoteToLegacy(
       "compound-assign-unsupported",
@@ -13241,23 +13255,23 @@ function lowerCompoundAssignment(
   // (#7144) Which slot / value families each operator writes is
   // `compoundWriteAdmissible`; the arms below are its producers.
   const slotFamily = irOperandFamily(logicalType, id);
+  const read = (): IrValueId =>
+    storage.kind === "moduleGlobal"
+      ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
+      : storage.kind === "slot"
+        ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
+        : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
+  const write = (value: IrValueId): void => {
+    if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, value);
+    else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, value);
+    else cx.builder.emitRefCellSet(storage.value, value);
+  };
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "string") {
-    const lhs =
-      storage.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
-        : storage.kind === "slot"
-          ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
-          : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
+    const lhs = read();
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsString = checkerOperandFamily(rhs, cx) === "string";
     const store = (result: IrValueId, stringEncoding: Encoding) => {
-      if (storage.kind === "moduleGlobal") {
-        cx.builder.emitGlobalSet(storage.globalRef, result);
-      } else if (storage.kind === "slot") {
-        cx.builder.emitSlotWrite(storage.slotIndex, result);
-      } else {
-        cx.builder.emitRefCellSet(storage.value, result);
-      }
+      write(result);
       cx.scope.set(id.text, { ...storage, stringEncoding });
     };
     if (rhsString && cx.builder.typeOf(rhsValue).kind === "dynamic") {
@@ -13301,18 +13315,10 @@ function lowerCompoundAssignment(
     return result;
   }
   // Dynamic += reads the binding before the RHS, then uses the same dynamic
-  // addition producer as binary + (IR_DYN_ADD_FN).
+  // addition producer as binary + (IR_DYN_ADD_FN). (#7354 L0c) A captured cell of the dynamic value exists only on the
+  // Prepared lane, where the carrier's cells are native.
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "dynamic") {
-    if (storage.kind === "local") {
-      demoteToLegacy(
-        "compound-assign-unsupported",
-        `ir/from-ast: dynamic "${id.text} +=" into a captured binding not in slice 6 (${cx.funcName})`,
-      );
-    }
-    const lhs =
-      storage.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
-        : cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
+    const lhs = read();
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
     if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
@@ -13325,12 +13331,10 @@ function lowerCompoundAssignment(
     // invariant (producer-promise): `compoundWriteAdmissible` admits only boxable operands — #7144.
     if (dynamicRhs === null) throw new Error(`ir/from-ast: admitted dynamic "+=" operand did not box (${cx.funcName})`);
     const added = emitDynamicAdd(lhs, dynamicRhs, cx);
-    if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, added);
-    else cx.builder.emitSlotWrite(storage.slotIndex, added);
+    write(added);
     return added;
   }
-  // Dynamic captured cells need a separately proven storage contract.
-  if (capturedCellType?.inner.kind === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
+  if (!compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
     demoteToLegacy(
       "compound-assign-unsupported",
       `ir/from-ast: compound assign ${ts.tokenToString(compoundOp)} to "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
@@ -13339,12 +13343,7 @@ function lowerCompoundAssignment(
 
   // Desugar: read the slot (or, #3142, the module-binding global), lower the
   // RHS, apply the binop, write back.
-  const lhs =
-    storage.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet(storage.globalRef, storage.type)
-      : storage.kind === "slot"
-        ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
-        : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
+  const lhs = read();
   const rhsValue = lowerExpr(rhs, cx, logicalType);
   const rhsType = cx.builder.typeOf(rhsValue);
   if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
@@ -13370,9 +13369,7 @@ function lowerCompoundAssignment(
   const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
   const result =
     slotFamily === "dynamic" ? cx.builder.emitBox(numericResult, irDynamic(JS_TAG_IDS.NumberF64)) : numericResult;
-  if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
-  else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
-  else cx.builder.emitRefCellSet(storage.value, result);
+  write(result);
   return numericResult;
 }
 
@@ -13405,7 +13402,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id)
     return withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
   refuseImmutableWrite(id, "increment/decrement of", cx);
-  const binding = cx.scope.get(id.text);
+  const binding = cx.scope.get(id.text) ?? laneModuleBinding(id, cx);
   if (!binding) {
     demoteToLegacy(
       "compound-assign-unsupported",
@@ -16429,21 +16426,25 @@ function lowerClosureExpressionWithSignature(
       continue;
     }
     if (cap.mutable) {
-      const innerVal = asVal(cap.type);
-      if (!innerVal) {
+      // #1926 — boxed.inner is an IrType: a scalar, or (#7354 L0c) on the Prepared lane the dynamic value.
+      const inner = asVal(cap.type)
+        ? irVal(asVal(cap.type)!)
+        : cap.type.kind === "dynamic" && functionObjects.onPreparedDynamicLane(cx.resolver)
+          ? irDynamic()
+          : undefined;
+      if (!inner) {
         demoteToLegacy(
           "body-shape-rejected",
           `ir/from-ast: mutable closure capture "${cap.name}" must be a primitive (${cx.funcName})`,
         );
       }
-      // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
-      const fieldType: IrType = { kind: "boxed", inner: irVal(innerVal) };
+      const fieldType: IrType = { kind: "boxed", inner };
       captureFieldTypes.push(fieldType);
       const live = cx.scope.get(cap.name);
       if (live?.kind === "local" && live.type.kind === "boxed") {
         captureArgs.push(live.value);
       } else if (live?.kind === "local") {
-        const cell = cx.builder.emitRefCellNew(live.value, innerVal);
+        const cell = cx.builder.emitRefCellNew(live.value, inner);
         cx.scope.set(cap.name, { kind: "local", value: cell, type: fieldType });
         captureArgs.push(cell);
       } else {

@@ -413,6 +413,15 @@ export function resolveNativeSourceClosureShape(
   return row && pack.shapes.find((shape) => shape.id === row.id);
 }
 
+/** (#7354 L0c) The issued cell types of the mutable captures, re-checked as `resolveNativeRefCell` does. */
+export function nativeSourceRefCellTypes(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceClosureTypes,
+): readonly TypeReservation[] {
+  const cells = reservedOwner(tx, pack).refCells;
+  return cells ? requireNativeRefCells(tx, cells, cells.requirements).types.map((row) => row.type) : [];
+}
+
 /** The cell resolver is backed by the same issued carrier pack used for capture fields. */
 export function resolveNativeSourceRefCell(
   tx: PhysicalModuleReservations,
