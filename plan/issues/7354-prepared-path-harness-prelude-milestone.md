@@ -5823,10 +5823,22 @@ files, all `onlyStrict`.
   5. `lowerDynamicBinaryValues`.
   6. `emitDynMemberSet(target, key, result, sloppy)`.
 - **N1.** `lowerPropertyCompound` takes the compound token. Admission is `compoundWriteAdmissible(token, "dynamic",
-  family(rhs))`, and `++` / `--` pass their `+` / `-`. `**=` is not admitted for the dynamic family, so it keeps a
-  named refusal.
+  family(rhs))`. `**=` is not admitted for the dynamic family, so it keeps a named refusal.
+- **`++` / `--` are not `+= 1` (B5, PRV-O7 rev 2).** An update expression is ToNumeric(old) ± 1 (§13.4.2.1), never
+  ApplyStringOrNumericBinaryOperator. So `o.x = "1"; o.x++` gives 2, where `o.x += 1` gives "11".
+  - The member arm's `++` / `--` therefore does not call `lowerDynamicBinaryValues`.
+  - It uses the identifier twin's dynamic step, which `lowerIncrementDecrement`'s dynamic arm already has:
+    `emitDynToNumber`, f64 add/sub of 1, box `NumberF64`. That step is extracted as `dynamicIncrement(current, op, cx)`
+    and called by both. It is the second extraction from an existing arm, not a fourth copy.
+  - Tests:
+    - `o.x = "1"; o.x++` gives 2 and `o.x--` gives 0, against `o.x += 1` giving "11";
+    - mutation: `++` routed through the dynamic `+`.
 - **The ordinary pipeline keeps its refusal (B3).**
   - Policy: no new JS-host work, and ordinary bytes stay identical.
+  - NB1 (PRV-O7): the flag follows the resolver-capability pattern of `createsFunctionObjects` and
+    `closuresBindReceivers`. No existing Prepared-only signal means "the dynamic member operations of this lane are
+    legalized by the realm" in a form this arm can ask, so the flag stays. If one exists by implementation time, the
+    arm uses it instead.
   - The member arm is taken only when the resolver supplies `dynamicCompoundMemberWrites()`. Only the Prepared
     resolver (`source-dynamic-contracts.ts`, the native-lane block) supplies it.
   - Absent, the arm is the existing named refusal, unchanged. That is not a silent default: the ordinary pipeline
@@ -5875,6 +5887,7 @@ files, all `onlyStrict`.
   - the old value's ToNumber emitted before the RHS.
 - **Code quality:**
   - one dynamic binary producer, three callers;
+  - one dynamic increment step, two callers;
   - one dynamic member target helper, two callers;
   - no new IR operation and no new module;
   - from-ast's net growth is offset by the extractions, and any remaining grant is stated with its reason.
