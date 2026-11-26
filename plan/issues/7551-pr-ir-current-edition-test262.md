@@ -1,7 +1,8 @@
 ---
 id: 7551
 title: "Per merge, measure test262 only on the IR path and only for the current ES edition; full corpus and legacy lane daily"
-status: in-progress
+status: done
+completed: 2026-11-26
 created: 2026-11-26
 updated: 2026-11-26
 assignee: ttraenkler/ci-pr-ir-edition
@@ -279,10 +280,16 @@ Other decisions:
   the main tip's push/queue artifact. A test asserts this.
 - **Dead HOST_RAN-only gates** are left in place and filed as their own
   cleanup issue (see `related`).
-- **Rollback.** Part B is one workflow commit plus its script and test
-  changes. `git revert <that commit>` restores the 102-shard legacy
-  merge_group gate, push-time promotion and the 8-hourly refresh. No baseline
-  file or required-check name changes, so the revert needs nothing else.
+- **Rollback.** Part B is one commit, `ci(#7551): merge queue gates on IR ×
+  current edition; legacy test262 runs daily ✓`. It carries the workflows,
+  scripts, tests and docs. `git revert <that commit>` restores:
+  - the 102-shard legacy merge_group gate;
+  - push-time promotion;
+  - the 8-hourly refresh;
+  - the commit-count staleness rule.
+
+  No baseline file or required-check name changes, so the revert needs
+  nothing else. The push-time IR edition measurement from Part A stays.
 
 ## Validation (Part A, local, 2026-11-26)
 
@@ -322,3 +329,52 @@ Other decisions:
     measurement is a pre-#7551 full artifact without `scope.json`, so that
     run cannot compare. From the second merge on, it compares against the
     previous edition run.
+
+## Validation (Part B, local, 2026-11-26)
+
+- **Plan program** (executed by `scripts/test262-ir-pages-artifacts.test.mjs`):
+  - `merge_group` selects the edition (ES5, 8 chunks) when `run_shards` is
+    true or unknown, and nothing when it is `false`;
+  - a push the queue already measured selects nothing; a direct push, or a
+    probe miss, selects the edition;
+  - schedule and dispatch select the full corpus (102 chunks);
+  - the probe looks for exactly the edition artifact name the plan assigns.
+  - 58/58 pass.
+- **Baseline resolution** (`tests/issue-7551-ir-edition-scope.test.ts`): in
+  the normal case the first lineage commit's measurement (distance 0, the
+  predecessor group or main tip) is taken. Commits without one are walked
+  past, a re-run supersedes, and nothing found means `null`, which becomes
+  an explicit "No baseline" pass.
+- **Annotation round-trip.** The gate's `::error title=test262 regressions
+  (#7551)::…` annotation, percent-decoded as GitHub stores it, is read back
+  by `readJobAnnotations`. `renderFailureLines` then lists each regressed
+  test under the job line of the park comment.
+- **Auto-park self-check** (`node scripts/auto-park-merge-group-failure.mjs
+  --self-check`):
+  - an edition regression parks;
+  - a failed baseline download plus the forwarding gate step is infra, so
+    there is no park and the queue retries.
+- **Staleness.** `floorAge` breaches at 33.5 h and not at 9.5 h, and treats
+  a missing or invalid timestamp as undetermined, never as a breach.
+- **Updated contracts.** #4153, #3611, #4350 and the per-lane gating tests
+  encode the new cadence.
+  - 35 workflow-structure test files: 655 pass, 3 todo.
+  - Pre-existing failures, identical on `origin/main` and not touched here:
+    #1778, #1897, #3344, #3426, #3451.
+- **Checks.** All four edited workflows parse; typecheck, prettier, biome,
+  loc, func, coercion, oracle, dead-exports and claude-md-paths all pass.
+- **Proven only live:**
+  - the first merge-queue run, whose expected outcome is a "No baseline"
+    pass (see above);
+  - the first daily run under the new schedule (legacy matrix + promotion
+    from `schedule`);
+  - the first park comment carrying the annotation.
+
+## Runner-minutes (measured on loopdive/js2, 2026-11-26)
+
+| | Before | After |
+|---|---|---|
+| merge_group (per code PR) | 652 runner-min, 96 min wall (run 45788963792: 102 legacy shards) | ~45 runner-min (8 IR edition shards, estimated from the 102-shard IR run's ~2.2 min/520 files), ~10 min wall |
+| push after a queue merge | ~300 runner-min (102 full IR shards, runs 45788961847 / 45779984142) | ~1 (plan + probe) |
+| daily | ~300 (full IR) | ~950 (full legacy 652 + full IR ~300) |
+| refresh-baseline.yml | full legacy matrix every 8 h | dispatch only |
