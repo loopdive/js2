@@ -138,10 +138,11 @@ export function legalizeDynamicValues(
       case "number":
         return [intrinsic(instr, "js.number.box", [value])];
       // (#7354 Str) A native string is its own carrier payload: the externref that wraps it; (#7354 O2) an ordinary
-      // object and (Fa) a function value's packed closure are one already.
+      // object and (Fa) a function value's packed closure are one already, and (L0a) so is a carrier the realm answered.
       case "string":
       case "object":
       case "function":
+      case "dynamic":
         return [
           {
             kind: "coerce.to_externref",

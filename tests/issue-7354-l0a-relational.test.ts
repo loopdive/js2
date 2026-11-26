@@ -89,6 +89,15 @@ describe("#7354 L0a — relational operators over the dynamic value", () => {
     );
   });
 
+  // A Boolean data property of a function-local object is read as the dynamic value: its native unbox needed a
+  // keyed-Get proof this read has none of, and refused the whole program even where the function never ran.
+  it("compares Boolean properties of a function-local object, and an uncalled such function leaves the program", async () => {
+    const body = "var o = { t: true, f: false, n: 1 };\n  return ";
+    const uses = ["o.t == o.n", "o.t == 1", "o.t != 2", "o.t > o.f", "o.f >= 0", "o.t === true", "o.t"];
+    await agrees(`function t() { ${body}${flags(uses)}; }\nvar out = t();`);
+    await agrees(`function t() { ${body}${flags(uses)}; }\nvar out = "ok";`);
+  });
+
   it("compares two object locals of a function through their conversions", async () => {
     await agrees(
       'function t() { var a = { valueOf: function () { return 1; } }; var b = { toString: function () { return "2"; } };\n' +

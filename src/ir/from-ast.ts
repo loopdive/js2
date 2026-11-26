@@ -6263,7 +6263,10 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
     );
     if (value === null) throw new Error("ordinary Get contract returned no value");
     if (result.kind === "callable") return cx.builder.emitOrdinaryGetCallableResult(value, result.signature);
-    if (boolean) return cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
+    if (boolean)
+      return functionObjects.createsFunctionObjects(cx.resolver)
+        ? cx.builder.emitBox(value, irDynamic())
+        : cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
     return cx.builder.emitIntrinsic("js.number.unbox", [value]);
   }
   return null;
