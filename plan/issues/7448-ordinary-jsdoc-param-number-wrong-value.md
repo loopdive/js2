@@ -9,6 +9,13 @@ horizon: s
 goal: core-semantics
 sprint: Backlog
 related: [7354]
+loc-budget-allow:
+  # 2026-11-26 (review RV7435, +9): the return-parity refusal sits beside its sibling #7106 S1b arm in
+  # `resolveReturnType` (both under one concrete-lattice guard), plus the `legacyResultIsExternref` option
+  - src/ir/select.ts
+  # 2026-11-26 (review RV7435, +3): `resolveIrOverrideParamType` lets a JSDoc slot legacy registered as
+  # externref keep that ABI over the f64 lattice guess; the two legacy-slot probes are one spread
+  - src/codegen/index.ts
 ---
 
 # #7448 — Ordinary pipeline: a JSDoc `@param {number}` makes `x + 1` numeric for a string argument
@@ -131,3 +138,71 @@ was already correct (its slot is now externref). Pins: `tests/issue-7448-jsdoc-o
 Known, not touched: the `String(g0())` shape in the ordinary IR (`IR alloc-provenance check failed` for
 `g`) already fails on main for `@param {string=} s`; with this change the omitted `@param {string} s`
 variant reaches it too (main: a null-pointer trap; now that compile error).
+
+## Review round 1 (RV7435)
+
+Fresh-context adversarial review of `94199c7eb2`: BLOCKER. Every finding was reproduced on that head first
+(`compile`, `allowJs`, `.js`, default and standalone, node as the oracle), then fixed. The three must-fix
+shapes had three separate causes, and a fourth defect turned up in the byte sweep.
+
+| finding | reproduced on `94199c7eb2` | resolution |
+| --- | --- | --- |
+| M1a: `arguments.length` with two params, `h(1)` | compile error (`b` an unpatched IR-first slot) | fixed by cause 1 and 2: IR-claims `h`, `a`, `b`; answers 11, 20 as node |
+| M1b: `typeof x` guard, `h()` | compile error, same | fixed by cause 1: answers -1, 8 |
+| M1c: recursion `1 + f()` | invalid module (`return[0]` f64 vs externref) | fixed by cause 2 (value) and 3 (no withdrawal): 104 as node; main traps on stack overflow |
+| M2: `h(1)` / `h()` on two params | compiles, but `irPostClaimErrors` = `a`, `h` (claim then withdraw) | fixed by cause 1; the test now asserts `irPostClaimErrors == []` for every shape on all three lanes |
+| M3: `quality` red, `invalid-inventory` | `unclassified-module`/`-target` for both new modules | both classified in `scripts/compiler-boundaries.json` like their `src/shared` AST-only siblings (`unmigrated`, `mixed-needs-split`, destination `ir-core`); `check-compiler-boundaries.mjs --mode inventory` exits 0 |
+| S1: `nestedParameterMayBeOmitted` duplicate | nested `h()` read the stale tag | deleted; `nested-declarations.ts` asks `parameterMayBeOmitted`. `closures.ts`' restated JSDoc spelling test is now `jsDocMarksParamOptional` (the closure lane has no call-site scan, so it shares only that half) |
+| S2: `new F()` exclusion untested | the mutation survived 22/22 | pinned (`(func $h (param f64) …)` with `new h()` plus `h(2)`); the mutation now fails 2 tests |
+| S3: callee index matches by name | — | kept (the selector is checker-free); `omittedByLocalCall`'s doc states it: a same-named function can cost a scalar slot, never a wrong value |
+| S4: `isBracketed \|\| parameterMayBeOmitted` redundant | — | now `jsDocMarksParamOptional(param) \|\| checkerTypeIgnoresOmission(param)`: the first keeps every optional spelling a candidate (with or without an initializer, as before); the second adds only the #7448 case |
+
+Causes:
+
+1. **Override map vs selector (`resolveIrOverrideParamType`, `src/codegen/index.ts`).** The selector resolved
+   the omitted slot `dynamic` from legacy's registered externref, but the override map let the f64 lattice
+   guess win (the #3551 numeric-withdrawal path), so the IR built `h(f64, f64)` against legacy's
+   `h(f64, externref)`: the caller's under-arity call failed in from-ast and `h` withdrew on typeIdx parity.
+   A JSDoc slot legacy registered as externref now keeps that ABI (`parameterHasDynamicExternrefAbi`), the
+   same answer the selector gives.
+2. **Legacy read side.** The slot was widened, but every read re-narrowed `x` to the checker's `number`, so
+   `x === undefined` folded to `false` — the #6651 C3 "two halves" defect. `checkerTypeIgnoresOmission`
+   (the #7448 half of `parameterMayBeOmitted`, now its own export) joins `paramReadTypeIsGuess` (renamed from
+   `paramReadIsJsDefaultGuess`), which the identifier-read narrowing gate and the strict-equality fold ask.
+   This also fixes the `typeof x` row of the Result table above (now `"undefined"`).
+3. **Recursive result (`resolveReturnType`, `src/ir/select.ts`).** The checker gives `return 1 + f()` the
+   circular `any`, which legacy registers as an externref result while the lattice infers f64; the claim then
+   withdrew on parity. This already happened on main for `@param {number} [n]`. The selector now refuses a
+   concrete lattice result whose registered legacy result is externref (`legacyResultIsExternref`, beside
+   `jsDocParamLowersAsExternref`; both are one `legacyExternrefSlotProbes` spread), except a #7331 widened
+   result, which the override map already gives the carrier. Byte-neutral: the `[n]`/`{number=}` recursive
+   programs that withdrew on main compile to the same bytes now that they are refused at select.
+4. **Monomorphize (found by the sweep).** `function h(a, x) { … for (var i = 0; i < x; i++) … }` with `h(1)`
+   compiled on main and failed on the head (`post-mono verify: slot.write … (function has 0 slots)`; also
+   failing on main for `@param {number} [x]`). `isMonomorphizable` used a local copy of `collectUses` that
+   does not descend into loop buffers, so it cloned a callee whose loop reads the retyped parameter. The pass
+   now asks the shared `collectUses(instr, { deep: true })`; the 290-line local twin is deleted.
+
+Verification (2026-11-26, base `41f0654e8c`):
+
+- `tests/issue-7448-jsdoc-omitted-argument.test.ts`: 52 tests (16 shapes × default/standalone/legacy-only,
+  plus 4 pins), all pass; 45 fail on main (the 7 that pass there are the loop shape and the two no-regression
+  pins). Mutations, each reverted: counting `new F()` → 2 fail; no read-side guess → 9; no return refusal → 2;
+  no override exemption → 10; shallow mono uses → 2; nested lane without the #7448 rule → 3.
+- `tests/issue-7106-s1i-under-arity-call.test.ts` pinned `add(3) === 3` for an omitted `@param {number} b`
+  (legacy's `0` pad); it now pins node's NaN.
+- 105 related test files (every test with a JSDoc `@param`, every monomorphize test, #4070, #6651): the only
+  failure not also failing on main was that S1i pin.
+- Bytes against main, default and standalone: 13 playground examples and the `benchmarks/`/`examples/`
+  sources (96 compiles) identical; 207 assembled test262 files (propertyHelper, compareArray,
+  testTypedArray, asyncHelpers, isConstructor, fnGlobalObject, decimalToHexString, nativeFunctionMatcher,
+  deepEqual, and 60 without includes; 414 compiles) identical; 149 generated JSDoc programs whose callers pass
+  every argument: 296 of 298 identical, the 2 others omit (`h(x - 1)` to a two-parameter `h`). 149 generated
+  omitted-argument programs: 118 of 298 compiles differ, all function-declaration shapes; arrow,
+  function-expression, `new`, `{T=}` and `[x]` shapes are identical.
+- Answers on the generated set (596 runs, node as oracle): main 372 match, now 436; 0 regressed. The 16
+  remaining post-claim withdrawals there all occur on main too (`{Number}`, `{Array}` and
+  `{number|string}` programs with every argument passed); main had 24.
+
+Left out (unchanged on main and here): a call through a value (`var f = h; f()`), arrow and function
+expression callees, `new P()` reading the omitted field, `.call`/`.apply`, method calls.

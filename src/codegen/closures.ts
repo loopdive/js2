@@ -247,6 +247,7 @@ import {
   emitCachedFuncClosureAccess,
 } from "./closures/method-trampolines.js";
 import { readEnv } from "../env.js";
+import { jsDocMarksParamOptional } from "../shared/omittable-param.js";
 export {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -2075,27 +2076,6 @@ export function computeClosureWrapperSig(
             // other callback shape can move a byte. `map` never reaches here:
             // its unconditional override above already fired.
             hofElemParamType(ctx, resolveWasmType(ctx, paramType), runtimeIndex, arrow);
-    // JSDoc optional parameters (for example `@param {number=} size`) are
-    // commonly exported from JavaScript modules and called from a different
-    // source file. The local call-site scan cannot see those callers, so a
-    // numeric ABI would pad `fn()` with zero instead of JavaScript's
-    // `undefined`. Keep the closure boundary dynamic unless the source has an
-    // initializer (whose existing default sentinel is handled below).
-    const jsdocType = p.type === undefined ? ts.getJSDocType(p) : undefined;
-    // The two JSDoc spellings of "optional" are independent, not alternatives:
-    // `@param {number=} size` puts the optionality in the TYPE, while
-    // `@param {number} [size]` puts it in the TAG and leaves the type a plain
-    // `number`. Testing the tag only when there is no type node therefore
-    // missed every bracketed parameter that also carries a type — which is all
-    // of them — so the bracketed spelling kept its scalar ABI. That is not just
-    // the `0`-instead-of-`undefined` pad: the `typeof` lowering takes an
-    // externref, so a bracketed parameter guarded by `typeof` emitted an
-    // INVALID module (`call[0] expected type externref, found local.get of
-    // type f64`). `parameterMayBeOmitted` (shared/omittable-param.ts) has always ORed
-    // the two; this aligns the closure boundary with it.
-    const jsdocOptional =
-      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
-      ts.getJSDocParameterTags(p).some((tag) => tag.isBracketed === true);
     if (
       preservesRawArguments &&
       p.type === undefined &&
@@ -2104,7 +2084,18 @@ export function computeClosureWrapperSig(
     ) {
       wasmType = { kind: "externref" };
     }
-    if (p.type === undefined && p.initializer === undefined && jsdocOptional) {
+    // JSDoc optional parameters (for example `@param {number=} size`) are
+    // commonly exported from JavaScript modules and called from a different
+    // source file. The local call-site scan cannot see those callers, so a
+    // numeric ABI would pad `fn()` with zero instead of JavaScript's
+    // `undefined`. Keep the closure boundary dynamic unless the source has an
+    // initializer (whose existing default sentinel is handled below).
+    // Both JSDoc spellings count (`jsDocMarksParamOptional`): testing the
+    // bracketed TAG only when there was no type node missed every bracketed
+    // parameter, so it kept its scalar ABI, and a `typeof` guard on it emitted
+    // an INVALID module (`call[0] expected type externref, found local.get of
+    // type f64`).
+    if (p.type === undefined && p.initializer === undefined && jsDocMarksParamOptional(p)) {
       wasmType = { kind: "externref" };
     }
     // (#5221) NOT widened here, deliberately. `function (item, options = void 0)`

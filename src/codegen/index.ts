@@ -56,6 +56,7 @@ import {
 } from "./ir-fnctor-parameter-planning.js";
 import {
   legacyParamSlotIsExternref,
+  legacyExternrefSlotProbes,
   legacyRefinedParamSlot,
   makeIrDynamicCarrierDivergenceProbe,
   resolveFnctorInstanceType,
@@ -2942,8 +2943,10 @@ function resolveIrOverrideParamType(
   // withdraws the complete caller cluster if legacy kept the param dynamic.
   // Nonnumeric mapped kinds cannot lower polymorphic equality soundly before
   // that guard (the #3471 string failure), so those retain the direct dynamic
-  // ABI in the IR view.
-  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64")) return projected.type;
+  // ABI in the IR view. (#7448) A JSDoc slot legacy registered as externref
+  // is no guess: it keeps that ABI, as the selector's `resolveParamType` does.
+  const legacyAbi = parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate);
+  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64" && !legacyAbi)) return projected.type;
   return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
 }
 
@@ -3331,7 +3334,7 @@ function planIrOverlay(
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
-      jsDocParamLowersAsExternref: (parameter) => legacyParamSlotIsExternref(ctx, parameter),
+      ...legacyExternrefSlotProbes(ctx),
       resultWidensToDynamic: (fn) => functionReturnsWidenedValue(ctx, fn),
       resolveFnctorAdmission,
       ...(fnctorArgumentProjections.length > 0
