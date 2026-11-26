@@ -5,7 +5,7 @@ status: backlog
 sprint: Backlog
 created: 2026-11-26
 updated: 2026-11-26
-priority: medium
+priority: high
 horizon: s
 feasibility: medium
 reasoning_effort: high
@@ -26,7 +26,13 @@ see a write that reaches the global object some other way:
 - a computed key: `globalThis["Obj" + "ect"] = f`;
 - an escaped global-object value: `var g = globalThis; g.Object = f`, or the value passed to a function;
 - `Object.defineProperty(globalThis, "Object", …)`, `Reflect.set`, `Object.assign(globalThis, …)`;
-- code run by the runtime-eval provider or the `Function` constructor.
+- code run by the runtime-eval provider or the `Function` constructor;
+- a literal-key element write: `globalThis["Object"] = f`, `this["Object"] = f`;
+- `delete Object` (#7363 A4 adds `DeleteExpression` to the walk; this row pins it);
+- **live today:** a sloppy function that reads ambient `this`, called as a value, returns the global object:
+  `function f(){return this} var h = f; var G = h(); G.Object = …`. This compiles on the Prepared path (PRV-A4 B1).
+  #7363 A4 refuses it for `eval` with a predicate beside `pristineBuiltinGlobal`; the `Object` statics must ask
+  the same predicate.
 
 ## Users
 
@@ -35,9 +41,9 @@ see a write that reaches the global object some other way:
 - **Eval A4** (#7363, "A4 narrowed"): a literal direct eval site is a direct call of its source's unit when the
   global `eval` is pristine, with no run-time identity test.
 
-## Why it is sound today
+## Why it is (mostly) sound today
 
-Every hole needs the global object as a first-class value or a dynamic code path, and the Prepared path refuses
+Except the live sloppy-`this` row above, every hole needs the global object as a first-class value or a dynamic code path, and the Prepared path refuses
 both: `globalThis` ("identifier "globalThis" is not in scope"), script-level `this` ("'this' reference outside an
 instance method body"), a plain call of a `this`-using function ("installs no receiver for its 'this'"), and an
 unbound eval statement or indirect eval (#7363 slice 1).

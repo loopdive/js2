@@ -242,7 +242,7 @@ it covers.
 | A1 | The called init. | `IrModuleInitInvocationKind` gains `"called"`; `exactlyOnce` becomes `boolean` (`src/ir/program/startup.ts:6-12`). `verifyIrModuleInitPlan` (`src/ir/module-init-plan.ts:466`, check at :507) requires `exactlyOnce === (kind !== "called")`. One predicate `runsAtStartup(plan)` beside it, asked by `planPhysicalStartup` (`src/ir/program-physical-plan.ts:1152-1181`) and `joinStartup` (`src/compiler/ir-program-presentation.ts:716`; the population at :723, the zero-demand check at :745). | `tests/issue-7363-called-module-init.test.ts`: two scripts, one called; the adapter calls one init and the called one is still emitted; the verifier refuses both mismatches. |
 | A2 | The sources and the relation. | `present()`; `literalEvalSources`; `eval-literal.ts` (predicate, receipt); `invocationPolicy` (`src/ir/module-init-plan.ts:131-144`) and `buildIrModuleInitPlan` (:190) take `"called"`, passed by `prepareIrProgramSources` for each related source (`src/ir/program-source.ts:1610`). | A qualifying statement adds one source with a called plan and still refuses by name at the site. A site of each excluded shape adds no source. |
 | A3 | Script-var homes with eval sources. | `irOwnedScriptVarHome` (`src/ir/module-binding-script-var-home.ts:40`) requires the program's only source (:45, :52). The rule becomes "the only source that is not an eval source", and `scriptVarReadsFollowInitializer` (`src/ir/module-binding-script-var.ts:101`) also walks the eval texts, placing their reads at the site. | `var x = 1; eval("x = x + 1");` keeps a home for `x` and stops at the eval site, not at `x`. |
-| A4 | The statement-position call. | A `lowerCall` arm (`src/ir/from-ast.ts`) on a resolver capability answered from the relation: the identity test, then a direct call of the source's unit. A name in the text that refers to the caller's top-level function crosses files: `resolveTopLevelFunctionValue` (`src/ir/imported-functions.ts:528-535`) accepts only a same-file target today. | The A3 program runs and agrees with node (right value returns, wrong one throws). A site in a loop runs its text each time. With `eval` reassigned, the text does not run. |
+| A4 | The statement-position call. **Superseded by "A4 narrowed" below (2026-11-26): a static proof, no identity test.** | A `lowerCall` arm (`src/ir/from-ast.ts`) on a resolver capability answered from the relation: the identity test, then a direct call of the source's unit. A name in the text that refers to the caller's top-level function crosses files: `resolveTopLevelFunctionValue` (`src/ir/imported-functions.ts:528-535`) accepts only a same-file target today. | The A3 program runs and agrees with node (right value returns, wrong one throws). A site in a loop runs its text each time. With `eval` reassigned, the text does not run. |
 | A5a | Completion value: the text ends in an expression statement. | The called init returns that value; the site reads it. | `var r = eval("1 + 1");` against node. |
 | A5b | Completion value: the tail is `if`, a loop, `switch` or `try`. | A completion register in the called init. | The `cptn-*` shapes, e.g. `eval("do ; while(false)") === undefined`. |
 | A6 | Texts that declare names (`var`, function, Annex B block function). | The shared globals registry (below) gains `on-first-run`. | `eval("var x = 1"); x` against node; a read before the eval throws a ReferenceError. |
@@ -533,15 +533,32 @@ run-time test and asks a static proof that already exists.
   - no source writes it: an assignment, a compound assignment, `++`/`--`, a destructuring or for-in/of target, or a
     member write through `globalThis`/`global`/`window`/`self`/`this`.
   A4 asks it through the existing resolver capability `isPristineBuiltinGlobal` (`from-ast.ts`), over every source
-  of the program, the `<eval:N>.js` sources included. A text that writes is no site anyway (RV7432 B2).
+  of the program, the `<eval:N>.js` sources included, and reads it as `=== true` (the capability is absent off the
+  native lane). A text that writes is no site anyway (RV7432 B2).
+  - `delete eval` removes the binding without a global-object value: `boundOrWrittenNames` gains `DeleteExpression`
+    (operand names, as for `++`). This is a soundness fix of the shared proof; the `Object` statics gain it too. The
+    PR measures bytes on the 100-file sample and the census for the claim change.
+  - A sloppy function that reads ambient `this`, called as a value, yields the global object today:
+    `function f(){return this} var h = f; var G = h(); G.eval = function(){}; eval("1");` compiles up to the A4
+    site (PRV-A4 B1). So A4 also requires that no sloppy function in the program reads ambient `this`: no
+    function-like with `readsAmbientThisGlobal(code)` (`src/shared/body-references-own-this.ts`) whose
+    `codeStrictness(code).functionCodeStrict` is false. One exported predicate beside `pristineBuiltinGlobal` in
+    `builtin-global-binding.ts`, built once per source list as that one is. The `Object` statics do not ask it yet:
+    their hole is live today and is #7503's.
 - **The call.** Pristine: `lowerCall` lowers the statement site as a direct call of the source's called init unit
   (A1's `"called"` kind). There is no identity test and no read of the global. Not pristine: the site refuses at
-  select, by name: `eval literal: the global eval is not pristine (#7363 A4)`.
+  select, by name: `eval literal: the global eval is not pristine (#7363 A4)`. A site in expression position (its
+  completion value is used) keeps a named refusal: `eval literal: its completion value needs #7363 A5`.
 - **Claimed only when the text's unit lowered.** RV7432 B1 left this open: a text the IR cannot lower (`[x]`,
   `delete x`, `with`, a read of a caller function as a value, `undeclaredX` as "identifier not in scope") fails the
   program even when its site never runs. Admission stays in one place, `withLiteralEvalSources`
-  (`test262-prepared-entry.ts`). There the texts already join only when the compile's gates pass them. A failure of
-  the preparation with the texts, inside an `<eval:N>.js` unit, now also falls back to the preparation without them.
+  (`test262-prepared-entry.ts`). There the texts already join only when the compile's gates pass them. Any failure
+  of the compile with the texts now also falls back to the compile without them (PRV-A4 B2: a failure's location
+  does not name its cause; `let y = 1; do { break; eval("y"); } while (false); if (y !== 1) throw 1;` fails at
+  physical setup, "body <module-init> references __new_ReferenceError", and main compiles it).
+  - This also covers a text that calls a caller's top-level function: `resolveTopLevelFunctionValue`
+    (`src/ir/imported-functions.ts`) accepts only a same-file target, so its unit does not lower and the file falls
+    back to main's.
   - The program is then exactly main's, and every site keeps its refusal.
   - Nothing is claimed and then withdrawn inside one program; the decision is the entry's, before emission.
   - The fallback is all or nothing per file, as in B1.
@@ -562,12 +579,16 @@ run-time test and asks a static proof that already exists.
     `globalThis.eval = f`, `this.eval = f`). Each refuses the site by the A4 name.
   - The boundary: a program whose site is pristine but that also reads `globalThis`, and one with script-level
     `this`, still refuse, by the existing labels. If either label ever goes away, the test fails and points at #7503.
-  - The lowering fallback: a text that cannot lower (`eval("[x]")` after `break`, never run) leaves the program
-    byte-identical to main's.
+  - The lowering fallback: a text that cannot lower (`eval("[x]")` after `break`, never run) and the PRV-A4 B2
+    program leave the output byte-identical to main's.
+  - `delete eval` refuses the site; the PRV-A4 B1 program refuses the site by the A4 name.
   - Run: the A3 program runs and agrees with node; a site in a loop runs its text each time.
 - **Yield, measured on `caaef907` (real harness).**
   - 16 files stop at the A4 label (18 with the stand-in harness).
-  - Simulated by rewriting each top-level statement site into its text as a block (the narrowed A4's semantics), 12
+  - Simulated by rewriting each top-level statement site into its text as a block (the narrowed A4's semantics;
+    a text that is only a `//` comment becomes `{}`), then
+    `npx tsx scripts/ir-census/prepared-census.mts --files <list> --out <jsonl> --harness real --jobs 3` over a
+    `test262/` whose `test/` holds the rewritten copies. 12
     pass: `11.1.5_4-4-b-1`, `S7.3_A5.4`, and the ten `language/white-space/comment-{single,multi}-*`. None has an
     `eval` binding or write in the test or the harness, so the proof holds for all 12.
   - The other 6:
