@@ -82,7 +82,8 @@ export function preparedSelectRefusal(
   for (const unit of inventory.terminalUnits)
     if (unit.directFailure) return locatedFailure({ inventory, derivedUnits: [] }, unit.id, unit.directFailure);
   for (const [sourceId, file] of identity.sourceFileBySourceId) {
-    // (#7499) GlobalDeclarationInstantiation precedes every evaluation of the Script, so this refusal comes first.
+    // (#7499) GlobalDeclarationInstantiation precedes every evaluation of the Script, so this refusal comes first among
+    // the per-source rules; the inventory's `directFailure` refusals above are reported before it.
     const restricted = restrictedGlobalLexicalName(file);
     if (restricted)
       return failureAt(
