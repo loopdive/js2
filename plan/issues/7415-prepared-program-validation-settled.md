@@ -1,10 +1,10 @@
 ---
 id: 7415
 title: "Prepared: the same prepared program is validated in full at every use (8× per compile)"
-status: in-progress
+status: wont-fix
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
 priority: high
 horizon: s
 feasibility: easy
@@ -108,3 +108,13 @@ process.
   4. Re-measure prelude q/h/f with the final module.
   5. Open the PR with hold.
 - **Open review threads:** none.
+
+## Superseded (2026-11-26)
+
+Closed as superseded by #7354 Perf3–Perf6, merged to main on 2026-11-21/22. On
+main 6694a8b839, the full-prelude program (source sha1 c70fb78b, S1's `t3.mts`)
+compiles in 3.6–4.2 s, peak RSS about 580 MB, and the output runs. On
+2026-11-20 it took 1,002 s (base) and 475 s with #7436. Perf6 checks a native
+string plan as issued instead of re-planning it for each literal, which removes
+the per-literal re-derivation measured above. No PR was opened from this
+branch.
