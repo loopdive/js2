@@ -16,7 +16,7 @@ import { realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, F64, I32, STRING, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { ERROR_TO_STRING_ID, REALM_BRAND, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
 import { identityTest, wrapperMethodTest, type WrapperMethodName } from "./dynamic-builtin-methods.js";
 import {
   ADD_ROLE,
@@ -324,6 +324,24 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
       builtins: builtins(instr),
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
+      ...(families.arrays
+        ? {
+            unlessArray: (
+              object: IrValueId,
+              unread: (r: IrValueId) => IrInstr[],
+              otherwise: (r: IrValueId) => IrInstr[],
+              r: IrValueId,
+              resultType: IrType,
+            ) => {
+              const array = fresh();
+              const aborted = (s: IrValueId) => [...builders.abort(instr, fresh()), ...unread(s)];
+              return [
+                ...builders.selectorCall("js.object.has-brand", [object], REALM_BRAND.array, array),
+                branch(array, aborted, otherwise, r, resultType),
+              ];
+            },
+          }
+        : {}),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
   };

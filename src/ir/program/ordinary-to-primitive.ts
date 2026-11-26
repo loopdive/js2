@@ -64,6 +64,18 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
    */
   readonly builtinOnly?: (result: IrValueId) => IrInstr[];
+  /**
+   * (#7354 A1) Where a value may be an array: an array's absent `toString` is Array.prototype's (`join`), which the
+   * realm does not hold yet: the run-time abort where `object` is an array (then `unread`, the value no code reads),
+   * else `otherwise`, into `result`.
+   */
+  readonly unlessArray?: (
+    object: IrValueId,
+    unread: (result: IrValueId) => IrInstr[],
+    otherwise: (result: IrValueId) => IrInstr[],
+    result: IrValueId,
+    resultType: IrType,
+  ) => IrInstr[];
 }
 
 /**
@@ -102,7 +114,18 @@ export function ordinaryToPrimitive(
     if (name !== "toString") return [...named, ...method(r)];
     // Only an absent `toString` has an answer of its own; an absent `valueOf` is skipped like any non-callable one.
     const held = b.fresh();
-    const absent = (s: IrValueId) => answer.text(kind === "object" ? "[object Object]" : undefined, s);
+    const absent = (s: IrValueId) =>
+      kind === "object"
+        ? b.unlessArray
+          ? b.unlessArray(
+              object,
+              (t) => answer.text("", t),
+              (t) => answer.text("[object Object]", t),
+              s,
+              answer.type,
+            )
+          : answer.text("[object Object]", s)
+        : answer.text(undefined, s);
     return [...named, realmCall("js.object.has", [object, key], held), b.branch(held, method, absent, r, answer.type)];
   };
   return step(0, result);

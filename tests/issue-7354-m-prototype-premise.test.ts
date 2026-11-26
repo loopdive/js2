@@ -12,7 +12,9 @@
 // (#7354 W2) `Object` and the wrapper constructors are values, so Object.prototype and the wrapper prototypes are: a
 // program that reads one of those constructors reads a primitive's members through the realm's prototype objects
 // (`programFamilies`; tests/issue-7354-w2-wrappers.test.ts writes String.prototype and reads it through a string).
-// `Object.getPrototypeOf` is a static the realm does not hold: its call is the run-time abort (below).
+// `Object.getPrototypeOf` is a static the realm does not hold: its call is the run-time abort (below). (#7354 A1)
+// `Array` is a value, so Array.prototype is: no primitive's chain holds it, so the premise is untouched
+// (tests/issue-7354-a1-arrays.test.ts writes Array.prototype and reads it through an array).
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { abortBodies, abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
@@ -34,7 +36,6 @@ const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not i
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
     ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
-    ["Array.prototype", "function f(){ return Array.prototype; } f();", notInScope("Array")],
     ["Reflect.getPrototypeOf", "function f(){ return Reflect.getPrototypeOf({}); } f();", notInScope("Reflect")],
     ["globalThis", "function f(){ return globalThis; } f();", notInScope("globalThis")],
     [

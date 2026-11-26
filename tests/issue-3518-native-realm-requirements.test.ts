@@ -96,6 +96,9 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%Boolean%",
       "%Boolean.prototype.toString%",
       "%Boolean.prototype.valueOf%",
+      // (#7354 A1) Array as a value, and IsArray
+      "%Array%",
+      "%Array.isArray%",
     ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);
