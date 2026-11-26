@@ -6,10 +6,12 @@
  * at run time it must throw a TypeError, which only the legacy lowering raises.
  * The selector therefore refuses a subject that writes a const
  * (`firstConstBindingWrite`), and (#7106) a destructuring declaration whose leaf
- * is written at all (`declarationBindingWritten`).
+ * is written at all (`declarationBindingWritten`). (#7434) The Prepared path has
+ * no selector, so from-ast's write entries ask `refuseImmutableWrite` per write.
  */
 import { ts, forEachChild } from "../ts-api.js";
 import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../shared/binding-writes.js";
+import { demoteToLegacy, refuseUnselected } from "./outcomes.js";
 import { collectPatternBindingNames, isFunctionScopeBoundary } from "./analysis/ast-scope.js";
 import { getFunctionOwnLocals } from "./analysis/binding-info.js";
 
@@ -27,6 +29,26 @@ export function firstConstBindingWrite(root: ts.Node): ts.Identifier | undefined
   };
   visit(root);
   return write;
+}
+
+/** What `refuseImmutableWrite` reads of from-ast's lowering context. */
+interface ImmutableWriteContext {
+  readonly checker?: ts.TypeChecker;
+  readonly unselected?: boolean;
+  readonly funcName: string;
+}
+
+/**
+ * A write to an immutable binding, whatever storage it has: a `const` (#7434), or a named function expression's own
+ * name (#7354 T). It throws (§9.1.1.1.5; a sloppy write to the name is ignored), which IR does not lower yet. The
+ * selector refuses both (`const-write`); from-ast, on a producer without one, refuses them before it writes.
+ */
+export function refuseImmutableWrite(id: ts.Identifier, what: string, cx: ImmutableWriteContext): void {
+  if (!isWriteToConstDeclaration(id)) return;
+  const declaration = cx.checker?.getSymbolAtLocation(id)?.valueDeclaration;
+  if (declaration && ts.isFunctionExpression(declaration))
+    demoteToLegacy("property-write-unsupported", `ir/from-ast: write to the function expression name "${id.text}"`);
+  refuseUnselected(cx.unselected, "body-shape-rejected", `const-write: ${what} "${id.text}" (${cx.funcName})`);
 }
 
 /**
