@@ -2091,7 +2091,7 @@ export function computeClosureWrapperSig(
     // the `0`-instead-of-`undefined` pad: the `typeof` lowering takes an
     // externref, so a bracketed parameter guarded by `typeof` emitted an
     // INVALID module (`call[0] expected type externref, found local.get of
-    // type f64`). `parameterMayBeOmitted` in declarations.ts has always ORed
+    // type f64`). `parameterMayBeOmitted` (shared/omittable-param.ts) has always ORed
     // the two; this aligns the closure boundary with it.
     const jsdocOptional =
       (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||

@@ -67,7 +67,7 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
-import { parameterMayBeOmitted } from "../declarations.js";
+import { parameterMayBeOmitted } from "../../shared/omittable-param.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { emitSymbolToString } from "../symbol-native.js";
@@ -1932,7 +1932,7 @@ function compileBoundIdentifierCall(
           }
           // An OMITTABLE parameter (`size?: number`, `@param {number=} size`,
           // `@param {number} [size]`) is widened to externref by the callee —
-          // see `parameterMayBeOmitted` in declarations.ts, whose whole purpose
+          // see `parameterMayBeOmitted` (shared/omittable-param.ts), whose whole purpose
           // is that a caller which omits the argument must deliver `undefined`
           // and not a padded `0`. This call site builds its wrapper signature
           // from the DECLARED types, so without the same widening it asks for a

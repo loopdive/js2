@@ -87,6 +87,7 @@ import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { parameterMayBeOmitted } from "../shared/omittable-param.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
@@ -2576,24 +2577,21 @@ function isIrClaimable(
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
 /**
- * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
- * the IR must ASK about rather than derive? True for a JSDoc type outside the
- * certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
- * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes)
- * and for any bracketed tag (`@param {string} [functionName]`). Legacy lowers
- * these from the checker and the answer is NOT syntactic (measured 2026-10-21:
- * `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag →
- * externref; `{string|number}` → `$AnyValue`; `{string|undefined}` →
- * `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
- * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the
- * registered legacy signature, and keeps its prior answer otherwise. A real
- * `.type` annotation is never a candidate (#2135's union rejection stands).
+ * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot the IR must ASK about rather than
+ * derive? True for a JSDoc type outside the certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
+ * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes), for any bracketed tag
+ * (`@param {string} [functionName]`), and (#7448) for a position a caller omits (`h()` for `@param {number} x`, see
+ * `parameterMayBeOmitted`). Legacy lowers these from the checker and the answer is NOT syntactic (measured
+ * 2026-10-21: `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag → externref; `{string|number}`
+ * → `$AnyValue`; `{string|undefined}` → `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
+ * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the registered legacy signature, and keeps
+ * its prior answer otherwise. A real `.type` annotation is never a candidate (#2135's union rejection stands).
  */
 export function jsDocParamIsExternrefCandidate(param: ts.ParameterDeclaration): boolean {
   if (param.type !== undefined || param.parent === undefined) return false;
   const jsDocType = ts.getJSDocType(param);
   if (jsDocType === undefined) return false;
-  if (ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed === true)) return true;
+  if (ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed) || parameterMayBeOmitted(param)) return true;
   return (
     jsDocType.kind !== ts.SyntaxKind.NumberKeyword &&
     jsDocType.kind !== ts.SyntaxKind.StringKeyword &&
