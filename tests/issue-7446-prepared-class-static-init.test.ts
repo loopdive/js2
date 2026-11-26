@@ -32,6 +32,16 @@ describe("#7446 — Prepared path refuses class static initialization by name", 
       "var s = ''; class A { static { s += 'a'; class B { static { s += 'b'; } } } } if (s !== 'ab') throw 0;",
     ],
     ["a static field initializer", "var n = 0; class C { static x = (n = 5); } if (n !== 5) throw 0;"],
+    ["an exported class", "export var n = 0; export class C { static { n = 7; } } if (n !== 7) throw 0;"],
+    [
+      "an anonymous default-exported class",
+      "export var n = 0; export default class { static { n = 7; } } if (n !== 7) throw 0;",
+    ],
+    ["a static accessor field", "var n = 0; class C { static accessor x = (n = 3); } if (n !== 3) throw 0;"],
+    [
+      "a block calling a static private method",
+      "var n = 0; class C { static #m() { return 4; } static { n = C.#m(); } } if (n !== 4) throw 0;",
+    ],
     [
       "a call the path refuses elsewhere",
       "var o = {}; class C { static { Object.defineProperty(o, 'x', { value: 1 }); } } if (o.x !== 1) throw 0;",
@@ -45,6 +55,14 @@ describe("#7446 — Prepared path refuses class static initialization by name", 
   it("refuses a class expression with a static block", async () => {
     const result = await refusal("var n = 0; var K = class { static { n = 3; } }; if (n !== 3) throw 0;", "refuse");
     expect(result.success).toBe(false);
+  });
+
+  // The inventory's other select-stage refusal: an anonymous class has no stable class identity.
+  it("refuses an anonymous default-exported class by the inventory's code", async () => {
+    expect(await refusal("export default class { m() { return 1; } }", "refuse")).toEqual({
+      success: false,
+      codes: ["anonymous-class"],
+    });
   });
 
   // A class whose definition only installs members runs no code, so the program still compiles and runs.

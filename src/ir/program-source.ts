@@ -47,7 +47,7 @@ import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import { locatedFailure } from "./program/runtime-manifest.js";
+import { locatedFailure } from "./program/owner.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -1544,6 +1544,9 @@ export function prepareIrProgramSources(
   });
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
+  // (#7446) Inventory select-stage refusals hold here too: no body producer runs a class's static block or initializer.
+  const refused = inventory.terminalUnits.find((unit) => unit.directFailure !== undefined);
+  if (refused) return locatedFailure({ inventory, derivedUnits: [] }, refused.id, refused.directFailure!);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
   const sourceMapCatalog =
     sourceMapRequest === undefined
@@ -1566,9 +1569,6 @@ export function prepareIrProgramSources(
   };
   const { promiseDelaysBySource, certifiedDelays } = delayPlans;
   const diagnostic: SourceDiagnosticOwner = { active: undefined };
-  // (#7446) Inventory select-stage refusals hold here too: no body producer runs a class's static block or initializer.
-  const refused = inventory.terminalUnits.find((unit) => unit.directFailure !== undefined);
-  if (refused) return locatedFailure({ inventory, derivedUnits }, refused.id, refused.directFailure!);
   try {
     const types = buildIrUnitTypeMap(sourceFiles, input.checker, identity);
     const callGraph = buildIrProgramCallableBindingGraph({

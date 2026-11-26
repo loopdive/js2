@@ -1083,7 +1083,7 @@ class SourceInventoryBuilder {
           kind: "unsupported",
           code: "anonymous-class",
           stage: "select",
-          detail: `${displayName} has no stable direct-codegen class identity for IR patching`,
+          detail: `${displayName} is an anonymous class, which has no stable IR class identity`,
         }
       : undefined;
     let explicitConstructor: IrUnitRecord | undefined;

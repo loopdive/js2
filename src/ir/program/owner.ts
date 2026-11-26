@@ -1,7 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
-import type { PreparedIrProgramProducerInput, PreparedIrProgramOwner } from "./prepared-contracts.js";
+import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
+import { PreparedIrProgramInvariantError } from "./errors.js";
+import type {
+  PreparedIrProgramFailure,
+  PreparedIrProgramProducerInput,
+  PreparedIrProgramOwner,
+} from "./prepared-contracts.js";
 
 /** Resolve diagnostics through the existing original/derived ownership records. */
 export function preparedIrProgramOwner(
@@ -26,4 +32,22 @@ export function preparedIrProgramOwner(
       declarationEnd: owner.declarationEnd,
     }),
   });
+}
+
+/** `failure` as a Prepared producer's refusal, owned by the terminal unit around `unitId`. */
+export function locatedFailure(
+  input: Pick<PreparedIrProgramProducerInput, "inventory" | "derivedUnits">,
+  unitId: IrUnitId,
+  failure: IrPreparationFailure,
+): PreparedIrProgramFailure {
+  const owner = preparedIrProgramOwner(input, unitId);
+  if (!owner) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      `prepared producer cannot locate ${unitId}: ${failure.detail}`,
+    );
+  }
+  // Error instances/callbacks must not escape into the serializable diagnostic contract.
+  const { cause: _cause, ...diagnostic } = failure;
+  return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
 }

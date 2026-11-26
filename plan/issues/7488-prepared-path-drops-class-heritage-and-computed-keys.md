@@ -44,7 +44,10 @@ Static blocks and static field initializers had the same defect; #7446 refuses t
 Of the 786 files with a top-level class with heritage and the 172 with a computed key, none gives a wrong value today:
 6 heritage-only files trap in an abort body, and 1 passes by accident
 (`language/statements/class/subclass/builtin-objects/Symbol/symbol-valid-as-extends-value.js`: the dropped
-`extends Symbol` has no effect). Soundness debt, not yield.
+`extends Symbol` has no effect). That holds only because the other files hit unrelated refusals first (e.g.
+`extends f()` refuses with "callable annotation … requires one non-constructing call signature"); the defect itself
+is confirmed by `class C extends (n=7, Object) {}` and `extends (n=7, null)`, which return normally where node
+throws. Soundness debt, not yield.
 
 ## Acceptance criteria
 

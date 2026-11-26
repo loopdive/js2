@@ -183,7 +183,7 @@ describe("canonical whole-program runtime projection owners", () => {
       }),
     );
     expect(error.code).toBe("invalid-prepared-data");
-    expect(error.message).toContain(`runtime producer cannot locate ${other.unitId}`);
+    expect(error.message).toContain(`prepared producer cannot locate ${other.unitId}`);
     expect(error).not.toHaveProperty("location");
   });
   it("removes nonserializable causes while retaining the supplied diagnostic and real owner", () => {

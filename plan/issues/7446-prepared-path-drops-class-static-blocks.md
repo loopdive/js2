@@ -73,26 +73,41 @@ Lowering the block is not cheap: the Prepared path has no class binding at all (
 `identifier "C" is not in scope`), so a static block would need class objects, `this` = the class, and ordering with
 static fields first. Refuse instead.
 
-- **Module:** `src/ir/program-source.ts`, `prepareIrProgramSources`, before any body is lowered: the first terminal
-  unit with a `directFailure` is the program's refusal, with that failure's code, stage (`select`) and detail.
-- **Reuses:** the inventory's existing `static-class-initialization` failure (the same rule the ordinary pipeline's
-  outcome report reads, `ir-overlay-outcomes.ts`); no new predicate.
-- **Removes a duplicate:** the producer's catch arm hand-rolled the owner lookup + failure shaping that
-  `locatedFailure` (`src/ir/program/runtime-manifest.ts`) already does for the runtime producer. Both the catch and the
-  new refusal call `locatedFailure`; its `input` type narrows to what it reads (`inventory`, `derivedUnits`).
-- The failure's detail is reworded path-neutral (`src/ir/identity.ts`; was "still emitted by the direct module-init
-  path", which is false on this path). No test or baseline holds the string; ordinary bytes do not carry it.
+- **Module:** `src/ir/program-source.ts`, `prepareIrProgramSources`, right after `buildIrUnitInventory` /
+  `buildIrPlanningIdentityContext` and before anything that can throw (startup plans, signatures, globals): the first
+  terminal unit with a `directFailure` is the program's refusal, with that failure's code, stage (`select`) and
+  detail. Placing it first keeps the refusal code independent of whichever later step would fail first.
+- **Which failures it honours:** every `directFailure` the inventory records, not a filtered code. Today there are
+  two:
+  - `static-class-initialization` on `<module-init>` (a top-level class's static block or static initializer): the
+    fix.
+  - `anonymous-class` on the members of an anonymous class (`export default class { m() {} }`): these programs were
+    already refused ("no body producer for class-instance-method"); only the reported code changes. Census of the 19
+    test262 files with `export default class {…}`: refused before and after, verdict unchanged.
+  - Both details are reworded path-neutral in `src/ir/identity.ts` (they named the legacy direct-codegen path, which
+    is false here). No test or baseline holds either string; tests and baselines key on the code.
+- **Reuses:** the inventory's existing select-stage failures (the same records the ordinary pipeline's outcome
+  report reads, `ir-overlay-outcomes.ts`); no new predicate.
+- **Removes duplicates:** `locatedFailure` (owner lookup + failure shaping) moves from
+  `src/ir/program/runtime-manifest.ts` to `src/ir/program/owner.ts`, next to `preparedIrProgramOwner`, with a neutral
+  message ("prepared producer cannot locate …"; `tests/issue-3518-runtime-projection-owner.test.ts` updated to it).
+  `runtime-manifest.ts` keeps re-exporting it for its compatibility surface. It replaces three hand-rolled copies: the
+  source producer's catch arm and the two in `src/ir/program/runtime-abi.ts`.
 - Never claims and withdraws: the refusal happens before any unit is lowered.
-- Ordinary pipeline: `prepareIrProgramSources` is reachable only from `runPreparedIrPipelinePresentation`, so ordinary
-  output is unchanged by construction (also checked on a sample).
+- Ordinary pipeline: `prepareIrProgramSources` is reachable only through `prepareWholeIrProgram` →
+  `ir-program-driver` → `ir-program-presentation`, so ordinary output is unchanged by construction (also checked on a
+  sample, and `check:ir-fallbacks` is unchanged).
 
 ### Acceptance
 
 - Correctness: every probe with a top-level static block / static initializer is refused by name
-  (`static-class-initialization`) under both `unlowerableBodies` policies; inert classes (`class C {}`,
-  `static x;`) still compile and run. Pin tests: `tests/issue-7446-prepared-class-static-init.test.ts` (fail on main).
-- Code quality: one helper owns failure shaping (one duplicate removed); the new rule is three lines in the producer;
-  no new predicate, no branch for a failure kind that cannot occur; `program-source.ts` stays within its LOC budget.
+  (`static-class-initialization`) under both `unlowerableBodies` policies, including an exported class, an anonymous
+  default-exported class, a `static accessor` field and a block calling a static private method; an anonymous class
+  with a method is refused as `anonymous-class`; inert classes (`class C {}`, `static x;`) still compile and run. Pin
+  tests: `tests/issue-7446-prepared-class-static-init.test.ts` (fail on main).
+- Code quality: one helper in `owner.ts` owns failure shaping (three hand-rolled copies removed); the new rule is
+  three lines in the producer; no new predicate, no filter by failure code, no branch for a case that cannot occur;
+  `program-source.ts` stays within its LOC budget.
 
 ### Yield (measured)
 
@@ -113,7 +128,9 @@ worker's options); before = clean main `c3b7be66` (`--tree`), after = this chang
   `static-init-statement-list-optional.js` (`static {}`), six `static-init-await-binding*` /
   `ident-name-prop-name-literal-await-static-init.js` (`static { (function await(await) {}); }`). Losing them is the
   price of the soundness rule; none is ES5, none is in a completed edition. Keeping them would need a "this static
-  code is inert" predicate, which is the speculative special case the IR rule forbids.
+  code is inert" predicate, which is the speculative special case the IR rule forbids. The lead accepted the loss
+  (2026-11-26); the plan reviewer found no cheap sound route (exempting empty blocks in the inventory would change the
+  ordinary pipeline's module-init selection).
 - The 6 remaining fails are heritage-only files whose class body has an abort-body trap, not a wrong value; the 1
   remaining pass is `symbol-valid-as-extends-value.js` (heritage evaluated without effect, see below).
 - Ordinary pipeline: 100 of these files × (default, standalone), base vs branch: byte-identical (171 binaries, same
@@ -133,7 +150,9 @@ worker's options); before = clean main `c3b7be66` (`--tree`), after = this chang
 | class inside a function | abort body (trap) |
 | class expression | refused by from-ast |
 
-The heritage / computed-key case needs a definition-evaluation predicate the inventory does not record today; it is
-left to a follow-up issue so this change stays the reuse of an existing rule. On test262 it causes no wrong value
-today (6 abort traps, 1 accidental pass), so it is soundness debt, not a measured yield. (Follow-up id: to be
-allocated by the lead; `claim-issue --allocate` was not permitted in this session.)
+Follow-up: [#7488](plan/issues/7488-prepared-path-drops-class-heritage-and-computed-keys.md). It cannot be folded in
+cheaply: the `<module-init>` `directFailure` also feeds the ordinary pipeline's selection, so widening it changes
+ordinary bytes, and a Prepared-only definition-evaluation predicate is new work. Wrong values are confirmed on main and
+after this change (`class C extends (n=7, Object) {}`, `extends (n=7, null)`, `static [f()];`, `[f()];`). "No wrong
+value on test262" holds only because those files hit unrelated refusals first (e.g. `extends f()` refuses with
+"callable annotation … requires one non-constructing call signature").
