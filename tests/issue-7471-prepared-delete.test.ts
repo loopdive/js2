@@ -167,9 +167,18 @@ describe("#7471 slice 2 — delete of a name", () => {
   });
 
   it.each([
-    ["an undeclared name", "var x = delete y;", 'ir/from-ast: delete of "y", which only the global object holds'],
-    ["NaN", "var x = delete NaN;", 'ir/from-ast: delete of "NaN", which only the global object holds'],
-    ["arguments at script level", "var x = delete arguments;", 'delete of "arguments", which only the global object'],
+    [
+      "an undeclared name",
+      "var x = delete y;",
+      'ir/from-ast: delete of "y", which names no binding this lowering resolves',
+    ],
+    ["NaN", "var x = delete NaN;", 'ir/from-ast: delete of "NaN", which names no binding this lowering resolves'],
+    [
+      "arguments at script level",
+      "var x = delete arguments;",
+      'delete of "arguments", which names no binding this lowering resolves',
+    ],
+    ["a class name", "class C {} var x = delete C;", 'delete of "C", which names no binding this lowering resolves'],
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source, runnerOptions())).toContain(reason);
   });

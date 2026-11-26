@@ -5379,10 +5379,10 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       );
     return lowerRegExpLiteral(expr, cx);
   }
-  // (#7106) `delete <expr>`: the selector refuses every form
-  // (`expr-delete-no-ir-lowering`) because the IR has no delete operation.
-  // Slice 11 (#1169n) used to answer a constant `true` here, which removed
-  // nothing and never threw. Fail closed if a delete ever reaches lowering.
+  // (#7106, #7471) `delete <expr>`: a declared binding or a non-reference
+  // answers a constant (`lowerReferencelessDelete`); a member of a dynamic
+  // receiver calls the resolver's delete helper (`lowerDynamicDelete`). Any
+  // other form demotes.
   if (ts.isDeleteExpression(expr)) {
     const deleted = lowerReferencelessDelete(expr, cx) ?? lowerDynamicDelete(expr, cx);
     if (deleted !== null) return deleted;
@@ -8237,8 +8237,7 @@ function lowerClosureCall(
  * boolean, or null when the operand is not that shape (the caller demotes).
  */
 function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
-  let operand: ts.Expression = expr.expression;
-  while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+  const operand = skipOuterExpressions(expr.expression);
   let receiverExpr: ts.Expression;
   let keyExpr: ts.Expression | undefined;
   let keyName: string | undefined;
@@ -8296,7 +8295,7 @@ function lowerReferencelessDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrVa
   if (read.kind !== "scope" && read.kind !== "module-binding" && read.kind !== "top-level-function" && !ownArguments)
     demoteToLegacy(
       "body-shape-rejected",
-      `ir/from-ast: delete of "${operand.text}", which only the global object holds, in ${cx.funcName}`,
+      `ir/from-ast: delete of "${operand.text}", which names no binding this lowering resolves, in ${cx.funcName}`,
     );
   return cx.builder.emitConst({ kind: "bool", value: false }, IR_BOOL);
 }
