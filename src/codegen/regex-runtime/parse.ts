@@ -85,7 +85,7 @@ import {
   type X,
 } from "./dsl.js";
 import { isAsciiLetter, isDigit, kindOf, peek, peekAt, syntax, unsupported } from "./core.js";
-import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../regex/bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../../regexp-compiler/bytecode.js";
 
 const ch = (s: string): number => s.charCodeAt(0);
 const is = (v: X, ...chars: string[]): X => anyOf(...chars.map((s) => eq(v, c(ch(s)))));

@@ -3,7 +3,7 @@
  * Body of `__regex_search`, the start-position scan of the native RegExp
  * engine: it tries `__regex_run` at each position from `startIdx` and returns
  * 1 with `caps` filled on the first match. Mirrors `search` in
- * `src/codegen/regex/vm.ts`.
+ * `src/regexp-compiler/reference/vm.ts`.
  */
 import { REGEX_ANCHORED_LITERAL_ALTS_MARKER, ReOp } from "../../contracts/regexp-bytecode.js";
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";

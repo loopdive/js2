@@ -21,9 +21,9 @@
  * the catastrophic cases below carry a backreference.
  */
 import { describe, expect, it } from "vitest";
-import { compilePattern } from "../src/codegen/regex/compile.js";
-import { parseFlags } from "../src/codegen/regex/bytecode.js";
-import { search } from "../src/codegen/regex/vm.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
+import { parseFlags } from "../src/regexp-compiler/bytecode.js";
+import { search } from "../src/regexp-compiler/reference/vm.js";
 import { REGEX_STEP_CAP } from "../src/runtime/contracts/regexp-bytecode.js";
 import { compile } from "../src/index.js";
 

@@ -285,6 +285,25 @@
       "minModules": 11
     },
     {
+      "id": "regexp-compiler",
+      "status": "active",
+      "roots": ["src/regexp-compiler"],
+      "required": true,
+      "entries": [
+        "src/regexp-compiler/bytecode.ts",
+        "src/regexp-compiler/casefold.ts",
+        "src/regexp-compiler/compile.ts",
+        "src/regexp-compiler/parse.ts",
+        "src/regexp-compiler/unicode.ts",
+        "src/regexp-compiler/unicode-string-properties.ts",
+        "src/regexp-compiler/unicode-string-data.generated.ts",
+        "src/regexp-compiler/reference/vm.ts",
+        "src/regexp-compiler/reference/linear.ts",
+        "src/regexp-compiler/reference/match-units.ts"
+      ],
+      "minModules": 10
+    },
+    {
       "id": "backend-wasmgc",
       "status": "active",
       "roots": ["src/backend/wasmgc"],
@@ -539,6 +558,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "wasm-model"
     ],
     "ir-core": ["ir-core", "foundation", "wasm-model"],
@@ -564,6 +584,7 @@
       "wasm-model"
     ],
     "runtime-contracts": ["runtime-contracts", "foundation", "wasm-model"],
+    "regexp-compiler": ["regexp-compiler", "foundation", "runtime-contracts"],
     "backend-wasmgc": [
       "backend-wasmgc",
       "foundation",
@@ -573,6 +594,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "wasm-model",
       "wasm-physical",
       "native-runtime",
@@ -600,6 +622,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "backend-wasmgc",
       "native-runtime",
       "standalone-platform"
@@ -617,6 +640,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "backend-wasmgc",
       "native-runtime",
       "standalone-platform",
@@ -638,6 +662,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "backend-wasmgc",
       "native-runtime",
       "standalone-platform",
@@ -659,6 +684,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "backend-wasmgc",
       "native-runtime",
       "standalone-platform",
@@ -680,6 +706,7 @@
       "ir-runtime",
       "ir-program",
       "runtime-contracts",
+      "regexp-compiler",
       "backend-wasmgc",
       "native-runtime",
       "standalone-platform",
@@ -1897,6 +1924,22 @@
         "src/runtime/wasmgc/values/regexp-search-body.ts"
       ],
       "minModules": 4
+    },
+    {
+      "layer": "regexp-compiler",
+      "entries": [
+        "src/regexp-compiler/bytecode.ts",
+        "src/regexp-compiler/casefold.ts",
+        "src/regexp-compiler/compile.ts",
+        "src/regexp-compiler/parse.ts",
+        "src/regexp-compiler/unicode.ts",
+        "src/regexp-compiler/unicode-string-properties.ts",
+        "src/regexp-compiler/unicode-string-data.generated.ts",
+        "src/regexp-compiler/reference/vm.ts",
+        "src/regexp-compiler/reference/linear.ts",
+        "src/regexp-compiler/reference/match-units.ts"
+      ],
+      "minModules": 10
     }
   ],
   "nonModules": [
@@ -1969,6 +2012,46 @@
     {
       "from": "src/ir/backend/legality.ts",
       "to": "src/ir/analysis/backend-legality.ts"
+    },
+    {
+      "from": "src/codegen/regex/bytecode.ts",
+      "to": "src/regexp-compiler/bytecode.ts"
+    },
+    {
+      "from": "src/codegen/regex/casefold.ts",
+      "to": "src/regexp-compiler/casefold.ts"
+    },
+    {
+      "from": "src/codegen/regex/compile.ts",
+      "to": "src/regexp-compiler/compile.ts"
+    },
+    {
+      "from": "src/codegen/regex/parse.ts",
+      "to": "src/regexp-compiler/parse.ts"
+    },
+    {
+      "from": "src/codegen/regex/unicode.ts",
+      "to": "src/regexp-compiler/unicode.ts"
+    },
+    {
+      "from": "src/codegen/regex/unicode-string-properties.ts",
+      "to": "src/regexp-compiler/unicode-string-properties.ts"
+    },
+    {
+      "from": "src/codegen/regex/unicode-string-data.generated.ts",
+      "to": "src/regexp-compiler/unicode-string-data.generated.ts"
+    },
+    {
+      "from": "src/codegen/regex/vm.ts",
+      "to": "src/regexp-compiler/reference/vm.ts"
+    },
+    {
+      "from": "src/codegen/regex/linear.ts",
+      "to": "src/regexp-compiler/reference/linear.ts"
+    },
+    {
+      "from": "src/codegen/regex/match-units.ts",
+      "to": "src/regexp-compiler/reference/match-units.ts"
     }
   ],
   "evidence": [
@@ -9488,84 +9571,54 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/regex/bytecode.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/bytecode.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/casefold.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/casefold.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/compile.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/compile.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/parse.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/parse.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/unicode-string-data.generated.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/unicode-string-data.generated.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/unicode-string-properties.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/unicode-string-properties.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/unicode.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/unicode.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/linear.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/reference/linear.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/match-units.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/reference/match-units.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
-      "path": "src/codegen/regex/vm.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "path": "src/regexp-compiler/reference/vm.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
     },
     {
       "path": "src/codegen/regex/wasm-array-literal.ts",

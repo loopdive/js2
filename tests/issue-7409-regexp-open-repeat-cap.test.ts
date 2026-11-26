@@ -5,7 +5,7 @@
 // (staging/sm/RegExp/regress-yarr-regexp.js).
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { compilePattern, RepeatTooLargeError } from "../src/codegen/regex/compile.js";
+import { compilePattern, RepeatTooLargeError } from "../src/regexp-compiler/compile.js";
 
 describe("#7409 — the expansion cap covers an open-ended quantifier", () => {
   it.each(["x{2147483648,}x", "x{2147483648}x", "x{2147483647,2147483648}x", "x{1001,}"])(

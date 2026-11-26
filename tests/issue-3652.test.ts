@@ -11,10 +11,10 @@
 import { describe, expect, it } from "vitest";
 import { buildImports } from "../src/runtime.js";
 import { compile } from "../src/index.js";
-import { parseFlags } from "../src/codegen/regex/bytecode.js";
+import { parseFlags } from "../src/regexp-compiler/bytecode.js";
 import { ReOp } from "../src/runtime/contracts/regexp-bytecode.js";
-import { compilePattern } from "../src/codegen/regex/compile.js";
-import { search } from "../src/codegen/regex/vm.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
+import { search } from "../src/regexp-compiler/reference/vm.js";
 
 function matches(pattern: string, flags: string, input: string): boolean {
   const compiled = compilePattern(pattern, parseFlags(flags));

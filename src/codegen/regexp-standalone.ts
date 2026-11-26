@@ -67,8 +67,8 @@ import {
   RE_FLAG_U,
   RE_FLAG_V,
   RE_FLAG_Y,
-} from "./regex/bytecode.js";
-import { compilePattern, RepeatTooLargeError } from "./regex/compile.js";
+} from "../regexp-compiler/bytecode.js";
+import { compilePattern, RepeatTooLargeError } from "../regexp-compiler/compile.js";
 import { pushRegexI32Array } from "./regex/wasm-array-literal.js";
 import { fullDynamicRegExpAttempt, simpleSubsetFlagGate } from "./regex-runtime/compiler.js";
 import {

@@ -7,10 +7,10 @@
  * interpreter mirrors, so getting this right de-risks the codegen.
  */
 import { describe, expect, it } from "vitest";
-import { parseFlags, RegexUnsupportedError } from "../src/codegen/regex/bytecode.js";
-import { compilePattern } from "../src/codegen/regex/compile.js";
-import { parsePattern } from "../src/codegen/regex/parse.js";
-import { search } from "../src/codegen/regex/vm.js";
+import { parseFlags, RegexUnsupportedError } from "../src/regexp-compiler/bytecode.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
+import { parsePattern } from "../src/regexp-compiler/parse.js";
+import { search } from "../src/regexp-compiler/reference/vm.js";
 
 /** Run our pipeline and return [start,end] of the first match (g0), or null. */
 function ourMatch(pattern: string, flags: string, input: string): [number, number] | null {

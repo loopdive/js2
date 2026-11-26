@@ -21,8 +21,8 @@ import { i32ArrayLiteralInstrs } from "./native-regex.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addFuncType } from "./registry/types.js";
-import { RE_FLAG_G } from "./regex/bytecode.js";
-import { compilePattern } from "./regex/compile.js";
+import { RE_FLAG_G } from "../regexp-compiler/bytecode.js";
+import { compilePattern } from "../regexp-compiler/compile.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import {
   IR_DYN_CALL_ARGUMENT_FN,

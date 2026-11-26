@@ -12,7 +12,7 @@
  * speed optimisation and is not reproduced.)
  */
 import { ReOp } from "../../runtime/contracts/regexp-bytecode.js";
-import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../regex/bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../../regexp-compiler/bytecode.js";
 import {
   ERR_UNSUPPORTED,
   F_CI,

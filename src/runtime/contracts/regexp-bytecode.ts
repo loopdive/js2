@@ -4,7 +4,7 @@
  * limits every interpreter of it observes.
  *
  * Three parties must agree on these numbers: the pattern compiler
- * (`src/codegen/regex/compile.ts`), its reference VM (`src/codegen/regex/vm.ts`)
+ * (`src/regexp-compiler/compile.ts`), its reference VM (`src/regexp-compiler/reference/vm.ts`)
  * and the Wasm VM bodies (`src/runtime/wasmgc/values/regexp-vm-bodies.ts`). The
  * Wasm bodies sit below the compiler in the layering, so the contract lives
  * here, where all three can import it, and has no imports of its own.

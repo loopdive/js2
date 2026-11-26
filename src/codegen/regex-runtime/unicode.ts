@@ -19,7 +19,7 @@
  */
 import type * as ts from "typescript";
 import type { CodegenContext } from "../context/types.js";
-import { enumerateClassRanges } from "../regex/unicode.js";
+import { enumerateClassRanges } from "../../regexp-compiler/unicode.js";
 import { F_PCI, F_POS, F_PROPS, F_RLEN, F_RP, ST, ag, as, advance, defineRxFn, sg, src, type RxEnv } from "./env.js";
 import {
   I32,

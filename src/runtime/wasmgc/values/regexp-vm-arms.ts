@@ -6,7 +6,7 @@
  *
  * Every arm leaves one VM step applied: it advances `PC` (and `SP` for a
  * consuming op), or sets `FAILED` so the loop in `regexp-vm-bodies.ts` pops a
- * backtrack frame. The reference VM in `src/codegen/regex/vm.ts` is the
+ * backtrack frame. The reference VM in `src/regexp-compiler/reference/vm.ts` is the
  * executable specification these arms mirror opcode for opcode.
  */
 import type {

@@ -7,9 +7,9 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { parseFlags, RegexUnsupportedError } from "../src/codegen/regex/bytecode.js";
-import { compilePattern } from "../src/codegen/regex/compile.js";
-import { search } from "../src/codegen/regex/vm.js";
+import { parseFlags, RegexUnsupportedError } from "../src/regexp-compiler/bytecode.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
+import { search } from "../src/regexp-compiler/reference/vm.js";
 
 function matchedText(pattern: string, flags: string, input: string): string | null {
   const compiled = compilePattern(pattern, parseFlags(flags));

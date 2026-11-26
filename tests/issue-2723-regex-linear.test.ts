@@ -9,10 +9,10 @@
  * is covered end to end by tests/equivalence/issue-2723-regex-linear-fallback.
  */
 import { describe, expect, it } from "vitest";
-import { parseFlags } from "../src/codegen/regex/bytecode.js";
-import { compilePattern } from "../src/codegen/regex/compile.js";
-import { isLinearSafe, searchLinear } from "../src/codegen/regex/linear.js";
-import { runAt, search } from "../src/codegen/regex/vm.js";
+import { parseFlags } from "../src/regexp-compiler/bytecode.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
+import { isLinearSafe, searchLinear } from "../src/regexp-compiler/reference/linear.js";
+import { runAt, search } from "../src/regexp-compiler/reference/vm.js";
 
 const PATTERNS: Array<[string, string]> = [
   ["a|ab", ""],
