@@ -34,14 +34,19 @@ it. Nothing names the file to fix.
 halves, recursing into the halves whose run raises one of the batch's untagged
 errors, until each error reproduces in a single-file run.
 
-- **Per-error labels.** Errors are matched by their first line. Two errors
-  in one batch are traced to their own files, so one batch-wide list is
-  never stamped on every error. RV7455 reproduced that defect in the first
-  attempt, 39d377a8f7.
-- **Hard time budget.** One deadline per `runFiles` call
-  (`KNOWN_FAILURES_BISECT_BUDGET_S`, default 900 s). Each bisection run's
-  timeout is capped at the time left. When the budget is spent, the error says
-  so. Naming files can never cost a shard its partial.
+- **Per-error labels.** Errors are matched by their first line, so two
+  different errors in one batch are traced to their own files instead of one
+  batch-wide list stamped on every error. RV7455 reproduced that defect in the
+  first attempt, 39d377a8f7. Errors that share a first line cannot be told
+  apart: two RPC timeouts share their whole stack. Their label lists every
+  file the first line reproduced in, and says it is shared.
+- **Hard time budget.** One budget per `runFiles` call
+  (`KNOWN_FAILURES_BISECT_BUDGET_S`, default 900 s), started by the first
+  bisection run. RV7478: a deadline started at the beginning of `runFiles`
+  would already be spent after a 25-minute batch. Each bisection run's timeout
+  is capped at the time left. When the budget is spent, including by a run that
+  timed out at the deadline, the label says so. Naming files can never cost a
+  shard its partial.
 - **Skipped:**
   - errors the reporter already tagged (`[raised while running <file>]`);
   - batches that hit their own timeout, because each half would wait out the
@@ -53,6 +58,7 @@ errors, until each error reproduces in a single-file run.
 Labels:
 
 - `(#7518 bisection: reproduces with only this file in the run: <file>)`
+- `(#7518 bisection: reproduces with only one of these files (errors with this first line are not told apart) in the run: <files>)`
 - `(#7518 bisection: not reproduced in a smaller run)`
 - `(#7518 bisection: budget spent before it was located)`
 
@@ -76,12 +82,21 @@ timeout raises it, without any main-process load.
 
 **Pins** (`tests/issue-7014-integrity.test.ts`):
 
-- two errors in one batch, each labelled with its own file;
+- two different errors in one batch, each labelled with its own file;
+- errors that share a first line get the shared label;
 - a spent budget makes no runs and says so;
+- the deadline starts at the first bisection run;
+- every bisection run's timeout is capped at the time left;
+- a last run that timed out at the deadline is reported as a spent budget;
 - tagged errors and timed-out batches are skipped;
 - end to end through real vitest: a leaking file among three clean ones. The
   leak is tagged by the reporter, and the run's untagged `vitest exited 1`
   record is located to the leaking file.
+
+Mutations checked, each failing at least one pin:
+- removing the timeout cap;
+- dropping "timed out at the deadline → budget spent";
+- resetting the deadline on every run.
 
 ## Cost
 

@@ -440,10 +440,10 @@ const errorKey = (error) => error.split("\n", 1)[0];
  * halves. vitest attaches no file to some run errors: a worker RPC timeout (`Timeout calling "onTaskUpdate"`)
  * rejects inside the runner and reaches the main process bare. A file that blocks its worker past the RPC timeout
  * raises it again when it runs on its own. Errors are matched per first line, so two errors in one batch are traced
- * to their own files. Skipped: errors the reporter already tagged with a file, and batches that hit their timeout,
- * whose halves would each wait out the timeout again. Every run counts against one deadline per runFiles call.
- * Returns a label per error; the errors stay refused either way. `bisection` carries the deadline, the log label
- * and, in tests only, a stand-in for vitestOnce (`runOnce`).
+ * to their own files; errors that share a first line share their label, which says so. Skipped: errors the reporter already tagged with a file, and batches that hit their timeout,
+ * whose halves would each wait out the timeout again. Every bisection run counts against one deadline per runFiles
+ * call, started by the first one. Returns a label per error; the errors stay refused either way. `bisection` carries
+ * the budget, the deadline once started, the log label and, in tests only, a stand-in for vitestOnce (`runOnce`).
  */
 export async function bisectUntaggedErrors(root, toRel, files, runErrors, run, options, bisection) {
   const labels = new Map();
@@ -461,10 +461,14 @@ export async function bisectUntaggedErrors(root, toRel, files, runErrors, run, o
   );
   for (const error of untagged) {
     const where = located.get(errorKey(error));
+    // Errors with the same first line cannot be told apart (two RPC timeouts share their whole stack), so a
+    // located key names every file it reproduced in, and says so when that is more than one.
+    const shared =
+      where?.size > 1 ? "one of these files (errors with this first line are not told apart)" : "this file";
     labels.set(
       error,
       where
-        ? `(#7518 bisection: reproduces with only this file in the run: ${[...where].join(", ")})`
+        ? `(#7518 bisection: reproduces with only ${shared} in the run: ${[...where].join(", ")})`
         : `(#7518 bisection: ${exhausted ? "budget spent before it was located" : "not reproduced in a smaller run"})`,
     );
   }
@@ -480,6 +484,8 @@ async function locateErrorFiles(root, toRel, files, keys, options, bisection, lo
   const half = Math.ceil(files.length / 2);
   let exhausted = false;
   for (const part of [files.slice(0, half), files.slice(half)]) {
+    // The budget starts at the first bisection run, not at the start of runFiles: a long batch must not spend it.
+    bisection.deadline ??= Date.now() + bisection.budgetMs;
     const remaining = bisection.deadline - Date.now();
     if (remaining <= 0) return true;
     const t0 = Date.now();
@@ -513,8 +519,9 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
     heapMb: heap,
     timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
   };
-  // (#7518) One bisection budget for the whole call, so naming files can never cost a shard its partial.
-  const bisection = { deadline: Date.now() + envInt("KNOWN_FAILURES_BISECT_BUDGET_S", 900) * 1000, label };
+  // (#7518) One bisection budget per call, started by the first bisection run, so naming files can never cost a
+  // shard its partial.
+  const bisection = { budgetMs: envInt("KNOWN_FAILURES_BISECT_BUDGET_S", 900) * 1000, deadline: undefined, label };
   let pending = serial ? [] : [...files];
   let pass = 0;
   while (pending.length) {

@@ -212,6 +212,96 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
       expect(calls).toEqual([]);
     });
 
+    it("starts its deadline at the first bisection run, not before", async () => {
+      const errors = ["Error: from b"];
+      const bisection = {
+        budgetMs: 60_000,
+        deadline: undefined as number | undefined,
+        label: "t",
+        runOnce: fakeRun({ "b.test.js": errors[0] }, []),
+      };
+      const before = Date.now();
+      const labels = await bisectUntaggedErrors("/r", null, files, errors, runOf(errors), options, bisection);
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: reproduces with only this file in the run: b.test.js)");
+      expect(bisection.deadline).toBeGreaterThanOrEqual(before + 60_000);
+    });
+
+    it("caps every bisection run's timeout at the time left", async () => {
+      const timeouts: number[] = [];
+      const run = fakeRun({ "b.test.js": "Error: from b" }, []);
+      const bisection = {
+        deadline: Date.now() + 5_000,
+        label: "t",
+        runOnce: (root: string, toRel: unknown, part: string[], opts: { timeoutMs: number }) => {
+          timeouts.push(opts.timeoutMs);
+          return run(root, toRel, part);
+        },
+      };
+      await bisectUntaggedErrors("/r", null, files, ["Error: from b"], runOf(["Error: from b"]), options, bisection);
+      expect(timeouts.length).toBeGreaterThan(0);
+      for (const timeout of timeouts) expect(timeout).toBeLessThanOrEqual(5_000);
+    });
+
+    it("reports a last run that timed out at the deadline as a spent budget", async () => {
+      // Two files: the first half runs clean, the second (and last) times out at the deadline. No later deadline
+      // check follows, so only the timed-out run itself can mark the budget spent.
+      const errors = ["Error: from b"];
+      let calls = 0;
+      const bisection = {
+        deadline: Date.now() + 200,
+        label: "t",
+        runOnce: async (_root: string, _toRel: unknown, part: string[]) => {
+          if (calls++ === 0)
+            return {
+              ended: new Map(part.map((f) => [f, { status: "passed" }])),
+              started: new Set(part),
+              timedOut: false,
+              code: 0,
+              runEnd: "passed",
+              runErrors: [],
+            };
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return {
+            ended: new Map(),
+            started: new Set(part),
+            timedOut: true,
+            code: null,
+            runEnd: undefined,
+            runErrors: [],
+          };
+        },
+      };
+      const labels = await bisectUntaggedErrors(
+        "/r",
+        null,
+        ["a.test.js", "b.test.js"],
+        errors,
+        runOf(errors),
+        options,
+        bisection,
+      );
+      expect(calls).toBe(2);
+      expect(labels.get(errors[0])).toBe("(#7518 bisection: budget spent before it was located)");
+    });
+
+    it("says so when errors that share a first line reproduce in more than one file", async () => {
+      const same = 'Error: [vitest-worker]: Timeout calling "onTaskUpdate"';
+      const raises = { "a.test.js": same, "c.test.js": same };
+      const bisection = { deadline: Date.now() + 60_000, label: "t", runOnce: fakeRun(raises, []) };
+      const labels = await bisectUntaggedErrors(
+        "/r",
+        null,
+        files,
+        [same, same],
+        runOf([same, same]),
+        options,
+        bisection,
+      );
+      expect(labels.get(same)).toBe(
+        "(#7518 bisection: reproduces with only one of these files (errors with this first line are not told apart) in the run: a.test.js, c.test.js)",
+      );
+    });
+
     it("traces a real untagged run error to its file through runFiles", async () => {
       const root = scratch();
       symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "dir");
