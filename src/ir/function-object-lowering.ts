@@ -249,6 +249,20 @@ export function dynamicStoreOperand(
 }
 
 /**
+ * (#7354 T, W2) `Number(v)`'s ToNumber on the Prepared lane, which binds no `js.number.from-value`: the carrier's
+ * legalized ToNumber of a dynamic or a string operand; `undefined` for any other operand or lane.
+ */
+export function preparedToNumber(
+  value: IrValueId,
+  source: ts.Expression,
+  cx: FunctionObjectLoweringHost,
+): IrValueId | undefined {
+  const kind = cx.builder.typeOf(value).kind;
+  if (!createsFunctionObjects(cx) || (kind !== "dynamic" && kind !== "string")) return undefined;
+  return cx.builder.emitDynToNumber(dynamicStoreOperand(value, source, cx, "Number argument"));
+}
+
+/**
  * (#7106 S3a, #7354 C2) `new C(…args)` through a value: the callee, then each argument in source order as a dynamic
  * value, then `dyn.construct`, which the Prepared legalization (`dynamic-function-operations.ts`) or the ordinary
  * pipeline's resolver lowers. A spread argument refuses.
