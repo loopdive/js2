@@ -234,7 +234,8 @@ PR stacked on this one (`claude/ci-legacy-daily`), after owner sign-off.
 
 ## Validation (Part A, local, 2026-11-26)
 
-- **Edition list.** `test262-edition-scope.ts paths` on test262 `f49d9d65`
+- **Edition list.** `test262-edition-scope.ts paths` on the sandbox's test262 copy (its
+  revision is not readable here: the copy has no git metadata)
   lists 9,174 ES5 files. The promoted standalone baseline (48,735 rows)
   holds **9,029 ES5 rows** by the same classifier, which equals the edition
   ratchet's ES5 `total`. Every one of those rows is in the list, and none is

@@ -2118,7 +2118,8 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
         run: |
-          TEST262_SHA=$(git -C test262 rev-parse HEAD) node --input-type=module -e "
+          # Same revision read as the regression gate's (#1081): the submodule pin, never the outer HEAD.
+          TEST262_SHA=$(git submodule status test262 | awk '{print $1}' | tr -d '+-') node --input-type=module -e "
             import { writeFileSync } from 'node:fs';
             const { SCOPE: scope, EDITION: edition, SOURCE_SHA: sourceSha, TEST262_SHA: test262Sha, EVAL_ENGINE: evalEngine } = process.env;
             writeFileSync('ir-measurement/scope.json', JSON.stringify({ scope, ...(edition ? { edition } : {}), sourceSha, test262Sha, evalEngine }, null, 2));"
