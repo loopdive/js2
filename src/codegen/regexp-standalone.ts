@@ -46,7 +46,6 @@ import {
   ensureRegexReplace,
   ensureRegexSearch,
   ensureRegexSplit,
-  i32ArrayLiteralInstrs,
   MATCH_VEC_FIELD_INDEX,
   MATCH_VEC_FIELD_INDICES,
   MATCH_VEC_FIELD_INPUT,
@@ -115,6 +114,7 @@ import {
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
   RE_FIELD_SOURCE,
+  regExpI32ArrayInstrs,
 } from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
 import {
   STANDALONE_REGEXP_CARRIER_TEST_HELPER,
@@ -4707,7 +4707,7 @@ function buildRegexNamesTableInstrs(ctx: CodegenContext, reExpr: ts.Expression):
     values.push(name.length); // name length (UTF-16 code units)
     for (let k = 0; k < name.length; k++) values.push(name.charCodeAt(k));
   }
-  return i32ArrayLiteralInstrs(ctx, values);
+  return regExpI32ArrayInstrs(regexI32ArrayType(ctx), values);
 }
 
 /**

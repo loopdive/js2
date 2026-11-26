@@ -2,9 +2,10 @@
 /**
  * Layouts of the native RegExp engine's WasmGC types: the `$NativeRegExp`
  * carrier and the backtrack frame the VM stacks. The i32 array both refer to is
- * the module's ordinary `array (mut i32)`, so it arrives as an index.
+ * the module's ordinary `array (mut i32)`, so it arrives as an index; the
+ * constant arrays a carrier holds are built by {@link regExpI32ArrayInstrs}.
  */
-import type { TypeHandle, ValType } from "../../../wasm/model/instructions.js";
+import type { Instr, TypeHandle, ValType } from "../../../wasm/model/instructions.js";
 import type { ArrayTypeDef, StructTypeDef } from "../../../wasm/model/module-records.js";
 
 export const NATIVE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
@@ -104,4 +105,54 @@ export function buildRegExpFrameArrayType(frameTypeIdx: TypeHandle): ArrayTypeDe
     element: { kind: "ref_null", typeIdx: frameTypeIdx },
     mutable: true,
   };
+}
+
+/** Values per `array.new_fixed`: V8 refuses one with more than 10,000 operands. */
+const FIXED_CHUNK = 8192;
+
+/**
+ * Leave one non-null i32 array holding `values` on the stack: a program, a
+ * class table or a names table. Large Unicode string properties produce
+ * programs past the `array.new_fixed` limit, so with a `scratchLocal` an array
+ * over {@link FIXED_CHUNK} values is assembled in that local from bounded fixed
+ * chunks; the local is requested only then. Without one, the array is always
+ * a single `array.new_fixed`.
+ */
+export function regExpI32ArrayInstrs(
+  i32ArrayTypeIdx: TypeHandle,
+  values: readonly number[],
+  scratchLocal?: () => number,
+): Instr[] {
+  // `array.new_fixed` needs at least one operand.
+  if (values.length === 0)
+    return [
+      { op: "i32.const", value: 0 },
+      { op: "array.new_default", typeIdx: i32ArrayTypeIdx },
+    ];
+  if (values.length <= FIXED_CHUNK || scratchLocal === undefined) return fixedI32Array(i32ArrayTypeIdx, values);
+  const local = scratchLocal();
+  const instrs: Instr[] = [
+    { op: "i32.const", value: values.length },
+    { op: "array.new_default", typeIdx: i32ArrayTypeIdx },
+    { op: "local.set", index: local },
+  ];
+  for (let offset = 0; offset < values.length; offset += FIXED_CHUNK) {
+    const chunk = values.slice(offset, offset + FIXED_CHUNK);
+    instrs.push(
+      { op: "local.get", index: local },
+      { op: "i32.const", value: offset },
+      ...fixedI32Array(i32ArrayTypeIdx, chunk),
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: chunk.length },
+      { op: "array.copy", dstTypeIdx: i32ArrayTypeIdx, srcTypeIdx: i32ArrayTypeIdx },
+    );
+  }
+  instrs.push({ op: "local.get", index: local });
+  return instrs;
+}
+
+function fixedI32Array(i32ArrayTypeIdx: TypeHandle, values: readonly number[]): Instr[] {
+  const instrs: Instr[] = values.map((value) => ({ op: "i32.const", value: value | 0 }));
+  instrs.push({ op: "array.new_fixed", typeIdx: i32ArrayTypeIdx, length: values.length });
+  return instrs;
 }
