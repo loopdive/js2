@@ -12,8 +12,8 @@ reasoning_effort: high
 task_type: implementation
 area: ir
 goal: ir-full-coverage
-depends_on: [7486]
-related: [7354, 7352, 7369, 7312]
+depends_on: []
+related: [7486, 7354, 7352, 7369, 7312]
 ---
 
 # #7517 — Prepared: String.prototype and Function.prototype methods off a dynamic value
@@ -37,6 +37,10 @@ program, #7354 U).
 
 Goal: a member read off a dynamic value reaches String.prototype and Function.prototype methods, and
 a method call runs them on the receiver.
+
+Depends on [#7486](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7486-prepared-kind-abort-site-ids) (PR #7468): its site reasons are how the slices are measured. It is listed under
+`related` because its issue file is not on main yet, and the issue-integrity gate rejects a
+`depends_on` that names a missing file.
 
 ## Measured (2026-11-26, main `1a726b3e`)
 
