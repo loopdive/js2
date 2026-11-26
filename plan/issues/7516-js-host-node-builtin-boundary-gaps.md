@@ -1,6 +1,6 @@
 ---
 id: 7516
-title: "JS host: node: builtin boundary gaps left after #7504 (nested args, host throws, callback strings)"
+title: "JS host: boundary gaps left after #7504 (nested args, host throws, callback strings, returned closures)"
 status: backlog
 sprint: Backlog
 created: 2026-11-26
@@ -70,9 +70,25 @@ inject the same converter. The console path could use the context's
 number", but the converter also handles boolean, BigInt and the null/undefined
 carriers.
 
+## 5. A closure returned to JS through `wrapCompiledExports` is not a function
+
+Addendum from S25, measured on main 1a726b3e: an exported function that
+returns a closure gives JS a null-prototype `{}` instead of a function.
+
+```ts
+export function getOrdinary(): any {
+  return (): void => {};
+}
+```
+
+A plain `mk() { return () => {}; }` does the same. The result is the same with
+the IR on and off. S25 found it via the issue-3214 native rewrite; the
+acceptance case is in #7520's file.
+
 ## Acceptance criteria (when picked up)
 
 - Nested option objects reach Node as host objects (gap 1 repros pass).
 - A host throw inside a Wasm `try` is catchable there (gap 2).
 - A host string passed into a Wasm callback reads as a string (gap 3).
 - One injection seam for the converter (gap 4).
+- A closure returned through `wrapCompiledExports` is callable from JS (gap 5).
