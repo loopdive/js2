@@ -2,8 +2,8 @@
 //
 // #7363 slice A, A2 — a top-level literal direct eval becomes a called script source of the program. The Prepared
 // entry adds each qualifying site's text as `<eval:N>.js`, pairs the site with that script, the receipt checks the
-// pair, and the script's module init is "called": startup does not run it. The site itself still refuses by name
-// until A4 builds the call. A site after `break` is never lowered, so its program compiles and shows the source.
+// pair, and the script's module init is "called": startup does not run it; since A4 the site calls it. A site after
+// `break` is never lowered, so its program compiles and shows the source.
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import {
@@ -34,7 +34,7 @@ const options = {
   allowJs: true,
 } as Test262CompileOptions;
 
-const CALLED = "ir/from-ast: eval literal has a called source; its call needs the %eval% identity test (#7363 A4)";
+const EVAL_LITERAL = "ir/from-ast: eval literal:";
 const NO_PROVIDER = "ir/from-ast: eval statement has no eval provider";
 const DIRECT_CALL = 'ir/from-ast: direct call to "eval" has no exact AST-site plan';
 /** A qualifying site that is never lowered: the program compiles. */
@@ -64,13 +64,15 @@ describe("#7363 A2 — a qualifying site adds a called source and refuses by nam
     expect(literalEvalTexts("test.js", 'eval("1");\nif (c) eval(`2`);')).toEqual(["1", "2"]);
   });
 
-  it("refuses a statement site with the called-source label", async () => {
-    expect(await gaps('eval("1");')).toEqual([`${CALLED} in <module-init>`]);
-  });
-
-  it("leaves an expression-position site at the generic direct-call refusal (A5)", async () => {
-    expect(literalEvalTexts("test.js", 'void eval("1");')).toEqual(["1"]);
-    expect(await gaps('void eval("1");')).toEqual([`${DIRECT_CALL} in <module-init>`]);
+  // (A4) A statement site, or one whose value is discarded, is a call of its source; a site whose completion value is
+  // used refuses by A5's name.
+  it("lowers a statement site and refuses an expression-position site by A5's name", async () => {
+    expect(await gaps('eval("1");')).toEqual([]);
+    expect(await gaps('void eval("1");')).toEqual([]);
+    expect(literalEvalTexts("test.js", 'var v = eval("1");')).toEqual(["1"]);
+    expect(await gaps('var v = eval("1");')).toEqual([
+      `${EVAL_LITERAL} its completion value needs #7363 A5 in <module-init>`,
+    ]);
   });
 
   it("compiles the called source, and startup does not run it", async () => {
@@ -152,7 +154,7 @@ describe("#7363 A2 — an excluded site adds no source and keeps its slice-1 ref
     ["a string-literal callee spelled eval", '"eval"("1");'],
   ])("%s", async (_label, source) => {
     expect(literalEvalTexts("test.js", source)).toEqual([]);
-    expect((await gaps(source)).some((message) => message.startsWith(CALLED))).toBe(false);
+    expect((await gaps(source)).some((message) => message.startsWith(EVAL_LITERAL))).toBe(false);
   });
 
   it("keeps the text of a return inside a function of the text", () => {
@@ -190,7 +192,7 @@ describe("#7363 A2 — the receipt", () => {
     const { ast, rows } = program('eval("1");\neval("2");');
     expect(rows.map((row) => row.source.text)).toEqual(["1", "2"]);
     const related = verify(rows, ast)();
-    expect([...related.calls]).toEqual(rows.map((row) => row.call));
+    expect([...related.calls]).toEqual(rows.map((row) => [row.call, row.source]));
     expect([...related.sources]).toEqual(rows.map((row) => row.source));
   });
 

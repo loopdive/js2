@@ -37,7 +37,6 @@ const SETTINGS = [
 ] as const;
 
 const NO_PROVIDER = "ir/from-ast: eval statement has no eval provider in <module-init>";
-const CALLED = "ir/from-ast: eval literal has a called source; its call needs the %eval% identity test (#7363 A4)";
 /** A qualifying site of `text` that is never lowered. */
 const deadSite = (text: string) => `do { break; eval(${JSON.stringify(text)}); } while (false);`;
 
@@ -82,9 +81,12 @@ describe("#7363 RV7432 B1 — a text the compile's gates refuse joins no program
     expect(await gaps('eval("1 +");', settings)).toEqual([NO_PROVIDER]);
   });
 
-  // A diagnostic no gate refuses is tolerated in a text as in an entry: the text joins, and the site is claimed.
+  // A diagnostic no gate refuses is tolerated in a text as in an entry: the text joins, and the site is claimed. The
+  // program then stops in the text, whose read has no lowering yet; without the text it fails too, at the site.
   it.each(SETTINGS)("a text that reads an undeclared global joins (%s)", async (_setting, settings) => {
-    expect(await gaps('eval("undeclaredX");', settings)).toEqual([`${CALLED} in <module-init>`]);
+    expect(await gaps('eval("undeclaredX");', settings)).toEqual([
+      'ir/from-ast: identifier "undeclaredX" is not in scope in <module-init>',
+    ]);
   });
 
   // TypeScript reports these only as semantic diagnostics, which no gate refuses; the site predicate does.

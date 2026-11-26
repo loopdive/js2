@@ -372,14 +372,19 @@ function adapterRefusal(entryFile: string, code: string, detail: string, message
     { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
   ]);
 }
+/** Compile a source graph with its analysis; `added` of its scripts are the entry's literal eval texts, in order. */
+type GraphCompile = (graph: Record<string, string>, ast: MultiTypedAST, added: number) => CompileResult;
 /**
- * (#7363) `files` plus one `<eval:N>.js` script per qualifying literal eval site of the entry, with its analysis, when
- * the scripts add nothing that fails the compile and change no other source's diagnostics; otherwise `files` and
- * `without`, its analysis, and every site keeps its slice-1 refusal at select. A script fails the compile exactly as a
- * JavaScript entry does, through the compile's own gates: a syntax error outside the tolerated list, a hard type error
- * or an ES early error. Any other diagnostic of a text, such as a read of an undeclared global, is tolerated as in an
- * entry. A text reaches another source's diagnostics when a member store in it declares a JS expando property of a
- * caller binding; such a change names no text, so then none joins.
+ * (#7363) The compile of `files` plus one `<eval:N>.js` script per qualifying literal eval site of the entry, when the
+ * scripts add nothing that fails the compile's gates and change no other source's diagnostics, and that compile
+ * succeeds; otherwise the compile of `files` with `without`, its analysis, where every site keeps its slice-1 refusal
+ * at select. A script fails the gates exactly as a JavaScript entry does: a syntax error outside the tolerated list, a
+ * hard type error or an ES early error. Any other diagnostic of a text, such as a read of an undeclared global, is
+ * tolerated as in an entry. A text reaches another source's diagnostics when a member store in it declares a JS
+ * expando property of a caller binding; such a change names no text, so then none joins. (A4) A failure with the texts
+ * does not name its cause either: a text the IR cannot lower fails the program even where its site never runs, so
+ * the program is then the one without them. When that fails too, the failure with the texts is the answer: it names
+ * the site's own refusal.
  */
 function withLiteralEvalSources(
   files: Record<string, string>,
@@ -387,8 +392,9 @@ function withLiteralEvalSources(
   texts: readonly string[],
   analyze: (graph: Record<string, string>) => MultiTypedAST,
   options: Test262CompileOptions,
-): { readonly graph: Record<string, string>; readonly ast: MultiTypedAST } {
-  if (texts.length === 0) return { graph: files, ast: without };
+  compileGraph: GraphCompile,
+): CompileResult {
+  if (texts.length === 0) return compileGraph(files, without, 0);
   const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
   const evalNames = new Set(texts.map((_, index) => normalizeMultiFileName(literalEvalFileName(index))));
   const graph: Record<string, string> = Object.create(null);
@@ -422,7 +428,11 @@ function withLiteralEvalSources(
   const quiet =
     !ast.sourceFiles.some((source) => isEvalSource(source) && failsCompile(source)) &&
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
-  return quiet ? { graph, ast } : { graph: files, ast: without };
+  if (!quiet) return compileGraph(files, without, 0);
+  const joined = compileGraph(graph, ast, texts.length);
+  if (joined.success) return joined;
+  const alone = compileGraph(files, without, 0);
+  return alone.success ? alone : joined;
 }
 function present(
   files: Record<string, string>,
@@ -471,15 +481,34 @@ function present(
     options.inferModuleStrictArguments === true || options.allowJs !== true
       ? []
       : literalEvalTexts(entryKey, analyzedFiles[entryKey]!);
-  const { graph, ast } = withLiteralEvalSources(analyzedFiles, analyzedAst, evalTexts, analyze, options);
+  const request: PresentRequest = { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies };
+  return withLiteralEvalSources(analyzedFiles, analyzedAst, evalTexts, analyze, options, (graph, ast, added) =>
+    presentAnalyzed(request, graph, ast, added),
+  );
+}
+/** What `present` was asked, for each graph it compiles. */
+interface PresentRequest {
+  readonly exactFiles: Record<string, string>;
+  readonly entryFile: string;
+  readonly options: Test262CompileOptions;
+  readonly singleSource: boolean;
+  readonly profile: ReturnType<typeof resolveCompileTargetProfile>;
+  readonly unlowerableBodies: UnlowerableBodies;
+}
+/** `present`'s compile of one analyzed graph, whose last `added` scripts are the entry's literal eval texts. */
+function presentAnalyzed(
+  { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies }: PresentRequest,
+  graph: Record<string, string>,
+  ast: MultiTypedAST,
+  added: number,
+): CompileResult {
   if (!completeAnalyzedGraph(graph, entryFile, ast))
     return adapterRefusal(
       entryFile,
       "prepared-source-graph-incomplete",
       "frontend did not retain the complete supplied name/text graph",
     );
-  const literalEvalSources =
-    graph === analyzedFiles ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, evalTexts.length);
+  const literalEvalSources = added === 0 ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, added);
   // (#7363) An eval source's supplied text is its own; the entry's is the unelided one.
   const supplied = new Map(
     [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [

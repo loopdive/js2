@@ -30,6 +30,9 @@ related: [7354, 7106, 7345, 3630]
 # so its program's source list names its called eval sources (+2). program-source.ts +20, not +17: a script's
 # module-init plan takes only its own function values (#7354 F1b), so a called eval source holds none (+3). The
 # capability now rides on SourceUnitLowering in program-source-units.ts (+5, under its ceiling).
+# 2026-11-26 (A4 narrowed): from-ast +27: `lowerLiteralEvalCall` (the site's call of its called init or its named
+# refusal, 22 lines with its doc) and the resolver's `literalEvalCalledInit` / `ambientThisMayBeGlobal`; lowerCall
+# is 306 lines, +1 over main (the A2 label's branch becomes the arm). The other A4 files stay under their ceilings.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts

@@ -62,27 +62,27 @@ export function pairLiteralEvalSources(
 
 /**
  * The receipt: each row's call is a qualifying site of the entry, its source is a script of the program whose text is
- * the literal's value, and no call or source occurs twice. Returns the related calls and sources, and each source's
- * dependency on the entry, which holds its call: the inventory orders a source after its dependencies, so the entry
- * is planned and lowered before the texts it runs, whatever the names sort to.
+ * the literal's value, and no call or source occurs twice. Returns each related call's source, the related sources,
+ * and each source's dependency on the entry, which holds its call: the inventory orders a source after its
+ * dependencies, so the entry is planned and lowered before the texts it runs, whatever the names sort to.
  */
 export function verifyLiteralEvalSources(
   rows: readonly LiteralEvalSource[],
   sourceFiles: readonly ts.SourceFile[],
   entry: ts.SourceFile,
 ): {
-  readonly calls: ReadonlySet<ts.CallExpression>;
+  readonly calls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
   readonly sources: ReadonlySet<ts.SourceFile>;
   readonly dependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>;
 } {
-  const calls = new Set<ts.CallExpression>();
+  const calls = new Map<ts.CallExpression, ts.SourceFile>();
   const sources = new Set<ts.SourceFile>();
   for (const { call, source } of rows) {
     const refused = (detail: string): never => {
       throw new PreparedIrProgramInvariantError("invalid-prepared-data", `literal eval ${source.fileName}: ${detail}`);
     };
     if (calls.has(call) || sources.has(source)) refused("a call or a source occurs in two rows");
-    calls.add(call);
+    calls.set(call, source);
     sources.add(source);
     if (source === entry || !sourceFiles.includes(source) || ts.isExternalModule(source))
       refused("the source is not a script of the program");

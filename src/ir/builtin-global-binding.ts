@@ -4,8 +4,8 @@
  * declared in lib files only, no source declares a binding of that name at any level (a `var`, `let`, `const`,
  * `function`, `class`, parameter or pattern element: the checker resolves a script's top-level `function Object(){}`
  * reference to the lib's symbol, so the declaration is looked for by name), and no source assigns the name:
- * `Object = …`, a compound assignment, `++` / `--`, a destructuring target, or a write through a global-object alias
- * (`globalThis.Object = …`).
+ * `Object = …`, a compound assignment, `++` / `--`, `delete`, a destructuring target, or a write through a global-object
+ * alias (`globalThis.Object = …`).
  * The one answer for "this is the global `Object`" of the native statics' call form and of the flow rule beside it.
  */
 import { ts } from "../ts-api.js";
@@ -13,7 +13,7 @@ import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
-const GLOBAL_ALIASES = new Set(["globalThis", "global", "window", "self"]);
+export const GLOBAL_ALIASES: ReadonlySet<string> = new Set(["globalThis", "global", "window", "self"]);
 
 const isAssignment = (kind: ts.SyntaxKind): boolean =>
   kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
@@ -58,6 +58,7 @@ function boundOrWrittenNames(sourceFiles: readonly ts.SourceFile[]): ReadonlySet
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     )
       targetNames(node.operand, names);
+    else if (ts.isDeleteExpression(node)) targetNames(node.expression, names);
     else if (
       (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       !ts.isVariableDeclarationList(node.initializer)
