@@ -2,7 +2,8 @@
 //
 // #7430 — `o?.f?.()` where the class field `f` holds `undefined`: the struct-field arm of the optional call called the
 // field without testing it, and the call trapped. Past the receiver test the call is now `o.f?.()` on the held
-// receiver, which short-circuits on the field value. Each program's expected answer is node's.
+// receiver, which short-circuits on the field value. That call passes a spread argument as its elements, not as one
+// array. Each program's expected answer is node's.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
@@ -87,6 +88,25 @@ describe("#7430 `o?.f?.(args)` on a class-field callee", () => {
         "const p: { f?: () => number } | undefined = { f: () => 3 }; " +
         "return (o?.f?.() === undefined ? 1 : 0) + (p?.f?.() ?? 0) * 10; }",
       31,
+    ],
+    [
+      "a spread argument passes its elements",
+      "class C { f = (a: number, b: number) => a + b; } " +
+        "export function main(): number { const o: C | undefined = new C(); const xs = [1, 2]; return o?.f?.(...xs) ?? -1; }",
+      3,
+    ],
+    [
+      "a spread after a plain argument",
+      "class C { f = (a: number, b: number, c: number) => a + b * 10 + c * 100; } " +
+        "export function main(): number { const o: C | undefined = new C(); const xs = [2, 3]; " +
+        "return o?.f?.(1, ...xs) ?? -1; }",
+      321,
+    ],
+    [
+      "`o.f?.(...xs)` on a receiver that is not optional",
+      "class C { f = (a: number, b: number) => a + b; } " +
+        "export function main(): number { const o = new C(); const xs = [1, 2]; return o.f?.(...xs) ?? -1; }",
+      3,
     ],
   ])("%s", async (_, source, expected) => {
     expect(node(source)).toBe(expected);
