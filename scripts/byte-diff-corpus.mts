@@ -1,11 +1,18 @@
 // Byte-identity corpus diff between two compiler trees (#2138; regexp corpus #7369).
 // Usage:
-//   npx tsx scripts/byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N]
-//   npx tsx scripts/byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> \
+//   INPUT_ROOT=<dir> npx tsx scripts/byte-diff-corpus.mts <compilerRoot> <outFile> \
+//       [--corpus sample|regexp] [--jobs N] [--cache <dir>]
+//   INPUT_ROOT=<dir> npx tsx scripts/byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> \
 //       <baseRoot> <headRoot> [--corpus sample|regexp]
 // Compiles a fixed corpus with the compiler at <compilerRoot> and writes JSONL of
-// {file, mode, status, sha, errs}; run it once per tree (baseline upstream/main,
-// then the branch) and `--compare` the two files.
+// {file, mode, status, sha, errors}; run it once per tree (baseline upstream/main,
+// then the branch) and `--compare` the two files. `status` is `ok`, `ce`, `throw`
+// or `crash:<code|signal>`; `errors` holds every message of a failed compile in
+// full, so two failures are equal only when all their messages are.
+//
+// Exit codes of `--compare`: 0 IDENTICAL; 1 FAILED, some row differs;
+// 2 INCONCLUSIVE, no row differs but some crashed or are order-dependent.
+// Every mode exits 2 on a usage error or a missing INPUT_ROOT.
 //
 // Corpora:
 //   sample (default)  example files on default + wasi, and a deterministic
@@ -27,17 +34,29 @@
 // TypeScript's process-global symbol ids reach emitted names), and a change
 // that compiles one file differently shifts that state for the files after it.
 // `--compare` therefore recompiles every differing row alone, in a fresh
-// process per tree, and counts it as a difference only if it still differs;
-// one that agrees alone is listed as order-dependent, not as a difference.
+// process per tree, and counts it as a difference only if it still differs.
+// One that agrees alone is listed as order-dependent and makes the verdict
+// INCONCLUSIVE: the chunked runs that should agree did not, so they prove
+// nothing about that row.
 //
-// Env: INPUT_ROOT (default /workspace), the tree the inputs are read from, the
-// same for both runs so both sides compile identical sources; STRIDE (default 20).
+// Cache: `--cache <dir>` stores each run's output under a hash of this script,
+// the compiler tree's src/, the corpus and every input file, and replays it on
+// a hit, so a head-only change recompiles only the head tree. It caches whole
+// runs, not rows, because a row's bytes can depend on its chunk (#7410); a run
+// with a crash row is not cached, so a rerun retries it. A change outside src/
+// (a dependency bump) is not in the key: use a fresh cache dir.
+//
+// Env: INPUT_ROOT (required), the tree the inputs are read from; it must hold
+// test262/test. It is not derived from <compilerRoot> because both runs must
+// read the same sources, and `--compare` has two roots. STRIDE (default 20).
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -45,11 +64,23 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
-const INPUT_ROOT = process.env.INPUT_ROOT ?? "/workspace";
+const USAGE =
+  "usage: INPUT_ROOT=<dir> byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N] [--cache <dir>]\n" +
+  "       INPUT_ROOT=<dir> byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp]";
+
+/** The input tree named by INPUT_ROOT; exits 2 unless it holds test262/test. */
+function inputRoot(): string {
+  const root = process.env.INPUT_ROOT;
+  if (root && existsSync(join(root, "test262/test"))) return resolve(root);
+  console.error(`INPUT_ROOT must name a tree holding test262/test; got ${JSON.stringify(root ?? null)}\n${USAGE}`);
+  process.exit(2);
+}
+
+const INPUT_ROOT = inputRoot();
 const STRIDE = Number(process.env.STRIDE ?? 20);
 const CHUNK_SIZE = 300;
 const WORKER_HEAP_MB = 3072;
@@ -65,7 +96,7 @@ interface Row {
   mode: string;
   status: string;
   sha: string | null;
-  errs: number;
+  errors: string[];
 }
 
 const AS_TS = { fileName: "test.ts" };
@@ -142,22 +173,23 @@ async function runWorker(compilerRoot: string, chunkPath: string, outPath: strin
   for (const { file, mode, opts } of JSON.parse(readFileSync(chunkPath, "utf-8")) as Job[]) {
     let status: string;
     let sha: string | null = null;
-    let errs = -1;
+    let errors: string[] = [];
     try {
       const r = await compile(readFileSync(file, "utf-8"), opts);
-      errs = r.errors?.length ?? 0;
       if (r.success && r.binary) {
         status = "ok";
         sha = createHash("sha256").update(r.binary).digest("hex");
       } else {
-        status = "ce:" + (r.errors?.[0]?.message ?? "").slice(0, 120);
+        status = "ce";
+        errors = (r.errors ?? []).map((e: { message: string }) => e.message);
       }
     } catch (e) {
-      status = "throw:" + String(e instanceof Error ? e.message : e).slice(0, 120);
+      status = "throw";
+      errors = [String(e instanceof Error ? e.message : e)];
     }
     // A message may quote a path inside the compiler tree; that is not a difference.
-    status = status.split(compilerRoot).join("<root>");
-    appendFileSync(outPath, JSON.stringify({ file: rel(file), mode, status, sha, errs }) + "\n");
+    errors = errors.map((message) => message.split(compilerRoot).join("<root>"));
+    appendFileSync(outPath, JSON.stringify({ file: rel(file), mode, status, sha, errors }) + "\n");
   }
 }
 
@@ -195,15 +227,33 @@ async function runChunk(compilerRoot: string, jobs: Job[], chunkPath: string, ou
     remaining = remaining.filter((job) => !finished.has(keyOf(job)));
     if (ended !== 0 && alone && remaining[0] === first) {
       remaining.shift();
-      const row = { file: rel(first.file), mode: first.mode, status: `crash:${ended}`, sha: null, errs: -1 };
+      const row = { file: rel(first.file), mode: first.mode, status: `crash:${ended}`, sha: null, errors: [] };
       appendFileSync(outPath, JSON.stringify(row) + "\n");
     }
     alone = ended !== 0 && !alone;
   }
 }
 
-async function run(compilerRoot: string, outFile: string, corpus: string, lanes: number) {
+/** Keys a run for `--cache`: this script, the compiler tree's src/, the corpus and every input. */
+function runKey(compilerRoot: string, corpus: string, jobs: Job[]): string {
+  const hash = createHash("sha256")
+    .update(readFileSync(fileURLToPath(import.meta.url)))
+    .update(`\0${corpus}`);
+  const src = join(compilerRoot, "src");
+  for (const name of readdirSync(src, { recursive: true, encoding: "utf-8" }).sort())
+    if (lstatSync(join(src, name)).isFile()) hash.update(`\0${name}\0`).update(readFileSync(join(src, name)));
+  for (const job of jobs) hash.update(`\0${keyOf(job)}\0`).update(readFileSync(job.file));
+  return hash.digest("hex");
+}
+
+async function run(compilerRoot: string, outFile: string, corpus: string, lanes: number, cacheDir?: string) {
   const jobs = CORPORA[corpus]!();
+  const cached = cacheDir && join(cacheDir, `${runKey(compilerRoot, corpus, jobs)}.jsonl`);
+  if (cached && existsSync(cached)) {
+    copyFileSync(cached, outFile);
+    process.stderr.write(`${corpus}: ${jobs.length} compiles replayed from ${cached} → ${outFile}\n`);
+    return;
+  }
   const scratch = mkdtempSync(join(tmpdir(), "byte-diff-corpus-"));
   const chunks: string[] = [];
   for (let start = 0; start < jobs.length; start += CHUNK_SIZE) chunks.push(join(scratch, `${chunks.length}`));
@@ -219,8 +269,13 @@ async function run(compilerRoot: string, outFile: string, corpus: string, lanes:
     }
   };
   await Promise.all(Array.from({ length: lanes }, lane));
-  writeFileSync(outFile, chunks.map((chunk) => readFileSync(`${chunk}.jsonl`, "utf-8")).join(""));
+  const rows = chunks.flatMap((chunk) => readRows(`${chunk}.jsonl`));
+  writeFileSync(outFile, rows.map((row) => JSON.stringify(row) + "\n").join(""));
   rmSync(scratch, { recursive: true, force: true });
+  if (cached && !rows.some((row) => row.status.startsWith("crash:"))) {
+    mkdirSync(dirname(cached), { recursive: true });
+    copyFileSync(outFile, cached);
+  }
   process.stderr.write(`done: ${jobs.length} compiles → ${outFile}\n`);
 }
 
@@ -241,8 +296,9 @@ async function compileAlone(compilerRoot: string, job: Job, scratch: string): Pr
 // apart (and still differs when the failure itself changed); a crash on
 // either side is not comparable at all. ──
 
-const sameOutput = (a: Row, b: Row | undefined) => b !== undefined && a.status === b.status && a.sha === b.sha;
-const show = (row: Row | undefined) => (row ? `${row.status} ${row.sha}` : "missing");
+const sameOutput = (a: Row, b: Row | undefined) =>
+  b !== undefined && a.status === b.status && a.sha === b.sha && JSON.stringify(a.errors) === JSON.stringify(b.errors);
+const show = (row: Row | undefined) => (row ? `${row.status} ${row.sha ?? JSON.stringify(row.errors)}` : "missing");
 
 interface Trees {
   corpus: string;
@@ -299,16 +355,17 @@ async function compare(baseFile: string, headFile: string, trees: Trees): Promis
       `  ${mode}: ${c.compiled} compiled + ${c.failed} failed on base, ${c.bothFailed} failed on both, ${c.differ} differ on head`,
     );
   const tail = `${identical} identical binaries, ${crashes.length} crash rows, ${orderDependent.length} order-dependent rows`;
-  const verdict = differ > 0 ? "FAILED" : crashes.length > 0 ? "INCONCLUSIVE" : "IDENTICAL";
+  const inconclusive = crashes.length + orderDependent.length;
+  const verdict = differ > 0 ? "FAILED" : inconclusive > 0 ? "INCONCLUSIVE" : "IDENTICAL";
   console.log(`${verdict} — ${differ} rows differ; ${tail}`);
-  return differ > 0 ? 1 : crashes.length > 0 ? 2 : 0;
+  return differ > 0 ? 1 : inconclusive > 0 ? 2 : 0;
 }
 
 const argv = process.argv.slice(2);
 const flag = (name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
 const corpus = flag("--corpus") ?? "sample";
 const lanes = Number(flag("--jobs") ?? 1);
-const positional = argv.filter((arg, i) => !arg.startsWith("--") && !argv[i - 1]?.match(/^--(corpus|jobs)$/));
+const positional = argv.filter((arg, i) => !arg.startsWith("--") && !argv[i - 1]?.match(/^--(corpus|jobs|cache)$/));
 if (argv[0] === "--worker") {
   await runWorker(argv[1]!, argv[2]!, argv[3]!);
 } else if (
@@ -317,14 +374,11 @@ if (argv[0] === "--worker") {
   lanes < 1 ||
   positional.length !== (argv[0] === "--compare" ? 4 : 2)
 ) {
-  console.error(
-    "usage: byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N]\n" +
-      "       byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp]",
-  );
+  console.error(USAGE);
   process.exit(2);
 } else if (argv[0] === "--compare") {
   const [baseFile, headFile, baseRoot, headRoot] = positional as [string, string, string, string];
   process.exit(await compare(baseFile, headFile, { corpus, baseRoot, headRoot }));
 } else {
-  await run(positional[0]!, positional[1]!, corpus, lanes);
+  await run(positional[0]!, positional[1]!, corpus, lanes, flag("--cache"));
 }

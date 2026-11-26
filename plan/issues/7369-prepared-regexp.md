@@ -235,3 +235,18 @@ rule out. This run had no differing row to recheck.
 The largest new function is `rawLiteralAltSearch` at 172 lines, and no new file
 exceeds 1,500 lines. The LOC and function budgets pass with no grant, against
 both the merge base and `LOC_GATE_BASE=origin/main`.
+
+**Follow-ups.**
+
+- **R0 follow-up: byte-diff-corpus nits** (review RV7337, 2026-11-26).
+  `scripts/byte-diff-corpus.mts` now (1) makes an order-dependent row turn the
+  verdict `INCONCLUSIVE` with exit 2, as a crash row does, instead of
+  `IDENTICAL`; (2) stores every message of a failed compile in full, as an
+  `errors` array, and compares all of them, where it compared only the first
+  120 characters of the first; (3) requires `INPUT_ROOT`, named in the usage
+  line, and exits 2 when it is unset or holds no `test262/test`, instead of
+  defaulting to `/workspace`; (4) takes `--cache <dir>`, which replays a whole
+  run keyed on a hash of the script, the tree's `src/`, the corpus and every
+  input, so a head-only change recompiles only the head tree. Each was shown by
+  a run, and a 30-file regexp corpus (90 compiles) against a `git archive` of
+  `origin/main` was `IDENTICAL`, exit 0.
