@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: bugfix
 area: ir
 goal: backend-agnostic-ir
-related: [6708, 6672, 6979, 4102, 4106, 4110, 4241, 5385]
+related: [6708, 6672, 6979, 4102, 4106, 4110, 4241, 5385, 7539, 7540, 7541]
 ---
 
 # #7533: native async runtime rejected on the JS environment
@@ -75,11 +75,9 @@ it is not deleted here: retiring it is its own reviewed change.
      counterpart that checks behaviour (the settled value), not only names, and each re-pin is listed in the PR body.
 4. Known remaining red: the #4110 "ordinary array near miss" row fails in legacy codegen with "would need retired host
    imports: env::Promise_all" (from S7, #6979; it belongs with #5385). It is not skipped or marked todo. It stays red
-   under its own issue; ask the lead for an id.
-5. Follow-ups, ids from the lead:
-   - retire `host-wasmgc` and rename `standalone-native-wasmgc` to `native-wasmgc`;
-   - an embedder using `setExports` with an IR timer callback hangs silently: fail loudly or export the generic
-     dispatcher.
+   under #7539.
+5. Follow-ups: #7540 (retire `host-wasmgc`, rename the native runtime; backlog) and #7541 (a `setExports` embedder
+   with an IR timer callback hangs silently).
 
 ## Acceptance criteria
 
@@ -100,5 +98,5 @@ it is not deleted here: retiring it is its own reviewed change.
 ## Risks
 
 - Native async on JS depends on the boundary adapter (`__drain_microtasks`, `setInstance`). A raw `setExports`
-  embedder hangs silently; that is follow-up (b).
+  embedder hangs silently; that is #7541.
 - More programs claim through IR on gc, so their binaries change by design. The A/B diff must list exactly those.
