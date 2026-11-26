@@ -740,7 +740,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * standalone codegen instead of selecting the host-extern IR ABI.
    */
   readonly isRegExpExpression?: (expr: ts.Expression) => boolean;
-  /** (#7106 lever R) Legacy's static RegExp compiler builds this pair (`standaloneStaticRegExpCompiles`). */
+  /** (#7106 lever R) Legacy's static RegExp compiler builds this pair (`staticRegExpPairCompiles`). */
   readonly nativeRegExpCompiles?: (pattern: string, flags: string) => boolean;
   /**
    * Checker-only ambient identity proof used by Math call selection when a

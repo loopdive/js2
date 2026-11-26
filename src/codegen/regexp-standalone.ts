@@ -69,6 +69,11 @@ import {
   RE_FLAG_Y,
 } from "../regexp-compiler/bytecode.js";
 import { compilePattern, RepeatTooLargeError } from "../regexp-compiler/compile.js";
+import {
+  REGEXP_ENGINE_FLAGS,
+  staticRegExpPairEngineCompiles,
+  staticRegExpPairSyntaxError,
+} from "../regexp-compiler/static-pair.js";
 import { pushRegexI32Array } from "./regex/wasm-array-literal.js";
 import { fullDynamicRegExpAttempt, simpleSubsetFlagGate } from "./regex-runtime/compiler.js";
 import {
@@ -236,15 +241,9 @@ export function usesNativeRegExpProvider(ctx: CodegenContext): boolean {
   return hasStandaloneRegExpEngine(ctx);
 }
 
-// g/i/y from Phase 2a, m/s from 2c, d/u/v from 2d (#1911 — `d` does not
-// change MATCHING semantics; the `.indices` result surface is #1914's lane;
-// u/v code-point atoms resolve via compile-time host enumeration, Slice B).
-const SUPPORTED_STANDALONE_FLAGS =
-  RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S | RE_FLAG_D | RE_FLAG_U | RE_FLAG_V;
-
 function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node | undefined, detail: string): void {
   // invariant (producer-promise): the IR's `extern.regex` wrapper (`ensureIrRegExpLiteralHelper`) has no source
-  // node, and selection admitted only a pattern `standaloneStaticRegExpCompiles` accepts — #7106 lever R.
+  // node, and selection admitted only a pattern `staticRegExpPairCompiles` accepts — #7106 lever R.
   if (node === undefined) throw new Error(`standalone RegExp wrapper reached an unsupported ${detail}`);
   reportError(
     ctx,
@@ -653,20 +652,7 @@ function nativeRegExpPatternCompiles(pattern: string, flags: string): boolean {
   const key = `${flags}\0${pattern}`;
   const memo = widenedFoldCompilable.get(key);
   if (memo !== undefined) return memo;
-  let ok = false;
-  try {
-    const bits = parseFlags(flags);
-    if ((bits & ~SUPPORTED_STANDALONE_FLAGS) === 0) {
-      if ((bits & (RE_FLAG_U | RE_FLAG_V)) !== 0 && hostRegExpSyntaxErrorMessage(pattern, flags) !== null) {
-        ok = false;
-      } else {
-        compilePattern(pattern, bits);
-        ok = true;
-      }
-    }
-  } catch {
-    ok = false;
-  }
+  const ok = staticRegExpPairEngineCompiles(pattern, flags);
   widenedFoldCompilable.set(key, ok);
   return ok;
 }
@@ -972,7 +958,7 @@ function compileStaticStandaloneRegExp(
     return null;
   }
 
-  const refusedFlags = flagBits & ~SUPPORTED_STANDALONE_FLAGS;
+  const refusedFlags = flagBits & ~REGEXP_ENGINE_FLAGS;
   if (refusedFlags !== 0) {
     reportStandaloneRegExpUnsupported(ctx, node, `flags ${JSON.stringify(flags)} (#1539 Phase 2d)`);
     return null;
@@ -983,7 +969,7 @@ function compileStaticStandaloneRegExp(
   // lenient parser path (constructor sites already lowered host-invalid
   // patterns to a runtime SyntaxError before reaching here). #1911 Slice B.
   if ((flagBits & (RE_FLAG_U | RE_FLAG_V)) !== 0) {
-    const syntaxMsg = hostRegExpSyntaxErrorMessage(pattern, flags);
+    const syntaxMsg = staticRegExpPairSyntaxError(pattern, flags);
     if (syntaxMsg !== null) {
       reportStandaloneRegExpUnsupported(ctx, node, `invalid u/v pattern: ${syntaxMsg}`);
       return null;
@@ -1019,7 +1005,7 @@ export function staticRegExpGroupMeta(
   if (meta === null) return null;
   try {
     const flagBits = parseFlags(meta.flags);
-    if ((flagBits & ~SUPPORTED_STANDALONE_FLAGS) !== 0) return null;
+    if ((flagBits & ~REGEXP_ENGINE_FLAGS) !== 0) return null;
     const compiled = compilePattern(meta.pattern, flagBits);
     return { groupNames: compiled.groupNames, flags: compiled.flags, nGroups: compiled.nGroups };
   } catch {
@@ -2555,29 +2541,6 @@ function finiteRegExpPatternCandidates(ctx: CodegenContext, expression: ts.Expre
 }
 
 /**
- * (#7106 lever R) Whether `compileStandaloneStaticRegExp` builds this pair
- * without a diagnostic: the engine compiles it, or it is an invalid pair that
- * throws SyntaxError when it evaluates.
- */
-export function standaloneStaticRegExpCompiles(pattern: string, flags: string): boolean {
-  return isSupportedStaticRegExpCandidate(pattern, flags) || hostRegExpSyntaxErrorMessage(pattern, flags) !== null;
-}
-
-/** Whether the complete static backend can compile a candidate without emitting diagnostics. */
-function isSupportedStaticRegExpCandidate(pattern: string, flags: string): boolean {
-  try {
-    const flagBits = parseFlags(flags);
-    if ((flagBits & ~SUPPORTED_STANDALONE_FLAGS) !== 0) return false;
-    if ((flagBits & (RE_FLAG_U | RE_FLAG_V)) !== 0 && hostRegExpSyntaxErrorMessage(pattern, flags) !== null)
-      return false;
-    compilePattern(pattern, flagBits);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Emit a value-producing string dispatch for a finite set of static patterns.
  * Unknown or unsupported runtime contents keep the existing dynamic compiler.
  */
@@ -2601,7 +2564,7 @@ function emitFiniteRegExpPatternDispatch(
     { op: "local.get", index: flagsLocal },
     { op: "call", funcIdx: dynamicCompilerIdx },
   ];
-  const supported = candidates.filter((candidate) => isSupportedStaticRegExpCandidate(candidate, flags));
+  const supported = candidates.filter((candidate) => staticRegExpPairEngineCompiles(candidate, flags));
   for (let index = supported.length - 1; index >= 0; index--) {
     const candidate = supported[index]!;
     const savedBody = fctx.body;
@@ -2636,27 +2599,6 @@ export function compileStandaloneRegExpLiteral(
   node: ts.Node,
 ): ValType | null {
   return compileStandaloneRegExpPattern(ctx, fctx, pattern, flags, node);
-}
-
-/**
- * Genuine (pattern, flags) SyntaxErrors vs. engine limitations (#1912).
- *
- * The compiler runs on a JS host whose `RegExp` constructor is a spec-exact
- * validity oracle: any pair the host rejects with a SyntaxError is invalid per
- * §22.2.3.2 and must throw a *runtime* SyntaxError when the compiled
- * `new RegExp(...)` evaluates — not fail the whole compile (test262's
- * S15.10.1/S15.10.2.15 families catch exactly this). Host-VALID patterns our
- * matcher can't handle stay compile-time narrowed refusals.
- */
-function hostRegExpSyntaxErrorMessage(pattern: string, flags: string): string | null {
-  try {
-    // eslint-disable-next-line no-new
-    new RegExp(pattern, flags);
-    return null;
-  } catch (e) {
-    if (e instanceof SyntaxError) return e.message;
-    return e instanceof Error ? e.message : "Invalid regular expression";
-  }
 }
 
 /**
@@ -2817,7 +2759,7 @@ export function compileStandaloneRegExpConstructor(
   if (patternArg !== undefined) {
     const copy = staticRegExpLiteralCopy(ctx, patternArg, flagsArg);
     if (copy !== null) {
-      const syntaxMsg = hostRegExpSyntaxErrorMessage(copy.pattern, copy.flags);
+      const syntaxMsg = staticRegExpPairSyntaxError(copy.pattern, copy.flags);
       if (syntaxMsg !== null && hasStandaloneRegExpEngine(ctx)) {
         return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMsg);
       }
@@ -2961,7 +2903,7 @@ export function compileStandaloneStaticRegExp(
   flags: string,
   node: ts.Node | undefined,
 ): ValType {
-  const syntaxMsg = hostRegExpSyntaxErrorMessage(pattern, flags);
+  const syntaxMsg = staticRegExpPairSyntaxError(pattern, flags);
   if (syntaxMsg !== null && hasStandaloneRegExpEngine(ctx)) {
     return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMsg);
   }
@@ -5349,7 +5291,7 @@ export function tryCompileStandaloneRegExpCompile(
   // into the existing receiver. Dynamic values and every host-valid pair keep
   // the established shared in-place path below.
   if (staticSyntaxCandidate !== null) {
-    const syntaxMessage = hostRegExpSyntaxErrorMessage(staticSyntaxCandidate.pattern, staticSyntaxCandidate.flags);
+    const syntaxMessage = staticRegExpPairSyntaxError(staticSyntaxCandidate.pattern, staticSyntaxCandidate.flags);
     if (syntaxMessage !== null) return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMessage);
   }
 

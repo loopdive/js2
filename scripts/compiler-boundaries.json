@@ -299,9 +299,10 @@
         "src/regexp-compiler/unicode-string-data.generated.ts",
         "src/regexp-compiler/reference/vm.ts",
         "src/regexp-compiler/reference/linear.ts",
-        "src/regexp-compiler/reference/match-units.ts"
+        "src/regexp-compiler/reference/match-units.ts",
+        "src/regexp-compiler/static-pair.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "backend-wasmgc",
@@ -1937,9 +1938,10 @@
         "src/regexp-compiler/unicode-string-data.generated.ts",
         "src/regexp-compiler/reference/vm.ts",
         "src/regexp-compiler/reference/linear.ts",
-        "src/regexp-compiler/reference/match-units.ts"
+        "src/regexp-compiler/reference/match-units.ts",
+        "src/regexp-compiler/static-pair.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     }
   ],
   "nonModules": [
@@ -9617,6 +9619,11 @@
     },
     {
       "path": "src/regexp-compiler/reference/vm.ts",
+      "state": "clean",
+      "layer": "regexp-compiler"
+    },
+    {
+      "path": "src/regexp-compiler/static-pair.ts",
       "state": "clean",
       "layer": "regexp-compiler"
     },

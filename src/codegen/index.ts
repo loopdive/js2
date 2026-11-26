@@ -613,11 +613,8 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber, fillParseNumberToStringArms } from "./parse-number-native.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import {
-  inferStandaloneRegExpMatchResultType,
-  STANDALONE_REGEXP_REFLECTION_PROPS,
-  standaloneStaticRegExpCompiles,
-} from "./regexp-standalone.js";
+import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import { staticRegExpPairCompiles } from "../regexp-compiler/static-pair.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 
@@ -3313,7 +3310,7 @@ function planIrOverlay(
       ...makeIrCheckerSelectionOptions(ast.checker),
       jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       classifyArrayElementFamily,
-      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
+      nativeRegExpCompiles: staticRegExpPairCompiles, // (#7106 lever R)
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
