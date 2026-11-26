@@ -244,12 +244,15 @@ unaffected by construction. `buildParseFloatDefinition` stays under the 300-line
 `tests/issue-1663.test.ts` (1 row) and `tests/issue-6969-parse-number-tostring.test.ts` (8 parseFloat rows)
 fail identically on main `89e4748241`; `issue-2654` and `parseint-edge` pass.
 
-## Implementation Plan — B3: String, Number and Boolean as realm values (2026-11-26)
+## Implementation Plan — B3: String, Number and Boolean as realm values (2026-11-26, revised after PRV-B3)
 
-`String`, `Number` and `Boolean` as realm values on the Prepared path (`TEST262_COMPILER_PATH=ir`, standalone): the
-constructors and their prototypes as objects of the realm, `new X(v)` as a wrapper object, and the prototype methods
-the sample reaches. Same shape as #7354 G1's Error family. Out of scope (another session): `Math`, arrays, property
-descriptors, `with`, the global object.
+`String`, `Number` and `Boolean` as realm values on the Prepared path (`TEST262_COMPILER_PATH=ir`, standalone). Two
+slices: **B3a** makes the three constructors values and serves Number's constants and the conversion calls; the
+prototypes stay unreachable. **B3bc** makes the prototypes reachable as wrapper objects, adds `new X(v)`, and moves a
+primitive's member read and write onto the held prototype. Same shape as #7354 G1's Error family. Out of scope
+(another session): `Math`, arrays, property descriptors, `with`, the global object.
+
+Revised 2026-11-26 after the plan review PRV-B3 (blocker on `51b37eebf7`); the changelog is at the end of this section.
 
 ### Measured (2026-11-26, main `bb9123f6a3`)
 
@@ -287,16 +290,18 @@ in the first matching row from the bottom up):
 **What stands behind the stop** (a throwaway source rewrite in a scratch tree, not a prototype of the design):
 
 - A, constants replaced by their literals: 92 of 109 pass. Of the 17 others, 10 meet loose / mixed equality
-  (`Phase 1 requires matching operand types for '=='`) and 6 the `Number(v)` gap below.
+  (`Phase 1 requires matching operand types for '=='`) and 6 the `Number(v)` gap below. Bucket A reads no prototype
+  and holds no constructor as a value, so B3a's yield does not depend on the prototypes (blocker 1+2 re-check).
 - B, a random 100 of 399 with `new X(v)` replaced by `v`: 66 pass, 7 fail, 27 compile errors (9 of them are the
   rewrite's own artefact: a property write on what is now a primitive; 3 `delete`, 3 loose `==`, 3 `Object`). An
-  upper bound for B3b and B3c together: a wrapper still needs ToPrimitive through `valueOf` / `toString`.
+  upper bound for B3bc: a wrapper still needs ToPrimitive through `valueOf` / `toString`.
 
-**Probes** (real harness, Prepared path): `String(5)` passes; `Number("3")` compiles in the front end but fails at
-setup (`intrinsic callable js.number.from-value needs runtime function materialization`: the catalog's remaining
-"public Number(value) provider"; 30 first stops in the carriers); `Boolean(1)` has no plan (`direct call to "Boolean"
-has no exact AST-site plan`); `typeof String` and `Number.MAX_VALUE` stop at "not in scope"; `(5).toString()` refuses
-(`method call .toString(...) on f64 not in slice 4`); `"abc".length` is the run-time abort.
+**Probes** (real harness, Prepared path): `String(5)`, `String()` and `Number()` pass; `Number("3")` compiles in the
+front end but fails at setup (`intrinsic callable js.number.from-value needs runtime function materialization`: the
+catalog's remaining "public Number(value) provider"; 30 first stops in the carriers); `Boolean(1)` has no plan
+(`direct call to "Boolean" has no exact AST-site plan`); `typeof String`, `Number.MAX_VALUE` and
+`var x = Number.MAX_VALUE` stop at "not in scope"; `(5).toString()` refuses (`method call .toString(...) on f64 not in
+slice 4`); `"abc".length` is the run-time abort.
 
 **Uses beyond the stop in the 40 sample files**: `new X(v)` / `new X` / `new X()` (24 files); wrappers through
 `/ << >> >>> -= ++ <=` (ToNumber through `valueOf`) and through `===`, `?:`, `&&` (identity, truthiness); a wrapper as a
@@ -312,6 +317,15 @@ identity; `Object.getOwnPropertyDescriptor(Boolean.prototype, "toString")` and `
 `instanceof X`, `Boolean(v)`. Across all carriers also `Number.prototype.toString(radix)` on Number.prototype itself
 (44 files, answer `"0"`: Number.prototype has [[NumberData]] +0).
 
+**Key lists** (blocker 8): `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE` (`builtin-prototype-keys.ts`) diffed against node
+22's `Object.getOwnPropertyNames(Number.prototype)` / `(String.prototype)`, each united with Object.prototype's keys as
+`BUILTIN_REACHABLE_KEYS` unites them: no difference either way (String's `length` included). The catalog rows are
+written from the specification, so the derived sets must equal these.
+
+**Member counts** (node 22): String.prototype 50 methods and 3 statics (`fromCharCode`, `fromCodePoint`, `raw`);
+Number.prototype 6 methods and 6 statics (`Number.parseFloat` and `Number.parseInt` are the global functions' objects);
+Boolean.prototype 2 methods.
+
 ### What exists on main (read)
 
 - **G1's Error family** (#7354): catalog rows with `heldWith` (`native-realm-catalog.ts` `errorRows`), the selector list
@@ -323,16 +337,44 @@ identity; `Object.getOwnPropertyDescriptor(Boolean.prototype, "toString")` and `
   called from two arms of `dynamic-value-legalization.ts`); Error.prototype.toString by identity in ToPrimitive
   (`ordinary-to-primitive.ts`, the `errorToString` hook built in `dynamic-value-chains.ts`); what a realm holds
   (`native-realm-requirements.ts` `heldErrorConstructors`, `heldCatalogRows`); `source-plain-objects.ts` `namesErrors`.
+  **An Error constructor's `prototype`** is a real own data property {!w, !e, !c} whose value is the family's prototype
+  object, seeded in the initializer: G1 has no unreachable prototype, so B3a cannot copy it for `prototype`.
+- **B2b's identity mark** (unmerged, `claude/7350-b2b` `23d952425f`, commit `8049075930`): an object flag
+  `BUILTIN_IDENTITY_ONLY_FLAG` (0x100) on a kernel entry's bag; the kernel lookup's status 4 is "a miss among an
+  identity-only object's own properties", which the caller turns into the trap (`identityOnlyMiss` in
+  `builtin-function-prototype-bodies.ts`). B2b's rule: an unsupported member is never a catchable error or
+  `undefined`; a statically visible one refuses by name, a dynamic one traps.
 - **P1's prototype methods**: `dynamic-prototype-methods.ts` (`o.m(v)`: F2's [[Get]] then the dispatcher's call,
   replaced by the built-in's algorithm when the value read is the realm's function object; else the call as it was).
 - **F2's call**: one `js.closure.call:N(receiver, callee, …args)`; the dispatcher calls source closures, throws its
   TypeError for a non-callable, and aborts for a built-in. `.call` / `.apply` are not on this path: Function.prototype
   keys refuse by name (`FUNCTION_REACHABLE_KEYS`), apart from the intercepted `Object.prototype.toString.call(v)`.
+- **C2's `this`** (`dynamic-function-operations.ts` `dynamicCurrentThis`): strict code takes the receiver as is;
+  sloppy code takes an object as is and aborts on `undefined`, `null` or a primitive (C2-D3). No ToObject of `this`
+  exists on this path.
+- **The kernel's OrdinarySet** (`source-object-bodies.ts`, `js.object.set(object, key, value, receiver)`): an inherited
+  writable data property or a miss is CreateDataProperty on the receiver. It assumes an object receiver; it has no
+  §10.1.9.2 step 2.b test.
+- **The live object layout is final.** `native-realm.ts` declares the realm's objects with `{ key }` only, so
+  `native-object-layouts.ts` emits the final `$Object` (`createOpenObjectDeclaration`); the subtype-ready root
+  (`createExtensibleOpenObjectDeclaration`) is behind the `extensible: true` opt-in, which nothing sets. The program
+  layer never declares the realm-state layouts (`declareNativeRealmObjectLayouts` has no caller in
+  `src/backend/wasmgc/program/`), so every live `realmState` field is absent.
 - **Wrapper storage, #3518, wired nowhere**: `primitive-wrapper-layouts.ts` (`$StringObject` etc.: a final subtype of
-  `$Object` with an immutable `[[XData]]` field 6), `realm-object-layouts.ts` `createRealmPrimitiveWrapperDeclaration`,
-  `primitive-wrapper-bodies.ts` (allocation with an explicit prototype; payload read), `to-object-body.ts`,
-  `string-exotic-bodies.ts`; backend owners `native-primitive-wrapper-layouts.ts` and
-  `native-primitive-wrapper-storage.ts`. No `src` file imports the two owners; only #3518 tests do.
+  `$Object` with an immutable `[[XData]]` field 6), `primitive-wrapper-bodies.ts` (allocation with an explicit
+  prototype; payload read), `string-create-body.ts` (`buildStringCreateDefinition`: own `length`, indices virtual),
+  `to-object-body.ts`; backend owners `native-primitive-wrapper-layouts.ts`, `native-primitive-wrapper-storage.ts` and
+  `native-string-create.ts`, which no `src` file imports. Their realm-state branch uses
+  `realm-object-layouts.ts` `createRealmPrimitiveWrapperDeclaration`; `REALM_WRAPPER_STATE_FIELD` has no reader
+  anywhere in `src`, `tests` or `scripts`.
+- **The String exotic, #3518, half wired**: `string-exotic-bodies.ts` (array-index parse, the virtual own descriptor,
+  and `buildStringExoticOwnDescriptorDefinition`, "virtual first, then the ordinary find", usable at every cursor of a
+  prototype walk; a `$StringObject` is told apart by `ref.test` of its layout), `string-exotic-define-body.ts` and
+  `string-own-keys-body.ts` (`buildStringOwnKeysDefinition`: indices, then strings, then symbols). The LIVE descriptor
+  owner `native-object-descriptors.ts` already takes an optional `stringOwn` selection
+  (`native-string-descriptor-selection.ts`) and then builds its define bodies in `string-exotic` mode; nothing
+  supplies one. The composition of the String-aware find into the realm's lookup exists only in the test-only
+  `native-mixed-object-access.ts`.
 - **Legacy standalone wrappers** (`object-runtime.ts` `__new_Number` / `__new_String` / `__new_Boolean`): a null-proto
   `$Object` with a hidden `WRAPPER_PRIMITIVE_KEY` entry, read by `to-primitive-wrapper-bodies.ts`. A hidden key and no
   prototype; not reused (B2c-1 reached the same conclusion).
@@ -340,85 +382,158 @@ identity; `Object.getOwnPropertyDescriptor(Boolean.prototype, "toString")` and `
   pipeline calls `prepareNumberConversionResolver` from `integration.ts`): `String(v)` holds while no source declares
   `String`; `Number(v)` is dropped by any value read of `Number`; no `Boolean` plan. `lowerPreparedNumberCall`
   (from-ast) sends a dynamic operand to `emitDynToNumber` but a native string to `js.number.from-value`, which the
-  Prepared lane cannot materialize.
+  Prepared lane cannot materialize. The branch `claude/7350-string-call` (on origin at
+  `b05ac3987041aa2bad4ba892cb0dca3c6b1003a3`; feature commit `e50febcb71`, "the String(v) call plan asks the pristine
+  realm binding") makes the `String` plan ask G1's pristine test; it is not merged.
 - **The prototype premise (M1, C1)**: no Prepared program obtains a built-in prototype, so a primitive's member read
   answers from `BUILTIN_REACHABLE_KEYS` (own or `undefined`, or a refusal by name) and a primitive's member write never
   meets a setter (`dynamic-member-access.ts`). `tests/issue-7354-m-prototype-premise.test.ts` pins
   `String.prototype`, `Number.prototype` and `Boolean.prototype` as refusals. `builtin-prototype-keys.ts` keeps
   `NUMBER_PROTOTYPE` and `STRING_PROTOTYPE` as hand lists "because the wrapper prototypes are not in the catalog yet".
 
-### Target structure
+### When a family is held (pay for what you use)
 
-**Representation** (the IR's own choice; nothing mirrors legacy):
+A wrapper family `X` is held, and its catalog rows enter the realm, only where the program's emitted IR uses it.
+`heldFamilies` (`native-realm-requirements.ts`) derives this from the IR, never from the source:
 
-- A wrapper is an ordinary realm object of #3518's typed layout `$XObject`: [[Prototype]] `%X.prototype%`,
-  the payload in the immutable `[[XData]]` field. Every kernel operation is already total over `$Object`, so get,
-  set, has, define and the key walk need no new arm. Its kind is the `object` kind (as G1's error): `typeof` "object",
-  ToBoolean true, `===` identity.
-- A String wrapper's own `length` (StringCreate defines it as a real property) and its index properties are defined
-  at creation, non-writable and non-configurable (indices enumerable). The kernel then answers String exotic
-  [[GetOwnProperty]], [[DefineOwnProperty]] and [[Delete]] with no exotic arm. Sample need is small (8 carrier files
-  read a String wrapper's `length` or an index), but without it a read of `w[0]` would answer `undefined`.
-- `%String.prototype%`, `%Number.prototype%`, `%Boolean.prototype%` are themselves wrappers with "", +0 and false
-  (§22.1.3, §21.1.3, §20.3.3): allocated by the wrapper allocation, not `createWithPrototype`. `String.prototype` has
-  own `length` 0.
-- Number's constants are number data properties of `%Number%` {!w, !e, !c}. Because they are read-only and
-  non-configurable, `Number.MAX_VALUE` on a pristine `Number` folds to the catalog's value in the front end.
+- a `js.object.intrinsic` use naming a member of `X`: an identifier read of `X` that no fold answered, or (B3bc) a
+  prototype or method read through it;
+- (B3bc) a `js.object.create-wrapper` or `js.object.wrapper-data` use of `X`'s selector;
+- (B3bc) a constant-key member read of a primitive of `X`'s kind whose key `%X.prototype%` owns (the catalog's key
+  set). Today such a read refuses by name, so no program that compiles today changes;
+- (B3bc) `Number.prototype.toString` with a radix argument also holds `%RangeError%` (the Error family) where the
+  program can catch.
 
-**Modules** (runtime contract → runtime body → backend → IR, as G1):
+Not a use: a folded `Number.MAX_VALUE` (a constant, no intrinsic read), a `String(v)` / `Number(v)` / `Boolean(v)`
+direct call (a conversion), `typeof X` (folded to "function"), and a primitive member read of a key the prototype does
+not own. Such programs keep their bytes.
+
+**Members** (blocker 10). G1's cost on the prelude: `assert(true);` 77,429 B; with the catch binding holding Error,
+TypeError and Error.prototype.toString, 81,397 B (+3,968 B, +5.1 %); compile time unchanged within noise (G1 result
+section of #7354). Holding every member of the String family is 53 function rows plus the prototype: an **estimate**
+of 8 to 16 KB on the same prelude. Gate, measured first on the B3bc branch (prelude + one `new String("a")` row,
+all members held vs the members the row reaches, bytes and median of 3 compiles): **more than 4 KB or more than 10 %
+compile time ⇒ per-member holding**. Per-member holding holds the constructor, the prototype, every member whose name
+is a constant key the program reads or writes (a member access, a `hasOwnProperty` / descriptor key argument), and the
+members the IR's own algorithms call (`valueOf`, `toString`); where any computed-key access or own-key enumeration
+could reach the prototype, all members. Today a computed key refuses by name and no own-key enumeration reaches a
+prototype's non-enumerable members (`defineProperties` / `create` read enumerable keys only), so per-member holding is
+unobservable. The estimate is above the gate, so expect per-member holding.
+
+### Slice B3a — the constructors and Number's constants
+
+**Behaviour:**
+
+- `String`, `Number`, `Boolean` read as values where pristine: identity across reads, stored, passed, compared;
+  `typeof` "function"; `X.name` and `X.length` (1) are served: every kernel entry seeds its own `length` and `name`
+  (`buildFunctionLengthNameSeed`), so neither exposes the prototype.
+- `Number.MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY`: folded in the front end where
+  `Number` is pristine (the constants are read-only and non-configurable, so the fold is exact). A read through a value
+  (`var N = Number; N.MAX_VALUE`) is the realm's own data property, seeded from the catalog.
+- `String()` "" (unchanged), `Number()` +0 (unchanged), `Boolean()` false (new); `String(v)`, `Number(v)` (now total:
+  a native string operand takes the legalized ToNumber too), `Boolean(v)` (new, ToBoolean). The same answers where the
+  callee is the realm value (`X` read as a value and called directly); through a variable (`var B = Boolean; B()`) the
+  call is the dispatcher's built-in abort, as G1.
+- `x instanceof X`: a primitive `x` answers false before `prototype` is read (C2 already does this); an object `x`
+  reads `prototype` and traps (below).
+
+**The prototype stays unreachable** (blockers 1+2). The constructor rows of B3a carry `length`, `name` and Number's
+five constants only; no `prototype`. They are identity rows in B2b's sense, marked with B2b's
+`BUILTIN_IDENTITY_ONLY_FLAG`:
+
+- a **static** read of an unseeded key off a pristine constructor (`String.prototype`, `Number.isNaN`,
+  `String.fromCharCode`) refuses by name in the legalization's member read: the receiver's definition is the realm
+  intrinsic helper, so the key is known not seeded (`String.prototype is not reachable on this path yet (#7350
+  B3bc)`);
+- a **dynamic** own-property query on a marked bag that misses traps: [[Get]] (B2b's lookup status 4), [[HasProperty]],
+  `hasOwnProperty`, `Object.getOwnPropertyDescriptor`, `delete` and a write of a missing key (which would otherwise
+  create a writable `prototype`). B3a checks which of these B2b's mark already covers and extends the mark's test to
+  the others in the same functions.
+- B3a lands B2b's mark if B2b has not merged (the same code, cherry-picked from `8049075930`, not a second flag), and
+  B2b then rebases onto it.
+
+**Modules:**
 
 | layer | module | change |
 | --- | --- | --- |
-| contract | `src/runtime/contracts/native-realm-catalog.ts` | `wrapperRows(name)` beside `errorRows`: constructor (length 1, constructible, own `prototype` {!w,!e,!c}, Number's five constants), prototype (`constructor`, the spec's methods, a `primitiveData` field), one row per method; `NATIVE_WRAPPER_CONSTRUCTORS`; `NATIVE_MEMBERS` gains `valueOf` / `toString` of the three prototypes; the new ids are appended to `NATIVE_VALUE_INTRINSICS` (G1's selectors keep their numbers) |
-| runtime body | `src/runtime/wasmgc/values/realm-wrapper-bodies.ts` (new, beside `realm-family-bodies.ts`) | `buildWrapperCreateDefinition` (allocation from `primitive-wrapper-bodies.ts`, then String's `length` and indices through the kernel's `defineDataBody`), `buildWrapperDataDefinition` (thisXValue: the payload of a wrapper of that kind, else the realm's TypeError) |
-| runtime body | `realm-family-bodies.ts` | `RealmFamilyProperty` takes a number value; an object row with primitive data is allocated as a wrapper |
-| backend | `src/backend/wasmgc/program/native-realm-families.ts`, `native-realm.ts`, `resources/native-builtin-functions.ts` | number properties and wrapper prototypes pass through; `errorCreateOperands` becomes one family-create operand builder for both creations; `native-primitive-wrapper-layouts.ts` / `-storage.ts` become live owners, reserved only for the kinds the realm holds |
-| contracts | `src/ir/runtime/ordinary-object-callables.ts` | `js.object.create-wrapper(value, selector)`, `js.object.wrapper-data(object, selector)`; `dyn.object_tag`'s wrapper test is a `ref.test` of the layout, beside `is-error` |
-| IR keys | `src/ir/program/builtin-prototype-keys.ts` | `realmConstructorId` (Error family and the three) replaces `errorConstructorId`; `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE` become `realmStringKeys("%Number.prototype%")` etc.; `nativeConstantStatic(parent, name)` reads a constant off the catalog |
-| IR holds | `src/ir/program/native-realm-requirements.ts` | `heldErrorConstructors` becomes `heldFamilies`: one table (family → member ids, contracts, extra trigger: a bound catch payload for Error) |
-| IR read | `src/ir/identifier-read.ts`, `src/ir/source-plain-objects.ts`, `dynamic-value-kinds.ts` | `realmIntrinsicRead` asks `realmConstructorId`; `namesErrors` becomes `realmFamilies` (a set), `holdsErrors` a per-family question; the object kind is admitted where any family is held |
-| IR construction | `src/ir/program/dynamic-wrapper-constructors.ts` (new, sibling of `dynamic-error-constructors.ts`) | `new X(v)`: ToString / ToNumber / ToBoolean of `v` (absent: "", +0, false), then `create-wrapper`; `X(v)` through the realm value: the conversion alone. The recognition moves to `dynamic-realm-calls.ts` `realmConstructorOf` (one function answering family and selector), so the legalization's construct arm and dispatched-call arm switch once |
-| IR methods | `dynamic-prototype-methods.ts`, `ordinary-to-primitive.ts`, `dynamic-value-chains.ts` | `RealmMethod` becomes a table of (name, catalog id, algorithm); the `toString`-only-with-errors special case and the `errorToString` hook become one "realm method by identity" list, used by the call expansion and by ToPrimitive |
-| IR member access | `dynamic-member-access.ts` | where the family of a primitive kind is held, that kind's read is the realm's [[Get]] on `%X.prototype%` with the primitive as receiver, and its write OrdinarySet there (a setter on the prototype runs); unchanged where it is not held |
-| front end | `prepare-number-conversion.ts`, `from-ast.ts`, `realm-static-call.ts` | `Boolean` joins `ambientConversionCalls`' names (ToBoolean, `dyn.truthy`); the Prepared `Number` plan is pristine like `String` (the change on the unmerged `claude/7350-string-call`, `e50febcb71`, extended to `Number`); `lowerPreparedNumberCall` boxes a non-dynamic operand and takes `emitDynToNumber` on the Prepared lane; the constant fold `Number.<constant>` sits beside the static call form in `realm-static-call.ts` |
+| contract | `native-realm-catalog.ts` | `wrapperConstructorRows(name)` beside `errorRows`, same helpers (`callable`, `data`): length 1, constructible, `native`; Number's five constants as `{ kind: "number" }` data properties {!w, !e, !c}; `NATIVE_WRAPPER_CONSTRUCTORS`; the three ids appended to `NATIVE_VALUE_INTRINSICS` |
+| runtime body | `realm-family-bodies.ts` | `RealmFamilyProperty` takes a number value (`f64.const`, boxed); the identity mark set on a row the catalog marks identity-only |
+| backend | `native-realm-families.ts` | `familyProperties` passes number values instead of throwing |
+| IR keys | `builtin-prototype-keys.ts` | `realmConstructorId(name)` (below) replaces `errorConstructorId`; `nativeConstantStatic("Number", name)` reads a constant off the catalog for the fold |
+| IR holds | `native-realm-requirements.ts` | `heldErrorConstructors` becomes `heldFamilies`, one table: family → member ids, contracts, extra trigger (a bound catch payload for Error) |
+| IR read | `identifier-read.ts`, `source-plain-objects.ts`, `dynamic-value-kinds.ts` | `realmIntrinsicRead` asks `realmConstructorId`; `namesErrors` becomes the set `realmFamilies`; `holdsErrors` a per-family question |
+| IR member read | `dynamic-member-access.ts` | the static refusal of an unseeded key off an identity row |
+| front end | `prepare-number-conversion.ts`, `from-ast.ts`, `realm-static-call.ts` | `Boolean` joins `ambientConversionCalls`' names (lowered as `dyn.truthy`, absent → false); the Prepared `Number` plan asks the pristine test like `String` (B3a absorbs `e50febcb71` and extends it to `Number`; `claude/7350-string-call` is then closed in favour of B3a); `lowerPreparedNumberCall` boxes a non-dynamic operand and takes `emitDynToNumber` on the Prepared lane; the `Number.<constant>` fold sits beside the static call form in `realm-static-call.ts` |
 
-### Reuse, and the duplicates it removes
+**Yield:** measured upper bound 92 of bucket A's 109, at most 98 with the `Number(v)` fix (6 rows stop at its gap);
+1 file of the 420 sample.
 
-- **Reuses**: G1's catalog shape, family allocation and seeding, `heldWith`, `js.object.intrinsic`, the pristine
-  predicate (`builtin-global-binding.ts`); P1's identity-tested call expansion; F2's call ABI and dispatcher (a held
-  method without an algorithm, called through a value, is the dispatcher's built-in abort); C2's `dyn.construct` and
-  `dyn.instanceof` (`x instanceof String` walks the wrapper's chain; a primitive answers false); the legalization's
-  existing ToString (`stringOf`), ToNumber (`toNumber`), ToBoolean (`js.value.to_boolean`) and number formatter
-  (radix formatting for `Number.prototype.toString(r)`); #3518's wrapper layouts, storage owners and bodies.
-- **Removes**: the two hand lists in `builtin-prototype-keys.ts` (the catalog is the list); the `errorToString`
-  single-purpose hook and P1's `name === "toString" && errors` special case (one table); `heldErrorConstructors`'
-  Error-only shape; `namesErrors` as a boolean; the Prepared `Number(v)` route to `js.number.from-value` (one ToNumber
-  for `+v` and `Number(v)`). Makes #3518's wrapper owners live instead of test-only.
-- **Does not add**: a second object layout, a hidden-key wrapper, a second call mechanism, or a selector-side copy of
-  the read rules.
+### Slice B3bc — wrappers and the reachable prototypes
 
-### Behaviour in scope
+B3b and B3c are one slice (review finding 13): a wrapper is useless without ToPrimitive through `valueOf` /
+`toString`, and the prototypes become reachable in the same change.
 
-- `String`, `Number`, `Boolean` read as values where pristine: `typeof X` "function"; `X.name`, `X.length` (1);
-  `X.prototype` (!w, !e, !c); `X.prototype.constructor === X`; identity across reads; passed, stored, compared.
-- `Number.MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY`: folded where `Number` is pristine,
-  the realm property otherwise (same value).
-- `String(v)` (unchanged), `Number(v)` (now total on the Prepared lane), `Boolean(v)` (new), as direct calls.
-- `new String(v)`, `new Number(v)`, `new Boolean(v)`, without argument and without parentheses: a wrapper; a second
-  argument is evaluated and ignored.
-- Wrapper as a value: `typeof` "object", truthy, `===` identity, `instanceof X` true, `Object.prototype.toString`
-  `[object String]` etc., own property reads and writes, as a descriptor object or property key.
-- ToPrimitive of a wrapper through the realm's `valueOf` / `toString`, recognised by identity, so a program override
+**Representation** (the IR's own choice; nothing mirrors legacy):
+
+- A wrapper is an ordinary realm object of #3518's typed layout `$XObject`: [[Prototype]] `%X.prototype%`, the payload
+  in the immutable `[[XData]]` field, the `object` kind (`typeof` "object", truthy, `===` identity). Every kernel
+  operation is total over `$Object`. Declaring the subtype needs the extensible `$Object` root: the realm sets
+  `extensible: true` only where it holds a wrapper family, so other realm programs keep the final type and their
+  bytes.
+- `%String.prototype%`, `%Number.prototype%`, `%Boolean.prototype%` are wrappers with "", +0 and false (§22.1.3,
+  §21.1.3, §20.3.3), allocated by the wrapper allocation, not `createWithPrototype`. The constructor rows gain their
+  `prototype` property, lose the identity mark, and the prototype and method rows join the catalog.
+- **String exotic objects use the existing exotic arm** (blocker 4; decided, no materialising): String creation is
+  `string-create-body.ts` (own `length`, indices virtual). Where the String family is held the realm supplies:
+  `stringOwn` to the live `native-object-descriptors.ts` (its define bodies switch to their existing `string-exotic`
+  mode), and the String-aware find (`buildStringExoticOwnDescriptorDefinition`, owned by
+  `native-string-exotic-own-descriptors.ts`) as the `findOwn` the realm's lookup, `has`, own-descriptor and kernel
+  [[Get]] call at each cursor (`native-object-access.ts`, `native-builtin-functions.ts` `findOrdinary`), as
+  `native-mixed-object-access.ts` composes it today. Own keys: `string-own-keys-body.ts` where the realm enumerates an
+  object's own keys. Feasible: each site takes the find as a function handle, and the virtual lookup tells a
+  `$StringObject` apart by `ref.test`. If one site cannot take it, that operation on a value that may be a String
+  wrapper refuses by name, and the plan's review is reopened; there is no materialised second mechanism either way.
+
+**Rules** (blocker 3):
+
+- **[[Get]] with a primitive receiver.** `"a".m`, `(5).m`, `true.m` where the family is held: the realm's [[Get]] on
+  `%X.prototype%` with the primitive as Receiver; a getter there runs with the primitive as `this`. A string's own
+  `length` and indices answer before the prototype (the String-aware find on its value, by the same exotic arm).
+- **[[Set]] with a primitive receiver** (§10.1.9.2): OrdinarySet on `%X.prototype%` with the primitive as Receiver.
+  An inherited data property, writable or not, and a miss answer `false` (step 2.b: Receiver is not an object), so
+  a sloppy write is a no-op and a strict write a TypeError; never an own write. An inherited setter runs with the
+  primitive as `this`, answering `true`; a setter-less accessor answers `false`. A string's own `length` and indices
+  are non-writable: `false`. The step-2.b test goes into the kernel's set body (`source-object-bodies.ts`), before
+  its own-update and CreateDataProperty, not into the IR.
+- **`this` of a primitive** (§10.2.1.2 OrdinaryCallBindThis): strict code gets the primitive (unchanged). Sloppy code
+  gets ToObject(this), a fresh wrapper, so `typeof this` is "object" and each call sees a new object.
+  `dynamicCurrentThis`'s abort arm gains, for each primitive kind whose family is held, `js.object.create-wrapper` of
+  that kind; `undefined` and `null` stay the abort (they need the global object, Session B). A primitive receiver
+  reaches a sloppy function only through a held prototype (a method, getter or setter defined there), so the family is
+  always held where the arm is needed. This is one arm, not a separate mechanism.
+
+**Behaviour in scope:**
+
+- `new String(v)`, `new Number(v)`, `new Boolean(v)`, without argument and without parentheses: ToString / ToNumber /
+  ToBoolean of `v` (absent: "", +0, false), then the wrapper; a second argument is evaluated and ignored.
+- A wrapper as a value: identity, truthiness, `instanceof X` true, `Object.prototype.toString` `[object String]` etc.
+  (`dyn.object_tag` tests the layout by `ref.test`, beside `is-error`), own property reads and writes, as a descriptor
+  object or a property key.
+- `X.prototype` (!w, !e, !c), `X.prototype.constructor === X`, writes to `X.prototype` and their reads from objects,
+  wrappers and primitives.
+- ToPrimitive of a wrapper through the realm's `valueOf` / `toString`, recognised by identity, so an override
   (`Number.prototype.valueOf = f`) is seen.
-- Calls by identity (P1's expansion): `valueOf()` and `toString()` of the three on a wrapper, on a primitive, and on
-  the prototype itself (`Number.prototype.toString(16)` is "0"); Number's `toString(radix)` for radix 2–36.
-- Every other method of the three prototypes is a function object (real `name`, `length`, [[Prototype]]
-  `%Function.prototype%`, no `prototype`) whose own properties can be read, written and deleted, so identity,
-  descriptor and `hasOwnProperty("length")` tests run.
-- Writes to `X.prototype` and reads of what they wrote, from objects, wrappers and primitives.
+- Calls by identity (P1's expansion): `valueOf()` and `toString()` of the three on a wrapper, a primitive and the
+  prototype itself (`Number.prototype.toString(16)` is "0"). Their `this` is thisXValue: the payload of a primitive or
+  of a wrapper of that kind, else a TypeError.
+- `Number.prototype.toString(radix)` (§21.1.3.6): thisNumberValue first; `radix` undefined → 10; otherwise
+  ToIntegerOrInfinity(radix), outside 2–36 a RangeError (test262 `S15.7.4.2_A4_*`); radix 10 is ToString, any other
+  the native number formatter's radix bodies.
+- Every other method is a function object (real `name`, `length`, [[Prototype]] `%Function.prototype%`, no
+  `prototype`) whose own properties can be read, written and deleted.
 
-**Not in scope, and what happens instead** (the lead's standing rule: never a wrong answer; a statically visible
-unsupported surface refuses by name at compile time, anything else is the uncatchable `unreachable`):
+**Not in scope, and what happens instead** (never a wrong answer; statically visible → named refusal, else the
+uncatchable `unreachable`):
 
 - A call of a method without an algorithm (`indexOf`, `substring`, `trim`, `fromCharCode`, …) in P1's `o.m(…)` shape:
   refuses by name (`String.prototype.indexOf has no Prepared algorithm`). Through any other value: the dispatcher's
@@ -426,48 +541,97 @@ unsupported surface refuses by name at compile time, anything else is the uncatc
 - `.call` / `.apply` / `.bind` on a built-in method: unchanged (refused by name through `FUNCTION_REACHABLE_KEYS`);
   #7350 G4 / #7349 S7.
 - Loose `==` / `!=` with a wrapper: stays the existing refusal (`dyn.eq (loose)`).
-- ES2015+ members (`Number.isNaN`, `Number.EPSILON`, `String.raw`, `String.prototype.at`, …): catalog rows held as
-  function objects or values where the spec gives them; their calls refuse by name like any other method.
-- `Object(v)` / `new Object(v)` (ToObject of a primitive, 40 `new Object` and 14 `Object(v)` first stops in the carriers): not here; it can reuse
-  `create-wrapper` later.
+- ES2015+ members (`Number.isNaN`, `Number.EPSILON`, `String.raw`, `String.prototype.at`, …): held as the
+  specification gives them where held at all; their calls refuse by name like any other method.
+- `Object(v)` / `new Object(v)` (ToObject of a primitive, 40 `new Object` and 14 `Object(v)` first stops in the
+  carriers): not here; it can reuse `create-wrapper` later.
 - A shadowed, assigned or `var`-declared `String` / `Number` / `Boolean`: not pristine; the existing rules
   (`scriptVarOfRealmGlobal` picks the three up through `REALM_GLOBAL_NAMES`).
 
-### Slices
+**Modules:**
 
-Each re-measures on current main before it starts (census on the 1,068 stop files and the 420 sample, base and head).
+| layer | module | change |
+| --- | --- | --- |
+| contract | `native-realm-catalog.ts` | `wrapperRows(name)` completes B3a's constructor rows: own `prototype`, the prototype row with a `primitiveData` field and `constructor`, one row per method; `NATIVE_MEMBERS` gains `valueOf` / `toString` of the three prototypes; ids appended to `NATIVE_VALUE_INTRINSICS` |
+| runtime body | `primitive-wrapper-bodies.ts` (blocker 5: no new file) | thisXValue (`buildPrimitiveWrapperThisValueDefinition`: the payload of a primitive or a wrapper of that kind, else the realm's TypeError) beside the existing allocation and payload read; Boolean and Number creation use the existing allocation; String creation is `string-create-body.ts` |
+| runtime body | `realm-family-bodies.ts` | an object row with primitive data is allocated as a wrapper |
+| backend | `native-realm.ts`, `native-builtin-functions.ts`, `native-primitive-wrapper-layouts.ts`, `native-primitive-wrapper-storage.ts`, `native-string-create.ts`, `native-object-descriptors.ts`, `native-object-access.ts` | the wrapper owners and String create become live, reserved only for held kinds; `stringOwn` and the String-aware find are supplied where String is held; `errorCreateOperands` becomes one family-create operand builder |
+| contracts | `src/ir/runtime/ordinary-object-callables.ts` | `js.object.create-wrapper(value, selector)`, `js.object.wrapper-data(object, selector)` |
+| IR construction | `dynamic-wrapper-constructors.ts` (new, sibling of `dynamic-error-constructors.ts`, same shape) | `new X(v)` and the value-route call `X(v)` |
+| IR methods | `dynamic-prototype-methods.ts`, `ordinary-to-primitive.ts`, `dynamic-value-chains.ts` | `RealmMethod` becomes a table (name, catalog id, algorithm); P1's `name === "toString" && errors` case and the `errorToString` hook become one realm-method-by-identity list, used by the call expansion and by ToPrimitive |
+| IR member access | `dynamic-member-access.ts` | the primitive read and write arms of a held kind go to the held prototype (rules above); an unheld kind keeps the static premise |
+| IR `this` | `dynamic-function-operations.ts` | `dynamicCurrentThis`'s sloppy arm wraps a primitive of a held kind |
+| IR keys | `builtin-prototype-keys.ts` | `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE` become `realmStringKeys("%Number.prototype%")` / `("%String.prototype%")` |
 
-| slice | content | yield on the 1,068 carriers | sample |
-| --- | --- | --- | ---: |
-| B3a | catalog rows, constructors and prototypes as realm values (identity, `typeof`, `name`, `length`, `prototype`, `constructor`), Number's constants and their fold, `Number(v)` total, `Boolean(v)` | measured upper bound 92 of A's 109; at most 98 with the `Number(v)` fix (6 rows stop at its gap) | 1 |
-| B3b | `new X(v)` wrappers, String's own `length` / indices, wrapper kind rows (`object_tag`), the primitive member read / write through a held prototype | needs B3c to show: ToPrimitive goes through `valueOf` | — |
-| B3c | `valueOf` / `toString` by identity in ToPrimitive and as calls; the remaining methods as function objects | B3b + B3c: estimate 260 of B's 399 (66 of a random 100 with wrappers rewritten to primitives) plus part of C's 219 (not measured) | estimate 10–20 |
-| B3d | String / Number method algorithms (bodies move from `src/codegen/string-ops.ts` to the native runtime first, as B2c-1), `.call` on them with G4 | D's 195, plus 56 `method call .trim(...) on string` first stops on primitives | own plan |
+**Yield:** estimate about 260 of bucket B's 399 (66 of a random 100 with wrappers rewritten to primitives) plus part
+of C's 219 (not measured: C cannot be rewritten); 10 to 20 files of the 420 sample (estimate).
 
-B3b and B3c may land as one PR if B3b alone gains no file; the review decides.
+**B3d** (own plan, not part of B3): String / Number method algorithms, after their bodies move from
+`src/codegen/string-ops.ts` to the native runtime as B2c-1 did, and `.call` on them with G4. Bucket D's 195, plus 56
+`method call .trim(...) on string` first stops on primitives.
+
+### One recogniser (finding 6)
+
+- **Base, catalog side:** `realmConstructorId(name)` in `builtin-prototype-keys.ts`, from `NATIVE_ERROR_CONSTRUCTORS`
+  and `NATIVE_WRAPPER_CONSTRUCTORS`: the catalog id and family of a global name, or none. `realmIntrinsicRead`,
+  `realmBuiltinOperand` and `programObjects` ask it.
+- **Derived, IR side:** `realmConstructorOf(callee, definitions)` in `dynamic-realm-calls.ts`: unwraps coercions, reads
+  the helper symbol's id (`realmIntrinsicOfHelper`), and answers `{ family, selector }` from the same lists through
+  `realmConstructorId`'s table. The legalization's construct arm and dispatched-call arm switch on it once.
+- Removed: `errorConstructorId`, `errorConstructorSelector`, `errorConstructorOf`.
+
+### Reuse, and the duplicates it removes
+
+- **Reuses**: G1's catalog shape, family allocation and seeding, `heldWith`, `js.object.intrinsic`, the pristine
+  predicate (`builtin-global-binding.ts`); B2b's identity mark; P1's identity-tested call expansion; F2's call ABI and
+  dispatcher; C2's `dyn.construct`, `dyn.instanceof` and `dynamicCurrentThis`; the legalization's ToString
+  (`stringOf`), ToNumber (`toNumber`), ToBoolean (`js.value.to_boolean`) and number formatter; #3518's wrapper layout,
+  allocation, String create, String exotic find, define and own-keys bodies, and their owners.
+- **Removes**: `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE`; the `errorToString` hook and P1's toString special case;
+  `heldErrorConstructors`' Error-only shape; `namesErrors` as a boolean; `errorConstructorId` /
+  `errorConstructorSelector` / `errorConstructorOf`; the Prepared `Number(v)` route to `js.number.from-value`;
+  (finding 7, verified: no live reader) `REALM_WRAPPER_STATE_FIELD`, `createRealmPrimitiveWrapperDeclaration` and the
+  `realmState` branches of `native-primitive-wrapper-layouts.ts`, `native-primitive-wrapper-storage.ts` and
+  `native-string-create.ts`, with the #3518 tests that exercise only those branches (listed in the PR). If B3bc ends
+  up wiring the String exotic arm only partly, the bodies it leaves unused go in the same PR.
+- **Does not add**: a second object layout, a hidden-key wrapper, materialised string indices, a second identity flag,
+  a second call mechanism, or a selector-side copy of the read rules.
 
 ### Acceptance criteria
 
 Correctness:
 
 1. Census (real harness) on the 1,068 stop files and on the 420 sample, base vs head: files gained per slice, files
-   lost 0, new crashes 0. Named rows that must pass after each slice:
+   lost 0, new crashes 0. Named rows that must pass:
    - B3a: `language/expressions/division/S11.5.2_A4_T1.1.js` (`Number.NaN`, the infinities),
      `language/expressions/modulus/S11.5.3_A4_T3.js` (both pass in the rewrite).
-   - B3b + B3c: `language/expressions/division/S11.5.2_A3_T1.1.js` (Boolean wrapper ToNumber) and
+   - B3bc: `language/expressions/division/S11.5.2_A3_T1.1.js` (Boolean wrapper ToNumber) and
      `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-40.js` (wrapper as key), both pass in the rewrite;
      `language/expressions/conditional/S11.12_A4_T2.js` (identity; the rewrite cannot show it: `NaN !== NaN`). To
-     confirm on the branch before they become criteria (C bucket, no rewrite possible):
+     confirm on the branch before they become criteria (bucket C, no rewrite possible):
      `built-ins/Number/S15.7.5_A1_T02.js` (`(new Number()).toString === Number.prototype.toString`),
      `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-85.js` (descriptor of `Boolean.prototype.toString`),
-     `built-ins/Number/prototype/toString/S15.7.4.2_A2_T14.js` (Number.prototype's +0).
+     `built-ins/Number/prototype/toString/S15.7.4.2_A2_T14.js` (Number.prototype's +0), and the
+     `S15.7.4.2_A4_*` RangeError rows.
    Each gained row gets a mutated twin (flip one expected value) that must fail in the same run.
-2. A probe matrix against node, each with a wrong twin, at module level and inside a function: the three names in
-   every value position; `new X(v)` over undefined, null, numbers, strings, Booleans, an object with `valueOf` /
-   `toString`; ToPrimitive with an overridden `X.prototype.valueOf`; writes to `X.prototype` read through a primitive
-   and through a wrapper; an accessor defined on `String.prototype` with a primitive write (`"a".x = 1`); a shadowed
-   and an assigned name. Nothing claimed answers differently from node; refusals and aborts are by name or
-   `unreachable`, never a wrong value.
+2. A probe matrix against node, each row with a wrong twin, at module level and inside a function:
+   - B3a: the three names in every value position; `X.name`, `X.length`; `String.prototype`, `Number.isNaN`,
+     `String.fromCharCode` read statically (named refusal); `var S = String; S.prototype`, `"prototype" in S`,
+     `S.hasOwnProperty("prototype")`, `Object.getOwnPropertyDescriptor(S, "prototype")`, `delete S.prototype`,
+     `S.prototype = 1`, `({}) instanceof S` (each traps, inside `try` / `catch` and inside an `assert.throws`-shaped
+     function: never caught); `1 instanceof S` false; `String()`, `Number()`, `Boolean()`, `Boolean(0)`,
+     `Number("3")`, each also through the realm value (`X` read, then called).
+   - B3bc: `new X(v)` over undefined, null, numbers, strings, Booleans, an object with `valueOf` / `toString`;
+     ToPrimitive with an overridden `X.prototype.valueOf`; `Number.prototype.toString()` / `(undefined)` / `(16)` /
+     `(1)` / `(37)` / `(Infinity)` (RangeError for the last three, caught); writes to `X.prototype` read through a
+     primitive and through a wrapper; [[Set]] on a primitive: an inherited writable data property in sloppy code (no
+     own property appears, the prototype's value stays) and in strict code (TypeError), an inherited setter (runs, its
+     `this` is the primitive in strict code and a fresh wrapper in sloppy code: `typeof this`, and `this !== this` of
+     two calls), a setter-less accessor; a getter on `String.prototype` read off `"a"` (same two `this` cases); a
+     sloppy and a strict method defined on `Number.prototype` called on `5`; `new String("ab")`'s `length`, `[0]`,
+     `[2]`, `hasOwnProperty("0")`, `Object.getOwnPropertyDescriptor(w, "0")`, a write and a `defineProperty` of `"0"`
+     and of `"5"`; a shadowed and an assigned name.
+   Nothing claimed answers differently from node; refusals and aborts are by name or `unreachable`.
 
 No regression:
 
@@ -476,53 +640,69 @@ No regression:
    is the gate.
 4. JS-environment and ordinary-pipeline output byte-identical: the change touches no `src/codegen/` and no
    `integration.ts` path; checked with `prove-emit-identity.mjs` on the 1,977 carriers × default and standalone.
-5. Prepared bytes: `check:prepared-bytes` (804 rows) identical for every program that names none of the three and
-   creates no wrapper (selectors are appended; literals follow the held rows). Rows that change are listed, each run
-   on base and head with the same outcome.
-6. Pins that move are listed in the PR: the three `m-prototype-premise` refusals become value tests (each onward route,
-   `String.prototype.__proto__` and the methods' `.call`, still aborts or refuses); `t2-typeof-standard-globals`;
+5. Prepared bytes: `check:prepared-bytes` (804 rows) identical for every program that holds no wrapper family
+   (selectors appended; literals follow the held rows; the final `$Object` kept). Rows that change are listed, each
+   run on base and head with the same outcome. Plus (finding 9): the prepared bytes of `var x = Number.MAX_VALUE;` equal
+   those of `var x = 1.7976931348623157e308;`, and likewise for the other four constants.
+6. Pins that move are listed in the PR: the three `m-prototype-premise` refusals (B3a: refusals with the new name;
+   B3bc: value tests whose onward routes still abort or refuse); `t2-typeof-standard-globals`;
    `issue-7354-str2-to-string`'s "String not in scope" pin.
 
 Code quality:
 
-7. One catalog shape (`wrapperRows` next to `errorRows`, same helpers); one family recognition
-   (`realmConstructorOf`), one held-family table, one realm-method-by-identity table; sibling modules
-   (`dynamic-wrapper-constructors.ts`, `realm-wrapper-bodies.ts`) in the shape of their Error siblings.
-8. The removals above are in the diff (hand lists, the `errorToString` hook, the Error-only held set, the
-   `js.number.from-value` Prepared route).
-9. No `loc-budget-allow` or `func-budget-allow`: `from-ast.ts` (over the 1,500-line threshold) ends at or below its
-   base; `dynamic-value-legalization.ts`, `dynamic-value-chains.ts` and `realm-family-bodies.ts` do not grow past the
-   new modules' share. Gates run bare before each commit.
-10. A fresh-context adversarial review per slice, given the diff and this plan, asked to prove the quality goal was
+7. One catalog shape (`wrapperRows` next to `errorRows`, same helpers); one recogniser pair (base and derived, above);
+   one held-family table; one realm-method-by-identity table; one identity mark; `dynamic-wrapper-constructors.ts` in
+   the shape of its Error sibling; wrapper bodies in `primitive-wrapper-bodies.ts`.
+8. The removals above are in the diff, including `errorConstructorOf`, `errorConstructorId`, the two hand lists,
+   `REALM_WRAPPER_STATE_FIELD` and `createRealmPrimitiveWrapperDeclaration`.
+9. (Finding 8) A unit test: for each wrapper prototype, the catalog-derived key set united with Object.prototype's
+   keys equals the old `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE` union (measured equal against node 22 above), so a
+   program that holds no family reads primitives exactly as before.
+10. No `loc-budget-allow` or `func-budget-allow`: `from-ast.ts` (over the 1,500-line threshold) ends at or below its
+    base; `dynamic-value-legalization.ts`, `dynamic-value-chains.ts` and `realm-family-bodies.ts` do not grow past the
+    new modules' share. Gates run bare before each commit.
+11. A fresh-context adversarial review per slice, given the diff and this plan, asked to prove the quality goal was
     not met; its verdict is in the PR body.
 
 ### Risks and open questions for the plan review
 
-1. **The prototype premise ends for three kinds.** Today a primitive's member read and write are answered without the
-   realm because no program can change `String.prototype` (M1, C1). With the family held, both go through the realm
-   prototype, including a setter or getter a program defines there. Programs that never name the family keep the old
-   arms and bytes. Proof: the probe matrix's primitive rows; the kernel's [[Get]] / [[Set]] must accept a primitive
-   receiver (to verify: today every receiver is an object).
-2. **The prototypes are wrappers.** `Object.prototype.toString.call(String.prototype)` is `[object String]`,
-   `String.prototype.length` 0, `Number.prototype.valueOf()` 0. The family allocation needs the wrapper path for these
-   three objects only.
-3. **Does the #3518 wrapper layout fit the live realm's `$Object`?** The storage owner requires the realm-object
-   layouts with realm state (`requireCompletedNativeRealmObjectLayouts`); the live kernel allocates through
-   `native-object-storage.ts`. If they differ, the wrapper is declared against the live object type and the unused
-   realm-state variant is deleted, not duplicated.
-4. **String indices materialized at creation.** Equivalent to the exotic object only if the kernel orders own keys as
-   OrdinaryOwnPropertyKeys does (integer keys ascending first). To verify; a large string costs one property per code
-   unit. The alternative is the exotic own-property arm of `string-exotic-bodies.ts` inside the kernel's own lookup.
-5. **Byte size and compile time.** A held String family carries about 50 method function objects (every member, so a
-   dynamic key read never answers `undefined` for a member that exists). Measure bytes and compile time on the
-   prelude + one `new String` row before and after; hold per member only if the cost is large and the soundness
-   argument holds.
-6. **Session B.** The global object (B2b) must hold the same function objects (`globalThis.String === String`); its
-   realm property for the three names reads `js.object.intrinsic`. The unmerged `claude/7350-string-call` change to
-   the `String(v)` plan belongs to this slice now; coordinate so it lands once.
+1. **The prototype premise ends for three kinds (B3bc).** Primitive member reads and writes go through the held
+   prototype, setters and getters included. Programs that hold no family keep the old arms and bytes. The kernel's
+   [[Get]] must take a primitive Receiver (to verify: today every receiver is an object; the accessor call passes it
+   through).
+2. **B2b's identity mark.** B3a needs it; it is on an unmerged branch. Its own-query coverage (has-own, descriptor,
+   delete, write) is to be checked and completed in the same functions.
+3. **The extensible `$Object`.** A program holding a wrapper family declares the non-final root; check that no
+   `ref.cast` / `br_on_cast` fast path relies on the final type.
+4. **String exotic wiring.** The String-aware find must reach every own-property site of the realm (lookup, has, own
+   descriptor, kernel [[Get]], own keys). If one cannot take it, that operation refuses by name for a value that may be
+   a String wrapper.
+5. **Byte size.** The member gate above; per-member holding is expected.
+6. **Session B.** The global object (B2b) must hold the same function objects (`globalThis.String === String`): its
+   realm property for the three names reads `js.object.intrinsic`. `Number.parseFloat` / `Number.parseInt` must be
+   B2c's `parseFloat` / `parseInt` objects (same catalog ids), not copies.
 7. **G1's shape**: `familyProperties` throws on number values and `realmFamilyAllocation` knows only
    `createWithPrototype`; both are generalised, not forked. `NATIVE_VALUE_INTRINSICS` is positional: append only.
 8. **`Number(v)` on the Prepared lane**: the string-operand route changes from an unmaterializable provider to the
    legalized ToNumber. No program that compiles today changes; the 30 carriers that stop at setup get past it.
 9. **Measurement caveats**: the sample is not the lead's 411 rows; buckets are from regexes; the B upper bound replaces
-   wrappers by primitives, which hides wrapper-only differences (`typeof`, identity) and adds artefacts (9 rows).
+   wrappers by primitives, which hides wrapper-only differences (`typeof`, identity) and adds artefacts (9 rows); the
+   member-size figure is an estimate from G1's cost.
+
+### Changelog after PRV-B3 (2026-11-26)
+
+| finding | resolution |
+| --- | --- |
+| 1+2 prototypes reachable in B3a | B3a is constructors and constants only; no `prototype` on its rows; B2b's identity mark: a static unseeded key refuses by name, a dynamic own miss traps; `name` / `length` served from the kernel's seed; bucket A's yield unchanged (it reads no prototype) |
+| 3 primitive receivers | Rules stated for [[Get]], [[Set]] (step 2.b in the kernel's set body) and `this` (ToObject in `dynamicCurrentThis`'s sloppy arm via `create-wrapper`; main has none today and aborts); probe rows with twins |
+| 4 String indices | Decided: the #3518 exotic arm (`stringOwn` into the live descriptor owner, the String-aware find into the realm's lookups, `string-own-keys-body.ts`); feasibility stated; no materialising |
+| 5 new body file | Dropped; thisXValue goes into `primitive-wrapper-bodies.ts`, String creation is `string-create-body.ts` |
+| 6 two recognisers | `realmConstructorId` is the base, `realmConstructorOf` derives from it; `errorConstructorOf` / `errorConstructorId` / `errorConstructorSelector` removed |
+| 7 dead realm-state wrapper code | Verified unused on the live path; deletion committed in B3bc |
+| 8 key lists | Diffed against node 22: equal; acceptance criterion 9 |
+| 9 folded constants | A fold is not a use; holding trigger listed; byte-equality criterion for `Number.MAX_VALUE` vs the literal |
+| 10 member cost | Gate up front (> 4 KB or > 10 % compile time ⇒ per-member holding), fallback rule, estimate from G1's measured cost |
+| 11 `toString(radix)` | undefined → 10, RangeError outside 2–36, probes and `S15.7.4.2_A4_*` rows |
+| 12 empty calls | `String()` / `Number()` / `Boolean()` direct and through the realm value; probes |
+| 13 slicing | B3b and B3c merged into B3bc with its yield |
+| other | `claude/7350-string-call` cited (`b05ac39870…`, feature commit `e50febcb71`); B3a absorbs it, the branch closes in its favour |
