@@ -145,11 +145,16 @@ describe("#7354 S — a script var named by Object.defineProperty", () => {
     180_000,
   );
 
-  it("refuses an own-property test on the var in a program without function values by name", async () => {
-    expect(await refusals("var o = {p: 1}; if (!o.hasOwnProperty('p')) throw 1;")).toEqual([
-      "dynamic operation member read 'hasOwnProperty' in a program that creates no function value has no Prepared intrinsic",
-    ]);
-  });
+  // (#7354 O1c) The method read admits the function kind itself, so a program with no source function runs the test.
+  it("runs an own-property test on the var in a program without source functions", async () => {
+    for (const [source, outcome] of [
+      ["var o = {p: 1}; if (!o.hasOwnProperty('p')) throw 1;", "returned"],
+      ["var o = {p: 1}; if (o.hasOwnProperty('p')) throw 1;", "threw"],
+    ] as const) {
+      expect(nodeOutcome(source)).toBe(outcome);
+      expect(await run(source)).toBe(outcome);
+    }
+  }, 180_000);
 
   // What still has no home keeps its reason: a non-writable global name, and a var of one of several scripts (each
   // script's module-init hoists only its own globals).

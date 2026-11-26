@@ -5802,6 +5802,11 @@ Tests:
   - P1 "what refuses": now the detached call.
   - M1 "keys a built-in prototype holds": the three native methods now answer the realm's method, and node agrees.
   - O2's `ProgramObjects` literals: the new field, plus a test of the walk.
+  - S "an own-property test on the var in a program without function values": it now runs (right answer returns,
+    wrong twin throws, node agrees).
+- The #7354 suite (str2c skipped) and the #3518 contract file: 2,082 of 2,084 pass. One failure is the S pin above,
+  since fixed. The other is O "refuses what the later steps build", which also fails on main: `return o` compiles
+  there now.
 
 Mutations:
 - Drop the admission: 7 of 8 tests fail.
