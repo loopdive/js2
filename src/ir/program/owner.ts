@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ts } from "../../ts-api.js";
-import type { IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js";
-import type { IrUnitInventory, IrUnitRecord } from "../../shared/contracts/ir-unit-inventory.js";
+import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import type { IrUnitInventory } from "../../shared/contracts/ir-unit-inventory.js";
 import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type {
   PreparedIrProgramFailure,
   PreparedIrProgramProducerInput,
   PreparedIrProgramOwner,
+  PreparedIrSourceLocation,
 } from "./prepared-contracts.js";
 
 /** Resolve diagnostics through the existing original/derived ownership records. */
@@ -20,24 +20,7 @@ export function preparedIrProgramOwner(
   const source = input.inventory.allUnits.find((record) => record.id === unitId);
   const ownerId = derived?.terminalOwnerId ?? source?.terminalOwnerId ?? unitId;
   const owner = input.inventory.terminalUnits.find((record) => record.id === ownerId);
-  return owner && unitOwner(input.inventory, owner);
-}
-
-/** `unit` itself as a diagnostic owner: its id, source file and declaration position. */
-export function unitOwner(inventory: IrUnitInventory, unit: IrUnitRecord): PreparedIrProgramOwner | undefined {
-  const sourceRecord = inventory.sources.find((record) => record.id === unit.sourceId);
-  if (!sourceRecord) return undefined;
-  return Object.freeze({
-    unitId: unit.id,
-    sourceFile: sourceRecord.sourceKey,
-    location: Object.freeze({
-      sourceId: unit.sourceId,
-      line: unit.line,
-      column: unit.column,
-      declarationStart: unit.declarationStart,
-      declarationEnd: unit.declarationEnd,
-    }),
-  });
+  return owner && ownerAt(input.inventory, owner.id, owner);
 }
 
 /** `failure` as a Prepared producer's refusal, owned by the terminal unit around `unitId`. */
@@ -50,28 +33,23 @@ export function locatedFailure(
 }
 
 /** The owner of a failure: a unit, or (`unitId: null`) source text no unit owns. */
-type FailureOwner = Omit<PreparedIrProgramOwner, "unitId"> & { readonly unitId: IrUnitId | null };
+type FailureOwner<U extends IrUnitId | null = IrUnitId | null> = Omit<PreparedIrProgramOwner, "unitId"> & {
+  readonly unitId: U;
+};
 
-export function sourceOwner(
+/** A failure owner at `location`, resolved against the inventory's source records. */
+export function ownerAt<U extends IrUnitId | null>(
   inventory: IrUnitInventory,
-  sourceId: IrSourceId | undefined,
-  node: ts.Node,
-): FailureOwner | undefined {
-  const sourceRecord = inventory.sources.find((record) => record.id === sourceId);
+  unitId: U,
+  location: PreparedIrSourceLocation,
+): FailureOwner<U> | undefined {
+  const sourceRecord = inventory.sources.find((record) => record.id === location.sourceId);
   if (!sourceRecord) return undefined;
-  const file = node.getSourceFile();
-  const start = node.getStart(file);
-  const { line, character } = file.getLineAndCharacterOfPosition(start);
+  const { sourceId, line, column, declarationStart, declarationEnd } = location;
   return Object.freeze({
-    unitId: null,
+    unitId,
     sourceFile: sourceRecord.sourceKey,
-    location: Object.freeze({
-      sourceId: sourceRecord.id,
-      line: line + 1,
-      column: character + 1,
-      declarationStart: start,
-      declarationEnd: node.end,
-    }),
+    location: Object.freeze({ sourceId, line, column, declarationStart, declarationEnd }),
   });
 }
 

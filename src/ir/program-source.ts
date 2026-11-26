@@ -1546,7 +1546,7 @@ export function prepareIrProgramSources(
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
-  const refused = preparedSelectRefusal(inventory, identity, sourceFiles);
+  const refused = preparedSelectRefusal(inventory, identity);
   if (refused) return refused;
   const sourceMapCatalog =
     sourceMapRequest === undefined

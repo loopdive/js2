@@ -8,11 +8,11 @@ import type { IrUnitInventory, IrUnitRecord } from "../shared/contracts/ir-unit-
 import type { IrUnsupportedCode } from "../shared/contracts/ir-preparation-failure.js";
 import { classDefinitionExpressions, type ClassDefinitionExpression } from "./class-definition-expressions.js";
 import { isAmbientDeclaration } from "./ambient-declarations.js";
-import type { IrClassId } from "./identity.js";
+import type { IrClassId, IrSourceId } from "./identity.js";
 import { localExportSpecifiers, localExportTargets } from "./module-init-plan.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
-import { failureAt, locatedFailure, sourceOwner, unitOwner } from "./program/owner.js";
-import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
+import { failureAt, locatedFailure, ownerAt } from "./program/owner.js";
+import type { PreparedIrProgramFailure, PreparedIrSourceLocation } from "./program/prepared-contracts.js";
 
 const EVALUATED = {
   decorator: "a decorator",
@@ -77,25 +77,23 @@ function classRefusal(
 export function preparedSelectRefusal(
   inventory: IrUnitInventory,
   identity: IrPlanningIdentityContext,
-  sourceFiles: readonly ts.SourceFile[],
 ): PreparedIrProgramFailure | undefined {
   for (const unit of inventory.terminalUnits)
     if (unit.directFailure) return locatedFailure({ inventory, derivedUnits: [] }, unit.id, unit.directFailure);
-  for (const file of sourceFiles) {
-    const sourceId = identity.sourceIdBySourceFile.get(file);
-    const targets = sourceId && localExportTargets(file, sourceId, identity);
+  for (const [sourceId, file] of identity.sourceFileBySourceId) {
+    const targets = localExportTargets(file, sourceId, identity);
     for (const statement of file.statements) {
       if (ts.isClassDeclaration(statement) && !isAmbientDeclaration(statement)) {
         const refusal = classRefusal(statement);
         if (!refusal) continue;
         const unit = constructorUnit(inventory, identity.classIdByDeclaration.get(statement));
-        const owner = unit && unitOwner(inventory, unit);
+        const owner = unit && ownerAt(inventory, unit.id, unit);
         return failureAt(owner, { kind: "unsupported", stage: "select", ...refusal }, "the class's constructor unit");
       }
-      const unresolved = localExportSpecifiers(statement)?.find(({ localName }) => !targets?.has(localName));
+      const unresolved = localExportSpecifiers(statement)?.find(({ localName }) => !targets.has(localName));
       if (unresolved)
         return failureAt(
-          sourceOwner(inventory, sourceId, unresolved.element),
+          ownerAt(inventory, null, nodeLocation(sourceId, unresolved.element)),
           {
             kind: "unsupported",
             code: "export-target-unsupported",
@@ -107,4 +105,11 @@ export function preparedSelectRefusal(
     }
   }
   return undefined;
+}
+
+function nodeLocation(sourceId: IrSourceId, node: ts.Node): PreparedIrSourceLocation {
+  const file = node.getSourceFile();
+  const start = node.getStart(file);
+  const { line, character } = file.getLineAndCharacterOfPosition(start);
+  return { sourceId, line: line + 1, column: character + 1, declarationStart: start, declarationEnd: node.end };
 }
