@@ -5899,6 +5899,53 @@ files, all `onlyStrict`.
   - no new IR operation and no new module;
   - from-ast's net growth is offset by the extractions, and any remaining grant is stated with its reason.
 
+### O7 result (2026-11-26, branch `claude/7354-o7-impl` from the plan head 0429434615)
+
+Built as planned. Where the code differs from the plan's wording, and why:
+
+- **Producer.** `lowerDynamicBinaryValues(op, lhs, rhs, left, right, cx)` absorbs `tryLowerDynamicArithmetic` and
+  lowerBinary's `+` arm. Its `right` node is required: `++`/`--` never reach it (B5), so an optional node would be a
+  dead parameter. lowerBinary now asks it before the relational arm; the operator sets are disjoint, so no
+  instruction moves.
+- **lowerCompoundAssignment.** The two dynamic-slot arms (`+=` and the numeric tail's dynamic branch) are one arm
+  calling the producer. Its result is boxed by `dynamicBinaryOnCarrier`, which the member arm shares. The f64 tail
+  loses only its conversions that cannot convert (an f64 slot and an admitted RHS are f64 already). Its bytes are
+  unchanged. A captured dynamic `+=` now refuses with the numeric arm's text instead of its own.
+- **Increment.** `dynamicIncrement` is the identifier arm's former inline step, which now calls it.
+- **Target.** `dynamicNamedMember` is the plain write's former inline target. `lowerPropertyAssignment` calls it,
+  and so does the member arm.
+- **N1.** `lowerPropertyCompound(lhs, token, rhs, cx)`. The typed arm derives its operator with
+  `numberCompoundBinaryOperator(token) ?? updateStepOperator(token)`. `updateStepOperator` lives in
+  `operand-admissibility.ts` and also replaces the dispatcher's inline step for the element arm.
+- **B4.** The script-var array refusal is written, but no program reaches it today: an array literal refuses first
+  on this lane (`resolver cannot register vec for array literal`). The test pins that refusal.
+- **Found, not fixed: a function declaration's last statement.** In `function f(p){ p.x += 1; }` the void-tail
+  path sends the statement through `lowerDiscardedExpression` → lowerBinary, which defers a member compound. The
+  function's body is the run-time abort. Not in a test262 cluster row: those are function expressions with a dynamic
+  result, which take the statement path. The same holds for an expression-position compound (N5).
+
+Measured:
+
+- **Cluster 10** (`prepared-census.mts --harness real`): 0 → **22 / 22**.
+- **411 sample** (real runner; base `main2-411.jsonl`, main bb9123f6a3): 83 → **84**. The only flip is
+  fail → pass on `11.13.2-24-s`. No pass was lost.
+- **Bytes.** The 13 playground examples × default/standalone are byte-identical to the base. So is
+  `check:prepared-bytes` on all 804 rows: no proving program has a dynamic compound member write. Also identical:
+  12 compound/binary probes × default/standalone, and 4 Prepared probes of the identifier dynamic compound and the
+  binary producer.
+- **Equivalence gate.** No new regression: 20 failing, against 22 in the baseline.
+- **Mutations.** Each one fails `tests/issue-7354-o7-compound-member.test.ts`:
+
+  | mutation | failing tests |
+  |---|---|
+  | no read | 6 |
+  | sloppy bit inverted | 5, both cluster rows among them |
+  | `+=` on the numeric path | 3 |
+  | the old value's ToNumber before the RHS | 1 (the order test) |
+  | `++` through the dynamic `+` | 1 |
+- **Pin updated.** `tests/issue-7354-o2-accessors.test.ts` pinned the accessor `o.x += 1` / `o.x++` refusal. It now
+  agrees with node: one getter and one setter call each.
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
