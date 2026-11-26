@@ -88,41 +88,55 @@ ordinary pipeline's selection (bytes). So the refusal is the Prepared producer's
 list.
 
 1. **Shared list, no duplicate.** Move the `definitionExpressions` construction out of `processClass` into one pure
-   exported function `classDefinitionExpressions(node)` in a new module `src/ir/class-definition-expressions.ts`.
-   `processClass` calls it (same expressions, same order, so the ordinary inventory is unchanged).
+   exported function `classDefinitionExpressions(node)` in a new module `src/ir/class-definition-expressions.ts`. It
+   returns tagged entries `{ kind: "decorator" | "extends" | "implements" | "computed-key", expression }` in exactly
+   today's order: class decorators, every heritage clause's types, then per member its decorators, its parameter
+   decorators, its computed key. `processClass` scans every entry's expression as today, so the ordinary inventory is
+   unchanged. `implements` is kept in the list because the inventory scans those identifiers today; only the Prepared
+   rule ignores it.
 2. **Prepared rule.** A new module `src/ir/prepared-select-refusals.ts` owns the select-stage refusals the Prepared
-   producer applies before any body is lowered, as one function returning `{ unitId, failure } | undefined`:
+   producer applies before any body is lowered, as one function returning the program's refusal or `undefined`:
    - the inventory's `directFailure` (moved here from the three lines #7446 added to `prepareIrProgramSources`);
-   - a top-level `ClassDeclaration` (a direct statement of a source file, exported or not) with a non-empty
-     `classDefinitionExpressions`, refused with a new `IrUnsupportedCode` `class-definition-evaluation`, stage
-     `select`, detail naming the class and what it evaluates (`extends` expression, computed key, decorator).
-   `prepareIrProgramSources` calls it once, where #7446's check stands now (right after the identity context), and
-   returns `locatedFailure(...)`. Net change in `program-source.ts`: about zero lines.
-3. **Owner.** The class's constructor unit: the one unit with `lexicalOwnerId === classId` and kind
-   `class-constructor` or `class-implicit-constructor` (every non-`declare` class has exactly one). It is terminal when
-   the class has an explicit constructor or instance initializers, otherwise a root support unit
-   (`terminalOwnerId: null`). `preparedIrProgramOwner` (`src/ir/program/owner.ts`) gains one rule: a unit with no
-   terminal owner owns itself (it already carries `line`/`column`/declaration span). No existing caller passes such a
-   unit (they pass function units), so their results do not change. The refusal then points at the class, also in a
-   file with no `<module-init>`.
+   - a top-level class definition that evaluates code: a source file's direct `ClassDeclaration` statement (the same
+     condition under which `processClass` runs with `topLevelDeclaration = true`), not `declare`, with an entry that
+     is a decorator, an `extends` expression, or a computed key whose expression is not a literal (string, numeric or
+     no-substitution template: these evaluate nothing, and `['x']`, `static [1]`, `` [`x`] `` give the right answer
+     today). `implements` evaluates nothing and is ignored. New `IrUnsupportedCode` `class-definition-evaluation`,
+     stage `select`, detail naming the class and the first entry's kind.
+   `prepareIrProgramSources` calls it once, where #7446's check stands now (right after the identity context). Net
+   change in `program-source.ts`: about zero lines.
+3. **Owner, without widening `preparedIrProgramOwner`.** The refusal is located at the class's constructor unit: the
+   one unit with `lexicalOwnerId === classId` and kind `class-constructor` or `class-implicit-constructor` (every
+   non-`declare` class has exactly one; `declare` classes are skipped above). It is terminal when the class has an
+   explicit constructor or instance initializers, otherwise a root support unit, and a file whose only code is the
+   class (`class C extends 5 {}`) has no terminal unit at all. `src/ir/program/owner.ts` is split along its two
+   existing steps, with no change in behaviour:
+   - `unitOwner(inventory, record)`: a unit record and its source as a `PreparedIrProgramOwner`. This is the second
+     half of `preparedIrProgramOwner`, which keeps its terminal-owner lookup and calls it.
+   - `failureAt(owner, failure)`: the failure shaping. This is the second half of `locatedFailure`, which keeps its
+     "cannot locate" guard and calls it.
+   The new rule calls `failureAt(unitOwner(inventory, constructorUnit), failure)`. The "cannot locate" guard and the
+   monomorphization-owner guard (`program-middleend-ir.ts:91`) are untouched.
 
 ### Reuse and quality
 
-- Reuses: the inventory's expression list (moved, not copied), `locatedFailure`/`preparedIrProgramOwner`, the #7446
-  refusal point.
+- Reuses: the inventory's expression list (moved, not copied), the owner and failure shaping in `owner.ts` (split,
+  not copied), the #7446 refusal point.
 - Removes: the inline list-building in `processClass` becomes a call; the #7446 lines in `program-source.ts` move into
   the new module next to the new rule, so the producer has one call for its select-stage refusals.
 - Quality acceptance: one list of definition-time expressions in the codebase; one module for Prepared select-stage
-  refusals; no new branch in from-ast; `program-source.ts` does not grow; no filter by failure code.
+  refusals; no owner guard weakened; no new branch in from-ast; `program-source.ts` does not grow; no filter by
+  failure code.
 
 ### Correctness acceptance
 
 - Each probe agrees with node or is refused by name (`class-definition-evaluation`), under both `unlowerableBodies`
   policies: `class C extends 5 {}` alone (no `<module-init>`), `extends g()`, `extends (n=7, Object)`,
-  `extends (n=7, null)`, `static [f()];`, `[f()];`, computed method key, a decorated class, an exported and a default
-  exported class with `extends`.
-- Inert classes still compile and run: `class C {}`, `class C { static x; }`, `class C { m() {} }` unreferenced is
-  still refused as before (no body producer), unchanged.
+  `extends (n=7, null)`, `extends Symbol`, `static [f()];`, `[f()];`, a computed method key, a decorated class, and a
+  default-exported class with `extends`.
+- Unchanged (not refused by this rule): `class C {}`, `class C { static x; }`, literal computed keys (`['x']`,
+  `static [1]`, `` [`x`] ``), `class C implements I {}` (.ts), `declare class B {} declare class C extends B {}` (.ts).
+  `class C { m() {} }` unreferenced stays refused as before (no body producer).
 - Pin tests fail on the PR 7440 head and pass after.
 - Ordinary pipeline: byte-identical on a 100-file sample of the affected test262 files × (default, standalone);
   `check:ir-fallbacks` unchanged; `tests/issue-3519-ir-outcomes.test.ts` green.
@@ -140,8 +154,10 @@ decorator (11), `scripts/ir-census/prepared-census.mts --harness real` (standalo
 | named refusal | 909 | 922 |
 | skip (negative / async) | 47 | 47 |
 
-The after-state is derived: the refusal runs before any other producer step, so every compiled row becomes a
-`class-definition-evaluation` refusal. It is re-measured on the implementation.
+The after-state is derived: the refusal runs before any other producer step, so every compiled row whose class
+evaluates code becomes a `class-definition-evaluation` refusal. None of the 13 compiled rows relies only on a literal
+computed key. It is re-measured on the implementation. Because the rule runs first, many of the 909 rows refused today
+change their first refusal label to the new code; the PR reports a before/after label histogram, not only verdicts.
 
 - **fail → refusal: 6** (`annexB/built-ins/RegExp/legacy-accessors/*/this-subclass-constructor.js`): abort traps
   today, not wrong values.
@@ -151,6 +167,13 @@ The after-state is derived: the refusal runs before any other producer step, so 
     must call `decorator()` at definition, and the path never calls it;
   - `language/statements/class/subclass/builtin-objects/Symbol/symbol-valid-as-extends-value.js`: `extends Symbol`
     is never evaluated.
-  None is ES5 or in a completed edition. This needs the lead's sign-off, as for #7446's 7.
+  None is ES5 or in a completed edition. This needs the lead's sign-off, as for #7446's 7. PRV-7488 confirmed all 7
+  are accidental, and the only sound skips it found are literal computed keys (adopted above); `extends Object` and
+  `extends Symbol` are rightly refused.
 - No wrong value on test262 today, because these files hit other refusals first. The probes in the table above are
   the soundness evidence.
+
+### Out of scope (found by PRV-7488, for separate issues)
+
+- `class NaN {}` and `let NaN` return where node throws SyntaxError.
+- A plain `export class C {}` crashes today ("alias … targets unplanned binding").
