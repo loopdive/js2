@@ -1,9 +1,9 @@
 // Byte-identity corpus diff between two compiler trees (#2138; regexp corpus #7369).
 // Usage:
 //   INPUT_ROOT=<dir> npx tsx scripts/byte-diff-corpus.mts <compilerRoot> <outFile> \
-//       [--corpus sample|regexp] [--jobs N] [--cache <dir>]
+//       [--corpus sample|regexp|prepared] [--jobs N] [--cache <dir>]
 //   INPUT_ROOT=<dir> npx tsx scripts/byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> \
-//       <baseRoot> <headRoot> [--corpus sample|regexp]
+//       <baseRoot> <headRoot> [--corpus sample|regexp|prepared]
 // Compiles a fixed corpus with the compiler at <compilerRoot> and writes JSONL of
 // {file, mode, status, sha, errors}; run it once per tree (baseline upstream/main,
 // then the branch) and `--compare` the two files. `status` is `ok`, `ce`, `throw`
@@ -21,6 +21,13 @@
 //                     RegularExpressionLiteral or an identifier `RegExp`, on
 //                     default, standalone and wasi: the targets that emit the
 //                     WasmGC RegExp engine (linear never does).
+//   prepared (#7369)  the test262 files listed in PREPARED_LISTS (under
+//                     INPUT_ROOT), through the Prepared whole-program entry
+//                     (src/test262/test262-prepared-entry.ts) with the real
+//                     harness assembly and the CI worker's options
+//                     (scripts/ir-census/prepared-toolchain.mts). Each compiler
+//                     tree reads the harness from its own test262/harness, so
+//                     both must hold the same one.
 //
 // Memory: compiles run in child processes with a WORKER_HEAP_MB heap, recycled
 // every CHUNK_SIZE compiles. A process that dies is restarted on the compiles it
@@ -44,8 +51,10 @@
 // environment switches (JS2WASM_*, IR_*, NODE_ENV), and replays it on
 // a hit, so a head-only change recompiles only the head tree. It caches whole
 // runs, not rows, because a row's bytes can depend on its chunk (#7410); a run
-// with a crash row is not cached, so a rerun retries it. A change outside src/
-// (a dependency bump) is not in the key: use a fresh cache dir.
+// with a crash row is not cached, so a rerun retries it. The prepared corpus
+// also keys the tree's tests/, scripts/ and test262/harness, which its
+// toolchain reads. A change outside those (a dependency bump) is not in the
+// key: use a fresh cache dir.
 //
 // Env: INPUT_ROOT (required), the tree the inputs are read from; it must hold
 // test262/test. It is not derived from <compilerRoot> because both runs must
@@ -69,9 +78,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
+import { loadToolchain, options, realAssembly } from "./ir-census/prepared-toolchain.mts";
+
 const USAGE =
-  "usage: INPUT_ROOT=<dir> byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N] [--cache <dir>]\n" +
-  "       INPUT_ROOT=<dir> byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp]\n" +
+  "usage: INPUT_ROOT=<dir> byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp|prepared] [--jobs N] [--cache <dir>]\n" +
+  "       INPUT_ROOT=<dir> byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp|prepared]\n" +
   "exit: 0 IDENTICAL, 1 FAILED, 2 usage error or bad INPUT_ROOT, 3 INCONCLUSIVE (--compare)";
 
 /** The input tree named by INPUT_ROOT; exits 2 unless it holds test262/test. */
@@ -87,7 +98,7 @@ const STRIDE = Number(process.env.STRIDE ?? 20);
 const CHUNK_SIZE = 300;
 const WORKER_HEAP_MB = 3072;
 
-/** One compile: an input file under one mode (a set of compile options). */
+/** One compile: an input file under one mode (a set of compile options, over the corpus's own). */
 interface Job {
   file: string;
   mode: string;
@@ -111,6 +122,23 @@ const MODES: Record<string, Record<string, Record<string, unknown>>> = {
     standalone: { ...AS_JS, target: "standalone" },
     wasi: { ...AS_JS, target: "wasi" },
   },
+  // The Prepared path's options are the CI worker's, unchanged.
+  prepared: { standalone: {} },
+};
+/**
+ * The file lists that make up the prepared corpus, one path per line, under
+ * INPUT_ROOT; each names the directory its paths are relative to (the runner's
+ * path-filter format, or the census's).
+ */
+const PREPARED_LISTS = [
+  { list: "plan/samples/7354-o411.txt", root: "test262" },
+  { list: "plan/samples/7369-es5-regexp-606.txt", root: "test262/test" },
+];
+/** Directories of a compiler tree that its compiles read, per corpus (the cache key). */
+const TOOLCHAIN_DIRS: Record<string, readonly string[]> = {
+  sample: ["src"],
+  regexp: ["src"],
+  prepared: ["src", "tests", "scripts", "test262/harness"],
 };
 
 const rel = (file: string) => file.replace(INPUT_ROOT, "");
@@ -165,25 +193,63 @@ function regexpCorpus(): Job[] {
     .flatMap((file) => Object.keys(MODES.regexp!).map((mode) => jobOf("regexp", file, mode)));
 }
 
-const CORPORA: Record<string, () => Job[]> = { sample: sampleCorpus, regexp: regexpCorpus };
+function preparedCorpus(): Job[] {
+  const files = new Set(
+    PREPARED_LISTS.flatMap(({ list, root }) =>
+      readFileSync(join(INPUT_ROOT, list), "utf-8")
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => join(INPUT_ROOT, root, line)),
+    ),
+  );
+  return [...files].sort().map((file) => jobOf("prepared", file, "standalone"));
+}
+
+const CORPORA: Record<string, () => Job[]> = { sample: sampleCorpus, regexp: regexpCorpus, prepared: preparedCorpus };
 
 // ── Worker: run one chunk of jobs; each row is appended as soon as its compile
 // finishes, so a process that dies leaves exactly the jobs it finished. ──
 
-async function runWorker(compilerRoot: string, chunkPath: string, outPath: string) {
-  const { compile } = await import(pathToFileURL(join(compilerRoot, "src/index.ts")).href);
+/** A compile's binary, or every message of its failure. */
+type Outcome = { binary: Uint8Array } | { errors: string[] };
+type CompileJob = (source: string, opts: Record<string, unknown>) => Promise<Outcome>;
+
+const messages = (errors: readonly { message: string }[] | undefined) => (errors ?? []).map((error) => error.message);
+
+/** Loads, in a worker, how the corpus compiles one source with the tree at `compilerRoot`. */
+async function compilerOf(corpus: string, compilerRoot: string): Promise<CompileJob> {
+  if (corpus !== "prepared") {
+    const { compile } = await import(pathToFileURL(join(compilerRoot, "src/index.ts")).href);
+    return async (source, opts) => {
+      const r = await compile(source, opts);
+      return r.success && r.binary ? { binary: r.binary } : { errors: messages(r.errors) };
+    };
+  }
+  const tools = await loadToolchain(compilerRoot);
+  return async (source, opts) => {
+    const meta = tools.runner.parseMeta(source);
+    const r = await tools.entry.compile(realAssembly(tools, source, meta).source, { ...options(meta), ...opts });
+    if (tools.entry.requiredPreparedEmission(r) && r.success && r.binary) return { binary: r.binary };
+    // A refusal's code, stage and detail are part of the failure, not only its diagnostics.
+    const refusal = tools.entry.requiredPreparedFailure(r);
+    return { errors: [...messages(r.errors), ...(refusal ? [JSON.stringify(refusal)] : [])] };
+  };
+}
+
+async function runWorker(corpus: string, compilerRoot: string, chunkPath: string, outPath: string) {
+  const compile = await compilerOf(corpus, compilerRoot);
   for (const { file, mode, opts } of JSON.parse(readFileSync(chunkPath, "utf-8")) as Job[]) {
     let status: string;
     let sha: string | null = null;
     let errors: string[] = [];
     try {
-      const r = await compile(readFileSync(file, "utf-8"), opts);
-      if (r.success && r.binary) {
+      const outcome = await compile(readFileSync(file, "utf-8"), opts);
+      if ("binary" in outcome) {
         status = "ok";
-        sha = createHash("sha256").update(r.binary).digest("hex");
+        sha = createHash("sha256").update(outcome.binary).digest("hex");
       } else {
         status = "ce";
-        errors = (r.errors ?? []).map((e: { message: string }) => e.message);
+        errors = outcome.errors;
       }
     } catch (e) {
       status = "throw";
@@ -206,10 +272,10 @@ function readRows(path: string): Row[] {
 }
 
 /** Resolves to how the process ended: `0`, another exit code, or the signal name. */
-function runProcess(compilerRoot: string, jobs: Job[], chunkPath: string, outPath: string) {
+function runProcess(corpus: string, compilerRoot: string, jobs: Job[], chunkPath: string, outPath: string) {
   writeFileSync(chunkPath, JSON.stringify(jobs));
   const self = fileURLToPath(import.meta.url);
-  const args = [`--max-old-space-size=${WORKER_HEAP_MB}`, "--import", "tsx", self, "--worker"];
+  const args = [`--max-old-space-size=${WORKER_HEAP_MB}`, "--import", "tsx", self, "--worker", corpus];
   return new Promise<number | string>((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [...args, compilerRoot, chunkPath, outPath], {
       stdio: ["ignore", "ignore", "inherit"],
@@ -219,12 +285,12 @@ function runProcess(compilerRoot: string, jobs: Job[], chunkPath: string, outPat
   });
 }
 
-async function runChunk(compilerRoot: string, jobs: Job[], chunkPath: string, outPath: string) {
+async function runChunk(corpus: string, compilerRoot: string, jobs: Job[], chunkPath: string, outPath: string) {
   let remaining = jobs;
   let alone = false;
   while (remaining.length > 0) {
     const first = remaining[0]!;
-    const ended = await runProcess(compilerRoot, alone ? [first] : remaining, chunkPath, outPath);
+    const ended = await runProcess(corpus, compilerRoot, alone ? [first] : remaining, chunkPath, outPath);
     const finished = new Set(readRows(outPath).map(keyOf));
     remaining = remaining.filter((job) => !finished.has(keyOf(job)));
     if (ended !== 0 && alone && remaining[0] === first) {
@@ -236,15 +302,18 @@ async function runChunk(compilerRoot: string, jobs: Job[], chunkPath: string, ou
   }
 }
 
-/** Keys a run for `--cache`: this script, the compiler tree's src/, the corpus, every input and the env switches. */
+/** Keys a run for `--cache`: this script, the compiler tree's toolchain, the corpus, every input and the env switches. */
 function runKey(compilerRoot: string, corpus: string, jobs: Job[]): string {
   const switches = Object.entries(process.env).filter(([name]) => /^(JS2WASM_|IR_|NODE_ENV$)/.test(name));
   const hash = createHash("sha256")
     .update(readFileSync(fileURLToPath(import.meta.url)))
     .update(`\0${corpus}\0${JSON.stringify(switches.sort(([a], [b]) => (a < b ? -1 : 1)))}`);
-  const src = join(compilerRoot, "src");
-  for (const name of readdirSync(src, { recursive: true, encoding: "utf-8" }).sort())
-    if (lstatSync(join(src, name)).isFile()) hash.update(`\0${name}\0`).update(readFileSync(join(src, name)));
+  for (const dir of TOOLCHAIN_DIRS[corpus]!) {
+    const root = join(compilerRoot, dir);
+    for (const name of readdirSync(root, { recursive: true, encoding: "utf-8" }).sort())
+      if (lstatSync(join(root, name)).isFile())
+        hash.update(`\0${dir}/${name}\0`).update(readFileSync(join(root, name)));
+  }
   for (const job of jobs) hash.update(`\0${keyOf(job)}\0`).update(readFileSync(job.file));
   return hash.digest("hex");
 }
@@ -267,7 +336,7 @@ async function run(compilerRoot: string, outFile: string, corpus: string, lanes:
     while (next < chunks.length) {
       const i = next++;
       const chunk = jobs.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-      await runChunk(compilerRoot, chunk, `${chunks[i]}.json`, `${chunks[i]}.jsonl`);
+      await runChunk(corpus, compilerRoot, chunk, `${chunks[i]}.json`, `${chunks[i]}.jsonl`);
       process.stderr.write(`  ${++done}/${chunks.length} chunks\n`);
     }
   };
@@ -283,14 +352,14 @@ async function run(compilerRoot: string, outFile: string, corpus: string, lanes:
 }
 
 /** Compiles one job alone in a fresh process (with the usual crash handling). */
-async function compileAlone(compilerRoot: string, job: Job, scratch: string): Promise<Row> {
+async function compileAlone(corpus: string, compilerRoot: string, job: Job, scratch: string): Promise<Row> {
   const out = join(
     scratch,
     createHash("sha1")
       .update(`${compilerRoot}\t${keyOf(job)}`)
       .digest("hex"),
   );
-  await runChunk(compilerRoot, [job], `${out}.json`, `${out}.jsonl`);
+  await runChunk(corpus, compilerRoot, [job], `${out}.json`, `${out}.jsonl`);
   return readRows(`${out}.jsonl`)[0]!;
 }
 
@@ -337,8 +406,8 @@ async function compare(baseFile: string, headFile: string, trees: Trees): Promis
     let detail = `\n  base: ${show(base)}\n  head: ${show(after)}`;
     if (after) {
       const job = jobOf(trees.corpus, join(INPUT_ROOT, base.file), base.mode);
-      const baseAlone = await compileAlone(trees.baseRoot, job, scratch);
-      const headAlone = await compileAlone(trees.headRoot, job, scratch);
+      const baseAlone = await compileAlone(trees.corpus, trees.baseRoot, job, scratch);
+      const headAlone = await compileAlone(trees.corpus, trees.headRoot, job, scratch);
       if (sameOutput(baseAlone, headAlone)) {
         orderDependent.push(`ORDER-DEPENDENT [${base.mode}] ${base.file}${detail}\n  alone: ${show(baseAlone)}`);
         continue;
@@ -364,18 +433,22 @@ async function compare(baseFile: string, headFile: string, trees: Trees): Promis
   return differ > 0 ? 1 : inconclusive > 0 ? 3 : 0;
 }
 
+/** The prepared corpus reads each compiler tree's test262/harness. */
+const harnessesPresent = (roots: string[]) => roots.every((root) => existsSync(join(root, "test262/harness")));
+
 const argv = process.argv.slice(2);
 const flag = (name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
 const corpus = flag("--corpus") ?? "sample";
 const lanes = Number(flag("--jobs") ?? 1);
 const positional = argv.filter((arg, i) => !arg.startsWith("--") && !argv[i - 1]?.match(/^--(corpus|jobs|cache)$/));
 if (argv[0] === "--worker") {
-  await runWorker(argv[1]!, argv[2]!, argv[3]!);
+  await runWorker(argv[1]!, argv[2]!, argv[3]!, argv[4]!);
 } else if (
   !CORPORA[corpus] ||
   !Number.isInteger(lanes) ||
   lanes < 1 ||
-  positional.length !== (argv[0] === "--compare" ? 4 : 2)
+  positional.length !== (argv[0] === "--compare" ? 4 : 2) ||
+  (corpus === "prepared" && !harnessesPresent(argv[0] === "--compare" ? positional.slice(2) : positional.slice(0, 1)))
 ) {
   console.error(USAGE);
   process.exit(2);
