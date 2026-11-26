@@ -25,7 +25,8 @@ related: [7354]
 
 ## Implementation Plan (covers #7455 and #7457; rev 2, 2026-11-26, main 41f0654e8c)
 
-Revision 2 answers plan review PRV-7455 on b62216ed (blockers 1–3, findings 4–7).
+Revision 2 answers plan review PRV-7455 on b62216ed (blockers 1–3, findings 4–7). The re-review on
+0dffe9f0 approved it, with one non-blocking note, which is folded in below.
 
 One idea: **one binding-write index per source file**, built in one walk and
 keyed by checker identity. The three scans that answer "is this binding
@@ -62,6 +63,10 @@ After #7354 H2 the Prepared path's soundness depends on the two agreeing (#7457)
   - Script-var callers pass the declaring file in PR 1. That is today's scope, so PR 1 stays byte-identical.
   - PR 3 widens the script-var callers to every script of the program, because scripts share the global
     object (§9.1.1.4). A write in another script then refuses. Each changed admission is listed as a fix.
+  - The binding-site count of the binding predicate (below) covers the **same files** as the write query.
+    A `function o(){}` in another script merges into the same symbol and overwrites `o` when that script
+    is instantiated. That is a binding site, not a write, so a file-local count would miss it (PRV-7455
+    re-review).
 - **De-aliasing is a no-op for a script binding (finding 5).** A `var` or function declaration's symbol has no
   `SymbolFlags.Alias`, so `deAliasedSymbol` returns it unchanged. Only import bindings are aliases. The PR 1
   byte check confirms it.
@@ -128,8 +133,8 @@ After #7354 H2 the Prepared path's soundness depends on the two agreeing (#7457)
    - Each changed admission is listed in the PR body and classified as a fix (refusal of a real write route)
      or a regression (must be zero).
    - Committed kill tests, one program per route, each refused: a parameter initializer, an Annex B block
-     function, a catch-param `var`, `with`, direct `eval`, indirect `eval`, `this.o = v`, and a write in
-     another script.
+     function, a catch-param `var`, `with`, direct `eval`, indirect `eval`, `this.o = v`, a write in another
+     script, and a `function o(){}` in another script.
 
 ### Acceptance criteria
 
