@@ -7045,7 +7045,7 @@
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
+      "nextBoundary": "Directive-prologue syntax (§11.2.1) over any SourceFile, shared by the legacy compiler and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
     },
     {
       "path": "src/codegen/hof-native.ts",

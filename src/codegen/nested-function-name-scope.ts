@@ -96,7 +96,7 @@
 // property of a marker-based stack — partial adoption is sound.
 import { ts } from "../ts-api.js"; // value import: the scope walk needs the `is*` predicates
 import type { CodegenContext } from "./context/types.js";
-import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
+import { EVAL_SOURCE_FILENAME } from "../frontend/eval/script.js";
 
 /**
  * One shadowed bare-name registration, captured across every side table that

@@ -51,7 +51,7 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { bodyReferencesOwnThis } from "../../shared/body-references-own-this.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
-import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
+import { EVAL_SOURCE_FILENAME } from "../../frontend/eval/script.js";
 import { resolveConstantString } from "./eval-inline.js";
 
 /** Oracle fact kind → the intrinsic whose `new` builds that primitive's wrapper. */

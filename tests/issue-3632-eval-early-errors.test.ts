@@ -99,8 +99,8 @@ describe("#3632 folded eval Script early errors", () => {
         export function test(): number {
           const direct = eval("var public = 1; 3");
           // An indirect eval that declares a global var belongs to the runtime-eval provider (#7106 A2c,
-          // providerOwnsEvalDeclarations), so this folded-only test's indirect row declares nothing.
-          const indirect = (0, eval)("LOCAL: { break LOCAL; } 4");
+          // providerOwnsEvalDeclarations), so this folded-only test's indirect row uses a strict-reserved name as a label.
+          const indirect = (0, eval)("implements: { break implements; } 4");
           const loop = eval("while (true) { break; } 5");
           const labelled = eval("LOCAL: { break LOCAL; } 6");
           return direct + indirect + loop + labelled;

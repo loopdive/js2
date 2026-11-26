@@ -25,8 +25,6 @@ export interface ParsedEvalScript {
   readonly evalIsStrict: boolean;
 }
 
-export type EvalDeclarationNames = FoldedEvalDeclarationNames;
-
 /**
  * (#2923 park fix) Does the eval Script begin with a `"use strict"` directive
  * prologue? Per §11.2.1 a directive prologue is the leading run of
@@ -41,7 +39,7 @@ export function evalBodyHasUseStrictDirective(stmts: ts.NodeArray<ts.Statement>)
     if (!ts.isExpressionStatement(s)) break;
     // Only a plain StringLiteral counts as a directive (a template does not).
     if (!ts.isStringLiteral(s.expression)) break;
-    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    // §11.2.2 matches the RAW token — see src/frontend/use-strict-directive.ts.
     if (isUseStrictDirectiveExpression(s.expression)) return true;
     // Some other directive (e.g. "use asm") → keep scanning the prologue.
   }
@@ -78,7 +76,7 @@ export function foldedEvalStaticSyntaxError(
   call: ts.CallExpression,
   directEval: boolean,
   script: ParsedEvalScript,
-  declarationNames: EvalDeclarationNames,
+  declarationNames: FoldedEvalDeclarationNames,
   globalLexicals: ReadonlySet<string> | undefined,
 ): string | undefined {
   // `parseDiagnostics` is an internal field on SourceFile.
