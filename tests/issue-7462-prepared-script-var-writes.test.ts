@@ -87,6 +87,13 @@ describe("#7462 — the shapes this slice leaves out, by name", () => {
       "var n = 1n; function g(){ n++; } g();",
       "ir/from-ast: unsupported expression kind BigIntLiteral in <module-init>",
     ],
+    [
+      // On main: `unsupported expression kind PostfixUnaryExpression in f`; the for-update clause now discards
+      // through `lowerDiscardedUpdate`, which reaches the member write the statement `o.x++;` already refuses at.
+      "a member update in a for-update clause, at the member compound write",
+      "function f(o){ for (var i = 0; i < 2; o.x++) i++; }",
+      "ir/from-ast: compound property write on dynamic not in IR scope (f)",
+    ],
   ])("refuses %s", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);
   });

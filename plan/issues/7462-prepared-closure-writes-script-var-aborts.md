@@ -115,12 +115,20 @@ The statement walkers call `lowerAdoptedMutatingStatement` first (`2467`, `12696
 
    There is no `lowerTail` patch.
 7. **Leave it better.** `lowerForUpdateExpr`'s identifier `++`/`--` arm (`12238-12243`) is replaced by a call to
-   `lowerDiscardedUpdate`. This is byte-safe: the selector admits only identifier operands there
-   (`isPhase1ForUpdateExpr`), and those go to the same `lowerIncrementDecrement`. Its `=` and compound-identifier
-   arms stay. `lowerAdoptedMutatingStatement`'s compound arm also takes member and element targets, which the
-   for-update selector sends to `isPhase1Expr` → `lowerExpr`; folding them would move claimed bytes. The
-   moduleGlobal / slot / cell read-write triplet (about 8 copies) is folded only if the byte gates below stay
-   identical. Otherwise it is filed as its own issue and linked here.
+   `lowerDiscardedUpdate`. Its `=` and compound-identifier arms stay, and so does the routing of a compound
+   assignment to a member or element (`o.x += 1`), which the for-update selector sends to `isPhase1Expr` →
+   `lowerExpr`.
+   - **Amended 2026-11-26 (review round 2, finding 4).** `lowerDiscardedUpdate` also takes a member or element
+     *update* operand (`o.x++`, `a[i]--`), so the for-update clause now routes those to the member and element
+     compound writers, as the statement `o.x++;` already does. The ordinary pipeline is unaffected:
+     `isPhase1ForUpdateExpr` refuses a non-identifier update operand (`select.ts` ~5896), so no claimed unit reaches
+     that arm and no claimed bytes move (gate 4). On the Prepared path, which has no selector, the refusal text
+     changes for `function f(o){ for (var i = 0; i < 2; o.x++) i++; }`: from `ir/from-ast: unsupported expression
+     kind PostfixUnaryExpression in f` (main) to `ir/from-ast: compound property write on dynamic not in IR scope
+     (f)`, the refusal `o.x++;` gives. Keeping the narrower routing would need a second, identifier-only discard
+     helper; the test pins the new text instead.
+   - The moduleGlobal / slot / cell read-write triplet (about 8 copies) is folded only if the byte gates below stay
+     identical. Otherwise it is filed as its own issue and linked here.
 
 ### Gap 2 — `new X(…)` directly as a `+` operand
 
@@ -339,6 +347,26 @@ Verdict: "quality goal NOT met", on findings 1 and 2. Each finding and its resol
 7. **nit, fixed.** The `construct` leaf's comment now says why it exists.
 8. **nit, recorded.** The `Map` / `Promise` / `Number` / `RegExp` pins are listed among the deviations above.
 
+### Review round 2 (PR review of `11db0c8791e`, REQUEST CHANGES; answered 2026-11-26)
+
+1. **must-fix, fixed** (`d0e70e65ac9`). `src/ir/identifier-write.ts` is classified in `scripts/compiler-boundaries.json`
+   beside `identifier-read.ts`. `check-compiler-boundaries --mode inventory` exits 0 with `--base HEAD^1` and with
+   `--base origin/main`.
+2. **should-fix, fixed.** One `IdentifierWriteKind` record per write kind (`ASSIGNMENT_WRITE`, `COMPOUND_WRITE`,
+   `UPDATE_WRITE`) holds `label`, `what`, `undeclared` and `nonSlot`. `identifierWriteTarget(id, writeValue, kind,
+   cx)` and `readModifyWriteStorage(id, kind, cx)`; each of the three writers passes its constant, and `=`'s non-slot
+   invariant reads `ASSIGNMENT_WRITE.nonSlot`. Every refusal text is unchanged (the pins below all pass).
+3. **should-fix, fixed.** `readModifyWriteStorage` returns `logicalType`; both verbatim copies are gone. The update
+   writer no longer reads `capturedCellType`; the compound writer keeps it for its dynamic-cell guard only.
+4. **nit, plan amended** (item 7). The member and element routing of the for-update clause is kept and explained
+   there; the test pins the new Prepared refusal (`function f(o){ for (var i = 0; i < 2; o.x++) i++; }` →
+   `ir/from-ast: compound property write on dynamic not in IR scope (f)`; main: `unsupported expression kind
+   PostfixUnaryExpression in f`, both measured).
+5. **nit, fixed.** The blank line between `lowerNewExpression`'s doc comment and the function is gone.
+6. **question, answered** in `## Consumer` below: no row of the 411 sample consumes the slice; the five rows whose
+   first gap named its refusals are owned elsewhere, or by no issue, and the shape scan names the rows that do carry
+   it.
+
 ## Result
 
 Base `6694a8b8391`, head = this branch, measured 2026-11-26.
@@ -397,3 +425,45 @@ Base = `1a726b3e64e`, head = the merge commit. #7434's `refuseImmutableWrite` ru
   for an imported binding, which no single-file Prepared program has.
 - **Size:** `src/ir/from-ast.ts` 17,337 (main) → 17,319 lines; no budget grant.
 
+
+### After review round 2, measured 2026-11-26 (base `1a726b3e64e`)
+
+- **`check:prepared-bytes`:** 804 rows, output identical to base (sha256 `6c9504fe8787…` both, stdout only; with
+  `npm run`'s header and stderr, 808 lines, `4f07708f95a6…` both).
+- **Gate 4, ordinary pipeline:** 7,632 compiles, 0 differences in status, sha256 or claim set (6,379 claimed
+  functions over 3,677 compiles).
+- **Suites:** the 74 files of `tests/issue-7462-*`, `tests/issue-7434-*`, `tests/issue-7354-*`,
+  `tests/test262-prepared-*`, `tests/issue-7338*`, one vitest run each: 2,262 pass, 1 fail (`issue-7354-o-objects`,
+  the base failure). The new file has 30 tests (the for-update member pin added).
+- **Size:** `src/ir/from-ast.ts` 17,321 lines (main 17,337); no budget grant.
+
+## Consumer (review round 2, finding 6; measured 2026-11-26)
+
+**On the 411-row sample: none.** The five rows whose first gap named one of this slice's refusals stop at the same
+refusal on the head (`.tmp/o411/om-head`, per-row compare against `om-base`: 0 of 411 rows differ). Each is a
+neighbouring shape this slice does not build:
+
+| Row (411 sample) | First gap, base and head | Owner |
+|---|---|---|
+| `built-ins/RegExp/S15.10.1_A1_T1`, `_T7` | `'+' operands not provably … (string/unprovable)`: `'…' + (new RegExp("a**"))`, a RegExp value | **No open issue.** #7106 lever R built it for the ordinary pipeline (R1 construction, R3 `'…' + re`, which made `S15.10.1_A1_T1` IR-only there); #7354 slice T dropped it on the Prepared path (row 1'), which answers no RegExp capability. |
+| `language/expressions/postfix-increment/S11.3.1_A2.1_T2`, `prefix-decrement/S11.4.5_A2.1_T2` | `increment/decrement of undeclared "x" in <module-init>`: GetValue of an unresolvable name must throw ReferenceError | #7372 slice 3 (planned, not started): an undeclared name's home starts absent and a read of it throws ReferenceError. |
+| `language/expressions/postfix-decrement/S11.3.2_A2.2_T1` | `unsupported expression kind PostfixUnaryExpression in <module-init>`: `var y = object--`, an update used as a value | **No issue.** #7106 (lever L2, "Skipped") names a value-position update "a lever of its own" without an id; this issue pins it by name. |
+
+No other 411 row contains the slice's shapes at all (AST scan, `.tmp/r2/shapes.mts`: a function updating a script
+`var` it does not declare, or `new` as a `+` operand; only the two RegExp rows match).
+
+**Where the consumers are.** The same scan over the 8,260 test262 files carrying `es5id:` finds 25 with a function
+updating a script `var` (and 52 with `new` as a `+` operand, all `RegExp`, `Number`, `Array`, `Boolean`, `String`
+or `Object`, none of which takes the `construct` leaf). Those 25 run on the Prepared path (real runner, standalone),
+base `1a726b3e64e` vs head `d0e70e65ac9`:
+
+| Row | Base | Head |
+|---|---|---|
+| `language/statements/return/12.9-1.js` | abort `compound assign to undeclared identifier "sum"` | **pass** |
+| `built-ins/Object/create/15.2.3.5-4-40.js` | abort `increment/decrement of undeclared "i"` (getter 1) | abort `unsupported expression kind PostfixUnaryExpression` (getter 2's `1 === i++`, an update used as a value; no issue, as above) |
+| `language/statements/break/S12.8_A4_T1.js` | abort `increment/decrement of undeclared "x"` | abort `unsupported body statement EmptyStatement` (`do { ; } while(0)` in the closure; no issue covers it) |
+| the other 22 | unchanged; they stop earlier (`globalThis` 7, `Array` 3, labelled tail statements 4, `&&` on non-bool 2, `this` at script level 2, and one each of `null` in f64, `Math`, a void call as a value, `'+'` unprovable) | unchanged |
+
+So the measured yield of this slice is **+1 pass** (12.9-1) and 2 rows past their first gap, outside the 411 sample.
+The next consumer that would turn more of these rows is an update used as a value (`i++` in an expression), which has
+no issue yet; it is named here, not filed.

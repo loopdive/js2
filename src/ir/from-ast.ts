@@ -8431,7 +8431,6 @@ function constructsDynamic(expr: ts.NewExpression, cx: LowerCtx): boolean {
  * `{ kind: "class", shape }` so subsequent property accesses / method
  * calls dispatch correctly.
  */
-
 function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerNewExpression(expr, cx));
@@ -13213,6 +13212,33 @@ function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): neve
   throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
 }
 
+/** (#7462) How each identifier write kind names itself in its refusals; the refusal texts are pinned by tests. */
+interface IdentifierWriteKind {
+  readonly label: "property-write-unsupported" | "compound-assign-unsupported";
+  readonly what: string;
+  readonly undeclared: string;
+  readonly nonSlot: string;
+}
+
+const ASSIGNMENT_WRITE: IdentifierWriteKind = {
+  label: "property-write-unsupported",
+  what: "assignment to",
+  undeclared: "assignment to undeclared identifier",
+  nonSlot: "assignment to non-slot binding",
+};
+const COMPOUND_WRITE: IdentifierWriteKind = {
+  label: "compound-assign-unsupported",
+  what: "compound assignment to",
+  undeclared: "compound assign to undeclared identifier",
+  nonSlot: "compound assign to non-slot binding",
+};
+const UPDATE_WRITE: IdentifierWriteKind = {
+  label: "compound-assign-unsupported",
+  what: "increment/decrement of",
+  undeclared: "increment/decrement of undeclared",
+  nonSlot: "increment/decrement of non-slot",
+};
+
 /**
  * (#7462) The binding a write to `id` targets, after (#7434) an immutable binding is refused by name, whatever its
  * storage. A module binding only the resolver answers (a function writing a script `var`) is its global with
@@ -13221,44 +13247,43 @@ function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): neve
 function identifierWriteTarget(
   id: ts.Identifier,
   writeValue: ts.Expression,
-  label: "property-write-unsupported" | "compound-assign-unsupported",
-  what: string,
-  undeclared: string,
+  kind: IdentifierWriteKind,
   cx: LowerCtx,
 ): { readonly binding: ScopeBinding; readonly resolved?: ModuleBindingGlobal } {
-  refuseImmutableWrite(id, what, cx);
+  refuseImmutableWrite(id, kind.what, cx);
   const answer = classifyIdentifierWrite(id, writeValue, cx);
   if (answer.kind === "scope") return { binding: answer.binding };
   if (answer.kind === "module-binding") {
     const { globalRef, type } = answer.binding;
     return { binding: { kind: "moduleGlobal", globalRef, type }, resolved: answer.binding };
   }
-  demoteToLegacy(label, `ir/from-ast: ${undeclared} "${id.text}" in ${cx.funcName}`);
+  demoteToLegacy(kind.label, `ir/from-ast: ${kind.undeclared} "${id.text}" in ${cx.funcName}`);
 }
 
 /**
- * The storage a compound assignment or an update reads and writes back: a slot, a module global or a captured cell.
- * (#7462) A resolved module binding's TDZ guard comes first: GetValue precedes the read of the old value.
+ * The storage a compound assignment or an update reads and writes back (a slot, a module global or a captured cell)
+ * and the type it is read and written as. (#7462) A resolved module binding's TDZ guard comes first: GetValue
+ * precedes the read of the old value.
  */
 function readModifyWriteStorage(
   id: ts.Identifier,
-  what: string,
-  undeclared: string,
-  nonSlot: string,
+  kind: IdentifierWriteKind,
   cx: LowerCtx,
 ): {
   storage: ReadModifyWriteStorage;
+  logicalType: IrType;
   capturedCellType?: Extract<IrType, { kind: "boxed" }>;
   resolved?: ModuleBindingGlobal;
 } {
-  const writeValue = id.parent as ts.Expression;
-  const target = identifierWriteTarget(id, writeValue, "compound-assign-unsupported", what, undeclared, cx);
+  const target = identifierWriteTarget(id, id.parent as ts.Expression, kind, cx);
   const storage = target.binding;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
   if (!(storage.kind === "slot" || storage.kind === "moduleGlobal" || (storage.kind === "local" && capturedCellType)))
-    refuseNonSlotWrite(id, nonSlot, cx);
+    refuseNonSlotWrite(id, kind.nonSlot, cx);
   if (target.resolved) lowerResolvedModuleBindingTdzCheck(id.text, target.resolved, cx);
-  return { storage, capturedCellType, resolved: target.resolved };
+  const logicalType =
+    storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
+  return { storage, logicalType, capturedCellType, resolved: target.resolved };
 }
 
 type ReadModifyWriteStorage = Extract<ScopeBinding, { kind: "slot" | "moduleGlobal" | "local" }>;
@@ -13280,14 +13305,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
   }
-  const { binding, resolved } = identifierWriteTarget(
-    id,
-    rhs,
-    "property-write-unsupported",
-    "assignment to",
-    "assignment to undeclared identifier",
-    cx,
-  );
+  const { binding, resolved } = identifierWriteTarget(id, rhs, ASSIGNMENT_WRITE, cx);
   // (#3142 Slice 2) Module-scope binding — write the legacy global; a resolved one after the RHS, then its TDZ guard.
   if (binding.kind === "moduleGlobal") {
     const result = lowerExpr(rhs, cx, binding.type);
@@ -13328,7 +13346,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return newValue;
   }
   if (binding.kind !== "slot") {
-    refuseNonSlotWrite(id, "assignment to non-slot binding", cx);
+    refuseNonSlotWrite(id, ASSIGNMENT_WRITE.nonSlot, cx);
   }
   // (#3741) invariant W — an i32-promoted slot's RHS lowers DIRECTLY to an
   // exact i32; it is never an f64 that we then truncate.
@@ -13384,13 +13402,7 @@ function lowerCompoundAssignment(
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
   }
-  const { storage, capturedCellType, resolved } = readModifyWriteStorage(
-    id,
-    "compound assignment to",
-    "compound assign to undeclared identifier",
-    "compound assign to non-slot binding",
-    cx,
-  );
+  const { storage, logicalType, capturedCellType, resolved } = readModifyWriteStorage(id, COMPOUND_WRITE, cx);
   // (#3741) Promotion admits bitwise compounds and exact literal counter steps.
   // Unsupported shapes remain refusals in the shared i32 producer.
   if (storage.kind === "slot" && storage.i32Storage) {
@@ -13398,8 +13410,6 @@ function lowerCompoundAssignment(
     // Promotion excludes >>>=, whose result may exceed signed i32.
     return cx.builder.emitUnary("f64.convert_i32_s", result, IR_F64);
   }
-  const logicalType =
-    storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
   // (#7144) Which slot / value families each operator writes is
   // `compoundWriteAdmissible`; the arms below are its producers.
   const slotFamily = irOperandFamily(logicalType, id);
@@ -13530,13 +13540,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
     return;
   }
-  const { storage, capturedCellType } = readModifyWriteStorage(
-    id,
-    "increment/decrement of",
-    "increment/decrement of undeclared",
-    "increment/decrement of non-slot",
-    cx,
-  );
+  const { storage, logicalType } = readModifyWriteStorage(id, UPDATE_WRITE, cx);
   // (#3741) i32-promoted slot — `i32.add`/`i32.sub` of 1, exactly what legacy
   // has emitted for a promoted counter since #1120.
   if (storage.kind === "slot" && storage.i32Storage) {
@@ -13546,8 +13550,6 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     cx.builder.emitSlotWrite(storage.slotIndex, next);
     return;
   }
-  const logicalType =
-    storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
   // (#7144) `incrementSlotAdmissible`: an f64 or a dynamic slot. The IR's binop
   // set only includes f64 arithmetic — i32 add/sub would need additional binop
   // variants, so i32-typed counters fall back to legacy.
