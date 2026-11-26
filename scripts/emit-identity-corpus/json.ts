@@ -2,12 +2,12 @@
 // counter-loops in src/codegen/json-runtime.ts so the counter-loop scaffolds
 // are present in the emitted binary. Without a JSON-using corpus file the
 // counter-loop byte-identity proof would be vacuous (the website/playground
-// examples do not force emitJsonQuoteString / emitJsonParsePrimitive).
+// examples do not force emitJsonQuoteString).
 //
 //  - `JSON.stringify(<string with escapable + control chars>)` forces
 //    emitJsonQuoteString (the char-scan out-length loop + the escape-write loop).
-//  - `JSON.parse(<primitive>)` forces emitJsonParsePrimitive (the digit / token
-//    scan loops).
+//  - `JSON.parse(<primitive literal>)` is folded at compile time; it keeps the
+//    corpus's literal-parse path covered.
 //
 // Kept DOM-free / Promise-free / class-field-free so it compiles under the gc,
 // standalone, and wasi targets (where the WasmGC JSON runtime is emitted).
@@ -20,7 +20,7 @@ export function run(): number {
   const quoted = JSON.stringify('a"b\\c\n\tde');
   total += quoted.length;
 
-  // emitJsonParsePrimitive — parse a numeric primitive (the digit-scan loop).
+  // JSON.parse of a numeric literal (folded at compile time).
   total += JSON.parse("12345") as number;
   total += JSON.parse("-67") as number;
 
