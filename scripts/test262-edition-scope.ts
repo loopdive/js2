@@ -12,7 +12,7 @@
  * classifier, so "ES5" means the same set of files in both places.
  *
  *   paths   --test262 <root> --out <file>          write the edition's file list
- *   fetch-baseline --from <sha> --dest <dir>         download the nearest earlier measurement
+ *   fetch-baseline --from <sha> --meta <scope.json> --dest <dir>   download the nearest COMPARABLE earlier measurement
  *   report  --results <jsonl> --meta <scope.json> --test262 <root>
  *           [--baseline-dir <dir>] --summary <md> --json <out>
  *
@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -144,15 +144,22 @@ function countStatuses(run: StatusMap, paths: ReadonlySet<string>): Counts {
  * well as an edition one. On the same test262 revision a baseline-passing test
  * with no row now is a regression: a run that silently drops tests must not
  * read as clean.
+ *
+ * `baselineCoversEdition` (the baseline measured this same edition) widens the
+ * check to every baseline row, not just today's path list: a change that
+ * narrows the classifier or the runner's categories shrinks today's list and
+ * the expected set together, and only the baseline still remembers the tests
+ * that fell out.
  */
 export function compareEditionRuns(
   run: StatusMap,
   baseline: StatusMap,
   paths: ReadonlySet<string>,
-  sameTest262Revision: boolean,
+  { sameTest262Revision, baselineCoversEdition }: { sameTest262Revision: boolean; baselineCoversEdition: boolean },
 ): EditionDiff {
   const diff: EditionDiff = { regressions: [], timeouts: [], improvements: [], unbaselined: 0, notComparable: [] };
-  for (const file of paths) {
+  const files = baselineCoversEdition ? new Set([...paths, ...baseline.keys()]) : paths;
+  for (const file of files) {
     const now = run.get(file);
     const was = baseline.get(file);
     if (now === undefined) {
@@ -176,18 +183,20 @@ export interface ArtifactRef {
 }
 
 /**
- * The measurement nearest to the start of `lineage` (first-parent order, newest
- * first). Within one commit the newest artifact wins, so a re-run supersedes.
+ * Every measurement on `lineage`, nearest first (first-parent order); within
+ * one commit the newest artifact first, so a re-run supersedes. The caller
+ * takes the first one that turns out comparable.
  */
-export function nearestBaseline(
+export function baselineCandidates(
   lineage: readonly string[],
   artifacts: readonly ArtifactRef[],
-): { artifact: ArtifactRef; distance: number } | null {
-  for (const [distance, sha] of lineage.entries()) {
-    const atSha = artifacts.filter((a) => a.sha === sha).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    if (atSha.length > 0) return { artifact: atSha[0]!, distance };
-  }
-  return null;
+): { artifact: ArtifactRef; distance: number }[] {
+  return lineage.flatMap((sha, distance) =>
+    artifacts
+      .filter((a) => a.sha === sha)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((artifact) => ({ artifact, distance })),
+  );
 }
 
 export interface Report {
@@ -257,8 +266,6 @@ export function buildReport(opts: {
   meta: ScopeMeta;
   paths: ReadonlySet<string>;
   baseline?: { statuses: StatusMap; meta: ScopeMeta; runId?: number; distance?: number };
-  /** Why there is no baseline, when the caller knows better than "none found". */
-  noBaselineReason?: string;
 }): Report {
   const base: Report = {
     edition: opts.meta.edition ?? "",
@@ -270,8 +277,8 @@ export function buildReport(opts: {
     return {
       ...base,
       noBaselineReason:
-        opts.noBaselineReason ??
-        `No earlier IR measurement was found within ${MAX_BASELINE_DISTANCE} first-parent commits.`,
+        `No comparable earlier IR measurement within ${MAX_BASELINE_DISTANCE} first-parent commits ` +
+        "(the download step logs each one it skipped, and why).",
     };
   }
   const mismatch = baselineMismatch(opts.baseline.meta, opts.meta);
@@ -287,7 +294,10 @@ export function buildReport(opts: {
       distance: opts.baseline.distance,
       ...(from === to ? {} : { test262Changed: { from, to } }),
     },
-    diff: compareEditionRuns(opts.run, opts.baseline.statuses, opts.paths, from === to),
+    diff: compareEditionRuns(opts.run, opts.baseline.statuses, opts.paths, {
+      sameTest262Revision: from === to,
+      baselineCoversEdition: opts.baseline.meta.scope === "edition",
+    }),
   };
 }
 
@@ -335,9 +345,21 @@ function listArtifacts(repo: string): ArtifactRef[] {
   return out;
 }
 
+/** Downloads tried before giving up: each candidate is a full artifact. */
+const MAX_BASELINE_DOWNLOADS = 5;
+
+/** Why a downloaded measurement cannot serve as the baseline, or null when it can. */
+export function candidateRejection(dir: string, current: ScopeMeta): string | null {
+  if (!existsSync(join(dir, "results.jsonl"))) return "it has no results.jsonl";
+  // Measurements from before #7551 do not record their eval engine or test262 revision.
+  if (!existsSync(join(dir, "scope.json"))) return "it predates scope.json, so its comparability is unknown";
+  return baselineMismatch(JSON.parse(readFileSync(join(dir, "scope.json"), "utf-8")), current);
+}
+
 function cmdFetchBaseline(args: string[]): void {
   const from = required(args, "--from");
   const dest = required(args, "--dest");
+  const current: ScopeMeta = JSON.parse(readFileSync(required(args, "--meta"), "utf-8"));
   const repo = process.env.GITHUB_REPOSITORY ?? usage("GITHUB_REPOSITORY is not set");
   const lineage = execFileSync(
     "git",
@@ -346,15 +368,23 @@ function cmdFetchBaseline(args: string[]): void {
   )
     .split("\n")
     .filter(Boolean);
-  const found = nearestBaseline(lineage, listArtifacts(repo));
-  if (!found) {
-    console.log(`no IR measurement on the ${lineage.length} first-parent commit(s) from ${from}`);
+  const candidates = baselineCandidates(lineage, listArtifacts(repo)).slice(0, MAX_BASELINE_DOWNLOADS);
+  for (const { artifact, distance } of candidates) {
+    rmSync(dest, { recursive: true, force: true });
+    gh("run", "download", String(artifact.runId), "--repo", repo, "--name", artifact.name, "--dir", dest);
+    const rejection = candidateRejection(dest, current);
+    if (rejection) {
+      console.log(`skipped ${artifact.name} of ${artifact.sha} (run ${artifact.runId}): ${rejection}`);
+      continue;
+    }
+    writeFileSync(join(dest, "baseline-ref.json"), JSON.stringify({ ...artifact, distance }) + "\n");
+    console.log(`baseline: ${artifact.name} of ${artifact.sha} (run ${artifact.runId}, distance ${distance})`);
     return;
   }
-  const { artifact, distance } = found;
-  gh("run", "download", String(artifact.runId), "--repo", repo, "--name", artifact.name, "--dir", dest);
-  writeFileSync(join(dest, "baseline-ref.json"), JSON.stringify({ ...artifact, distance }) + "\n");
-  console.log(`baseline: ${artifact.name} of ${artifact.sha} (run ${artifact.runId}, distance ${distance})`);
+  rmSync(dest, { recursive: true, force: true });
+  console.log(
+    `no comparable IR measurement among ${candidates.length} candidate(s) on the ${lineage.length} first-parent commit(s) from ${from}`,
+  );
 }
 
 function cmdReport(args: string[]): void {
@@ -363,30 +393,18 @@ function cmdReport(args: string[]): void {
   const paths = new Set(editionPaths(required(args, "--test262"), year));
   const dir = arg(args, "--baseline-dir");
   let baseline: Parameters<typeof buildReport>[0]["baseline"];
-  let noBaselineReason: string | undefined;
-  if (dir && existsSync(join(dir, "results.jsonl"))) {
+  if (dir && existsSync(join(dir, "results.jsonl")) && existsSync(join(dir, "scope.json"))) {
     const ref = existsSync(join(dir, "baseline-ref.json"))
       ? JSON.parse(readFileSync(join(dir, "baseline-ref.json"), "utf-8"))
       : {};
-    if (existsSync(join(dir, "scope.json"))) {
-      baseline = {
-        statuses: readStatuses(join(dir, "results.jsonl")),
-        meta: JSON.parse(readFileSync(join(dir, "scope.json"), "utf-8")),
-        runId: ref.runId,
-        distance: ref.distance,
-      };
-    } else {
-      // Measurements from before #7551 do not record their eval engine or test262 revision.
-      noBaselineReason = `The nearest earlier IR measurement (${ref.sha ?? "unknown commit"}) predates scope.json, so its comparability is unknown.`;
-    }
+    baseline = {
+      statuses: readStatuses(join(dir, "results.jsonl")),
+      meta: JSON.parse(readFileSync(join(dir, "scope.json"), "utf-8")),
+      runId: ref.runId,
+      distance: ref.distance,
+    };
   }
-  const report = buildReport({
-    run: readStatuses(required(args, "--results")),
-    meta,
-    paths,
-    baseline,
-    noBaselineReason,
-  });
+  const report = buildReport({ run: readStatuses(required(args, "--results")), meta, paths, baseline });
   const summary = renderSummary(report);
   writeFileSync(required(args, "--summary"), summary);
   writeFileSync(required(args, "--json"), JSON.stringify(report, null, 2) + "\n");

@@ -307,3 +307,23 @@ PR stacked on this one (`claude/ci-legacy-daily`), after owner sign-off.
     before retrying (tested).
   - The measurement upload has `overwrite: true`, so a re-run of failed jobs
     re-uploads.
+
+## Delta review fixes, Part A (2026-11-26)
+
+- **Tests a narrowed classifier drops.**
+  - When the baseline measured the same edition, `compareEditionRuns` now
+    checks every baseline row, not just today's path list. A baseline-pass
+    test absent from both today's list and the run is a regression,
+    `missing`, on the same test262 revision, and "not comparable" when the
+    revision changed.
+  - A full-corpus baseline cannot tell (it holds every edition's rows), so
+    the check applies only to edition baselines.
+  - Tested.
+- **Non-comparable baselines are skipped, not final.**
+  - `fetch-baseline --meta <scope.json>` walks the candidates nearest first:
+    `baselineCandidates`, at most 5 downloads.
+  - It skips any candidate that predates `scope.json` or differs in edition
+    or eval engine, logs why, and takes the first comparable one.
+  - "No baseline" now means no comparable measurement among those
+    candidates.
+  - Tested (`candidateRejection`).

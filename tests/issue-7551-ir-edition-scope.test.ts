@@ -14,7 +14,8 @@ import {
   compareEditionRuns,
   editionPaths,
   MISSING_STATUS,
-  nearestBaseline,
+  baselineCandidates,
+  candidateRejection,
   REGRESSION_EXIT_CODE,
   readCurrentEdition,
   renderSummary,
@@ -79,13 +80,14 @@ describe("#7551 edition path list", () => {
 
 describe("#7551 per-test comparison", () => {
   const paths = new Set([ES5_A, ES5_B, ES5_C]);
+  const SAME = { sameTest262Revision: true, baselineCoversEdition: false };
 
   it("gates pass -> not-pass, lists improvements, and does not gate pass -> compile_timeout", () => {
     const diff = compareEditionRuns(
       statuses({ [ES5_A]: "compile_error", [ES5_B]: "pass", [ES5_C]: "compile_timeout", [ES2015]: "fail" }),
       statuses({ [ES5_A]: "pass", [ES5_B]: "fail", [ES5_C]: "pass", [ES2015]: "pass" }),
       paths,
-      true,
+      SAME,
     );
     expect(diff.regressions).toEqual([{ file: ES5_A, now: "compile_error" }]);
     expect(diff.improvements).toEqual([ES5_B]);
@@ -95,18 +97,21 @@ describe("#7551 per-test comparison", () => {
   });
 
   it("counts edition tests the baseline never ran instead of calling them regressions", () => {
-    const diff = compareEditionRuns(statuses({ [ES5_A]: "fail" }), statuses({}), paths, true);
+    const diff = compareEditionRuns(statuses({ [ES5_A]: "fail" }), statuses({}), paths, SAME);
     expect(diff).toMatchObject({ regressions: [], unbaselined: 1 });
   });
 
   it("gates a baseline-passing test the run dropped, unless the test262 revision changed", () => {
     const run = statuses({ [ES5_A]: "pass" });
     const baseline = statuses({ [ES5_A]: "pass", [ES5_B]: "pass", [ES5_C]: "fail" });
-    expect(compareEditionRuns(run, baseline, paths, true)).toMatchObject({
+    expect(compareEditionRuns(run, baseline, paths, SAME)).toMatchObject({
       regressions: [{ file: ES5_B, now: MISSING_STATUS }],
       notComparable: [],
     });
-    expect(compareEditionRuns(run, baseline, paths, false)).toMatchObject({ regressions: [], notComparable: [ES5_B] });
+    expect(compareEditionRuns(run, baseline, paths, { ...SAME, sameTest262Revision: false })).toMatchObject({
+      regressions: [],
+      notComparable: [ES5_B],
+    });
     const changed = buildReport({
       run,
       meta: meta(),
@@ -115,6 +120,31 @@ describe("#7551 per-test comparison", () => {
     });
     expect(changed.baseline?.test262Changed).toEqual({ from: "older", to: "t262" });
     expect(renderSummary(changed)).toContain("Not comparable (test262 revision changed)");
+  });
+
+  it("an edition baseline remembers tests a narrowed classifier dropped from today's list", () => {
+    // Today's list lost ES5_C (as if the classifier or the categories narrowed);
+    // the run did not report it either.
+    const narrowed = new Set([ES5_A, ES5_B]);
+    const run = statuses({ [ES5_A]: "pass", [ES5_B]: "pass" });
+    const baseline = statuses({ [ES5_A]: "pass", [ES5_B]: "pass", [ES5_C]: "pass" });
+    const covers = { sameTest262Revision: true, baselineCoversEdition: true };
+    expect(compareEditionRuns(run, baseline, narrowed, covers).regressions).toEqual([
+      { file: ES5_C, now: MISSING_STATUS },
+    ]);
+    expect(
+      compareEditionRuns(run, baseline, narrowed, { ...covers, sameTest262Revision: false }).notComparable,
+    ).toEqual([ES5_C]);
+    // Only an EDITION baseline can say so: a full-corpus one holds every edition's rows.
+    expect(compareEditionRuns(run, baseline, narrowed, SAME).regressions).toEqual([]);
+    // buildReport turns it on for an edition-scope baseline.
+    const report = buildReport({
+      run,
+      meta: meta(),
+      paths: narrowed,
+      baseline: { statuses: baseline, meta: meta({ sourceSha: "base" }) },
+    });
+    expect(report.diff?.regressions).toEqual([{ file: ES5_C, now: MISSING_STATUS }]);
   });
 
   it("never reports 'no regressions' without a comparable baseline", () => {
@@ -156,16 +186,17 @@ describe("#7551 per-test comparison", () => {
 describe("#7551 baseline resolution", () => {
   const art = (id: number, sha: string, createdAt: string) => ({ id, name: "a", runId: id, sha, createdAt });
 
-  it("takes the measurement of the first commit in the lineage — the predecessor in the normal case", () => {
-    const found = nearestBaseline(
+  it("orders candidates nearest first — the predecessor in the normal case", () => {
+    const found = baselineCandidates(
       ["parent", "grandparent"],
       [art(1, "grandparent", "2026-11-26T01:00:00Z"), art(2, "parent", "2026-11-26T02:00:00Z")],
     );
-    expect(found).toEqual({ artifact: art(2, "parent", "2026-11-26T02:00:00Z"), distance: 0 });
+    expect(found[0]).toEqual({ artifact: art(2, "parent", "2026-11-26T02:00:00Z"), distance: 0 });
+    expect(found.map((c) => c.artifact.id)).toEqual([2, 1]);
   });
 
-  it("walks back past commits without a measurement and prefers the newest re-run of a commit", () => {
-    const found = nearestBaseline(
+  it("walks past commits without a measurement and puts the newest re-run of a commit first", () => {
+    const found = baselineCandidates(
       ["docs-only", "parent"],
       [
         art(1, "parent", "2026-11-26T01:00:00Z"),
@@ -173,12 +204,29 @@ describe("#7551 baseline resolution", () => {
         art(9, "unrelated", "2026-11-27T00:00:00Z"),
       ],
     );
-    expect(found?.artifact.id).toBe(3);
-    expect(found?.distance).toBe(1);
+    expect(found.map((c) => [c.artifact.id, c.distance])).toEqual([
+      [3, 1],
+      [1, 1],
+    ]);
   });
 
-  it("returns null when nothing on the lineage was measured", () => {
-    expect(nearestBaseline(["a", "b"], [art(1, "elsewhere", "2026-11-26T00:00:00Z")])).toBeNull();
+  it("has no candidates when nothing on the lineage was measured", () => {
+    expect(baselineCandidates(["a", "b"], [art(1, "elsewhere", "2026-11-26T00:00:00Z")])).toEqual([]);
+  });
+
+  it("rejects a non-comparable candidate, so the download step keeps walking", () => {
+    const dir = (name: string, scope?: ScopeMeta) => {
+      const d = join(root, `candidate-${name}`);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "results.jsonl"), "");
+      if (scope) writeFileSync(join(d, "scope.json"), JSON.stringify(scope));
+      return d;
+    };
+    expect(candidateRejection(dir("old"), meta())).toMatch(/predates scope\.json/);
+    expect(candidateRejection(dir("engine", meta({ evalEngine: "interpreter" })), meta())).toMatch(/eval engine/);
+    expect(candidateRejection(dir("edition", meta({ edition: "ES2015" })), meta())).toMatch(/measured ES2015/);
+    expect(candidateRejection(dir("ok", meta({ sourceSha: "base" })), meta())).toBeNull();
+    expect(candidateRejection(dir("full", meta({ scope: "full", edition: undefined })), meta())).toBeNull();
   });
 });
 
