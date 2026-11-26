@@ -4365,7 +4365,7 @@ function withNativeGeneratorContinuationLocals<T>(
   if (!replacements || replacements.length === 0) return emit();
 
   const previousYieldLocals = fctx.nativeGeneratorYieldValueLocals;
-  const previousExpressionLocals = fctx.nativeGeneratorExpressionValueLocals;
+  const previousExpressionLocals = fctx.preEvaluatedExpressionLocals;
   const yieldLocals = new Map(previousYieldLocals);
   const expressionLocals = new Map(previousExpressionLocals);
   const seen = new Set<ts.Expression>();
@@ -4386,12 +4386,12 @@ function withNativeGeneratorContinuationLocals<T>(
   }
 
   fctx.nativeGeneratorYieldValueLocals = yieldLocals;
-  fctx.nativeGeneratorExpressionValueLocals = expressionLocals;
+  fctx.preEvaluatedExpressionLocals = expressionLocals;
   try {
     return emit();
   } finally {
     fctx.nativeGeneratorYieldValueLocals = previousYieldLocals;
-    fctx.nativeGeneratorExpressionValueLocals = previousExpressionLocals;
+    fctx.preEvaluatedExpressionLocals = previousExpressionLocals;
   }
 }
 
