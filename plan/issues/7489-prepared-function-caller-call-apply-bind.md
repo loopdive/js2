@@ -158,11 +158,11 @@ in the Prepared realm, or in Prepared-only legalization.
      [[Get]] / [[Set]] for `caller` (the write's existing `putValue`: a sloppy
      write to the non-writable own `caller` is ignored, a strict one throws;
      the accessor's setter throws in both). No has-then-branch, no new helper.
-   - `arguments` keeps a by-name refusal for reads and writes: a sloppy
-     function's V8 `arguments` is the live arguments object (Session B), and
-     no own property is installed for it, so the accessor's TypeError would be
-     the wrong answer for a sloppy function. The refusal text names the reason
-     ("a function's own `arguments` needs arguments objects").
+   - `arguments` kept a by-name refusal for reads and writes in slice A; slice
+     C-1 (C.5) replaced it with a run-time split: a sloppy plain function's
+     read or write takes the run-time abort (its V8 value is the live arguments
+     object, Session B's), every other function's throws the accessor's
+     TypeError.
    - `FUNCTION_PROTOTYPE_ACCESSOR_KEYS` stays the catalog's; the read's and the
      write's `missing` name only `arguments` from it.
 4. **Pins** (`tests/issue-7489-function-caller.test.ts`), each failing on main:
@@ -384,3 +384,35 @@ Branch `claude/s20-fn-call-apply` (stacked on slice A), measured against main
   (`familyProperties`); only Object.prototype's methods keep their entry's own
   seeding (`object-prototype-method`). `builtin-prototype-keys.ts`
   derives both prototypes' unpopulated keys with one helper.
+
+## Slice C-1 result (2026-11-26): `arguments` run-time split, C.6 wording, the `throwing` nit
+
+Branch `claude/s20-fn-arguments` is stacked on slice B (#7480); it was measured against slice B's head (main `1a726b3e`).
+
+### Implementation
+
+- `dynamic-member-access.ts` (`withoutOwnCaller`): the function arm of a read or write of `arguments` tests
+  `js.object.has-own(value, "caller")` at run time.
+  - The own `caller` is exactly slice A's rule (`SLOPPY_FUNCTION_OWN_CALLER_KEY`, written only by
+    `js.object.init-function`); that one predicate is the only definition.
+  - True: the run-time abort.
+  - Otherwise: the realm's [[Get]] / [[Set]], whose %ThrowTypeError% accessor throws.
+  - The select-time refusal is gone; nothing is claimed and then withdrawn.
+- C.6: "V8's" becomes "node 22's" in the own-`caller` comments.
+- RV7480's nit: `dynamic-object-statics.ts`'s local `throwing` adapter is folded into `throwingArm`.
+
+### Census
+
+- `plan/log/7489-census/arguments.txt` holds the 17 ES5 files that read `.arguments`.
+  - 1 file fail → pass (`13.2-26-s`); none pass → fail.
+  - The 3 `bind` files that read `bf.arguments` wait for C-2.
+  - The rest stop at unrelated gaps: `Function`, `delete`, an undeclared global, `dyn.arguments_length`.
+- `candidates.txt` is unchanged against slice B (92 / 94 / 366).
+
+### Tests
+
+- `tests/issue-7489-function-caller.test.ts`:
+  - abort pins for sloppy declaration and expression, read and write;
+  - node-agreement pins for strict declaration and expression, read and write, from sloppy and from strict code.
+- G1's write pin moved here.
+- The `issue-7354-*` / `7106` / `3518-native-realm*` / `7489-*` suites fail only main's 4 tests.
