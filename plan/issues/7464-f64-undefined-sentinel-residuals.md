@@ -1,7 +1,7 @@
 ---
 id: 7464
 title: "f64 `undefined` sentinel residuals: per-evaluation statics, `for (var …)` heads, String/JSON/typeof, same-named module `let`s"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
@@ -34,8 +34,10 @@ with the same lowering) to an f64 that carries the `undefined` sentinel (`UNDEF_
 
 1. **Per-evaluation statics.** A class declared in a function body gets its static `undefined` seed once, from the
    module prologue, and not each time the class declaration is evaluated.
-2. **`for (var …)` heads.** A `var` head that declares several bindings, one of them `number | undefined`, emits
-   instructions that fail validation. The single-binding `var` head is correct.
+2. **`for (var …)` heads.** `hoistVarDeclarations` gives a `number | undefined` var an externref slot and stores
+   `undefined` into it at function entry. `compileForStatement` then retyped that slot to f64, so the entry store
+   failed validation. This holds for one binding or several (re-measured 2026-11-26; the earlier note that the
+   single-binding head is correct was wrong).
 3. **Readers of the sentinel.** `String()`, `JSON.stringify` (a property holding `undefined` must be skipped),
    `typeof`, and the parameter-property assignment read the raw f64 and do not test for the sentinel. These are the
    sentinel readers that #7360 and #7366 did not audit. #7406 is the boolean counterpart.
@@ -54,3 +56,20 @@ with the same lowering) to an f64 that carries the `undefined` sentinel (`UNDEF_
   - `class-bodies.ts` and `class-constructor-wrapper.ts` still write the sentinel inline. They should call
     `pushUndefF64`, as the seed and the loops do.
   - The header of `module-var-undefined-seed.ts` (lines 46–51) still lists the f64 slot as an open residual.
+
+## Implementation Plan
+
+Re-measured on origin/main 6694a8b839 (2026-11-26); every row reproduces on gc and standalone.
+
+| Case | Module | Change |
+| --- | --- | --- |
+| 1 | `declarations/module-var-undefined-seed.ts`, `statements/nested-declarations.ts` | The seed registry keeps each static's declaration. `emitClassStaticF64UndefinedSeeds` re-seeds a function-local class's statics at each evaluation, before its static initialisers. Reuses `pushUndefF64` and the existing registry; there is no second list. |
+| 2 | `statements/loops.ts` | A `var` head that reuses a hoisted externref slot keeps that type, as the `seedUninitialisedForLet` doc already says. |
+| 3 | the shared sentinel readers (String/concat coercion, JSON, `typeof`) and the parameter-property store | Test the sentinel where an f64 is read as a value, reusing `emitIsUndefF64`/`f64MayHoldUndefined`. |
+| 4 | module-global keying | Key module globals per file, following #3364, through one helper. |
+
+Code-quality criterion: no new predicate or seed list beside the existing ones, no budget grants, gc bytes
+unchanged outside the affected shapes (checked on 240 test262 files × gc/standalone).
+
+Out of scope, noted: `` `${g}` `` with `g: number | undefined` is a compile error ("Template literal numeric
+substitution requires number_toString"). `static a: number` (no `undefined` in the type) is not re-seeded either.
