@@ -93,6 +93,7 @@ import {
 } from "./declarations/host-carrier-object-literal.js"; // (#6650) return boundary: BOTH host-path reasons
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
+import { restrictedGlobalLexicalName } from "../shared/script-lexical-names.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
@@ -189,8 +190,7 @@ import {
 } from "./declarations/module-init-closure-prelift.js";
 import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
 import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
-import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
-import { moduleF64UndefinedSeedGlobals } from "./declarations/module-var-undefined-seed.js"; // (#7366)
+import { emitModuleInitPrologue, moduleInitPrologueForcesInit } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
@@ -2085,26 +2085,6 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
- * (#5271 step 8) 16.1.7 GlobalDeclarationInstantiation step 5.c-d: a SCRIPT's
- * top-level lexical name that collides with a RESTRICTED GLOBAL - an own,
- * non-configurable property of the global object - is a SyntaxError thrown at
- * instantiation time. `undefined`, `NaN` and `Infinity` are the three the spec
- * mandates.
- *
- * Records the first collision; the throw is emitted as the first instruction of
- * `__module_init`. A MODULE has its own environment record and no such
- * collision, so a source with an import/export indicator is skipped.
- */
-function noteRestrictedGlobalLexicalName(ctx: CodegenContext, sourceFile: ts.SourceFile, name: string): void {
-  if (ctx.restrictedGlobalLexicalName !== undefined) return;
-  if (name !== "undefined" && name !== "NaN" && name !== "Infinity") return;
-  if ((sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node }).externalModuleIndicator !== undefined) {
-    return;
-  }
-  ctx.restrictedGlobalLexicalName = name;
-}
-
-/**
  * (#5195 Step 9 H) A top-level `C.staticX = v` or `new C().x = v` whose target
  * names a declared class ACCESSOR.
  *
@@ -3772,6 +3752,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   for (const stmt of sourceFile.statements) walkModuleStmtForVars(stmt);
   for (const group of runtimeModuleGroups) registerRuntimeModuleVarHoists(group);
 
+  // (#5271, #7519) The first Script whose top-level lexical binds a restricted global makes `__module_init` throw.
+  ctx.restrictedGlobalLexicalName ??= restrictedGlobalLexicalName(sourceFile)?.text;
   // Single pass preserves source order, which matters for statements that depend on
   // side effects from earlier statements (e.g. `(Ctor as any).prototype = proto` must
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between
@@ -3836,10 +3818,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // to the standalone-regexp / inferred type. See moduleGlobalWasmType.
           const wasmType = moduleGlobalWasmType(decl, varType);
           registerModuleGlobal(ctx, decl.name.text, wasmType, decl);
-          if (isLetOrConst) {
-            ctx.tdzLetConstNames.add(decl.name.text);
-            noteRestrictedGlobalLexicalName(ctx, sourceFile, decl.name.text);
-          }
+          if (isLetOrConst) ctx.tdzLetConstNames.add(decl.name.text);
         } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
           registerBindingNames(decl.name, isLetOrConst);
         }
@@ -5512,12 +5491,7 @@ export function compileDeclarations(
   // Compile module-level init statements BEFORE function bodies so that
   // closureMap is populated for module-level arrow function variables.
   // This allows function bodies (e.g. test()) to reference module-level closures.
-  // (#2931) A reassigned-function live-binding global must be seeded with its
-  // closure in __module_init even when the program has no other init statements,
-  // so a read before the reassignment still yields the function; likewise an f64 `undefined` seed (#7366).
-  const hasPrologueSeeds =
-    (ctx.liveFuncBindingGlobals?.size ?? 0) > 0 || moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0;
-  const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasPrologueSeeds;
+  const hasModuleInits = ctx.moduleInitStatements.length > 0 || moduleInitPrologueForcesInit(ctx, sourceFile);
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   const hasAsyncGraphInit =
     ctx.deferTopLevelInit === true && !ctx.wasi && moduleInitHasTopLevelAwait(ctx.moduleInitStatements);

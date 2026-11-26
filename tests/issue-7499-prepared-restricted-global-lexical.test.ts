@@ -12,8 +12,8 @@ const options = (fileName: string): Test262CompileOptions => ({
   fileName,
 });
 
-const codes = async (source: string, unlowerableBodies: "abort" | "refuse") =>
-  (await compile(source, options("test.js"), undefined, unlowerableBodies)).errors.map((error) => error.code);
+const codes = async (source: string, unlowerableBodies: "abort" | "refuse", fileName = "test.js") =>
+  (await compile(source, options(fileName), undefined, unlowerableBodies)).errors.map((error) => error.code);
 
 describe("#7499 — Prepared path refuses restricted global lexicals", () => {
   it.each([
@@ -45,4 +45,13 @@ describe("#7499 — Prepared path refuses restricted global lexicals", () => {
     for (const policy of ["abort", "refuse"] as const)
       expect(await codes(source, policy)).not.toContain("restricted-global-lexical");
   });
+
+  // (#7519) An ambient declaration binds nothing, so instantiation has no name to reject.
+  it.each([["declare let NaN: number;"], ["declare class NaN {}"], ["declare const undefined: any;"]])(
+    "does not refuse the ambient %s by this rule",
+    async (source) => {
+      for (const policy of ["abort", "refuse"] as const)
+        expect(await codes(source, policy, "test.ts")).not.toContain("restricted-global-lexical");
+    },
+  );
 });

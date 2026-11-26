@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { isAmbientDeclaration } from "./ambient-declarations.js";
 import { GLOBAL_CONSTANTS } from "./ambient-intrinsics.js";
 
 /**
@@ -32,9 +33,12 @@ export function scriptGlobalLexicalNames(sourceFile: ts.SourceFile): readonly ts
 
 /**
  * The first top-level lexical name of a Script that is a restricted global (`undefined`, `NaN`, `Infinity`): such a
- * Script throws a SyntaxError at GlobalDeclarationInstantiation (§16.1.7). A Module has its own environment record.
+ * Script throws a SyntaxError at GlobalDeclarationInstantiation (§16.1.7). A Module has its own environment record,
+ * and an ambient (`declare`) declaration binds nothing.
  */
 export function restrictedGlobalLexicalName(sourceFile: ts.SourceFile): ts.Identifier | undefined {
   if (ts.isExternalModule(sourceFile)) return undefined;
-  return scriptGlobalLexicalNames(sourceFile).find((name) => GLOBAL_CONSTANTS.has(name.text));
+  return scriptGlobalLexicalNames(sourceFile).find(
+    (name) => GLOBAL_CONSTANTS.has(name.text) && !isAmbientDeclaration(name),
+  );
 }

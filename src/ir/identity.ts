@@ -25,7 +25,7 @@ export type {
 } from "../shared/contracts/ir-identity.js";
 
 import { ts } from "../ts-api.js";
-import { isAmbientDeclaration } from "./ambient-declarations.js";
+import { isAmbientDeclaration } from "../shared/ambient-declarations.js";
 import {
   createDerivedIrUnitId,
   createIrBindingId,

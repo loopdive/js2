@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import { isAmbientDeclaration } from "./ambient-declarations.js";
+import { isAmbientDeclaration } from "../shared/ambient-declarations.js";
 
 const ASCII_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const RESERVED_CLASS_METHOD_KEYS = new Set(["constructor", "new", "init"]);

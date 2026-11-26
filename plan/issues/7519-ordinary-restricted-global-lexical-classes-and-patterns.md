@@ -1,10 +1,11 @@
 ---
 id: 7519
 title: "Ordinary pipeline: a Script's restricted global lexical class or binding pattern does not throw SyntaxError"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 feasibility: easy
@@ -119,4 +120,21 @@ wrong label for a program that tsc rejects anyway (TS2451 against lib's `declare
 
 0 test262 files. The only Script with a top-level restricted lexical is `decl-lex-restricted-global.js` (`let undefined;`),
 which the ordinary pipeline already throws on. This is a correctness fix for the class and pattern forms.
+
+## Verification (2026-11-26, branch `claude/7519-ordinary-restricted-lexicals`)
+
+- **One addition to the plan.** The "this prologue needs a `__module_init`" test now also counts
+  `ctx.restrictedGlobalLexicalName`. It moves out of `compileDeclarations` into
+  `moduleInitPrologueForcesInit` (`declarations/module-init-prologue.ts`), which `moduleInitPrologueMayEmit` now reuses
+  instead of repeating the same three checks. Without it, a Script whose only statement is `class NaN {}` has nothing to
+  initialise, gets no `__module_init`, and the prologue throw never runs. `let NaN = 1;` always had an init
+  statement, so it never showed this.
+- `tests/issue-7519-ordinary-restricted-global-lexical.test.ts`: 13 pass, default and standalone. On PR 7489's head
+  (`1451f3b1`), 5 fail: the class and pattern forms.
+- `tests/issue-7499-prepared-restricted-global-lexical.test.ts` gains the three ambient `.ts` forms as "not refused by
+  this rule".
+- Ordinary pipeline byte-identical, PR 7489 head vs this branch, on #7499's 100-file test262 sample × (default,
+  standalone): 200 of 200. The walker is unchanged, so `ctx.globalLexicalBindings` is too.
+- Pre-existing, unrelated: `issue-5271-es2015-statements-r2` "the folded constant is still in the module" fails on
+  PR 7489's head as well.
 

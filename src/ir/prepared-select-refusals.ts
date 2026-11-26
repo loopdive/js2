@@ -8,7 +8,7 @@ import type { IrUnitInventory, IrUnitRecord } from "../shared/contracts/ir-unit-
 import type { IrUnsupportedCode } from "../shared/contracts/ir-preparation-failure.js";
 import { restrictedGlobalLexicalName } from "../shared/script-lexical-names.js";
 import { classDefinitionExpressions, type ClassDefinitionExpression } from "./class-definition-expressions.js";
-import { isAmbientDeclaration } from "./ambient-declarations.js";
+import { isAmbientDeclaration } from "../shared/ambient-declarations.js";
 import type { IrClassId, IrSourceId } from "./identity.js";
 import { localExportSpecifiers, localExportTargets } from "./module-init-plan.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
