@@ -19,6 +19,8 @@ loc-budget-allow:
   - src/compiler.ts
 func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
+flat-dir-budget-allow:
+  - src/codegen/exn-render-kind.ts # 2026-11-26 (#7453): sits next to its sibling exn-render-lite.ts, whose buffer it writes; no sub-directory holds the exception-render helpers
 ---
 
 # #7453 — test262 runner: a thrown string "TypeError: x" still passes a runtime negative expecting TypeError
