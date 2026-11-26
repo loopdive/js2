@@ -13,7 +13,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 depends_on: []
-related: [7354, 7436]
+related: [7354]
 ---
 
 # #7486 — Prepared: site ids for the run-time kind abort
