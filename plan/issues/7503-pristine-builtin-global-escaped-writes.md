@@ -31,8 +31,8 @@ see a write that reaches the global object some other way:
 - `delete Object` (#7363 A4 adds `DeleteExpression` to the walk; this row pins it);
 - **live today:** a sloppy function that reads ambient `this`, called as a value, returns the global object:
   `function f(){return this} var h = f; var G = h(); G.Object = …`. This compiles on the Prepared path (PRV-A4 B1).
-  #7363 A4 refuses it for `eval` with a predicate beside `pristineBuiltinGlobal`; the `Object` statics must ask
-  the same predicate.
+  #7363 A4 refuses it for `eval` with the contracts' `ambientThisMayBeGlobal` flag (`source-dynamic-contracts.ts`);
+  the `Object` statics must ask the same flag.
 
 ## Users
 

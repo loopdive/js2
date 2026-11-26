@@ -540,11 +540,16 @@ run-time test and asks a static proof that already exists.
     PR measures bytes on the 100-file sample and the census for the claim change.
   - A sloppy function that reads ambient `this`, called as a value, yields the global object today:
     `function f(){return this} var h = f; var G = h(); G.eval = function(){}; eval("1");` compiles up to the A4
-    site (PRV-A4 B1). So A4 also requires that no sloppy function in the program reads ambient `this`: no
-    function-like with `readsAmbientThisGlobal(code)` (`src/shared/body-references-own-this.ts`) whose
-    `codeStrictness(code).functionCodeStrict` is false. One exported predicate beside `pristineBuiltinGlobal` in
-    `builtin-global-binding.ts`, built once per source list as that one is. The `Object` statics do not ask it yet:
-    their hole is live today and is #7503's.
+    site (PRV-A4 B1). So A4 also requires that no sloppy function can receive ambient `this`. No new walk: the
+    contracts' existing receiver walk (`bindsReceiver` → `closuresBindReceivers`, `src/ir/source-dynamic-contracts.ts`)
+    already asks `codeStrictness(code).ambientThisStrict`, which is defined exactly for a function-like that reads
+    ambient `this` (`readsAmbientThisGlobal`) when functions are values. That walk visits function expressions only,
+    and the B1 program's `f` is a declaration. So the walk is widened to every non-arrow function-like and answers two
+    flags in one pass: the existing `closuresBindReceivers` (expressions, any strictness: unchanged) and
+    `ambientThisMayBeGlobal` (any function-like with `ambientThisStrict === false`). A4 asks the second through the
+    resolver beside `isPristineBuiltinGlobal`. When functions are not values, `ambientThisStrict` is undefined and a
+    plain call of a `this`-using function already refuses ("installs no receiver"), so the flag is false and sound.
+    The `Object` statics do not ask it yet: their hole is live today and is #7503's.
 - **The call.** Pristine: `lowerCall` lowers the statement site as a direct call of the source's called init unit
   (A1's `"called"` kind). There is no identity test and no read of the global. Not pristine: the site refuses at
   select, by name: `eval literal: the global eval is not pristine (#7363 A4)`. A site in expression position (its
@@ -599,5 +604,5 @@ run-time test and asks a static proof that already exists.
   - The static SyntaxError throw adds 3. Total: 15.
   - The earlier "A4 alone 18" was an estimate made another way; this measurement replaces it.
 - **Size (estimate).** `lowerCall` arm about 15 lines, the capability about 5, the admission fallback about 15, the
-  call of the called unit about 25, the sloppy-`this` predicate about 20, `DeleteExpression` 3. One test file for
+  call of the called unit about 25, the widened receiver walk about 15, `DeleteExpression` 3. One test file for
   the pins.
