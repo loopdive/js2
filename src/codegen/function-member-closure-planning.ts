@@ -10,7 +10,7 @@ import type { TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { peekFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { noteFunctionValueInhabitant } from "./closures/closure-type-sources.js";
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { isStrictFunction } from "../shared/is-strict-function.js";
 
 function physicalKey(types: readonly ValType[], result: ValType | null): string {
   return JSON.stringify([types, result]);

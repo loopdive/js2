@@ -183,7 +183,7 @@ import {
   emitRealmGlobalPrimitiveMethodWriteback,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { BUILTIN_CTOR_ARITY } from "../builtin-value-read.js"; // (#4484 C) which names are builtin constructors
 import {
   isSpecNonWritableBuiltinProp,
@@ -1084,7 +1084,7 @@ function tryEmitAmbientIdentifierGlobalWriteFromLocal(
   return true;
 }
 
-export { isStrictContext } from "../helpers/is-strict-function.js";
+export { isStrictContext } from "../../shared/is-strict-function.js";
 
 /** True when this binding is the receiver of a static Object.defineProperty call. */
 function sourceDefinesProperty(ctx: CodegenContext, receiver: ts.Identifier, propName: string): boolean {

@@ -1,7 +1,8 @@
 /**
- * (#7372 slice 2) Lifted from `src/codegen/annexb-cancel.ts`, below the IR, so the legacy pipeline and the IR ask one
- * Annex B analysis (as `ast-scope.ts` was lifted, #4601). Pure AST: a `ts.Node` in, an answer out. The one behaviour
- * change of the lift is the CaseBlock rule below (`blockScopeStatements`).
+ * (#7372 slice 2) Lifted from `src/codegen/annexb-cancel.ts` into `src/shared/`, beside the strictness helpers it
+ * asks, so the legacy pipeline and the IR ask one Annex B analysis with no import edge between them. Pure AST: a
+ * `ts.Node` in, an answer out. The one behaviour change of the lift is the CaseBlock rule below
+ * (`blockScopeStatements`).
  *
  * (#3980) Annex B B.3.3 — "the web-compat extension is NOT observed when
  * creating the var binding would produce an Early Error".
@@ -41,8 +42,8 @@
  * create a *new* binding and the existing one is still readable
  * (`*-skip-param`, `*-skip-early-err` without a suffix).
  */
-import { isStrictContext } from "../../codegen/helpers/is-strict-function.js";
-import { ts } from "../../ts-api.js";
+import { isStrictContext } from "./is-strict-function.js";
+import { ts } from "../ts-api.js";
 
 export interface AnnexBCancelSite {
   /** The cancelled function-declaration name. */

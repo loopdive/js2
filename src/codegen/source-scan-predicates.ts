@@ -11,7 +11,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { sourceWritesPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { TypeOracle } from "../checker/oracle.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 
 export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {

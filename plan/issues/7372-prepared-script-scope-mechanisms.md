@@ -18,7 +18,7 @@ related: [7354, 7106]
 # module-init global rule (`isModuleInitGlobalDeclaration`): an ES module's nested `var` / `for` head is a
 # module-init local, not a global. The rule itself lives in src/ir/module-init-vars.ts.
 # 2026-11-26 (slice 2a-1): src/codegen/expressions/identifiers.ts +4, formatting only. Its import of the Annex B
-# analysis now names the lifted module (src/ir/analysis/annexb-block-functions.ts); the longer path makes prettier
+# analysis now names the lifted module (src/shared/annexb-block-functions.ts); the longer path makes prettier
 # wrap the one-line import over five lines. No code added.
 loc-budget-allow:
   - src/ir/program-source.ts
@@ -250,7 +250,7 @@ CaseClause/DefaultClause, or the sole statement of an `if` clause (§B.3.3, its 
   already import from `src/codegen`, so that import is not a new layering edge. Moving the strictness helper to
   `src/shared` is a separate cleanup, which I'll file.
 
-  2a-1 moves the module to **`src/ir/analysis/annexb-block-functions.ts`**, beside `ast-scope.ts`. The legacy callers
+  2a-1 moves the module to **`src/shared/annexb-block-functions.ts`** (as built; the plan first said `src/ir/analysis/`). The legacy callers
   import it from there; there are 8 of them: `annexb-global-live-binding.ts`, `statements.ts`,
   `statements/nested-declarations.ts`, `expressions/identifiers.ts`, `expressions/call-identifier.ts`,
   `function-declaration-observation.ts`, `nested-function-name-scope.ts`, `analysis/mixed-assignment-carrier.ts`.
@@ -384,6 +384,16 @@ for the CaseBlock, then dispatches to a clause. `instantiateBlockFunctions` runs
 dispatch.
 
 `blockFunctionBindings` lands in 2a-2 with its first caller, so 2a-1 exports nothing unused (dead-exports gate).
+
+2a-1 as built (review RV7447):
+- The module, `is-strict-function.ts` and `use-strict-directive.ts` move to `src/shared/`, not `src/ir/analysis/`.
+  The analysis needs the strictness helpers, which lived in `src/codegen/helpers`. With all three in `src/shared/`,
+  neither pipeline imports the other for them: `check:ir-layering` and `check:import-cycles` stay at their baselines,
+  with no grant.
+- The plan's per-variant unit fixtures are already covered end to end by `tests/issue-3980.test.ts` and
+  `tests/issue-4166.test.ts` (block / `if` / `switch` positions, loop heads, catch patterns, parameters, strict code).
+  2a-1 adds the CaseBlock rule's pins and an end-to-end program (`class f` and an `if`-clause `function f` in sibling
+  clauses), which compiled to invalid Wasm on main.
 
 #### Order (small PRs, each with pin tests that fail on main)
 

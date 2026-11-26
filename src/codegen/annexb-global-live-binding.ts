@@ -45,10 +45,10 @@ import {
   annexBDeclaringRange,
   enclosingVarScope,
   hasInterveningLexicalBinder,
-} from "../ir/analysis/annexb-block-functions.js";
+} from "../shared/annexb-block-functions.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { compileNestedFunctionDeclaration } from "./statements/nested-declarations.js";

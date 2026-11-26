@@ -9,7 +9,7 @@ import {
   functionLikeReferencesOwnThis,
   readsAmbientThisGlobal,
 } from "../../shared/body-references-own-this.js";
-import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
+import { isStrictFunction, isSimpleParameterList } from "../../shared/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
@@ -129,7 +129,7 @@ import {
   annexBUpdatesExistingVarBinding,
   enclosingVarScope,
   hasInterveningLexicalBinder,
-} from "../../ir/analysis/annexb-block-functions.js";
+} from "../../shared/annexb-block-functions.js";
 import { emitArgumentsVecTail, emitRestArgs, prepareRestArgs } from "../arguments-vector-tail.js";
 import {
   beginNestedFunctionNameScope,

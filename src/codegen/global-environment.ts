@@ -21,7 +21,7 @@ import {
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";

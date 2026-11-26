@@ -50,7 +50,7 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { bodyReferencesOwnThis } from "../../shared/body-references-own-this.js";
-import { isStrictFunction } from "../helpers/is-strict-function.js";
+import { isStrictFunction } from "../../shared/is-strict-function.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import { resolveConstantString } from "./eval-inline.js";
 

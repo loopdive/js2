@@ -67,7 +67,7 @@ import {
   annexBReadEscapesFunctionScope,
   annexBReadIsUnbound,
   collectAnnexBCancelSites,
-} from "../../ir/analysis/annexb-block-functions.js";
+} from "../../shared/annexb-block-functions.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
   identifierIsWrittenTo,

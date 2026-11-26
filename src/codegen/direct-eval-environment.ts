@@ -16,7 +16,7 @@ import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addFuncType, getOrRegisterRefCellType } from "./registry/types.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
