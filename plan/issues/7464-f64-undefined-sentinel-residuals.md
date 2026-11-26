@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7366, 7360, 7406, 7470]
+related: [7366, 7360, 7406, 7470, 7529]
 # 2026-11-26 (review): a module binding's slot type calls `undefinedCapableSlotType` directly instead of through a
 # one-line pass-through in module-var-undefined-seed.ts, which costs declarations.ts one import line (+1).
 loc-budget-allow:
@@ -98,7 +98,7 @@ The IR's ToString and `typeof` share `emitUndefinedStringOr` (`src/ir/f64-undefi
 
 Checks: 240 test262 files × gc/standalone byte-identical to origin/main; pin tests fail on main and pass now.
 
-### Left open (follow-up issue still to be filed; id allocation failed because the open-PR scan was down)
+### Left open (filed as #7529, except the template literal)
 
 - **JSON.stringify:** the native codec writes `null` for a property that holds `undefined`, even for
   `JSON.stringify({ a: undefined })`. Its `$AnyValue` arm maps tag 1 to `"null"` (`json-codec-native.ts` ~L411).
