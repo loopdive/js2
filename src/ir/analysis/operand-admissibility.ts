@@ -549,11 +549,9 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
  * value (string-evidence then also requires an encoding), and is the dynamic
  * `+` into a dynamic slot with a boxable value; every numeric compound is
  * number arithmetic on an f64 or dynamic slot. Dynamic operands use ToNumber;
- * a value `void x` already supplies its numeric NaN.
- */
-/**
- * `dynamicToNumber`: the lane's `native-dynamic-to-number` capability, under which (#7375) a boolean or string
- * right-hand side of a numeric compound is read with ToNumber.
+ * a value `void x` already supplies its numeric NaN. `dynamicToNumber` is the
+ * lane's `native-dynamic-to-number` capability, under which (#7375) a boolean
+ * or string right-hand side of a numeric compound is read with ToNumber.
  */
 export function compoundWriteAdmissible(
   op: ts.SyntaxKind,

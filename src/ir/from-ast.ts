@@ -15387,14 +15387,17 @@ function boxNumericReaderOperands(
     irOperandFamily(cx.builder.typeOf(operands[1]), expr.right),
   ] as const;
   if (!numericReaderOperandsBoxed(expr.operatorToken.kind, families[0], families[1])) return operands;
-  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId => {
-    if (family !== "boolean" && family !== "string") return value;
-    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
-    // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
-    if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
-    return boxed;
-  };
+  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId =>
+    family === "boolean" || family === "string" ? boxReaderOperand(value, family, source, cx) : value;
   return [box(operands[0], families[0], expr.left), box(operands[1], families[1], expr.right)];
+}
+
+/** Box a boolean / string operand into the dynamic carrier, for a numeric reader's ToNumber. */
+function boxReaderOperand(value: IrValueId, family: OperandFamily, source: ts.Expression, cx: LowerCtx): IrValueId {
+  const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
+  // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
+  if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
+  return boxed;
 }
 
 /**
@@ -15428,8 +15431,7 @@ function numericReaderOperandToF64(value: IrValueId, source: ts.Expression, cx: 
   const family = irOperandFamily(type, source);
   if (family === "boolean") return booleanToNumber(value, cx);
   if (family !== "string") return relOperandToF64(value, type, cx);
-  const boxed = boxConcreteToDynamic(value, type, source, cx);
-  return boxed === null ? null : cx.builder.emitDynToNumber(boxed);
+  return cx.builder.emitDynToNumber(boxReaderOperand(value, family, source, cx));
 }
 
 /**
