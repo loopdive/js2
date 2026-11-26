@@ -103,6 +103,23 @@ import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#19
 import { isOpenForInReceiver } from "../for-in-open-object.js";
 import { subclassedInstanceReceiver } from "../class-arm-tag-guard.js"; // (#7216)
 import { isDirectProxyBinding } from "../proxy-value-provenance.js"; // (#6651 U3) for-in/for-of over a Proxy
+import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js"; // (#7366)
+
+/**
+ * (#7366) A fresh `for (let g: number | undefined; …)` binding holds `undefined`, not the f64 local's zero. (A `var`
+ * head without an initializer is a no-op and keeps whatever its hoisted slot holds, so its caller skips it.)
+ */
+function seedUninitialisedForLet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.VariableDeclaration,
+  type: ValType,
+  localIdx: number,
+): void {
+  if (!f64MayHoldUndefined(ctx, decl.name, type)) return;
+  pushUndefF64(fctx.body);
+  fctx.body.push({ op: "local.set", index: localIdx });
+}
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
  * for-of assignment head. The declaration/destructuring paths intentionally
@@ -761,7 +778,7 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
             }
             emitCoercedLocalSet(ctx, fctx, localIdx, forInitType ?? wasmType);
           }
-        }
+        } else if (!isVar) seedUninitialisedForLet(ctx, fctx, decl, wasmType, localIdx);
         // Set TDZ flag for let/const loop vars so they are no longer in TDZ (#790)
         if (!isVar) {
           const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);

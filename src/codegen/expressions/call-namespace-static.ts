@@ -129,7 +129,6 @@ import {
   emitJsonReplacerAllowList,
   isDynamicCombinatorArgEligible,
   isGlobalBuiltinIdentifier,
-  tryEmitJsonParsePrimitive,
   tryEmitJsonStringifyPrimitive,
 } from "./calls.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
@@ -3492,11 +3491,8 @@ export function compileNamespaceStaticCall(
         // grammar in json-codec-native.ts (`__json_parse_text`) builds the
         // SAME value rep the object runtime + stringify codec consume, so a
         // round-trip `JSON.parse(JSON.stringify(o))` and downstream property
-        // reads work. It is a strict superset of the older primitive-only
-        // `__json_parse_primitive` slice — which could only parse a lone
-        // number / true / false / null and *traps* on `{`/`[`/`"` — so it
-        // takes over the whole runtime-string case (the primitive helper
-        // stays for any caller that still routes to it directly). A `reviver`
+        // reads work. It replaced the primitive-only `__json_parse_primitive`
+        // slice (number / true / false / null), deleted by #7350 B2c-2.
         // (#2166 PR-D1) A `reviver` (2nd arg) routes to the reviver codec when
         // it is a function; a non-function 2nd arg keeps the refusal below.
         if (expr.arguments.length === 1 || expr.arguments.length === 2) {
@@ -3582,7 +3578,6 @@ export function compileNamespaceStaticCall(
           return { kind: "externref" };
         }
       }
-      void tryEmitJsonParsePrimitive;
       // (#1599 Phase 1) Refuse-and-document: in standalone (no-JS-host) /
       // WASI mode there is no `env::JSON_*` host import to fall back to.
       // The primitive `JSON.stringify` slice above (#1324) already handles

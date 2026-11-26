@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { FuncHandle, Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
+import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";
 import type { ClosureInvocationArityEntry, ClosureInvocationLayout } from "./closure-invocation-types.js";
 import {
   buildClosureFuncrefExtraction,
+  buildClosureRootTest,
   buildClosureMethodArgumentState,
   buildClosureMethodCallBody,
   type ClosureArgumentState,
@@ -32,10 +34,24 @@ export interface ClosureInvocationFailure {
     | { readonly kind: "callable"; readonly handle: FuncHandle };
   readonly newTypeError: FuncHandle;
   readonly exceptionTag: number;
+  /**
+   * (#7354 P1) The closure root, where the realm holds built-in methods as function objects. Every source closure has
+   * its dispatch arm, so a closure-root callee that reaches the failure is a built-in, which the dispatcher cannot run:
+   * the run-time abort, never the TypeError a value that is not callable gets. (#7354 O2) Likewise where the realm
+   * calls accessor halves: there the arms are the dispatchable source closures, and any other closure aborts.
+   */
+  readonly builtinRootTypeIdx?: number;
 }
 
-export function buildClosureInvocationFailure(failure: ClosureInvocationFailure): Instr[] {
+/** The dispatch's last arm, for the callee in the externref local `callee`. */
+export function buildClosureInvocationFailure(failure: ClosureInvocationFailure, callee: number): Instr[] {
   return [
+    ...(failure.builtinRootTypeIdx === undefined
+      ? []
+      : ([
+          ...buildClosureRootTest(callee, failure.builtinRootTypeIdx),
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+        ] satisfies Instr[])),
     ...(failure.message.kind === "global"
       ? ([{ op: "global.get", index: failure.message.index }, { op: "extern.convert_any" }] satisfies Instr[])
       : ([{ op: "call", funcIdx: failure.message.handle }] satisfies Instr[])),
@@ -44,9 +60,14 @@ export function buildClosureInvocationFailure(failure: ClosureInvocationFailure)
   ];
 }
 
-/** Save/restore the invocation protocol without converting or replacing a thrown value. */
+/**
+ * Save/restore the invocation protocol without converting or replacing a thrown value. The guard is a standard
+ * `try_table` on the module's exception tag: V8 refuses a module that mixes it with a legacy `try`, and every
+ * user `try` on this regime is a `try_table`.
+ */
 export function buildClosureInvocationBoundary(
   state: ClosureInvocationState,
+  exceptionTag: number,
   slots: {
     readonly previousThis: number;
     readonly previousArgc: number;
@@ -70,13 +91,18 @@ export function buildClosureInvocationBoundary(
     { op: "local.set", index: slots.previousArgc },
     { op: "global.get", index: state.extrasArgv },
     { op: "local.set", index: slots.previousExtras },
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [...structuredClone([...body]), { op: "local.set", index: slots.result }],
-      catches: [],
-      catchAll: [...restore(), { op: "rethrow", depth: 0 }],
-    },
+    buildStandardTryTable(
+      { kind: "empty" },
+      [...structuredClone([...body]), { op: "local.set", index: slots.result }],
+      [
+        {
+          kind: "catch",
+          tagIdx: exceptionTag,
+          payloadType: { kind: "externref" },
+          body: [...restore(), { op: "throw", tagIdx: exceptionTag }],
+        },
+      ],
+    ),
     ...restore(),
     { op: "local.get", index: slots.result },
   ];
@@ -124,7 +150,7 @@ export function buildNativeClosureMethodDefinition(
     result: anyLocal + 5,
   };
   const omittedLocal = anyLocal + 6;
-  let dispatch = buildClosureInvocationFailure(failure);
+  let dispatch = buildClosureInvocationFailure(failure, 1);
   for (const entry of [...entries].reverse()) {
     const argumentLocals = entry.params.map((_, index) => (index < arity ? index + 2 : omittedLocal));
     const argumentsBody = entry.params.flatMap((type, index) =>
@@ -153,7 +179,7 @@ export function buildNativeClosureMethodDefinition(
       { name: "__result", type: { kind: "externref" } },
       { name: "__omitted", type: { kind: "externref" } },
     ],
-    body: buildClosureInvocationBoundary(state, slots, [
+    body: buildClosureInvocationBoundary(state, failure.exceptionTag, slots, [
       ...(state.receiverPolicy === "exact"
         ? [{ op: "local.get", index: 0 } as Instr]
         : buildInstallableClosureReceiver(0, state.anyValueTypeIdx)),

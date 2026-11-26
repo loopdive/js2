@@ -96,7 +96,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis } from "../shared/body-references-own-this.js";
 import { installableReceiverInstrs } from "./helpers/undefined-receiver.js"; // (#4555) §10.4.3
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 

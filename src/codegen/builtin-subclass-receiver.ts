@@ -93,8 +93,17 @@ function inheritedBuiltinMemberBase(
  * Number/Boolean/String subclass needs the same native helpers as the parent
  * (`number_toFixed`, …), which the collector registers by receiver type.
  */
-export function collectorReceiverType(ctx: CodegenContext, receiverType: ts.Type, method: string): ts.Type {
-  return inheritedBuiltinMemberBase(receiverType, method) ?? receiverType;
+export function collectorReceiverType(method: ts.PropertyAccessExpression, receiverType: ts.Type): ts.Type {
+  const receiver = optionalChainReceiverType(method, receiverType);
+  return inheritedBuiltinMemberBase(receiver, method.name.text) ?? receiver;
+}
+
+/**
+ * (#7370) Past `x?.` a method runs only on a non-nullish receiver, so `x?.toFixed()` with `x: number | undefined`
+ * dispatches (and registers its helper) as a Number method.
+ */
+export function optionalChainReceiverType(method: ts.PropertyAccessExpression, receiver: ts.Type): ts.Type {
+  return method.questionDotToken ? receiver.getNonNullableType() : receiver;
 }
 
 /**

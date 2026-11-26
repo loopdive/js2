@@ -49,6 +49,7 @@
  * therefore observable, which is the same failure mode as the stale-static-type
  * folds this issue also fixes (`S11.8.6_A2.4_T1`).
  */
+import { GLOBAL_CONSTANTS } from "../shared/ambient-intrinsics.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
@@ -90,13 +91,10 @@ const CTOR_NON_WRITABLE_PROPS: ReadonlySet<string> = new Set(["length", "name", 
  * Deliberately NOT here: `globalThis` itself (§19.1.4 is
  * `{ w:true, e:false, c:true }` — writable, so an assignment to it must
  * succeed), and every function-valued global (`parseInt`, `isNaN`, …), which are
- * writable too.
+ * writable too: the names are exactly `GLOBAL_CONSTANTS`.
  */
-const GLOBAL_NON_WRITABLE_VALUE_NAMES: ReadonlySet<string> = new Set(["NaN", "Infinity", "undefined"]);
-
-/** See `GLOBAL_NON_WRITABLE_VALUE_NAMES`. */
 export function isSpecNonWritableGlobalValueName(name: string): boolean {
-  return GLOBAL_NON_WRITABLE_VALUE_NAMES.has(name);
+  return GLOBAL_CONSTANTS.has(name);
 }
 
 /**

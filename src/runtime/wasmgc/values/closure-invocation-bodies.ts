@@ -5,6 +5,18 @@ import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import { CLOSURE_ARITY_FIELD_IDX } from "./closure-layouts.js";
 import type { ClosureInvocationArityEntry, ClosureInvocationLayout } from "./closure-invocation-types.js";
 
+/**
+ * (#7354 Fa) Is the externref in `valueLocal` a function value: the dispatcher's root arm (below) as a predicate.
+ * Sound only where every closure carrier descends from the root, as the native invocation layout requires.
+ */
+export function buildClosureRootTest(valueLocal: number, rootTypeIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: valueLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: rootTypeIdx },
+  ];
+}
+
 export function buildClosureFuncrefExtraction(
   layout: ClosureInvocationLayout,
   entries: readonly { readonly selfTypeIdx: number }[],

@@ -58,7 +58,7 @@ import { join } from "node:path";
 // ── The authoritative verdict-logic surface (grep-derived, #3003) ───────────
 // PURE: files whose entire job is verdict logic — ANY substantive (non-comment)
 // changed line is a verdict signal.
-export const PURE_VERDICT_FILES = ["scripts/negative-verdict.mjs"];
+export const PURE_VERDICT_FILES = ["scripts/negative-verdict.mjs", "scripts/test262-runtime-verdict.mjs"];
 
 // MIXED: files that compute per-test verdicts but also carry lots of unrelated
 // machinery — only a change to a VERDICT-SIGNAL line counts.

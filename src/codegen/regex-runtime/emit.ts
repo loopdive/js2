@@ -11,7 +11,7 @@
  * change is involved. (The compile-time literal-alternation trie is a pure
  * speed optimisation and is not reproduced.)
  */
-import { ReOp } from "../regex/bytecode.js";
+import { ReOp } from "../../runtime/contracts/regexp-bytecode.js";
 import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../regex/bytecode.js";
 import {
   ERR_UNSUPPORTED,

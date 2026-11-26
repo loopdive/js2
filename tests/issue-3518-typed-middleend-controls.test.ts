@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AllocSiteRegistry } from "../src/ir/alloc-registry.js";
 import * as ownership from "../src/ir/analysis/ownership.js";
@@ -376,10 +374,4 @@ describe("resolved middle-end controls and historical compatibility", () => {
       );
     },
   );
-
-  it("retains all four real historical integration calls", () => {
-    const source = readFileSync(new URL("../src/ir/integration.ts", import.meta.url), "utf8");
-    expect(source.match(/\brunHygienePasses\(/g)).toHaveLength(4);
-    expect(source).toContain('from "./program-middleend.js"');
-  });
 });

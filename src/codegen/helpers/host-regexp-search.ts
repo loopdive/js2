@@ -32,18 +32,13 @@ import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { ensureNativeStringExternBridge, hostStringBridgeUsable } from "../native-strings.js";
 import { addImport } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
+import { RE_FIELD_FLAGS, RE_FIELD_PROG, RE_FIELD_SOURCE } from "../../runtime/wasmgc/values/regexp-carrier-layouts.js";
 
 const REGISTER = "__regexp_host_register";
 const EXEC = "__regexp_host_exec";
 const SUBJECT = "__regexp_host_subject";
 const CAPTURE = "__regexp_host_capture";
 const REGISTER_STRUCT = "__regexp_host_register_struct";
-
-// `$NativeRegExp` field indices (regexp-standalone.ts RE_FIELD_*); repeated
-// here so this helper does not import the RegExp god-file.
-const RE_FIELD_FLAGS = 0;
-const RE_FIELD_PROG = 2;
-const RE_FIELD_SOURCE = 4;
 
 const used = new WeakSet<CodegenContext>();
 

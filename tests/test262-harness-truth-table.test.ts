@@ -235,7 +235,7 @@ const CASES: TruthCase[] = [
     body: `throw new TypeError("expected");`,
     frontmatter: `negative:\n  phase: runtime\n  type: TypeError\n`,
     truth: "pass",
-    why: "A runtime negative whose expected error IS thrown. On the standalone lane this ALSO pins the #3613 render-parity fix: `originalNegativeMatches` searches the reported detail for the expected type name, so while the local runner rendered the opaque #2870 label instead of the real text, this scored `fail` locally and `pass` in CI.",
+    why: "A runtime negative whose expected error IS thrown. On the standalone lane this ALSO pins the #3613 render-parity fix: the local verdict searched the reported detail for the expected type name, so while the local runner rendered the opaque #2870 label instead of the real text, this scored `fail` locally and `pass` in CI (since #7354 X every lane matches the kind `readThrownValue` reads).",
     lanes: ["gc", "standalone"],
   },
   {

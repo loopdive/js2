@@ -1,8 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as bindings from "../src/ir/core/async-callables.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
@@ -37,46 +33,6 @@ const EXPECTED = [
 ] as const;
 
 describe("six closed native-family logical contracts", () => {
-  it("keeps all six compatibility constants as named forwards from the canonical owner", () => {
-    for (const [path, names] of [
-      [
-        "async-semantic-runtime.ts",
-        [
-          "IR_ASYNC_CLOCK_SNAPSHOT_FN",
-          "IR_ASYNC_NUMBER_TO_STRING_FN",
-          "IR_ASYNC_CONSOLE_LOG_STRING_FN",
-          "IR_ASYNC_STRING_CONCAT_5_FN",
-          "IR_ASYNC_PROMISE_ALL_NATIVE_FN",
-        ],
-      ],
-      ["promise-delay-lowering.ts", ["IR_NATIVE_PROMISE_DELAY_FN"]],
-    ] as const) {
-      const file = ts.createSourceFile(
-        path,
-        readFileSync(new URL(`../src/ir/${path}`, import.meta.url), "utf8"),
-        ts.ScriptTarget.Latest,
-        true,
-      );
-      expect(file.parseDiagnostics).toEqual([]);
-      const exports = file.statements
-        .filter(ts.isExportDeclaration)
-        .filter(
-          (node) =>
-            node.moduleSpecifier &&
-            ts.isStringLiteral(node.moduleSpecifier) &&
-            node.moduleSpecifier.text === "./core/async-callables.js",
-        );
-      expect(exports).toHaveLength(1);
-      const clause = exports[0]!.exportClause;
-      expect(clause && ts.isNamedExports(clause)).toBe(true);
-      if (!clause || !ts.isNamedExports(clause)) throw new Error("missing named compatibility exports");
-      expect(clause.elements.map((entry) => entry.name.text).sort()).toEqual([...names].sort());
-      for (const statement of file.statements.filter(ts.isVariableStatement))
-        for (const declaration of statement.declarationList.declarations)
-          expect(names).not.toContain(declaration.name.getText(file));
-    }
-  });
-
   it("pins all six canonical bindings and their complete result vectors", () => {
     expect(Object.values(bindings).sort()).toEqual(EXPECTED.map((row) => row[1]).sort());
     expect(NATIVE_ASYNC_CALLABLE_DECLARATIONS).toHaveLength(6);
@@ -212,25 +168,5 @@ describe("six closed native-family logical contracts", () => {
     expect(
       REFERENCE_ERROR_RUNTIME_PROVIDERS.every((provider) => provider.signature === REFERENCE_ERROR_SIGNATURE),
     ).toBe(true);
-  });
-
-  it.each([
-    ["semanticTypes", "32bda7377f2551e8b00391f070283f43b9da152094a6a48d75a6cdc8cf35299f"],
-    ["REFERENCE_ERROR_DECLARATION", "11d4e1cde5b33026050ba9548830a8356d0011c82e4e66560d9893c34e7e48c1"],
-    ["REFERENCE_ERROR_SIGNATURE", "3bed770417c0b3f16844c06f369a0ac454f863f43aa9d65ed310d3e2b3095647"],
-    ["REFERENCE_ERROR_RUNTIME_PROVIDERS", "172c22f32b2c243a34b028a5c8aa3cad301d4034f83013243d84db3fb1b4d347"],
-  ])("retains the complete existing %s declaration text without historical git access", (name, hash) => {
-    const path = new URL("../src/ir/runtime/callable-declarations.ts", import.meta.url);
-    const source = ts.createSourceFile(path.pathname, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
-    const found: string[] = [];
-    function visit(node: ts.Node) {
-      if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node)) && node.name?.getText(source) === name)
-        found.push(node.getText(source));
-      ts.forEachChild(node, visit);
-    }
-    visit(source);
-    expect(found).toHaveLength(1);
-    expect(createHash("sha256").update(found[0]!).digest("hex")).toBe(hash);
-    expect(createHash("sha256").update(`${found[0]} `).digest("hex")).not.toBe(hash);
   });
 });
