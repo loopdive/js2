@@ -29,11 +29,12 @@ see a write that reaches the global object some other way:
 - code run by the runtime-eval provider or the `Function` constructor;
 - a literal-key element write: `globalThis["Object"] = f`, `this["Object"] = f`;
 - `delete Object` (#7363 A4 adds `DeleteExpression` to the walk; this row pins it);
-- **live today:** a sloppy function that reads ambient `this`, called as a value, returns the global object:
-  `function f(){return this} var h = f; var G = h(); G.Object = …`. This compiles on the Prepared path (PRV-A4 B1).
-  #7363 A4 refuses it for `eval` with the contracts' `ambientThisMayBeGlobal` flag (a sloppy function whose own
-  `this` escapes, `ownThisEscapes`) (`source-dynamic-contracts.ts`);
-  the `Object` statics must ask the same flag.
+- **compiles today:** a sloppy function that reads ambient `this`, called as a value:
+  `function f(){return this} var h = f; var G = h(); G.Object = …`. It compiles on the Prepared path and is held
+  only by the run-time trap in sloppy `dyn.current_this`; it becomes a wrong value once the global object
+  materialises on standalone (PRV-A4, verified on main). #7363 A4 refuses it for `eval` with the contracts'
+  `ambientThisMayBeGlobal` flag (`source-dynamic-contracts.ts`: a sloppy function whose own `this` escapes,
+  `ownThisEscapes`); the `Object` statics must ask the same flag.
 
 ## Users
 
@@ -44,7 +45,7 @@ see a write that reaches the global object some other way:
 
 ## Why it is (mostly) sound today
 
-Except the live sloppy-`this` row above, every hole needs the global object as a first-class value or a dynamic code path, and the Prepared path refuses
+Except the sloppy-`this` row above (held only by a run-time trap), every hole needs the global object as a first-class value or a dynamic code path, and the Prepared path refuses
 both: `globalThis` ("identifier "globalThis" is not in scope"), script-level `this` ("'this' reference outside an
 instance method body"), a plain call of a `this`-using function ("installs no receiver for its 'this'"), and an
 unbound eval statement or indirect eval (#7363 slice 1).

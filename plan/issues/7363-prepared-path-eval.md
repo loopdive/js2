@@ -604,6 +604,10 @@ run-time test and asks a static proof that already exists.
     still lowers; `this.globalThis`, `this["eval"]`, `var t = this` and an `eval` call in a sloppy function each
     refuse.
   - Acceptance: the 12 files re-measured with the real harness on the built head, not the stand-in.
+  - Measured at plan time on `05388431` with the flag instrumented (local copy, reverted), `--harness real`: in
+    all 12 programs `functionObjects` is true and no sloppy ambient-`this` function lets `this` escape (the
+    harness's `this.message` and `this instanceof` stay allowed). The B1 program, `this.globalThis` and `this["eval"]`
+    each set the flag; the harness-like `E` with its `toString` does not.
   - Run: the A3 program runs and agrees with node; a site in a loop runs its text each time.
 - **Yield, measured on `caaef907` (real harness).**
   - 16 files stop at the A4 label (18 with the stand-in harness).
