@@ -1,6 +1,6 @@
 ---
 id: 7502
-title: "Array destructuring defaults: five wrong answers left after #7473"
+title: "Array destructuring defaults: wrong answers left after #7473"
 status: ready
 created: 2026-11-26
 updated: 2026-11-26
@@ -15,18 +15,18 @@ sprint: Backlog
 related: [7473]
 ---
 
-# #7502 — Array destructuring defaults: five wrong answers left after #7473
+# #7502 — Array destructuring defaults: wrong answers left after #7473
 
 ## Problem
 
-Five wrong answers on the ordinary pipeline (legacy codegen), on the default target and `--target standalone` alike.
+Seven wrong answers on the ordinary pipeline (legacy codegen), on the default target and `--target standalone` alike.
 They were found while fixing [#7473](7473-ordinary-array-destructuring-default-nan.md) (PR #7453), which fixes the
 plain `[n = 5] = []` form; none of them is fixed by that PR.
 
 ## Reproduction (2026-11-26, `origin/main` `1a726b3e64`)
 
 Each body is `export function g() { <body> }` in a `.js` file, compiled through `compile()` with `allowJs`. "#7453"
-is the PR head `4e889f329e`. The rows are grouped by sub-cause.
+is the PR head `4e889f329e` (rows 6–7 were measured at `679569ee24`, which compiles them to the same bytes). The rows are grouped by sub-cause.
 
 | # | Sub-cause | Declarations | Body | node | main (both targets) | #7453 (both targets) |
 | --- | --- | --- | --- | ---: | ---: | ---: |
@@ -37,6 +37,8 @@ is the PR head `4e889f329e`. The rows are grouped by sub-cause.
 | 3 | object shorthand default only for externref fields | | `var n; [{ n = 5 } = { n: 3 }] = [{}]; return n;` | 5 | NaN | NaN |
 | 4 | declaration form of a nested default | | `var [[n = 5] = []] = []; return n;` | 5 | 0 | 0 |
 | 5 | member target evaluated after the default | `var log = 0; var o = {}; function obj() { log = log * 10 + 1; return o; } function d() { log = log * 10 + 2; return 5; }` | `[obj().x = d()] = []; return log;` | 12 | 1 | 21 |
+| 6 | `undefined` read from a variable | | `var u; var a; [a = 1] = [u]; return a;` | 1 | NaN | NaN |
+| 7 | nesting deeper than two levels | | `var n; [[[n = 5] = []] = []] = []; return n;` | 5 | NaN | NaN |
 
 Notes per sub-cause, from the #7473 investigation:
 
@@ -50,6 +52,11 @@ Notes per sub-cause, from the #7473 investigation:
 5. On main the member-target default never runs (#7473), so the order bug is hidden: `obj()` runs and `d()` does not,
    giving 1. With #7453 the default runs, but before the target reference: the log reads 21 where node reads 12.
    ECMAScript evaluates an `AssignmentElement`'s target reference before its initializer.
+6. Added from the RV7453 review. The literal `[undefined]` answers right with #7453, but an `undefined` read from a
+   variable does not. Not yet traced; the likely cause is that the element reaches the f64 slot as a plain NaN
+   rather than the `UNDEF_F64_BITS` marker.
+7. Added from the RV7453 review. #7453 handles a default one nesting level down; a third level still reads NaN.
+   Not yet traced.
 
 ## Acceptance criteria
 
