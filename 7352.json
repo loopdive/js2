@@ -1,10 +1,10 @@
 {
   "id": "7352",
-  "assignee": "ttraenkler/c-lead",
-  "requested_by": "ttraenkler/c-lead",
+  "assignee": "ttraenkler/ir-lane-a1",
+  "requested_by": "ttraenkler/ir-lane-a1",
   "status": "in-progress",
-  "branch": "claude/7354-o",
-  "claimed_at": "2026-11-19T12:45:29Z",
-  "updated_at": "2026-11-19T12:45:29Z",
-  "write_id": "1833-uw84baw4"
+  "branch": "claude/7354-a1",
+  "claimed_at": "2026-11-26T21:22:46Z",
+  "updated_at": "2026-11-26T21:22:46Z",
+  "write_id": "16042-u1mnoy0n"
 }
