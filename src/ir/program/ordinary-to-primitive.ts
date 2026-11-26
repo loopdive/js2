@@ -11,7 +11,8 @@
  * closure does not carry, which the caller answers (`ToPrimitiveAnswer.text`). In a program that creates no function
  * value no method can be callable, so only `toString` is consulted. `@@toPrimitive` (§7.1.1 step 2) is reachable only
  * by naming `Symbol`, and such a program refuses by name. (#7354 G1) An error's `toString` is the realm's
- * Error.prototype.toString, which the dispatcher cannot call: recognised by identity and answered here.
+ * Error.prototype.toString, which the dispatcher cannot call: recognised by identity and answered here; (W2) so are a
+ * wrapper's `valueOf` and `toString`.
  */
 import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import { irClosureMethodReference } from "../core/closure-invocation-callables.js";
@@ -48,13 +49,14 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
   /** Whether the carrier `value` holds a primitive (none of the program's object kinds), into `result`. */
   readonly isPrimitive: (value: IrValueId, result: IrValueId) => IrInstr[];
   /**
-   * (#7354 G1) Where a value may be an error: whether `method` is the realm's Error.prototype.toString, into `result`,
-   * and its answer for `object` (`js.object.error-to-string`): a built-in the dispatcher cannot call, written here.
+   * (#7354 G1, W2) The realm's built-in conversion methods the dispatcher cannot call, each recognised by identity and
+   * answered here: whether `method` is it, into `result`, and its answer for `object`. Error.prototype.toString where a
+   * value may be an error (`js.object.error-to-string`); a held wrapper family's `valueOf` and `toString`.
    */
-  readonly errorToString?: {
+  readonly builtins: readonly {
     readonly is: (method: IrValueId, result: IrValueId) => IrInstr[];
     readonly answer: (object: IrValueId, result: IrValueId) => IrInstr[];
-  };
+  }[];
   /**
    * (#7354 G1) Where the program creates no source function, every callable method is a built-in, which the
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
@@ -126,12 +128,14 @@ function callIfCallable(
             resultType: b.carrier,
           },
         ];
-  const builtin = b.errorToString;
-  const call = (r: IrValueId): IrInstr[] => {
-    if (!builtin) return dispatch(r);
-    const same = b.fresh();
-    return [...builtin.is(method, same), b.branch(same, (s) => builtin.answer(object, s), dispatch, r, b.carrier)];
-  };
+  const call = b.builtins.reduceRight(
+    (otherwise: (r: IrValueId) => IrInstr[], builtin) =>
+      (r: IrValueId): IrInstr[] => {
+        const same = b.fresh();
+        return [...builtin.is(method, same), b.branch(same, (s) => builtin.answer(object, s), otherwise, r, b.carrier)];
+      },
+    dispatch,
+  );
   const skip = (r: IrValueId): IrInstr[] => [
     { kind: "coerce.to_externref", value: object, result: r, resultType: b.carrier },
   ];

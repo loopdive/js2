@@ -7,8 +7,7 @@
  * so a read of one of them refuses by name; (#7354 P1) but for the Object.prototype methods the catalog marks native.
  *
  * (#7354 M1, C3) Object.prototype's keys are the realm catalog's (`OBJECT_PROTOTYPE_KEYS`, read here for every IR
- * reader, `src/ir/realm-keys.ts` re-exports them); the wrapper prototypes are not in the catalog yet, so their keys
- * are listed here from the specification.
+ * reader, `src/ir/realm-keys.ts` re-exports them); (#7354 W2) so are the wrapper prototypes'.
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
@@ -18,6 +17,7 @@ import {
   realmMethodId,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
+  type NativeWrapperConstructor,
   type NativeRealmProperty,
 } from "../../runtime/contracts/native-realm-catalog.js";
 
@@ -123,57 +123,74 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  */
 export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
-const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
-const STRING_PROTOTYPE = [
-  "at",
-  "charAt",
-  "charCodeAt",
-  "codePointAt",
-  "concat",
-  "endsWith",
-  "includes",
-  "indexOf",
-  "isWellFormed",
-  "lastIndexOf",
-  "localeCompare",
-  "match",
-  "matchAll",
-  "normalize",
-  "padEnd",
-  "padStart",
-  "repeat",
-  "replace",
-  "replaceAll",
-  "search",
-  "slice",
-  "split",
-  "startsWith",
-  "substring",
-  "toLocaleLowerCase",
-  "toLocaleUpperCase",
-  "toLowerCase",
-  "toUpperCase",
-  "toWellFormed",
-  "trim",
-  "trimEnd",
-  "trimStart",
-  "substr",
-  "anchor",
-  "big",
-  "blink",
-  "bold",
-  "fixed",
-  "fontcolor",
-  "fontsize",
-  "italics",
-  "link",
-  "small",
-  "strike",
-  "sub",
-  "sup",
-  "trimLeft",
-  "trimRight",
-];
+/** The catalog's ordinary objects (a family's prototype objects): the realm holds each with its family. */
+const CATALOG_OBJECTS: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, callable }) => (callable === undefined ? [id] : [])),
+);
+
+/**
+ * The catalog's string keys of `id` whose value the realm can hold: data, a function value of
+ * `NATIVE_VALUE_INTRINSICS`, or an ordinary object of the catalog.
+ */
+function holdableKeys(id: string): ReadonlySet<string> {
+  return stringKeys(
+    propertiesOf([id]).filter(
+      (property) =>
+        property.kind === "data" &&
+        (property.value.kind !== "intrinsic" ||
+          NATIVE_VALUE_INTRINSICS.includes(property.value.id) ||
+          CATALOG_OBJECTS.has(property.value.id)),
+    ),
+  );
+}
+
+/**
+ * (#7354 W2) Each wrapper prototype's keys (§22.1.3, §21.1.3, §20.3.3, Annex B included), from the catalog, and those
+ * the realm holds where it holds the family (`constructor`, `toString`, `valueOf`, String.prototype's `length`).
+ */
+const WRAPPER_PROTOTYPE_KEYS = Object.fromEntries(
+  NATIVE_WRAPPER_CONSTRUCTORS.map((name) => {
+    const id = `%${name}.prototype%`;
+    return [name, { all: realmStringKeys(id), held: holdableKeys(id) }];
+  }),
+) as Readonly<
+  Record<NativeWrapperConstructor, { readonly all: ReadonlySet<string>; readonly held: ReadonlySet<string> }>
+>;
+
+/** (#7354 W2) The wrapper prototype a primitive kind reads through. */
+export const WRAPPER_OF_KIND = { number: "Number", boolean: "Boolean", string: "String" } as const;
+
+/**
+ * (#7354 W2) The keys a read of a held family's object reaches on its prototype that the realm does not hold
+ * (`String.prototype.charAt`): an object that may be a wrapper of `wrappers` (catalog ids) finds them only on its own
+ * or source-built chain.
+ */
+export function unheldWrapperPrototypeKeys(wrappers: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set(
+    NATIVE_WRAPPER_CONSTRUCTORS.filter((name) => wrappers.has(`%${name}%`)).flatMap((name) => {
+      const { all, held } = WRAPPER_PROTOTYPE_KEYS[name];
+      return [...all].filter((key) => !held.has(key));
+    }),
+  );
+}
+
+/** (#7354 W2) Whether the realm holds `key` on the wrapper prototype `name` where it holds the family. */
+export const heldWrapperPrototypeKey = (name: NativeWrapperConstructor, key: string): boolean =>
+  WRAPPER_PROTOTYPE_KEYS[name].held.has(key);
+
+/**
+ * (#7354 W2) The statics of the realm constructors `constructors` (catalog ids) the realm does not hold
+ * (`Object.keys`, `String.fromCharCode`, `Number.isNaN`): a read or write of one on a value that may be a function
+ * refuses by name, as the realm's constructor lacks the property.
+ */
+export function unheldStaticKeys(constructors: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set(
+    [...constructors].flatMap((id) => {
+      const held = holdableKeys(id);
+      return [...realmStringKeys(id)].filter((key) => !held.has(key));
+    }),
+  );
+}
 
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */
 const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
@@ -198,9 +215,9 @@ const FUNCTION_REACHABLE_KEYS = new Set(
 export const BUILTIN_REACHABLE_KEYS = {
   object: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
   function: FUNCTION_REACHABLE_KEYS,
-  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...NUMBER_PROTOTYPE]),
-  boolean: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
-  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...STRING_PROTOTYPE, "length"]),
+  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...WRAPPER_PROTOTYPE_KEYS.Number.all]),
+  boolean: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...WRAPPER_PROTOTYPE_KEYS.Boolean.all]),
+  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...WRAPPER_PROTOTYPE_KEYS.String.all]),
 } as const satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
 /** A canonical array index (§6.1.7): a string's own indexed character. */

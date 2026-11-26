@@ -25,7 +25,7 @@ import type { RealmFamilyProperty } from "../../../runtime/wasmgc/values/realm-f
  * Object.prototype holds, or (#7354 G1) a member of a family the realm holds (an Error constructor,
  * `Error.prototype.toString`), whose own properties and holder come from the catalog. A call of a method or a family
  * member through the dispatcher is the run-time abort: the Prepared path writes its algorithm where a call reads it
- * (`dynamic-prototype-methods.ts`, `dynamic-error-constructors.ts`).
+ * (`dynamic-prototype-methods.ts`, `dynamic-realm-constructors.ts`).
  */
 export type NativeBuiltinFunctionBehavior =
   | "function-prototype"

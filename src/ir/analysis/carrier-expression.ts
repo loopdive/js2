@@ -31,6 +31,8 @@ export interface CarrierLeaves {
   readonly conditional?: (conditional: ts.ConditionalExpression) => boolean;
   /** A `+` operand that adds as the carrier though it is not one (a fresh wrapper's ToPrimitive). */
   readonly addsAsCarrier?: (operand: ts.Expression) => boolean;
+  /** (#7354 W2) A `new` expression that answers the carrier: its callee is a value of the carrier (C2's construct). */
+  readonly construct?: (expression: ts.NewExpression) => boolean;
 }
 
 /** Every value `expression` can yield is the carrier. */
@@ -61,6 +63,7 @@ function yieldsCarrier(expression: ts.Expression, leaves: CarrierLeaves, quantif
       if (answer !== undefined) return answer;
       return ts.isPropertyAccessExpression(e.expression) && carrier(e.expression.expression);
     }
+    if (ts.isNewExpression(e)) return leaves.construct?.(e) === true;
     if (quantifier === "some") {
       const projected = skipOuterExpressions(e);
       if (projected !== e) return carrier(projected);

@@ -15,6 +15,9 @@ import {
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
+  heldWrapperPrototypeKey,
+  unheldWrapperPrototypeKeys,
+  WRAPPER_OF_KIND,
 } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
@@ -37,6 +40,13 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
   /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
   readonly errors: boolean;
+  /**
+   * (#7354 W2) The wrapper families the program holds (`heldWrappers`), whether it can obtain a built-in prototype
+   * (`obtainsPrototypes`), and the statics its realm constructors lack (`unheldStaticKeys`).
+   */
+  readonly wrappers: ReadonlySet<string>;
+  readonly prototypes: boolean;
+  readonly staticKeys: ReadonlySet<string>;
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -155,6 +165,40 @@ const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
   "prepareStackTrace",
 ]);
 
+const STATICS = "the realm constructor's statics";
+
+/** What the realm lacks for a read of `name` off a function value. */
+function functionMissing(b: MemberAccessBuilders, name: string): string | undefined {
+  if (BUILTIN_REACHABLE_KEYS.function.has(name)) return "Function.prototype's properties";
+  return b.staticKeys.has(name) ? STATICS : undefined;
+}
+
+/**
+ * Whether a primitive of `kind` reaches `name` on a built-in prototype the realm does not hold: its wrapper prototype's
+ * keys and Object.prototype's unpopulated ones, but (#7354 W2) what a held family's prototype holds.
+ */
+function primitiveLacks(b: MemberAccessBuilders, kind: CarrierKind, name: string): boolean {
+  const wrapper = WRAPPER_OF_KIND[kind as keyof typeof WRAPPER_OF_KIND];
+  const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
+  return reachable.has(name) && !(b.wrappers.has(`%${wrapper}%`) && heldWrapperPrototypeKey(wrapper, name));
+}
+
+/**
+ * (#7354 W2) `access` of the realm's prototype object a primitive of `kind` reads through: its wrapper prototype where
+ * the program holds the family, else Object.prototype (the wrapper prototype's own keys refuse, `primitiveLacks`).
+ */
+function throughPrototype(
+  b: MemberAccessBuilders,
+  kind: CarrierKind,
+  access: (base: IrValueId, result: IrValueId) => IrInstr[],
+  result: IrValueId,
+): IrInstr[] {
+  const wrapper = WRAPPER_OF_KIND[kind as keyof typeof WRAPPER_OF_KIND];
+  const base = b.fresh();
+  const id = b.wrappers.has(`%${wrapper}%`) ? `%${wrapper}.prototype%` : "%Object.prototype%";
+  return [...b.realmIntrinsic(id, base), ...access(base, result)];
+}
+
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
 export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, result: IrValueId): IrInstr[] {
   const name = constantKey(b, instr);
@@ -179,14 +223,12 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       // holds them (the object arm); only the accessor would run code the realm lacks.
       if (kind === "object")
         return OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name) ? "Object.prototype's accessor" : undefined;
-      if (kind === "function")
-        return BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined;
+      if (kind === "function") return functionMissing(b, name);
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
-      const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       // A string's own `length` and indexed characters come with arrays (#7352).
       if (kind === "string" && (name === "length" || isArrayIndexKey(name)))
         return "its own length and index properties";
-      return reachable.has(name) ? `${WRAPPER[kind]}.prototype's properties` : undefined;
+      return primitiveLacks(b, kind, name) ? `${WRAPPER[kind]}.prototype's properties` : undefined;
     },
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
@@ -195,12 +237,16 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     // ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
     object: (r, abort) => {
       const get = (s: IrValueId) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s)];
-      if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
+      if (!BUILTIN_REACHABLE_KEYS.object.has(name) && !unheldWrapperPrototypeKeys(b.wrappers).has(name)) return get(r);
       const found = b.fresh();
       return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
     },
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
-    primitive: (_kind, r) => inherited(r),
+    // (#7354 W2) Where a program can obtain a prototype it can change one: the read goes through the realm's.
+    primitive: (kind, r) =>
+      b.prototypes
+        ? throughPrototype(b, kind, (base, s) => [realmCall("js.object.get", [base, instr.key, instr.recv], s)], r)
+        : inherited(r),
   };
   return memberAccess(b, instr, access, result);
 }
@@ -240,16 +286,31 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     missing: (kind) => {
       if (MEMBER_ACCESS_ARM[kind] === "type-error") return undefined;
       if (OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)) return "Object.prototype's accessor";
-      return kind === "function" && FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(name)
+      if (kind !== "function") return undefined;
+      return FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(name)
         ? "Function.prototype's accessor"
-        : undefined;
+        : b.staticKeys.has(name)
+          ? STATICS
+          : undefined;
     },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
     function: (r, throwTypeError) => putValue("function", r, throwTypeError),
-    primitive: (kind, r, throwTypeError) =>
-      instr.sloppy === true ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
+    primitive: (kind, r, throwTypeError) => {
+      const absent = (s: IrValueId) =>
+        instr.sloppy === true ? [unread(s)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, s);
+      if (!b.prototypes) return absent(r);
+      // (#7354 W2) A key the prototype chain holds may be a setter or read only: the run-time abort.
+      const found = (base: IrValueId, s: IrValueId): IrInstr[] => {
+        const has = b.fresh();
+        return [
+          realmCall("js.object.has", [base, instr.key], has),
+          b.branch(has, (t) => b.abort(instr, t), absent, s, b.carrier),
+        ];
+      };
+      return throughPrototype(b, kind, found, r);
+    },
   };
   return memberAccess(b, instr, access, b.fresh());
 }

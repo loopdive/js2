@@ -6,7 +6,7 @@
 //   `stackTraceLimit`) refuse by name: the realm answers the specification, the engine beside it V8.
 // - A shadowed or written name is no longer the realm's constructor: the existing rules refuse it.
 // - The constructor called through another value (a variable) is the dispatcher's built-in abort.
-// - The premise re-proof (`dynamic-error-constructors.ts`): a function's [[Prototype]] chain answers `false` to
+// - The premise re-proof (`dynamic-realm-constructors.ts`): a function's [[Prototype]] chain answers `false` to
 //   `instanceof` / `isPrototypeOf`, but `%Error%` (a NativeError constructor's [[Prototype]]) is the abort.
 // - A read of an undeclared name stays a refusal (no ReferenceError at GetValue: the lib is not the global list).
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -26,6 +26,9 @@ export type ObjectStaticBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
   /** (#7354 G1) A value may be an error (`holdsErrors`). */
   readonly errors: boolean;
+  /** (#7354 W2) The program can obtain a built-in prototype (`obtainsPrototypes`). */
+  readonly objects: boolean;
+  readonly toNumber: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
 };
 type Call = Extract<IrInstr, { kind: "call" }>;
 type Arm = (result: IrValueId) => IrInstr[];

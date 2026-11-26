@@ -17312,7 +17312,12 @@
       "layer": "ir-program"
     },
     {
-      "path": "src/ir/program/dynamic-error-constructors.ts",
+      "path": "src/ir/program/dynamic-realm-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-wrapper-methods.ts",
       "state": "clean",
       "layer": "ir-program"
     },

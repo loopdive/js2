@@ -17,11 +17,12 @@ import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js"
 import {
   IS_OBJECT,
   holdsErrors,
+  obtainsPrototypes,
   isOrdinaryObject,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
-import { functionChainAnswer } from "./dynamic-error-constructors.js";
+import { functionChainAnswer } from "./dynamic-realm-constructors.js";
 
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
@@ -165,7 +166,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
  * instance (before `prototype` is read); C's `prototype` must be an object, else a TypeError; and an ordinary
  * object's chain is walked (`isOrdinaryObject`, (#7354 G1) an error's included): a function's holds built-in
  * prototypes alone, which no Prepared program obtains (M1, C1; tests/issue-7354-m-prototype-premise.test.ts), so no
- * `prototype` is on it, but (G1) %Error% (`functionChainAnswer`).
+ * `prototype` is on it, but (G1) %Error% and (W2) %Object.prototype% (`functionChainAnswer`).
  */
 export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   if (b.program.objects.namesSymbol) gap("instanceof in a program that names 'Symbol'");
@@ -180,7 +181,16 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
-        : functionChainAnswer(b, instr, holdsErrors(b.program), prototype, (t) => [unread(t)], s, BOOLEAN);
+        : functionChainAnswer(
+            b,
+            instr,
+            { errors: holdsErrors(b.program), objects: obtainsPrototypes(b.program) },
+            prototype,
+            (t) => [unread(t)],
+            (t) => [boolean(true, t)],
+            s,
+            BOOLEAN,
+          );
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,

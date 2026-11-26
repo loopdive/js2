@@ -16,6 +16,7 @@ import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { wrapperMethodAnswer, wrapperMethods } from "./dynamic-wrapper-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -23,6 +24,7 @@ import {
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   carrierKindOf,
+  heldWrappers,
   holdsErrors,
   type CarrierKind,
   type LegalizationProgram,
@@ -285,17 +287,23 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** (#7354 G1) The realm's Error.prototype.toString, recognised by identity (`ordinary-to-primitive.ts`). */
-  const errorToString = (instr: IrInstr) => ({
+  /** The realm's built-in method `id`, recognised by identity (`ordinary-to-primitive.ts`), answering `answer`. */
+  const builtin = (instr: IrInstr, id: string, answer: (object: IrValueId, r: IrValueId) => IrInstr[]) => ({
     is: (method: IrValueId, r: IrValueId): IrInstr[] => {
-      const builtin = fresh();
-      return [
-        ...builders.realmIntrinsic(ERROR_TO_STRING_ID, builtin),
-        intrinsic(instr, "js.value.strict_eq", [method, builtin], r),
-      ];
+      const value = fresh();
+      return [...builders.realmIntrinsic(id, value), intrinsic(instr, "js.value.strict_eq", [method, value], r)];
     },
-    answer: (object: IrValueId, r: IrValueId): IrInstr[] => [realmCall("js.object.error-to-string", [object], r)],
+    answer,
   });
+  /** (#7354 G1, W2) Error.prototype.toString where a value may be an error; each held wrapper's two methods. */
+  const builtins = (instr: IrInstr) => [
+    ...(holdsErrors(program)
+      ? [builtin(instr, ERROR_TO_STRING_ID, (object, r) => [realmCall("js.object.error-to-string", [object], r)])]
+      : []),
+    ...wrapperMethods(heldWrappers(program)).map((id) =>
+      builtin(instr, id, (object, r) => wrapperMethodAnswer(wrapperMethodBuilders, instr, id, object, r)),
+    ),
+  ];
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
   const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);
   const toPrimitive = (
@@ -315,7 +323,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
-      ...(holdsErrors(program) ? { errorToString: errorToString(instr) } : {}),
+      builtins: builtins(instr),
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
@@ -409,6 +417,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     );
     return { instrs, value: result };
   };
+  const wrapperMethodBuilders = { ...builders, carrier: CARRIER, stringOf };
   return { stringOf, toNumber, primitiveOf };
 }
 
