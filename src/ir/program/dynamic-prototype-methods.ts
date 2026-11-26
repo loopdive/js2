@@ -16,20 +16,18 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { closureMethodArity, irClosureMethodReference } from "../core/closure-invocation-callables.js";
-import {
-  realmMethodId,
-  type NativeFunctionPrototypeMethod,
-  type NativeObjectPrototypeMethod,
+import type {
+  NativeFunctionPrototypeMethod,
+  NativeObjectPrototypeMethod,
 } from "../../runtime/contracts/native-realm-catalog.js";
 import {
-  ERROR_TO_STRING_ID,
   nativeFunctionPrototypeMethod,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
-import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-chains.js";
+import { realmCall } from "./dynamic-realm-calls.js";
+import { CARRIER, carried, throwingArm } from "./dynamic-value-chains.js";
 import { IS_OBJECT, MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
@@ -72,19 +70,9 @@ export function prototypeMethodOfCall(
   return invoker === undefined ? nativeObjectPrototypeMethod(name) : `Function.prototype.${invoker}`;
 }
 
-/** The catalog id of `method`. */
-function methodId(method: RealmMethod): string {
-  switch (method) {
-    case "Error.prototype.toString":
-      return ERROR_TO_STRING_ID;
-    case "Function.prototype.apply":
-      return realmMethodId("Function.prototype", "apply");
-    case "Function.prototype.call":
-      return realmMethodId("Function.prototype", "call");
-    default:
-      return objectPrototypeMethodId(method);
-  }
-}
+/** The catalog id of `method`: a qualified name is its id without the `%` signs, a bare one an Object.prototype method. */
+const methodId = (method: RealmMethod): string =>
+  method.includes(".") ? `%${method}%` : objectPrototypeMethodId(method as NativeObjectPrototypeMethod);
 
 /** `value`, the realm's Boolean of `test`, boxed into the carrier `result`. */
 function boxed(b: ObjectStaticBuilders, instr: Call, test: (value: IrValueId) => IrInstr[], result: IrValueId) {
@@ -173,18 +161,16 @@ function invoke(b: ObjectStaticBuilders, instr: Call, thisArg: IrValueId | undef
  */
 function apply(b: ObjectStaticBuilders, instr: Call, result: IrValueId): IrInstr[] {
   const [receiver, , thisArg, argArray] = instr.args as [IrValueId, IrValueId, IrValueId?, IrValueId?];
-  const throwing = (message: string) => (r: IrValueId) =>
-    typeErrorThen({ ...b, carrier: CARRIER }, message, b.intrinsic(instr, "js.value.undefined", [], r));
   const noArguments = invoke(b, instr, thisArg, []);
   const list = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
-    MEMBER_ACCESS_ARM[kind] === "type-error"
+    !isObjectCoercible(kind)
       ? noArguments(r)
       : IS_OBJECT[kind]
         ? b.abort(instr, r)
-        : throwing("CreateListFromArrayLike called on non-object")(r);
+        : throwingArm(b, instr, "CreateListFromArrayLike called on non-object")(r);
   const callable = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
     kind !== "function"
-      ? throwing("Function.prototype.apply was called on a value that is not a function")(r)
+      ? throwingArm(b, instr, "Function.prototype.apply was called on a value that is not a function")(r)
       : argArray === undefined
         ? noArguments(r)
         : b.kindChain(instr, argArray, r, list, b.kinds.kindsOf(argArray), CARRIER);
