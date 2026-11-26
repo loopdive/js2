@@ -35,6 +35,7 @@ export const REGRESSION_EXIT_CODE = 3;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CURRENT_EDITION_CONFIG = join(ROOT, "scripts", "test262-current-edition.json");
+const RECLASSIFIED_CONFIG = join(ROOT, "scripts", "test262-edition-reclassified.json");
 
 /** Artifact names of the two IR measurement scopes; consumers tell them apart by name. */
 const EDITION_ARTIFACT = "test262-ir-standalone-edition-measurement";
@@ -73,6 +74,22 @@ export function editionPaths(test262Root: string, year: number): string[] {
     }
   }
   return [...out].sort();
+}
+
+/**
+ * Tests deliberately moved out of the current edition, each with a reason
+ * (a reviewed file, so the escape hatch is visible in the diff that uses it).
+ */
+export function readReclassified(path = RECLASSIFIED_CONFIG): Set<string> {
+  const { files } = JSON.parse(readFileSync(path, "utf-8"));
+  if (!Array.isArray(files)) throw new Error(`${path}: "files" must be an array`);
+  const out = new Set<string>();
+  for (const entry of files) {
+    if (typeof entry?.file !== "string" || typeof entry?.reason !== "string" || !entry.reason.trim())
+      throw new Error(`${path}: every entry needs a file and a reason: ${JSON.stringify(entry)}`);
+    out.add(entry.file);
+  }
+  return out;
 }
 
 /** What a measurement artifact says about itself (`scope.json`). */
@@ -126,6 +143,8 @@ export interface EditionDiff {
   unbaselined: number;
   /** Passed in the baseline, absent now, and the test262 revision changed: not comparable, not gated. */
   notComparable: string[];
+  /** Dropped from the edition on purpose (scripts/test262-edition-reclassified.json): listed, not gated. */
+  reclassified: string[];
 }
 
 function countStatuses(run: StatusMap, paths: ReadonlySet<string>): Counts {
@@ -155,16 +174,28 @@ export function compareEditionRuns(
   run: StatusMap,
   baseline: StatusMap,
   paths: ReadonlySet<string>,
-  { sameTest262Revision, baselineCoversEdition }: { sameTest262Revision: boolean; baselineCoversEdition: boolean },
+  {
+    sameTest262Revision,
+    baselineCoversEdition,
+    reclassified = new Set<string>(),
+  }: { sameTest262Revision: boolean; baselineCoversEdition: boolean; reclassified?: ReadonlySet<string> },
 ): EditionDiff {
-  const diff: EditionDiff = { regressions: [], timeouts: [], improvements: [], unbaselined: 0, notComparable: [] };
+  const diff: EditionDiff = {
+    regressions: [],
+    timeouts: [],
+    improvements: [],
+    unbaselined: 0,
+    notComparable: [],
+    reclassified: [],
+  };
   const files = baselineCoversEdition ? new Set([...paths, ...baseline.keys()]) : paths;
   for (const file of files) {
     const now = run.get(file);
     const was = baseline.get(file);
     if (now === undefined) {
       if (was !== "pass") continue;
-      if (sameTest262Revision) diff.regressions.push({ file, now: MISSING_STATUS });
+      if (reclassified.has(file)) diff.reclassified.push(file);
+      else if (sameTest262Revision) diff.regressions.push({ file, now: MISSING_STATUS });
       else diff.notComparable.push(file);
     } else if (was === undefined) diff.unbaselined++;
     else if (was === "pass" && now === "compile_timeout") diff.timeouts.push(file);
@@ -183,20 +214,31 @@ export interface ArtifactRef {
 }
 
 /**
- * Every measurement on `lineage`, nearest first (first-parent order); within
- * one commit the newest artifact first, so a re-run supersedes. The caller
- * takes the first one that turns out comparable.
+ * Every measurement on `lineage`, EDITION measurements first, each group
+ * nearest first (first-parent order) and, within one commit, newest first so
+ * a re-run supersedes. The caller takes the first one that turns out
+ * comparable.
+ *
+ * Edition before full: only an edition baseline lets `compareEditionRuns`
+ * catch tests a narrowed classifier dropped. The weekly full run lands on a
+ * main commit AFTER that commit's own edition measurement, so newest-first
+ * alone would hand the next queue group the full one, the narrowing would
+ * pass, and the group's own edition artifact would then lack the dropped
+ * tests for good. A full measurement is used only when no edition one is in
+ * the window (the first run after #7551, or after an edition switch).
  */
 export function baselineCandidates(
   lineage: readonly string[],
   artifacts: readonly ArtifactRef[],
 ): { artifact: ArtifactRef; distance: number }[] {
-  return lineage.flatMap((sha, distance) =>
-    artifacts
-      .filter((a) => a.sha === sha)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((artifact) => ({ artifact, distance })),
-  );
+  const ranked = (name: string) =>
+    lineage.flatMap((sha, distance) =>
+      artifacts
+        .filter((a) => a.sha === sha && a.name === name)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map((artifact) => ({ artifact, distance })),
+    );
+  return [...ranked(EDITION_ARTIFACT), ...ranked(FULL_ARTIFACT)];
 }
 
 export interface Report {
@@ -256,6 +298,11 @@ export function renderSummary(r: Report): string {
   if (d.timeouts.length > 0) list("Not gated: pass → compile_timeout (runner-load flake)", d.timeouts.map(code));
   if (d.notComparable.length > 0)
     list("Not comparable (test262 revision changed): passed before, no row now", d.notComparable.map(code));
+  if (d.reclassified.length > 0)
+    list(
+      "Not gated: deliberately reclassified out of the edition (test262-edition-reclassified.json)",
+      d.reclassified.map(code),
+    );
   if (d.unbaselined > 0) lines.push(`${d.unbaselined} test(s) of the edition have no row in the baseline.`, "");
   return lines.join("\n") + "\n";
 }
@@ -266,6 +313,7 @@ export function buildReport(opts: {
   meta: ScopeMeta;
   paths: ReadonlySet<string>;
   baseline?: { statuses: StatusMap; meta: ScopeMeta; runId?: number; distance?: number };
+  reclassified?: ReadonlySet<string>;
 }): Report {
   const base: Report = {
     edition: opts.meta.edition ?? "",
@@ -297,6 +345,7 @@ export function buildReport(opts: {
     diff: compareEditionRuns(opts.run, opts.baseline.statuses, opts.paths, {
       sameTest262Revision: from === to,
       baselineCoversEdition: opts.baseline.meta.scope === "edition",
+      reclassified: opts.reclassified,
     }),
   };
 }
@@ -404,7 +453,13 @@ function cmdReport(args: string[]): void {
       distance: ref.distance,
     };
   }
-  const report = buildReport({ run: readStatuses(required(args, "--results")), meta, paths, baseline });
+  const report = buildReport({
+    run: readStatuses(required(args, "--results")),
+    meta,
+    paths,
+    baseline,
+    reclassified: readReclassified(),
+  });
   const summary = renderSummary(report);
   writeFileSync(required(args, "--summary"), summary);
   writeFileSync(required(args, "--json"), JSON.stringify(report, null, 2) + "\n");

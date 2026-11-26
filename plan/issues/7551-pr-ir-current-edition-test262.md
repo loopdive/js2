@@ -327,3 +327,23 @@ PR stacked on this one (`claude/ci-legacy-daily`), after owner sign-off.
   - "No baseline" now means no comparable measurement among those
     candidates.
   - Tested (`candidateRejection`).
+
+## Delta review r3, Part A (2026-11-26)
+
+- **Edition baselines rank first.** `baselineCandidates` returns every
+  EDITION measurement in the window (nearest first, newest first per
+  commit) before any FULL one. A weekly full artifact on a main tip is
+  newer than that tip's edition artifact, and would otherwise exempt the
+  next queue group from the dropped-test check. Tested: on the same sha, a
+  newer full candidate and an older edition one → the edition one is
+  chosen.
+- **Escape hatch for a deliberate reclassification:**
+  `scripts/test262-edition-reclassified.json`, a reviewed `{file, reason}`
+  list read by `report`.
+  - A listed test missing from the run is reported as "deliberately
+    reclassified", not gated.
+  - The PR that moves the test adds the entry. Its own edition measurement
+    then lacks the test, so later merges are clean and the entry can be
+    removed.
+  - An entry without a reason is refused.
+  - Tested. The file joins the test262 path lists.

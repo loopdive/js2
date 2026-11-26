@@ -451,7 +451,15 @@ The IR-path (`TEST262_COMPILER_PATH=ir`, standalone) measurement in
   nearest earlier IR measurement on the first-parent lineage. The artifact is
   `test262-ir-standalone-edition-measurement`.
   - `merge complete IR standalone measurement` fails when a test of that
-    edition went pass → not-pass.
+    edition went pass → not-pass. Against an edition baseline that includes
+    a passing test that has dropped out of today's edition list (a narrowed
+    classifier or category list): it fails as `missing`. Edition baselines
+    are preferred over full ones so this check is in force.
+  - **Deliberately moving a test out of the edition:** list it, with a
+    reason, in `scripts/test262-edition-reclassified.json` in the same PR.
+    Listed tests are reported, not gated. Once that PR's edition measurement
+    is on main, later runs no longer see the test, and the entry can be
+    removed.
   - With no comparable earlier measurement, the summary says **"No baseline
     — not compared"** and the job passes. That happens on the first run, or
     after an edition switch or an eval-engine change.

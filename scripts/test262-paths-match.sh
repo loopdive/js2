@@ -142,7 +142,7 @@ classify_test262_path() {
     scripts/generate-editions.ts) echo both ;;
     # The per-merge IR measurement's scope (#7551): which edition runs, and how
     # it is selected and compared. The IR measurement is a standalone lane.
-    scripts/test262-edition-scope.ts | scripts/test262-current-edition.json | scripts/lib/gh-api-retry.mjs) echo standalone ;;
+    scripts/test262-edition-scope.ts | scripts/test262-current-edition.json | scripts/test262-edition-reclassified.json | scripts/lib/gh-api-retry.mjs) echo standalone ;;
     scripts/test262-worker.mjs) echo both ;;
     tests/test262-chunk*.test.ts) echo both ;;
     tests/test262-runner.ts) echo both ;;

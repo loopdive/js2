@@ -1,0 +1,4 @@
+{
+  "note": "#7551: tests DELIBERATELY moved out of the current edition (a classifier or category change). A baseline-passing test that leaves the edition list otherwise fails the merge-queue gate as `missing`. Add {file, reason} in the PR that reclassifies; once that PR's edition measurement is on main, later merges no longer see the test and the entry can be removed.",
+  "files": []
+}

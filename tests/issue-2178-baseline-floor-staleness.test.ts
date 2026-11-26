@@ -73,6 +73,7 @@ describe("#2178 — pathsTouchTest262 mirrors the test262-paths allowlist", () =
       "scripts/quickjs-artifact/build.sh",
       "scripts/test262-edition-scope.ts",
       "scripts/test262-current-edition.json",
+      "scripts/test262-edition-reclassified.json",
       "scripts/lib/gh-api-retry.mjs",
       "tests/test262-slow-tests.json",
       "tests/test262-slow-tests-standalone.json",
