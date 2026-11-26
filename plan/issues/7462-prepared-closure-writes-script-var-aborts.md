@@ -209,9 +209,21 @@ with node's answer, which must return, and with a wrong one, which must throw. `
    benchmarks/results/>`.
 
    Report, base and head: the pass count, and the rows whose first gap is one of the refusals above. Also run the
-   mutated twins through it. Expected yield: **estimate, unmeasured**; the base run fills the line below.
-   - **BASE (6694a8b8391, 2026-11-26): pass = `<<FILL>>`; first-gap rows naming these refusals = `<<FILL>>`** ← filled by
-     the coordinator's base run.
+   mutated twins through it.
+   - **BASE, measured (6694a8b8391, 2026-11-26): pass = 83 / 411.** Rows whose first gap names one of these refusals: 5,
+     and none of them is expected to pass on the head:
+     - 2 `'+' operands not provably … (string/unprovable)` rows have `'…' + (new RegExp("a**"))`
+       (`built-ins/RegExp/S15.10.1_A1_T1`, `_T7`). `new RegExp` takes the RegExp arm, not `dyn.construct`, so the
+       `construct` leaf does not fire. The other 2 `'+'` rows are not `new` operands (`addition/S11.6.1_A2.4_T4`:
+       `(y = 1) + y`; `do-while/S12.6.1_A4_T4`: a `&&` chain).
+     - 2 `increment/decrement of undeclared "x"` rows (`postfix-increment/S11.3.1_A2.1_T2`,
+       `prefix-decrement/S11.4.5_A2.1_T2`) expect a ReferenceError for an undeclared `x`. That stays a named refusal
+       (point 7).
+     - 1 `unsupported expression kind PostfixUnaryExpression` row (`postfix-decrement/S11.3.2_A2.2_T1`) has
+       `var y = object--`, a postfix value, which is out of scope.
+   - **Expected yield on this sample: 0 (estimate from the rows above, not measured).** The slice unblocks a pattern the
+     prelude and later harness code need (a closure or function updating a script var; `new` as a `+` operand). The head
+     run will say whether any row's first gap moves.
 2. **`npm run check:prepared-bytes`.** This is `scripts/prepared-byte-identity.mts`, 804 rows, about 45 s. Base
    measured 2026-11-26 on `6694a8b8391`: 804 lines, 745 `bytes`, 58 `refused`, 1 `threw`; output sha256 `6c9504fe8787…`.
    Run it on head and `diff` the two outputs. A row may change only where it contains one of the gap shapes (a script
