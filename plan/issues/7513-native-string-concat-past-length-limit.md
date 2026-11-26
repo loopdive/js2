@@ -65,7 +65,24 @@ standalone) and the exception tag.
   - About 60 `__str_concat` references and the IR concat resolver arms would have to switch, plus one more call per
     concat.
 
-**Recommendation: (A).** One guard and one call per kernel. B's byte scope is about the same in practice (concat is
+**Measured, prototype of (A) (2026-11-26).** The prelude guard `__str_check_length(len: i32) -> i32` throws through
+#7460's `buildNativeStringLengthCheck` on an unsigned read, so a wrapped sum counts as too long; it is called once in
+`__str_concat` after the length sum. Base is #7460's head df9c70c9. The prototype throws `RangeError` for every row
+above except `replaceAll`, which has a kernel of its own.
+
+- 100-file test262 sample, default pipeline. Every compiled module (83 per target) emits the string prelude.
+  - gc: +124 to +487 B, median +150 B (+0.06 % of a median 302 KB module).
+  - standalone: +131 to +675 B, median +244 B (+0.17 %).
+- **A minimal string module**, `export function f(a: string, b: string): string { return a + b; }`:
+  - gc: 13,054 → 38,498 B (×2.9);
+  - standalone: 11,974 → 32,501 B (×2.7).
+
+  The throw pulls in the RangeError constructor and the error-object runtime, which the test262 modules already
+  carry but a small module does not. (B) costs the same as soon as a module concatenates, so the size question is not
+  A versus B; it is whether a concatenating module may pay for RangeError at all.
+
+**D1 decided (lead, 2026-11-26): (A).** The minimal-module measurement above was taken after that decision and is
+reported back to the lead before code. One guard and one call per kernel. B's byte scope is about the same in practice (concat is
 everywhere strings are), with far more sites and a wrapper call on the hottest string path.
 
 **Under either option:**
