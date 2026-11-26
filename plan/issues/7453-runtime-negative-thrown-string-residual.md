@@ -62,6 +62,9 @@ Found on 2026-11-22 during the #7354 slices (Prepared whole-program IR path).
 - **Not covered (no kind, where a host reader would find one):** a closed object-literal struct
   (`throw { name: "TypeError" }`), and the `name` of a class or `new F()` instance in a module without
   `__extern_get`. A missing kind can only fail a row, never pass one.
+- **Known limits, deferred to #7447:** the Wasm reader names an instance's constructor by its brand, so it ignores an
+  overwritten `constructor` property; that can only reject a row, never accept one. On the non-Prepared lanes a trap
+  still counts when the expected type's name (e.g. `TypeError`) appears in its text, frame names included.
 - **Prepared artifact:** not done. It exports no tag, so a thrown value there is still unread (X2).
 - **Pins.** `tests/issue-7453-thrown-value-kind.test.ts`: 33 tests on standalone and gc, 26 of them fail on main
   `c3b7be667a`. They include a byte comparison of the option absent and the option `false`.
