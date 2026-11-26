@@ -546,8 +546,21 @@ run-time test and asks a static proof that already exists.
     ambient `this` (`readsAmbientThisGlobal`) when functions are values. That walk visits function expressions only,
     and the B1 program's `f` is a declaration. So the walk is widened to every non-arrow function-like and answers two
     flags in one pass: the existing `closuresBindReceivers` (expressions, any strictness: unchanged) and
-    `ambientThisMayBeGlobal` (any function-like with `ambientThisStrict === false`). A4 asks the second through the
-    resolver beside `isPristineBuiltinGlobal`. When functions are not values, `ambientThisStrict` is undefined and a
+    `ambientThisMayBeGlobal`: some function-like with `ambientThisStrict === false` whose own `this` **escapes**.
+    A4 asks the second through the resolver beside `isPristineBuiltinGlobal`.
+  - Escape, not use (PRV-A4 B1'): every real-harness program has four sloppy function-likes that read `this` (the
+    shim's two, sta.js's `Test262Error` and its `toString`), so "any use" refuses all 12 files. The global object
+    leaves a function only where `this` is a value. A use does not escape when `this` is (a) the object of a static
+    property access whose name is not a global alias (`this.globalThis` yields the object; the alias set is
+    `GLOBAL_ALIASES` of `builtin-global-binding.ts`, exported, not copied), or (b) the left operand of
+    `instanceof`. Every other use escapes, `this["eval"]` included, and so does a direct `eval` call in the body
+    (its text may read `this`, as `bodyReferencesOwnThis` already assumes). A write `this.eval = …` is already
+    one of `targetNames`'s writes. The harness uses are `this.message` ×3 and `this instanceof` ×1, so none escapes.
+  - The predicate `ownThisEscapes(declaration)` lives in `src/shared/body-references-own-this.ts`. Its traversal is
+    that module's own: the scope rules `findOwnThisReference` and `bodyReferencesOwnThis` already share (do not
+    descend into a non-arrow function-like or class; do descend into arrows) become one internal
+    `forEachOwnThis(node, visit)`. All three predicates use it, so no second copy of the rules exists. Parameter
+    initializers count, as in `functionLikeReferencesOwnThis`. When functions are not values, `ambientThisStrict` is undefined and a
     plain call of a `this`-using function already refuses ("installs no receiver"), so the flag is false and sound.
     The `Object` statics do not ask it yet: their hole is live today and is #7503's.
 - **The call.** Pristine: `lowerCall` lowers the statement site as a direct call of the source's called init unit
@@ -586,7 +599,11 @@ run-time test and asks a static proof that already exists.
     `this`, still refuse, by the existing labels. If either label ever goes away, the test fails and points at #7503.
   - The lowering fallback: a text that cannot lower (`eval("[x]")` after `break`, never run) and the PRV-A4 B2
     program leave the output byte-identical to main's.
-  - `delete eval` refuses the site; the PRV-A4 B1 program refuses the site by the A4 name.
+  - `delete eval` refuses the site; the PRV-A4 B1 program (a bare `return this`) refuses the site by the A4 name.
+  - A harness-like `function E(m){ if (!(this instanceof E)) return new E(m); this.message = m; }` plus a site
+    still lowers; `this.globalThis`, `this["eval"]`, `var t = this` and an `eval` call in a sloppy function each
+    refuse.
+  - Acceptance: the 12 files re-measured with the real harness on the built head, not the stand-in.
   - Run: the A3 program runs and agrees with node; a site in a loop runs its text each time.
 - **Yield, measured on `caaef907` (real harness).**
   - 16 files stop at the A4 label (18 with the stand-in harness).
@@ -604,5 +621,5 @@ run-time test and asks a static proof that already exists.
   - The static SyntaxError throw adds 3. Total: 15.
   - The earlier "A4 alone 18" was an estimate made another way; this measurement replaces it.
 - **Size (estimate).** `lowerCall` arm about 15 lines, the capability about 5, the admission fallback about 15, the
-  call of the called unit about 25, the widened receiver walk about 15, `DeleteExpression` 3. One test file for
-  the pins.
+  call of the called unit about 25, the widened receiver walk about 15, `ownThisEscapes` and the shared traversal
+  about 25, `DeleteExpression` 3. One test file for the pins.
