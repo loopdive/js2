@@ -373,7 +373,7 @@ Refusals pinned: two scripts, `[x] = [1]`, `this.x = 1`, `x = 1; (function () { 
 
 #### Slice 3 measurements
 
-Main `1a726b3e64`, 2026-11-26; strict Prepared entry, standalone). The tool is
+Main `1a726b3e64`, 2026-11-26; strict Prepared entry, standalone. The tool is
 `prepared-census.mts --harness real`, which skips negatives, so its counts are not the S3 runner's. Abort bodies are
 attributed by matching the trap frame to `requiredPreparedAbortBodies`.
 
