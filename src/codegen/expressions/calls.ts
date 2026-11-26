@@ -66,8 +66,8 @@ import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
 import { prepareBuiltinCtorValueInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
+import { registerCalleeCallableGuard } from "./callee-callable-guard.js";
 import {
-  ensureBoundaryCallableKind,
   ensureObjVecBuilders,
   ensureObjectGroupBy,
   ensureObjectRuntime,
@@ -3872,8 +3872,7 @@ export function tryEmitInlineDynamicCall(
   // [[Construct]], but no [[Call]]. Register the shared predicate before any
   // funcIdx is captured; the actual check is emitted after every argument has
   // evaluated, matching EvaluateCall's observable order.
-  ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
-  ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  registerCalleeCallableGuard(ctx);
   prepareBuiltinCtorValueInvoke(ctx, fctx, expr.expression);
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their

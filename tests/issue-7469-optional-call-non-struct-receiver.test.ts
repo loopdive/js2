@@ -3,7 +3,9 @@
 // #7469 — `o?.f?.()` on a receiver that is not a struct (`any`, a `Record`, an index signature, an object built
 // dynamically): an `any` receiver called `f` through the method ladder without testing it, so an undefined `f` threw,
 // and a nullish receiver yielded `null`; a `Record` or index-signature receiver never called `f` at all. Past the
-// receiver test the call is now `o.f?.()` on the held receiver, as for a struct (#7430). Each expected answer is node's.
+// receiver test the call is now `o.f?.()` on the held receiver, as for a struct (#7430). A non-callable `f` that is not
+// nullish throws a TypeError, and a global built-in namespace (`JSON`, `Math`) keeps its static method's native call.
+// Each expected answer is node's.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
@@ -42,6 +44,13 @@ describe("#7469 `o?.f?.(args)` on a non-struct receiver", () => {
     [
       "an `any` local",
       score(`const o: any = { n: 5, f: ${METHOD} }; const u: any = { n: 5 }; const z: any = undefined;`),
+    ],
+    [
+      "an `unknown` parameter narrowed to an object with a callable `f`",
+      'function h(o: unknown): any { if (typeof o === "object" && o !== null && "f" in o && ' +
+        'typeof o.f === "function") return o?.f?.(3); return -1; } ' +
+        "export function main(): number { return h({ f: (x: number) => x * 2 }) * 100 + (h({}) === -1 ? 10 : 0) + " +
+        "(h(null) === -1 ? 1 : 0); }",
     ],
     [
       "an `unknown` value cast to `any`",
@@ -89,6 +98,39 @@ describe("#7469 `o?.f?.(args)` on a non-struct receiver", () => {
         "const z: any = null; const a = o?.f?.(bump()); const b = u?.f?.(bump()); const c = z?.f?.(bump()); " +
         "return (a === 8 ? 1 : 0) + (b === undefined ? 10 : 0) + (c === undefined ? 100 : 0) + n * 1000; }",
     ],
+  ])("%s", async (_, source) => {
+    const expected = node(source);
+    for (const target of TARGETS) expect(await run(source, target), target).toBe(expected);
+  });
+});
+
+// Each program answers 1 when the call throws a TypeError, 2 when it yields `undefined`, 3 for any other value.
+const outcome = (decl: string, call = "o?.f?.()"): string =>
+  `export function main(): number { ${decl} ` +
+  `try { const r = ${call}; return r === undefined ? 2 : 3; } catch (e) { return e instanceof TypeError ? 1 : 4; } }`;
+
+describe("#7469 `o?.f?.()` where `f` is neither nullish nor callable", () => {
+  it.each([
+    ["a number on an `any` receiver", outcome("const o: any = { f: 5 };")],
+    ["a string on an `any` receiver", outcome('const o: any = { f: "s" };')],
+    ["an object on an `any` receiver", outcome("const o: any = { f: {} };")],
+    ["a number on a `Record` receiver", outcome("const o: Record<string, any> | undefined = { f: 5 };")],
+    ["an object on a `Record` receiver", outcome("const o: Record<string, any> | undefined = { f: {} };")],
+    ["`o.f?.()` on an `any` receiver", outcome("const o: any = { f: 5 };", "o.f?.()")],
+    ["`Math?.PI?.()`", outcome("", "(Math as any)?.PI?.()")],
+  ])("%s throws a TypeError", async (_, source) => {
+    expect(node(source)).toBe(1);
+    for (const target of TARGETS) expect(await run(source, target), target).toBe(1);
+  });
+});
+
+describe("#7469 `?.` calls on a global built-in namespace keep the native static call", () => {
+  it.each([
+    ['`JSON?.parse?.("5")`', 'export function main(): number { return JSON?.parse?.("5"); }'],
+    ['`JSON.parse?.("5")`', 'export function main(): number { return JSON.parse?.("5"); }'],
+    ["`Math?.max?.(1, 2)`", "export function main(): number { return Math?.max?.(1, 2); }"],
+    ["`Math.abs?.(-3)`", "export function main(): number { return Math.abs?.(-3); }"],
+    ["`JSON?.stringify?.(5)`", 'export function main(): number { return JSON?.stringify?.(5) === "5" ? 1 : 0; }'],
   ])("%s", async (_, source) => {
     const expected = node(source);
     for (const target of TARGETS) expect(await run(source, target), target).toBe(expected);

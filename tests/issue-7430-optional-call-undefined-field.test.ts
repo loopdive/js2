@@ -3,7 +3,8 @@
 // #7430 — `o?.f?.()` where the class field `f` holds `undefined`: the struct-field arm of the optional call called the
 // field without testing it, and the call trapped. Past the receiver test the call is now `o.f?.()` on the held
 // receiver, which short-circuits on the field value. That call passes a spread argument as its elements, not as one
-// array. Each program's expected answer is node's.
+// array. A field that holds a non-callable value is not skipped: the call throws a TypeError. Each program's expected
+// answer is node's.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
@@ -111,5 +112,22 @@ describe("#7430 `o?.f?.(args)` on a class-field callee", () => {
   ])("%s", async (_, source, expected) => {
     expect(node(source)).toBe(expected);
     for (const target of TARGETS) expect(await run(source, target), target).toBe(expected);
+  });
+});
+
+// Each program answers 1 when `o?.f?.()` throws a TypeError, 2 when it yields `undefined`, 3 for any other value.
+const outcome = (decl: string, call = "o?.f?.()"): string =>
+  `${decl} export function main(): number { ` +
+  `try { const r = ${call}; return r === undefined ? 2 : 3; } catch (e) { return e instanceof TypeError ? 1 : 4; } }`;
+
+describe("#7469 `o?.f?.()` on a class field that holds a non-callable value", () => {
+  it.each([
+    ["a number field", outcome("class O { f: any = 5; } const o: O | undefined = new O();")],
+    ["a string field", outcome('class O { f: any = "s"; } const o: O | undefined = new O();')],
+    ["an object field", outcome("class O { f: any = {}; } const o: O | undefined = new O();")],
+    ["`o.f?.()` on a number field", outcome("class O { f: any = 5; } const o = new O();", "o.f?.()")],
+  ])("%s throws a TypeError", async (_, source) => {
+    expect(node(source)).toBe(1);
+    for (const target of TARGETS) expect(await run(source, target), target).toBe(1);
   });
 });

@@ -24,11 +24,11 @@ import { isSyntheticPropertyAssignmentReceiverDeclaration } from "../builtin-wri
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { buildThrowJsErrorInstrs } from "../js-errors.js";
-import { ensureBoundaryCallableKind, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { isPatchedBuiltinStaticMember } from "../source-scan-predicates.js";
+import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./callee-callable-guard.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 /**
@@ -75,8 +75,7 @@ export function tryEmitPatchedBuiltinStaticCall(
   // (#6957 review) IsCallable on the resolved callee: the carrier holds
   // whatever the program wrote (`Math.custom = 1` / `= null`), and the apply
   // bridge's null-sentinel fallback must never silently accept a non-callable.
-  ensureBoundaryCallableKind(ctx);
-  const isCallableIdx = ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const isCallableIdx = registerCalleeCallableGuard(ctx);
   reserveApplyClosure(ctx);
   ensureObjVecBuilders(ctx);
   flushLateImportShifts(ctx, fctx);
@@ -106,16 +105,7 @@ export function tryEmitPatchedBuiltinStaticCall(
     else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
     fctx.body.push({ op: "call", funcIdx: ensureObjVecBuilders(ctx).pushIdx });
   }
-  // §13.3.6.1 EvaluateCall → Call step 2: IsCallable(func) runs AFTER the
-  // arguments (their side effects stay observable) and BEFORE [[Call]].
-  // `__is_callable` also rejects a class value (no [[Call]]).
-  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", { flush: fctx });
-  fctx.body.push(
-    { op: "local.get", index: calleeLocal },
-    { op: "call", funcIdx: ctx.funcMap.get("__is_callable") ?? isCallableIdx },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
-  );
+  emitCalleeCallableGuard(ctx, fctx, calleeLocal);
   fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "local.get", index: objLocal });
   fctx.body.push({ op: "local.get", index: argsLocal });

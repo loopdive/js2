@@ -187,6 +187,7 @@ import {
   resolveReceiverMethodClassName,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
+import { emitCalleeCallableGuard } from "./callee-callable-guard.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName, resolveStructNameForExpr, tryCompileCallableStaticField } from "./misc.js";
 
@@ -4465,12 +4466,8 @@ function emitCapturedCarrierMethodCall(
   const argsLocal = allocLocal(fctx, `__emc_args_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: argsLocal });
   emitHostMethodCallArgs(ctx, fctx, expr, argsLocal, arrPushName, ensureObjVecBuilders(ctx).pushIdx);
-  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", { flush: fctx });
+  emitCalleeCallableGuard(ctx, fctx, calleeLocal);
   fctx.body.push(
-    { op: "local.get", index: calleeLocal },
-    { op: "call", funcIdx: ctx.funcMap.get("__is_callable")! },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
     { op: "local.get", index: calleeLocal },
     { op: "local.get", index: recvLocal },
     { op: "local.get", index: argsLocal },

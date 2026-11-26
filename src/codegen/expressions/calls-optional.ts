@@ -23,9 +23,15 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { compileBuiltinStaticCall } from "./call-builtin-static.js";
+import { compileNamespaceStaticCall } from "./call-namespace-static.js";
+import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./callee-callable-guard.js";
+import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";
 import { isBuiltinTypeName } from "../builtin-tags.js";
+import { builtinNamespaceConstantValue } from "../builtin-value-read.js";
+import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
 import { emitIsUndefF64, f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 
 export function compileOptionalCallExpression(
@@ -34,6 +40,14 @@ export function compileOptionalCallExpression(
   expr: ts.CallExpression,
 ): InnerResult {
   const propAccess = expr.expression as ts.PropertyAccessExpression;
+  // (#7469) A global built-in namespace or constructor is never nullish, and neither is its own static method, so no
+  // `?.` of `JSON?.parse?.(s)` can short-circuit: it is the native static call. Any other member (`Math?.PI?.()`) is a
+  // value read, called below.
+  if (globalBuiltinName(ctx, fctx, propAccess.expression) !== undefined) {
+    const staticCall =
+      compileBuiltinStaticCall(ctx, fctx, expr, propAccess) ?? compileNamespaceStaticCall(ctx, fctx, expr, propAccess);
+    if (staticCall !== undefined) return staticCall;
+  }
   // `obj.method?.(args)` short-circuits on the METHOD VALUE, not on `obj`.
   // It is a distinct AST shape from `obj?.method(args)`: the question-dot is
   // carried by the CallExpression while the PropertyAccessExpression is plain.
@@ -288,6 +302,11 @@ function compileOptionalPropertyValueCall(
   // `canonicalUndefinedExternInstrs` supplies the lane's real `undefined`.
   const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
+  registerCalleeCallableGuard(ctx);
+  // (#7469) The namespace carrier holds only methods, so a constant (`Math.PI`) is read from the native table instead.
+  const receiverName = globalBuiltinName(ctx, fctx, propAccess.expression);
+  const constant = receiverName === undefined ? undefined : builtinNamespaceConstantValue(receiverName, methodName);
+  if (constant !== undefined) ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [externref]);
   const applyIdx = reserveApplyClosure(ctx);
   const vecBuilders = ensureObjVecBuilders(ctx);
   const arrayNewIdx = vecBuilders?.newIdx;
@@ -309,9 +328,14 @@ function compileOptionalPropertyValueCall(
     return externref;
   }
 
-  fctx.body.push({ op: "local.get", index: receiverLocal });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-  fctx.body.push({ op: "call", funcIdx: resolvedGetIdx });
+  if (constant === undefined) {
+    fctx.body.push({ op: "local.get", index: receiverLocal });
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+    fctx.body.push({ op: "call", funcIdx: resolvedGetIdx });
+  } else {
+    fctx.body.push({ op: "f64.const", value: constant });
+    coerceType(ctx, fctx, { kind: "f64" }, externref);
+  }
   const calleeLocal = allocLocal(fctx, `__optprop_fn_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.tee", index: calleeLocal });
   fctx.body.push({ op: "ref.is_null" });
@@ -335,10 +359,12 @@ function compileOptionalPropertyValueCall(
       fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
     }
   }
+  // (#7469) Only a nullish `m` short-circuits; any other non-callable throws, as in an ordinary call.
+  emitCalleeCallableGuard(ctx, fctx, calleeLocal);
   fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "local.get", index: receiverLocal });
   fctx.body.push({ op: "local.get", index: argsLocal });
-  // Expanding a spread can register late imports, which shift a defined function's index: re-resolve it by name.
+  // A spread or the TypeError can register late imports, which shift a defined function's index: re-resolve it by name.
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? resolvedCallIdx });
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
@@ -350,6 +376,12 @@ function compileOptionalPropertyValueCall(
     else: elseInstrs,
   });
   return externref;
+}
+
+/** The global built-in `expr` names (`JSON`, `(Math as any)`), unless a local binding shadows it. */
+function globalBuiltinName(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): string | undefined {
+  const unwrapped = unwrapTransparentExpression(expr);
+  return ts.isIdentifier(unwrapped) && isGlobalBuiltinIdentifier(ctx, fctx, unwrapped) ? unwrapped.text : undefined;
 }
 
 const PRIMITIVE_METHOD_RECEIVER =
