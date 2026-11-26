@@ -36,8 +36,9 @@ tags only `sprint/N` (+ `sprint-N/begin`); see `CLAUDE.md` and
 ## How to cut a release
 
 Before step 0, **dispatch the full test262 run on `main` and wait for it to
-go green** (`gh workflow run test262-sharded.yml --ref main`, then check
-`merge shard reports` and `promote merged report to main baseline`). Since
+go green** (`gh workflow run test262-sharded.yml --ref main -f full_run=true`, then check `merge shard reports`,
+`promote merged report to main baseline` and `merge complete IR standalone
+measurement`). `full_run` runs exactly what the weekly schedule runs. Since
 #7551 the merge queue gates only the IR current edition, and the full run is
 otherwise weekly (`docs/ci-policy.md`, "The merge-queue test262 gate").
 

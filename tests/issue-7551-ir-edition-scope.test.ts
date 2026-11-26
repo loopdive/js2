@@ -13,19 +13,20 @@ import { DEFAULT_MAX_FLOOR_AGE_HOURS, floorAge } from "../scripts/check-baseline
 import { GH_RETRY_DELAYS_SECONDS, ghWithRetry } from "../scripts/lib/gh-api-retry.mjs";
 import { REGRESSION_ANNOTATION_TITLE } from "../scripts/lib/regression-annotation.mjs";
 import {
+  MISSING_STATUS,
+  REGRESSION_EXIT_CODE,
+  type ScopeMeta,
+  baselineCandidates,
   buildReport,
+  candidateRejection,
   compareEditionRuns,
   editionPaths,
-  MISSING_STATUS,
-  baselineCandidates,
-  candidateRejection,
-  REGRESSION_EXIT_CODE,
   readCurrentEdition,
   readReclassified,
   regressionAnnotation,
   renderSummary,
-  type ScopeMeta,
 } from "../scripts/test262-edition-scope.ts";
+import { FULL_RUN_JOBS, isFullRun, lastFullRun } from "../scripts/test262-last-full-run.mjs";
 
 const ES5_A = "test/built-ins/Object/create/15.2.3.5-1-1.js";
 const ES5_B = "test/built-ins/Array/prototype/forEach/15.4.4.18-4-1.js";
@@ -89,8 +90,18 @@ describe("#7551 per-test comparison", () => {
 
   it("gates every pass -> not-pass, compile_timeout included, and lists improvements", () => {
     const diff = compareEditionRuns(
-      statuses({ [ES5_A]: "compile_error", [ES5_B]: "pass", [ES5_C]: "compile_timeout", [ES2015]: "fail" }),
-      statuses({ [ES5_A]: "pass", [ES5_B]: "fail", [ES5_C]: "pass", [ES2015]: "pass" }),
+      statuses({
+        [ES5_A]: "compile_error",
+        [ES5_B]: "pass",
+        [ES5_C]: "compile_timeout",
+        [ES2015]: "fail",
+      }),
+      statuses({
+        [ES5_A]: "pass",
+        [ES5_B]: "fail",
+        [ES5_C]: "pass",
+        [ES2015]: "pass",
+      }),
       paths,
       SAME,
     );
@@ -110,12 +121,21 @@ describe("#7551 per-test comparison", () => {
 
   it("gates a baseline-passing test the run dropped, unless the test262 revision changed", () => {
     const run = statuses({ [ES5_A]: "pass" });
-    const baseline = statuses({ [ES5_A]: "pass", [ES5_B]: "pass", [ES5_C]: "fail" });
+    const baseline = statuses({
+      [ES5_A]: "pass",
+      [ES5_B]: "pass",
+      [ES5_C]: "fail",
+    });
     expect(compareEditionRuns(run, baseline, paths, SAME)).toMatchObject({
       regressions: [{ file: ES5_B, now: MISSING_STATUS }],
       notComparable: [],
     });
-    expect(compareEditionRuns(run, baseline, paths, { ...SAME, sameTest262Revision: false })).toMatchObject({
+    expect(
+      compareEditionRuns(run, baseline, paths, {
+        ...SAME,
+        sameTest262Revision: false,
+      }),
+    ).toMatchObject({
       regressions: [],
       notComparable: [ES5_B],
     });
@@ -123,9 +143,15 @@ describe("#7551 per-test comparison", () => {
       run,
       meta: meta(),
       paths,
-      baseline: { statuses: baseline, meta: meta({ sourceSha: "base", test262Sha: "older" }) },
+      baseline: {
+        statuses: baseline,
+        meta: meta({ sourceSha: "base", test262Sha: "older" }),
+      },
     });
-    expect(changed.baseline?.test262Changed).toEqual({ from: "older", to: "t262" });
+    expect(changed.baseline?.test262Changed).toEqual({
+      from: "older",
+      to: "t262",
+    });
     expect(renderSummary(changed)).toContain("Not comparable (test262 revision changed)");
   });
 
@@ -134,13 +160,20 @@ describe("#7551 per-test comparison", () => {
     // the run did not report it either.
     const narrowed = new Set([ES5_A, ES5_B]);
     const run = statuses({ [ES5_A]: "pass", [ES5_B]: "pass" });
-    const baseline = statuses({ [ES5_A]: "pass", [ES5_B]: "pass", [ES5_C]: "pass" });
+    const baseline = statuses({
+      [ES5_A]: "pass",
+      [ES5_B]: "pass",
+      [ES5_C]: "pass",
+    });
     const covers = { sameTest262Revision: true, baselineCoversEdition: true };
     expect(compareEditionRuns(run, baseline, narrowed, covers).regressions).toEqual([
       { file: ES5_C, now: MISSING_STATUS },
     ]);
     expect(
-      compareEditionRuns(run, baseline, narrowed, { ...covers, sameTest262Revision: false }).notComparable,
+      compareEditionRuns(run, baseline, narrowed, {
+        ...covers,
+        sameTest262Revision: false,
+      }).notComparable,
     ).toEqual([ES5_C]);
     // Only an EDITION baseline can say so: a full-corpus one holds every edition's rows.
     expect(compareEditionRuns(run, baseline, narrowed, SAME).regressions).toEqual([]);
@@ -157,9 +190,21 @@ describe("#7551 per-test comparison", () => {
   it("a deliberate reclassification passes only through the reviewed allow-list", () => {
     const narrowed = new Set([ES5_A, ES5_B]);
     const run = statuses({ [ES5_A]: "pass", [ES5_B]: "pass" });
-    const baseline = { statuses: statuses({ [ES5_A]: "pass", [ES5_C]: "pass" }), meta: meta({ sourceSha: "base" }) };
-    const report = buildReport({ run, meta: meta(), paths: narrowed, baseline, reclassified: new Set([ES5_C]) });
-    expect(report.diff).toMatchObject({ regressions: [], reclassified: [ES5_C] });
+    const baseline = {
+      statuses: statuses({ [ES5_A]: "pass", [ES5_C]: "pass" }),
+      meta: meta({ sourceSha: "base" }),
+    };
+    const report = buildReport({
+      run,
+      meta: meta(),
+      paths: narrowed,
+      baseline,
+      reclassified: new Set([ES5_C]),
+    });
+    expect(report.diff).toMatchObject({
+      regressions: [],
+      reclassified: [ES5_C],
+    });
     expect(renderSummary(report)).toContain("deliberately reclassified out of the edition");
 
     // The committed file parses; an entry without a reason is refused.
@@ -177,9 +222,17 @@ describe("#7551 per-test comparison", () => {
     expect(renderSummary(none)).not.toContain("Regressions (pass");
     expect(renderSummary(none)).toContain("Regressions cannot be ruled out");
 
-    const baseline = { statuses: statuses({ [ES5_A]: "pass" }), meta: meta({ sourceSha: "base" }) };
+    const baseline = {
+      statuses: statuses({ [ES5_A]: "pass" }),
+      meta: meta({ sourceSha: "base" }),
+    };
     for (const other of [meta({ evalEngine: "interpreter", sourceSha: "base" }), meta({ edition: "ES2015" })]) {
-      const report = buildReport({ run, meta: meta(), paths, baseline: { ...baseline, meta: other } });
+      const report = buildReport({
+        run,
+        meta: meta(),
+        paths,
+        baseline: { ...baseline, meta: other },
+      });
       expect(report.diff).toBeUndefined();
       expect(report.noBaselineReason).toMatch(/not comparable/);
     }
@@ -208,7 +261,13 @@ describe("#7551 per-test comparison", () => {
 describe("#7551 baseline resolution", () => {
   const EDITION = "test262-ir-standalone-edition-measurement";
   const FULL = "test262-ir-standalone-measurement";
-  const art = (id: number, sha: string, createdAt: string, name = EDITION) => ({ id, name, runId: id, sha, createdAt });
+  const art = (id: number, sha: string, createdAt: string, name = EDITION) => ({
+    id,
+    name,
+    runId: id,
+    sha,
+    createdAt,
+  });
 
   it("ranks edition measurements ahead of full ones, even a newer full one on the same commit", () => {
     // The weekly full run lands on main tip X after X's own edition measurement.
@@ -230,7 +289,10 @@ describe("#7551 baseline resolution", () => {
       ["parent", "grandparent"],
       [art(1, "grandparent", "2026-11-26T01:00:00Z"), art(2, "parent", "2026-11-26T02:00:00Z")],
     );
-    expect(found[0]).toEqual({ artifact: art(2, "parent", "2026-11-26T02:00:00Z"), distance: 0 });
+    expect(found[0]).toEqual({
+      artifact: art(2, "parent", "2026-11-26T02:00:00Z"),
+      distance: 0,
+    });
     expect(found.map((c) => c.artifact.id)).toEqual([2, 1]);
   });
 
@@ -275,7 +337,10 @@ describe("#7551 queue gate plumbing", () => {
       run: statuses({ [ES5_A]: "fail", [ES5_B]: "compile_error" }),
       meta: meta(),
       paths: new Set([ES5_A, ES5_B]),
-      baseline: { statuses: statuses({ [ES5_A]: "pass", [ES5_B]: "pass" }), meta: meta({ sourceSha: "base" }) },
+      baseline: {
+        statuses: statuses({ [ES5_A]: "pass", [ES5_B]: "pass" }),
+        meta: meta({ sourceSha: "base" }),
+      },
     });
     const line = regressionAnnotation(report);
     const match = /^::error title=([^:]+)::(.*)$/.exec(line);
@@ -299,6 +364,61 @@ describe("#7551 queue gate plumbing", () => {
     expect(comment).toContain(`  - ${ES5_B} -> compile_error`);
   });
 
+  it("'the last green full run' is a schedule OR full_run dispatch run whose full-run jobs both succeeded", () => {
+    const job = (name: string, conclusion = "success") => ({
+      name,
+      conclusion,
+    });
+    const full = FULL_RUN_JOBS.map((n) => job(n));
+    expect(isFullRun(full)).toBe(true);
+    // A legacy-only or IR-only run is not a full run.
+    expect(isFullRun([job(FULL_RUN_JOBS[0]!)])).toBe(false);
+    expect(isFullRun([job(FULL_RUN_JOBS[0]!), job(FULL_RUN_JOBS[1]!, "skipped")])).toBe(false);
+
+    const runs: Record<string, object[]> = {
+      schedule: [
+        {
+          id: 1,
+          head_sha: "weekly",
+          html_url: "u1",
+          created_at: "2026-11-22T11:00:00Z",
+        },
+      ],
+      workflow_dispatch: [
+        {
+          id: 2,
+          head_sha: "release",
+          html_url: "u2",
+          created_at: "2026-11-25T15:00:00Z",
+        },
+        {
+          id: 3,
+          head_sha: "ir-only",
+          html_url: "u3",
+          created_at: "2026-11-26T15:00:00Z",
+        },
+      ],
+    };
+    const jobsOf: Record<number, object[]> = {
+      1: full,
+      2: full,
+      3: [job(FULL_RUN_JOBS[1]!)],
+    };
+    const gh = (args: string[]) => {
+      const event = /event=(\w+)/.exec(args[1]!)?.[1];
+      if (event) return JSON.stringify({ workflow_runs: runs[event] });
+      const id = Number(/runs\/(\d+)\/jobs/.exec(args[2]!)?.[1]);
+      return jobsOf[id]!.map((j) => JSON.stringify(j)).join("\n");
+    };
+    // The green release dispatch (newer than the weekly run) shortens the range;
+    // the even newer IR-only dispatch does not count.
+    expect(lastFullRun("o/r", gh)).toEqual({
+      sha: "release",
+      url: "u2",
+      createdAt: "2026-11-25T15:00:00Z",
+    });
+  });
+
   // Kept outside the files a gate rollback restores, so the owner's
   // no-auto-heal decision (2026-11-26) survives a rollback of the gate.
   it("the staleness alert only alerts: nothing in it dispatches a baseline refresh", () => {
@@ -307,7 +427,9 @@ describe("#7551 queue gate plumbing", () => {
       .filter((line) => !/^\s*#/.test(line))
       .join("\n");
     // No dispatch call (the messages may still NAME the manual lever).
-    expect(code).not.toMatch(/gh workflow run|actions\/workflows\/[^"]*\/dispatches/);
+    // A `gh workflow run` that EXECUTES (starts a command line, or follows && / ||);
+    // the messages may quote the manual command inside echo strings.
+    expect(code).not.toMatch(/(?:^\s*|&&\s*|\|\|\s*)gh workflow run|actions\/workflows\/[^"]*\/dispatches/m);
     // Without actions:write it could not dispatch even if a step tried.
     expect(code).not.toMatch(/actions:\s*write/);
     // Still fails loudly on a breach.
@@ -350,18 +472,36 @@ describe("#7551 gh calls survive one transient GitHub error", () => {
       "ok",
     ]);
     const slept: number[] = [];
-    expect(ghWithRetry(["api", "x"], { exec, sleep: (s: number) => slept.push(s), log: () => {} })).toBe("ok");
+    expect(
+      ghWithRetry(["api", "x"], {
+        exec,
+        sleep: (s: number) => slept.push(s),
+        log: () => {},
+      }),
+    ).toBe("ok");
     expect(calls).toHaveLength(3);
     expect(slept).toEqual(GH_RETRY_DELAYS_SECONDS.slice(0, 2));
   });
 
   it("fails at once on an HTTP 4xx, and after the last retry on a persistent 5xx", () => {
     const notFound = scripted([failure("HTTP 404: Not Found"), "never"]);
-    expect(() => ghWithRetry(["api", "x"], { exec: notFound.exec, sleep: () => {}, log: () => {} })).toThrow(/gh api/);
+    expect(() =>
+      ghWithRetry(["api", "x"], {
+        exec: notFound.exec,
+        sleep: () => {},
+        log: () => {},
+      }),
+    ).toThrow(/gh api/);
     expect(notFound.calls).toHaveLength(1);
 
     const down = scripted(Array.from({ length: 10 }, () => failure("HTTP 503")));
-    expect(() => ghWithRetry(["api", "x"], { exec: down.exec, sleep: () => {}, log: () => {} })).toThrow();
+    expect(() =>
+      ghWithRetry(["api", "x"], {
+        exec: down.exec,
+        sleep: () => {},
+        log: () => {},
+      }),
+    ).toThrow();
     expect(down.calls).toHaveLength(GH_RETRY_DELAYS_SECONDS.length + 1);
   });
 
@@ -370,9 +510,14 @@ describe("#7551 gh calls survive one transient GitHub error", () => {
     const { calls, exec } = scripted([blob, "done"]);
     const cleaned: string[] = [];
     const args = ["run", "download", "42", "--name", "a", "--dir", "dest"];
-    expect(ghWithRetry(args, { exec, sleep: () => {}, log: () => {}, clean: (d: string) => cleaned.push(d) })).toBe(
-      "done",
-    );
+    expect(
+      ghWithRetry(args, {
+        exec,
+        sleep: () => {},
+        log: () => {},
+        clean: (d: string) => cleaned.push(d),
+      }),
+    ).toBe("done");
     expect(calls).toHaveLength(2);
     expect(cleaned).toEqual(["dest"]);
   });

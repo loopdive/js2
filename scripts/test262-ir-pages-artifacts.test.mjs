@@ -293,7 +293,7 @@ async function planMeasurement(event, day, inputs = {}) {
   assert.equal(outputs.run, String(selected.run));
   return { selected, outputs };
 }
-test("every daily run has exactly the full IR standalone cell and never Host", async () => {
+test("every scheduled (weekly) run has exactly the full IR standalone cell and never Host", async () => {
   const full = {
     run: true,
     cells: [{ compilerPath: "ir", target: "standalone", scope: "full", edition: "", chunks: 102 }],
@@ -362,6 +362,23 @@ test("the merge queue measures the current edition; the push after it reuses tha
   );
   assert.match(plan, /ART_NAME: test262-ir-standalone-edition-measurement\n/);
   assert.match(plan, /QUEUE_MEASURED: \$\{\{ steps\.probe\.outputs\.measured \}\}/);
+});
+test("one full_run dispatch runs what the weekly schedule runs (#7551)", async () => {
+  const dispatch = { COMPILER_PATH: "ir", MEASUREMENT_TARGET: "standalone" };
+  // The IR half: the same full cell the schedule selects.
+  assert.deepEqual(
+    await selectMeasurement("workflow_dispatch", 1, { ...dispatch, FULL_RUN: "true", MEASUREMENT: "false" }),
+    await selectMeasurement("schedule", 1),
+  );
+  // The legacy half: test262-shard and promotion run on any dispatch without
+  // compiler_path_measurement, which full_run must not be combined with.
+  const legacy = workflow.slice(workflow.indexOf("\n  test262-shard:\n"), workflow.indexOf("\n  test262-shard-mg:\n"));
+  assert.match(legacy, /github\.event_name == 'workflow_dispatch' && !inputs\.compiler_path_measurement/);
+  await assert.rejects(
+    selectMeasurement("workflow_dispatch", 1, { ...dispatch, FULL_RUN: "true", MEASUREMENT: "true" }),
+    /full_run already includes/,
+  );
+  assert.match(workflow, /\n {6}full_run:\n {8}description:/);
 });
 test("manual measurement is immediate, explicit and standalone only", async () => {
   assert.equal(

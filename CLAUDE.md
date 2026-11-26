@@ -352,6 +352,9 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   the IR path (`TEST262_COMPILER_PATH=ir`, standalone), for the current
   edition only (`scripts/test262-current-edition.json`, ES5, 8 shards).
   - It diffs per test against the IR measurement of the group's base commit.
+  - To move a test out of the edition on purpose, list it with a reason in
+    `scripts/test262-edition-reclassified.json` in the same PR. Otherwise it
+    fails as `missing`.
   - Any pass → not-pass of that edition fails the check, and auto-park parks
     the PR with the regressed tests listed. `compile_timeout` counts. So does
     a test the run dropped, when the test262 revision is unchanged.
@@ -369,14 +372,15 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   keeps runners.
   - A regression in the legacy lane, or in another edition, is therefore
     **detected after the fact, not blocked**. The scheduled run fails, and its
-    summary names the commits merged since the last green weekly run.
+    summary names the commits merged since the last green full run (weekly or
+    `full_run` dispatch).
   - Landing-page and baseline numbers are as of the last green weekly run.
   - **Before a release, dispatch the full run by hand
-    (`gh workflow run test262-sharded.yml --ref main`); it must be green.**
+    (`gh workflow run test262-sharded.yml --ref main -f full_run=true`); it must be green.** `full_run` runs exactly what the weekly schedule runs. Do not add `compiler_path_measurement=true`: that is IR only.
   - `refresh-baseline.yml` is dispatch-only. **Nothing forces a baseline
     refresh automatically.** A floor older than 192 h (8 days: the week plus
     jitter plus run time) fails `baseline-floor-staleness-alert.yml` loudly,
-    with the age and the last green weekly run, and that is all it does. Its
+    with the age and the last green full run, and that is all it does. Its
     auto-heal was removed (owner decision 2026-11-26), because after a failed
     run it would bank the regression. A forced refresh is a manual dispatch.
   - Known limit: an infrastructure failure in the queue gate (baseline
@@ -384,7 +388,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
     no retry counter.
 - **Rollback:** this is the gate only; the alert-only staleness rule stays.
   A plain `git revert` of the Part B commits conflicts. Instead, restore the
-  gate's files from the last Part A commit `39ef7afe08`. The exact
+  gate's files from the last Part A commit `27a77da585`. The exact
   `git checkout` command is in `docs/ci-policy.md` ("The merge-queue test262
   gate").
 

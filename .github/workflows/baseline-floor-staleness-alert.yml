@@ -21,7 +21,7 @@ name: Baseline floor staleness alert (#2178)
 # push:main runs from cancelling each other, which removes the root cause. This
 # workflow is the BACKSTOP / observability layer required by #2178 acceptance
 # criterion 3: it independently measures the floor's age and, on a breach,
-# alerts loudly: a red run naming the floor's age and the last green weekly run.
+# alerts loudly: a red run naming the floor's age and the last green full run.
 #
 # (#7551, owner decision 2026-11-26) It NO LONGER auto-heals. The usual
 # reason for a stale floor is now a weekly run whose gates FAILED, and a forced
@@ -50,7 +50,7 @@ on:
 
 permissions:
   contents: read
-  actions: read # look up the last green weekly run; nothing is dispatched (#7551)
+  actions: read # look up the last green full run; nothing is dispatched (#7551)
 
 concurrency:
   # Latest-wins: an alert sweep is idempotent, so collapse a burst of triggers
@@ -66,11 +66,11 @@ jobs:
     # (the runs that are SUPPOSED to promote a floor). Ignore pull_request /
     # merge_group sharded runs — they never promote, so their completion says
     # nothing about floor freshness. schedule/workflow_dispatch always run.
-    # (#7551) The promoting run is now the weekly `schedule` run, so its
-    # completion is the one that says something about floor freshness.
+    # (#7551) The promoting runs are now the weekly `schedule` run and a
+    # `full_run` dispatch, so their completions say something about freshness.
     if: >-
       github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.event == 'schedule' &&
+      ((github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch') &&
        github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -132,7 +132,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Name the last green weekly run (#7551)
+      - name: Name the last green full run (#7551)
         # Alert only: NOTHING is dispatched. The auto-heal that force-promoted
         # refresh-baseline.yml here is gone (owner decision 2026-11-26) — after
         # a failed weekly run it would bank the very regression that failed it.
@@ -141,15 +141,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test262-sharded.yml/runs?event=schedule&status=success&per_page=1" \
-            --jq '.workflow_runs[0] | "\(.html_url) (\(.head_sha[0:10]), \(.created_at))"' 2>/dev/null || true)
+          # The weekly schedule run or a full_run dispatch (scripts/test262-last-full-run.mjs).
+          RUN=$(node scripts/test262-last-full-run.mjs | awk '{print $2" ("substr($1,1,10)", "$3")"}' || true)
           RUN=${RUN:-none found}
           echo "run=$RUN" >> "$GITHUB_OUTPUT"
           {
             echo ""
-            echo "Last green weekly test262 run: $RUN"
+            echo "Last green full test262 run: $RUN"
             echo ""
-            echo "Nothing was dispatched. Fix the failing weekly run, or force a refresh by hand: refresh-baseline.yml with force_baseline_refresh=true and confirm_force=YES."
+            echo "Nothing was dispatched. Fix the failing full run and re-dispatch it (gh workflow run test262-sharded.yml --ref main -f full_run=true), or force a refresh by hand: refresh-baseline.yml with force_baseline_refresh=true and confirm_force=YES."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Notify on breach (ntfy)
@@ -162,7 +162,7 @@ jobs:
           MSG=$(node -e "
             const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
             const stale=(j.lanes||[]).filter(l=>l.breach).map(l=>l.lane+' '+l.ageHours+' h old').join(', ');
-            console.log('STALE baseline floor (#2178): '+stale+' — the weekly promotion did not land. Last green weekly run: '+process.env.LAST_GREEN+'. Nothing dispatched.');
+            console.log('STALE baseline floor (#2178): '+stale+' — the weekly promotion did not land. Last green full run: '+process.env.LAST_GREEN+'. Nothing dispatched.');
           " 2>/dev/null || echo "STALE baseline floor (#2178) — the weekly promotion did not land. Nothing dispatched.")
           curl -s --max-time 10 \
             -H "Title: js2wasm CI" \
@@ -176,5 +176,5 @@ jobs:
         env:
           LAST_GREEN: ${{ steps.last_green.outputs.run }}
         run: |
-          echo "::error::Baseline floor is older than the threshold (#2178, #7551): the weekly promotion did not land. Last green weekly run: ${LAST_GREEN}. Nothing was dispatched — fix the weekly run, or force a refresh by manual dispatch of refresh-baseline.yml."
+          echo "::error::Baseline floor is older than the threshold (#2178, #7551): the weekly promotion did not land. Last green full run: ${LAST_GREEN}. Nothing was dispatched — fix and re-dispatch the full run (gh workflow run test262-sharded.yml --ref main -f full_run=true), or force a refresh by manual dispatch of refresh-baseline.yml."
           exit 1

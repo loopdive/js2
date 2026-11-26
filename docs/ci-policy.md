@@ -447,7 +447,7 @@ Owner decision, 2026-11-26.
 | `pull_request` | none | green no-op |
 | `merge_group` | IR path (`TEST262_COMPILER_PATH=ir`, standalone), current edition only (`scripts/test262-current-edition.json`: ES5, 8 shards) | **gate**: fails when a test of that edition went pass → not-pass against the IR measurement of the group's `base_sha` |
 | `push` to main | nothing, when the queue already measured this SHA; a direct push runs the edition measurement | not run |
-| `schedule` (**weekly**, Sunday 02:23 UTC) / dispatch | full legacy matrix (102 shards) with the high-water floor, edition ratchet and #1897 guard, then `promote-baseline`; full-corpus IR measurement. Both matrices run at `max-parallel: 40`, so about 40 of the ~120 runners stay free for the merge queue | the legacy gates; a breach fails the scheduled run, blocks promotion, and names the commits since the last green weekly run |
+| `schedule` (**weekly**, Sunday 02:23 UTC) / dispatch | full legacy matrix (102 shards) with the high-water floor, edition ratchet and #1897 guard, then `promote-baseline`; full-corpus IR measurement. Both matrices run at `max-parallel: 40`, so about 40 of the ~120 runners stay free for the merge queue | the legacy gates; a breach fails the scheduled run, blocks promotion, and names the commits since the last green full run (weekly or `full_run` dispatch). `-f full_run=true` runs this same job set by hand |
 
 **Edition measurement details:**
 
@@ -494,9 +494,12 @@ Owner decision, 2026-11-26.
 - The landing page, `test262-current.json` and the js2wasm-baselines floor
   are as of the last green weekly run.
 - **Before a release, the full run is dispatched by hand and must be green:**
-  `gh workflow run test262-sharded.yml --ref main`, then check that
-  `merge shard reports` and `promote merged report to main baseline`
-  passed.
+  `gh workflow run test262-sharded.yml --ref main -f full_run=true`, then check that `merge shard reports`,
+  `promote merged report to main baseline` and `merge complete IR standalone
+  measurement` passed. `full_run` selects exactly the weekly job set. Plain
+  `gh workflow run test262-sharded.yml` runs the legacy half only;
+  `-f compiler_path_measurement=true` runs the IR half only, and combining
+  it with `full_run` is refused.
 - Known limit: an infrastructure failure in the queue gate (a baseline
   download that fails after its retries, or a crashed report) makes the
   queue retry the PR with no cap. There is no retry counter; a persistent
@@ -525,10 +528,10 @@ are as of the last full run.
 **Rollback (the gate only; the alert-only staleness rule stays):** a plain
 `git revert` of the Part B commits does not apply cleanly (5d7abeaf87 and
 the auto-heal removal 3c90c135e2 touch the same files). Instead, restore
-the gate's files from the last Part A commit, `39ef7afe08`, in one PR:
+the gate's files from the last Part A commit, `27a77da585`, in one PR:
 
 ```bash
-git checkout 39ef7afe08 -- \
+git checkout 27a77da585 -- \
   .github/workflows/test262-sharded.yml .github/workflows/refresh-baseline.yml \
   .github/workflows/retry-test262-baseline.yml scripts/test262-ir-pages-artifacts.test.mjs \
   tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
@@ -1237,5 +1240,6 @@ if the tag and `package.json` versions disagree. Full flow: [releasing.md](relea
 **Before tagging, the full test262 run must be green on the release commit
 (#7551).** The merge queue only gates the IR current edition; the full run
 (legacy matrix and full-corpus IR) is weekly. Dispatch it by hand on `main`
-with `gh workflow run test262-sharded.yml --ref main`, then wait for
-`merge shard reports` and `promote merged report to main baseline` to pass.
+with `gh workflow run test262-sharded.yml --ref main -f full_run=true` (the weekly job set), then wait for `merge shard reports`,
+`promote merged report to main baseline` and `merge complete IR standalone
+measurement` to pass.

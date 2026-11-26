@@ -19,7 +19,7 @@ on:
   #     the full-corpus IR measurement. Legacy and other-edition regressions
   #     are detected there, AFTER the fact, not blocked.
   # Rollback (gate only): restore this file and the gate tests from the last
-  # Part A commit 39ef7afe08 — exact command in docs/ci-policy.md ("The
+  # Part A commit 27a77da585 — exact command in docs/ci-policy.md ("The
   # merge-queue test262 gate"); a plain revert of the Part B commits conflicts.
   #
   # This comment previously claimed "full 57-shard test262 runs at PR-time AND
@@ -89,6 +89,10 @@ on:
     - cron: "23 2 * * 0"
   workflow_dispatch:
     inputs:
+      full_run:
+        description: "(#7551) Run exactly what the weekly schedule runs: the legacy matrix with its gates and baseline promotion, AND the full-corpus IR measurement. Required green before a release. Do not combine with compiler_path_measurement (IR only)."
+        type: boolean
+        default: false
       compiler_path_measurement:
         description: "Measure the full corpus through IR standalone, separately from legacy regression baselines."
         type: boolean
@@ -1958,6 +1962,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
           MEASUREMENT: ${{ inputs.compiler_path_measurement }}
+          FULL_RUN: ${{ inputs.full_run }}
           COMPILER_PATH: ${{ inputs.compiler_path }}
           MEASUREMENT_TARGET: ${{ inputs.measurement_target }}
           RUN_SHARDS: ${{ needs.changes.outputs.run_shards }}
@@ -1971,7 +1976,12 @@ jobs:
           const queued = process.env.EVENT_NAME === 'merge_group' && process.env.RUN_SHARDS !== 'false';
           const merged = process.env.EVENT_NAME === 'push' && process.env.ACTOR !== 'github-actions[bot]' &&
             process.env.QUEUE_MEASURED !== 'true';
-          const manual = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.MEASUREMENT === 'true';
+          // A full_run dispatch measures what the weekly schedule does (the legacy jobs key on
+          // !compiler_path_measurement, so they run too); compiler_path_measurement alone is IR only.
+          const fullRun = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.FULL_RUN === 'true';
+          if (fullRun && process.env.MEASUREMENT === 'true')
+            throw new Error('full_run already includes the full IR measurement; compiler_path_measurement would skip the legacy matrix');
+          const manual = process.env.EVENT_NAME === 'workflow_dispatch' && (process.env.MEASUREMENT === 'true' || fullRun);
           if (manual && (process.env.COMPILER_PATH !== 'ir' || process.env.MEASUREMENT_TARGET !== 'standalone'))
             throw new Error('Only IR standalone is supported; JS Host results are historical');
           const run = scheduled || queued || merged || manual;
@@ -3656,26 +3666,28 @@ jobs:
       # the weekly run is AFTER THE FACT: name what landed since the last green
       # weekly run, so it can be attributed without a bisect. The regressed
       # tests themselves are listed by the guard steps above.
-      - name: Name the commits since the last green weekly run (#7551)
+      - name: Name the commits since the last green full run (#7551)
         # Only when a verdict step failed: a cancelled or infrastructure-failed
-        # run is not "a regression".
+        # run is not "a regression". A full run is the weekly schedule run or a
+        # `full_run` dispatch (e.g. before a release); both count as "the last
+        # green full run" (scripts/test262-last-full-run.mjs).
         if: |
-          always() && github.event_name == 'schedule' && env.STANDALONE_RAN == 'true' &&
+          always() && env.STANDALONE_RAN == 'true' &&
+          (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_run)) &&
           (steps.standalone_highwater.outcome == 'failure' || steps.edition_ratchet.outcome == 'failure' ||
            steps.standalone_guard.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PREV=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test262-sharded.yml/runs?event=schedule&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)
+          PREV=$(node scripts/test262-last-full-run.mjs | awk '{print $1}' || true)
           {
-            echo "## Weekly full test262 run found a regression (#7551)"
+            echo "## Full test262 run found a regression (#7551)"
             echo ""
             echo "The merge queue gates only on the IR current edition, so this was not blocked at merge time."
             if [ -z "$PREV" ]; then
-              echo "No earlier green weekly run was found; inspect the history before \`${GITHUB_SHA}\`."
+              echo "No earlier green full run was found; inspect the history before \`${GITHUB_SHA}\`."
             else
-              echo "Merged since the last green weekly run (\`${PREV}\` .. \`${GITHUB_SHA}\`):"
+              echo "Merged since the last green full run (\`${PREV}\` .. \`${GITHUB_SHA}\`):"
               echo ""
               gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_SHA}" \
                 --jq '.commits[] | select(.parents | length > 1) | "- \(.sha[0:10]) \(.commit.message | split("\n")[0])"' \

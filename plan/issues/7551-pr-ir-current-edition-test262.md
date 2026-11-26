@@ -1,6 +1,6 @@
 ---
 id: 7551
-title: "Per merge, measure test262 only on the IR path and only for the current ES edition; full corpus and legacy lane daily"
+title: "Per merge, measure test262 only on the IR path and only for the current ES edition; full corpus and legacy lane weekly"
 status: done
 completed: 2026-11-26
 created: 2026-11-26
@@ -290,10 +290,10 @@ Other decisions:
   fails on the Part B head `d4b7bf66ac` in 10 files that later commits
   changed, `3c90c135e2` among them. Reverting those commits as well would
   also bring back the auto-heal. The verified procedure restores the gate's files from the last
-  Part A commit, `39ef7afe08`, in one PR:
+  Part A commit, `27a77da585`, in one PR:
 
   ```bash
-  git checkout 39ef7afe08 -- \
+  git checkout 27a77da585 -- \
     .github/workflows/test262-sharded.yml .github/workflows/refresh-baseline.yml \
     .github/workflows/retry-test262-baseline.yml scripts/test262-ir-pages-artifacts.test.mjs \
     tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
@@ -627,3 +627,26 @@ Other decisions:
     removed.
   - An entry without a reason is refused.
   - Tested. The file joins the test262 path lists.
+
+## Delta review r3, Part B (2026-11-26)
+
+- **One dispatch runs the full job set.** A new `workflow_dispatch` input,
+  `full_run`, selects the full-corpus IR measurement. The legacy matrix and
+  promotion already run on any dispatch without `compiler_path_measurement`.
+  - So `gh workflow run test262-sharded.yml --ref main -f full_run=true`
+    runs exactly what the weekly schedule runs.
+  - Combining it with `compiler_path_measurement=true` (IR only) is refused
+    by the plan.
+  - The pages test checks that this dispatch's IR selection equals the
+    schedule's, that the legacy condition admits it, and the refusal.
+  - CLAUDE.md, docs/ci-policy.md (§3 and §10) and docs/releasing.md give
+    this exact command.
+- **"Last green full run" includes release dispatches.**
+  `scripts/test262-last-full-run.mjs` finds the newest successful schedule
+  or dispatch run whose `promote merged report to main baseline` and
+  `merge complete IR standalone measurement` both succeeded. The failed-run
+  summary and the staleness alert use it, and the alert also reacts to
+  dispatch completions. Tested with a mocked API: a green release dispatch
+  shortens the range, an IR-only dispatch does not.
+- **Nits.** The issue title now says weekly. The pages test name no longer
+  says daily. Rollback references the new Part A tip `27a77da585`.
