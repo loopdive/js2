@@ -26,14 +26,12 @@
  */
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runFn(source: string, exportName: string): Promise<unknown> {
   const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message ?? "?"}`);
-  const importResult = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, importResult as any);
-  importResult.setExports?.(instance.exports as any);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as any)[exportName]();
 }
 

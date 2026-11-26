@@ -11,16 +11,14 @@
 // rewrites live in — not `standalone`.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, fn = "test", deps?: Record<string, unknown>): Promise<unknown> {
   const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, deps, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result, deps);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]!();
 }
 
@@ -120,9 +118,7 @@ describe("#3903 host-call shim rewrite keeps string-method semantics", () => {
       return args[0] === "world" && args[1] === 6;
     };
     try {
-      const imports = buildImports(result.imports, undefined, result.stringPool);
-      const { instance } = await WebAssembly.instantiate(result.binary, imports);
-      imports.setExports?.(instance.exports as Record<string, Function>);
+      const instance = await instantiateWithRuntime(result);
       expect((instance.exports.test as (value: string) => number)("hello world")).toBe(1);
       expect(receiver).toBe("hello world");
       expect(argsLength).toBe(2);

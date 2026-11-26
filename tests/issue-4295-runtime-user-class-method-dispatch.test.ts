@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string): Promise<number> {
   const result = await compile(source, {
@@ -16,14 +16,7 @@ async function run(source: string): Promise<number> {
     target: "gc",
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await instantiateWasm(
-    result.binary,
-    imports.env,
-    imports.string_constants,
-    imports.string_constants16,
-  );
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports.runCase as () => number)();
 }
 

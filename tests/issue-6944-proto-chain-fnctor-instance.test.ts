@@ -8,7 +8,8 @@
 // per-key method caches no longer `ref.cast` it, and `isPrototypeOf` steps over
 // it. Every expectation below is node's output for the same source.
 import { describe, expect, it } from "vitest";
-import { buildImports, compile, instantiateWasm } from "../src/index.js";
+import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const PRELUDE = `
 function Inheriter() { }
@@ -149,9 +150,7 @@ async function runLane(src: string, lane: "gc" | "standalone"): Promise<string> 
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     return renderStandalone(instance, (instance.exports.main as () => unknown)());
   }
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return String((instance.exports.main as () => unknown)());
 }
 

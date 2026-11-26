@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(body: string, flag: boolean | boolean[] = false, standalone = false): Promise<unknown> {
   const result = await compile(
@@ -9,9 +10,7 @@ async function run(body: string, flag: boolean | boolean[] = false, standalone =
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   const test = instance.exports.test as (flag: boolean) => unknown;
   return Array.isArray(flag) ? flag.map((value) => test(value)) : test(flag);
 }

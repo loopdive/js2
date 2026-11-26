@@ -29,14 +29,12 @@
 
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, fn = "run"): Promise<unknown> {
   const result = await compile(source, { skipSemanticDiagnostics: true });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 

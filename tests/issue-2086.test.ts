@@ -14,11 +14,11 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports, compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // Lane A: default WasmGC-struct path under JS host.
 async function runHost(source: string): Promise<unknown> {
-  const exports = await compileAndInstantiate(source);
+  const exports = await compileToWasm(source);
   return (exports as { test: () => unknown }).test();
 }
 

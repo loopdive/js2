@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const TYPESCRIPT_OR_SHAPE = `
 export function or<T extends unknown[], U>(...fs: ((...args: T) => U)[]): (...args: T) => U {
@@ -71,9 +72,7 @@ describe("#1058 externref-backed closure rest host dispatch", () => {
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
 
-    const imports = result.importObject ?? {};
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as unknown as {
       makeArrow(bias: number): unknown;
       makeMethod(bias: number): unknown;

@@ -29,7 +29,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -42,8 +42,7 @@ async function runFn(source: string, fnName = "test"): Promise<unknown> {
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
-  const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
+  const instance = await instantiateWithRuntime(r, ENV_STUB);
   const fn = (instance.exports as Record<string, unknown>)[fnName] as (() => unknown) | undefined;
   if (!fn) throw new Error(`export '${fnName}' missing`);
   return fn();

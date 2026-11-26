@@ -24,7 +24,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileChecked(source: string, standalone: boolean) {
   const result = await compile(
@@ -48,9 +48,7 @@ async function compileChecked(source: string, standalone: boolean) {
 
 async function runHost(source: string): Promise<unknown> {
   const result = await compileChecked(source, false);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as { run: () => unknown }).run();
 }
 

@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -24,8 +24,7 @@ async function compileAndRun(source: string, fnName = "test"): Promise<unknown> 
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "<unknown>"}`);
   }
-  const imports = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r, ENV_STUB);
   const fn = instance.exports[fnName] as (...a: unknown[]) => unknown;
   return fn();
 }

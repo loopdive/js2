@@ -9,10 +9,10 @@
 // a new `__extern_is_array` host predicate (§22.2.7.2 result-array shape).
 
 import { describe, expect, it } from "vitest";
-import { compileAndInstantiate } from "../src/runtime.ts";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function run(src: string, fname = "test"): Promise<unknown> {
-  const exports = await compileAndInstantiate(src);
+  const exports = await compileToWasm(src);
   const fn = (exports as any)[fname];
   if (typeof fn !== "function") throw new Error(`Export ${fname} not a function`);
   return fn();

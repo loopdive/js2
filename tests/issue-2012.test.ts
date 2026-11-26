@@ -11,13 +11,12 @@
 // DECLARED variable instead of the (non-identifier) argument.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runStr(source: string): Promise<string> {
   const r = await compile(source, { fileName: "issue-2012.ts" });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
-  const imp = r.importObject;
-  const { instance } = await WebAssembly.instantiate(r.binary, imp);
-  (imp as unknown as { __setExports?: (e: unknown) => void }).__setExports?.(instance.exports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => string>).test();
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #2844 — for-of / for-await array-pattern REST element bound to a nested OBJECT
 // pattern (`[...{ 0: v, length: z }]`) dropped the object-pattern bindings: the
@@ -11,8 +11,7 @@ import { buildImports } from "../src/runtime.ts";
 async function run(source: string): Promise<number> {
   const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   let ret = (instance.exports as any).test();
   if (ret && typeof ret.then === "function") ret = await ret;
   return ret;

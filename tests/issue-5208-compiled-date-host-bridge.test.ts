@@ -44,15 +44,13 @@
 
 import { describe, expect, it } from "vitest";
 import { compile, compileMulti } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /** Single-module JS-host lane; `test()` runs AFTER instantiation. */
 async function run(source: string): Promise<unknown> {
   const result = await compile(source, { fileName: "issue-5208.ts", skipSemanticDiagnostics: true });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 
@@ -75,9 +73,7 @@ async function runLinked(source: string): Promise<unknown> {
   };
   const result = await compileMulti(files, "./entry.ts", { skipSemanticDiagnostics: true });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 

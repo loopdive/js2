@@ -37,6 +37,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { compile, compileProject } from "../src/index.js";
 import { buildCompiledImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -253,7 +254,7 @@ function standaloneLane(key: string, source: string): Promise<WebAssembly.Export
         hostBridge: "always",
       });
       expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
-      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      const instance = await instantiateWithRuntime(result);
       return instance.exports;
     })();
     standaloneModules.set(key, cached);

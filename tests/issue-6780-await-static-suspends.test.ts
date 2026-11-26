@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const LOG_PRELUDE = `
 const out: string[] = [];
@@ -27,9 +27,7 @@ async function runWasm(src: string): Promise<string> {
   const result = await compile(src, { fileName: "issue-6780.ts" });
   expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (await (instance.exports.run as () => Promise<string>)()) as string;
 }
 

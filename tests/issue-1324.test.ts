@@ -17,11 +17,10 @@
 // regressions in the slice's `tryEmitJsonStringifyPrimitive` are caught.
 
 import { describe, expect, it } from "vitest";
-
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function runTest(src: string): Promise<unknown> {
-  const exports = await compileAndInstantiate(src);
+  const exports = await compileToWasm(src);
   return (exports as Record<string, () => unknown>).test?.();
 }
 

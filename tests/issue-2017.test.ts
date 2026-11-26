@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // (#2017) Writing to a getter-only object-literal property used to silently
 // no-op (and, earlier, trap "illegal cast") instead of throwing the strict-mode
@@ -10,7 +10,7 @@ import { compileAndInstantiate } from "../src/runtime-instantiate.js";
 // and ordinary writable properties are unaffected.
 
 async function run<T = unknown>(src: string, fn: string): Promise<T> {
-  const exports = (await compileAndInstantiate(src)) as Record<string, () => T>;
+  const exports = (await compileToWasm(src)) as Record<string, () => T>;
   return exports[fn]!();
 }
 

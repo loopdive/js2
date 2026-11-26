@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { createContext } from "node:vm";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { buildImports } from "../src/runtime.js";
 import { getTestSandbox } from "./test262-runner.js";
 
@@ -53,8 +54,7 @@ describe("#1310 — globalSandbox option threads through buildImports", () => {
     const r = await compile(src, { fileName: "t.ts" });
     expect(r.success).toBe(true);
 
-    const imports = buildImports(r.imports, undefined, r.stringPool);
-    const { instance } = await WebAssembly.instantiate(r.binary, imports);
+    const instance = await instantiateWithRuntime(r);
     const fromWasm = (instance.exports.getArray as () => unknown)();
     expect(fromWasm).toBe(globalThis.Array);
   });

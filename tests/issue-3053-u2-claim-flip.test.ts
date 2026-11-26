@@ -32,7 +32,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { planIrCompilation } from "../src/ir/index.js";
 import { buildTypeMap } from "../src/ir/propagate.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -76,12 +76,7 @@ async function compileStrict(source: string, opts: Record<string, unknown> = {})
 }
 
 async function instantiate(r: Awaited<ReturnType<typeof compile>>): Promise<Record<string, Function>> {
-  const built = buildImports(r.imports, {}, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, {
-    env: built.env,
-    string_constants: built.string_constants,
-  });
-  if (built.setExports) built.setExports(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   return instance.exports as Record<string, Function>;
 }
 

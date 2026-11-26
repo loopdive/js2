@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * Regression test for #1211 — fast-mode codegen of `f(n - 1) + f(n - 2)`
@@ -31,9 +31,7 @@ async function run(src: string, exportName: string, ...args: number[]): Promise<
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
-  const imports = buildImports(r.imports, {}, r.stringPool);
-  const { instance } = await instantiateWasm(r.binary, imports.env, imports.string_constants);
-  if (imports.setExports) imports.setExports(instance.exports);
+  const instance = await instantiateWithRuntime(r);
   const fn = instance.exports[exportName] as (...a: number[]) => unknown;
   if (typeof fn !== "function") {
     throw new Error(`export ${exportName} is not a function`);
@@ -102,9 +100,7 @@ describe("#1211 — fast-mode recursive arithmetic", () => {
     const r = await compile(src, { fileName: "t.ts", allowJs: true, target: "gc", fast: true, optimize: 0 });
     expect(r.success).toBe(true);
     if (!r.success) return;
-    const imports = buildImports(r.imports, {}, r.stringPool);
-    const { instance } = await instantiateWasm(r.binary, imports.env, imports.string_constants);
-    if (imports.setExports) imports.setExports(instance.exports);
+    const instance = await instantiateWithRuntime(r);
     expect(typeof instance.exports.run).toBe("function");
     expect(typeof instance.exports.run_hot).toBe("function");
     // `run` returns f64 directly, so this remains a primitive number.

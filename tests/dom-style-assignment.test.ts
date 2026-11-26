@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 function createMockElement() {
   const el: Record<string, any> = {
@@ -45,9 +45,7 @@ describe("DOM style assignment", () => {
 
     expect(result.success).toBe(true);
 
-    const imports = buildImports(result.imports, { document: doc }, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-    imports.setExports?.(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(result, { document: doc });
 
     expect((instance.exports as { test: () => number }).test()).toBe(1);
 

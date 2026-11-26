@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
-import { buildImports, wrapExports } from "../src/runtime.js";
+import { wrapExports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * #1829 — `marshalTypedArrayArgs` byte-masked EVERY element (`src[j] & 0xff`),
@@ -21,8 +22,7 @@ import { buildImports, wrapExports } from "../src/runtime.js";
 
 async function instantiate(r: CompileResult): Promise<WebAssembly.Instance> {
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   return instance;
 }
 

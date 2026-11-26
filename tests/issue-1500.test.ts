@@ -22,14 +22,12 @@
 // instead, which won't match a JS Response handle at runtime.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileAndInstantiate(src: string) {
   const result = await compile(src, { fileName: "test.ts" });
   expect(result.success, `compile failed: ${result.errors[0]?.message ?? "unknown"}`).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, any>;
 }
 

@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
-import { buildImports, wrapExports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 function expectCompileSuccess(result: CompileResult): void {
   expect(result.success, result.success ? "" : result.errors.map((e) => e.message).join("\n")).toBe(true);
-}
-
-async function instantiateWithRuntime(result: CompileResult): Promise<WebAssembly.Instance> {
-  expectCompileSuccess(result);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  return instance;
 }
 
 function instantiateNoImports(result: CompileResult): WebAssembly.Exports {
@@ -46,8 +39,8 @@ describe("#1755 Uint8Array<ArrayBuffer> generic typed-array annotation", () => {
       result: "uint8array",
     });
 
-    const instance = await instantiateWithRuntime(result);
-    const exports = wrapExports(instance.exports, { signatures: result.exportSignatures });
+    expectCompileSuccess(result);
+    const { exports } = await instantiateWithRuntime(result);
     const out = exports.echo(new Uint8Array([7, 8, 9]));
     expect(out).toBeInstanceOf(Uint8Array);
     expect(Array.from(out as Uint8Array)).toEqual([7, 8, 9]);

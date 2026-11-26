@@ -19,19 +19,15 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, fn = "test"): Promise<unknown> {
   const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+  const instance = await instantiateWithRuntime(result);
   // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
-  if (typeof imports.setInstance === "function") {
-    imports.setInstance(instance);
-  }
   return (instance.exports as never as Record<string, () => unknown>)[fn]!();
 }
 
@@ -47,11 +43,7 @@ async function runLoose(source: string, fn = "test"): Promise<unknown> {
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
-  if (typeof imports.setInstance === "function") {
-    imports.setInstance(instance);
-  }
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as never as Record<string, () => unknown>)[fn]!();
 }
 

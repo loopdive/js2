@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { planIrCompilation } from "../src/ir/select.js";
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 function plan(source: string, trackFallbacks = true) {
   const sf = ts.createSourceFile("test.ts", source, ts.ScriptTarget.ES2022, /* setParentNodes */ true);
@@ -151,7 +151,7 @@ describe("#3142 Slice 2 — module-init lowers via IR and patches __module_init"
     expect((r.irPostClaimErrors ?? []).filter((e) => e.func === MI)).toEqual([]);
     // The IR-lowered init wrote the SAME `__mod_total` global the legacy
     // reader function observes.
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.readTotal as () => unknown)())).toBe(7);
   });
 
@@ -165,7 +165,7 @@ describe("#3142 Slice 2 — module-init lowers via IR and patches __module_init"
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(irCompiled(r).has(MI)).toBe(true);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.readCounter as () => unknown)())).toBe(3);
   });
 
@@ -178,7 +178,7 @@ describe("#3142 Slice 2 — module-init lowers via IR and patches __module_init"
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(irCompiled(r).has(MI)).toBe(true);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Boolean((exports.isReady as () => unknown)())).toBe(true);
   });
 });
@@ -212,7 +212,7 @@ describe("#3142 Slice 2 — patched __module_init must FALL THROUGH (PR #3168 me
     expect(r.success).toBe(true);
     // The unit must be claimed (this is what arms the hazard).
     expect(irCompiled(r).has(MI)).toBe(true);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("p2,p3,p1");
   });
 });
@@ -227,7 +227,7 @@ describe("#3142 Slice 2 — demote guards (unit falls back to the legacy body, o
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(irCompiled(r).has(MI)).toBe(false);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.readGreeting as () => unknown)())).toBe("hi!");
   });
 
@@ -240,7 +240,7 @@ describe("#3142 Slice 2 — demote guards (unit falls back to the legacy body, o
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(irCompiled(r).has(MI)).toBe(false);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.readV as () => unknown)())).toBe(2);
   });
 
@@ -254,7 +254,7 @@ describe("#3142 Slice 2 — demote guards (unit falls back to the legacy body, o
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(irCompiled(r).has(MI)).toBe(false);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.readSeed as () => unknown)())).toBe(8);
   });
 });

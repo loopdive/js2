@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, compileProject } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { ESLINT_DEV_DEPENDENCY_SKIP, resolveEslintFile } from "./helpers/eslint.js";
 
 const FLAGS_FILE = resolveEslintFile("lib/shared/flags.js");
@@ -47,9 +47,7 @@ describe("#3656 — untyped JavaScript destructured parameter", () => {
     expect(result.errors.some((error) => error.message.includes("object destructuring source must"))).toBe(false);
     expect(result.irPostClaimErrors?.some((error) => error.kind === "build")).not.toBe(true);
 
-    const imports = buildImports(result.imports, undefined, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-    imports.setExports?.(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(result);
     const reason = instance.exports.reason as (value: unknown) => string;
     expect(reason({ description: "x" })).toBe("This feature has been abandoned.");
     expect(reason({ description: "x", replacedBy: "stable" })).toBe("renamed:stable");

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildImports, compile, instantiateWasm } from "../src/index.js";
+import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #2122 — String.fromCharCode / fromCodePoint silently dropped every argument
 // after the first. Three of the four backend paths compiled only argument[0];
@@ -19,9 +20,7 @@ async function runHost(source: string): Promise<any> {
 async function runFast(source: string): Promise<any> {
   const r = await compile(source, { fast: true });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await instantiateWasm(r.binary, imports.env, imports.string_constants);
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports.test as Function)();
 }
 

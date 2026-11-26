@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #5095 — `Array.prototype.at` with NO argument answered the *index* instead of
 //   the element: `[10,20,30].at()` returned `0` (and `undefined` in value
@@ -43,7 +44,7 @@ async function build(src: string, standalone: boolean): Promise<CompileResult> {
 
 async function runGc(src: string): Promise<unknown> {
   const r = await build(src, false);
-  const { instance } = await WebAssembly.instantiate(r.binary, r.importObject ?? {});
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { test(): unknown }).test();
 }
 

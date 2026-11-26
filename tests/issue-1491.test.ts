@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const tmpDir = mkdtempSync(join(tmpdir(), "js2wasm-1491-"));
 const fixturePath = join(tmpDir, "hello.txt");
@@ -72,9 +72,7 @@ describe("#1491 — fs.readFileSync / writeFileSync as JS host imports (non-WASI
       { allowFs: true },
     );
     expect(r.success).toBe(true);
-    const built = buildImports(r.imports, undefined, r.stringPool);
-    const { instance } = await WebAssembly.instantiate(r.binary, built);
-    if (built.setExports) built.setExports(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(r);
     const exports = instance.exports as { readFixture: (p: string) => string };
     const content = exports.readFixture(fixturePath);
     expect(content).toBe(FIXTURE);
@@ -91,9 +89,7 @@ describe("#1491 — fs.readFileSync / writeFileSync as JS host imports (non-WASI
       { allowFs: true },
     );
     expect(r.success).toBe(true);
-    const built = buildImports(r.imports, undefined, r.stringPool);
-    const { instance } = await WebAssembly.instantiate(r.binary, built);
-    if (built.setExports) built.setExports(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(r);
     const exports = instance.exports as { writeAt: (p: string, d: string) => void };
     exports.writeAt(outPath, "WROTE-FROM-WASM");
     const echoed = nodeReadFileSync(outPath, "utf-8");
@@ -112,9 +108,7 @@ describe("#1491 — fs.readFileSync / writeFileSync as JS host imports (non-WASI
       { allowFs: true },
     );
     expect(r.success).toBe(true);
-    const built = buildImports(r.imports, undefined, r.stringPool);
-    const { instance } = await WebAssembly.instantiate(r.binary, built);
-    if (built.setExports) built.setExports(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(r);
     const exports = instance.exports as { upperCopy: (a: string, b: string) => void };
     const roundTripOut = join(tmpDir, "roundtrip.txt");
     exports.upperCopy(fixturePath, roundTripOut);

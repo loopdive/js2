@@ -23,7 +23,7 @@ import { stringIndexProvenBelow } from "../src/ir/capability.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import { compile, type CompileResult } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileFlag(on: boolean, src: string): Promise<CompileResult> {
   // (#3143) IR-first is default-ON; off-arm uses the explicit "0" escape hatch.
@@ -36,9 +36,7 @@ async function compileFlag(on: boolean, src: string): Promise<CompileResult> {
 }
 
 async function instantiate(r: CompileResult): Promise<Record<string, Function>> {
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   return instance.exports as Record<string, Function>;
 }
 

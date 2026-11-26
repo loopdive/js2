@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { deduplicateLocals } from "../src/codegen/context/locals.js";
 import type { FunctionContext } from "../src/codegen/context/types.js";
 import type { Instr } from "../src/ir/types.js";
@@ -51,9 +51,7 @@ it("keeps a contextual tuple return consistent with its concise closure body", a
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   expect(() => (instance.exports.test as () => unknown)()).not.toThrow();
 });
 
@@ -137,9 +135,7 @@ it("remaps nested-function captures to the synthetic async resume frame", async 
   `);
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(1);
 });
 
@@ -155,9 +151,7 @@ it("keeps read-only arrow captures on their by-value resume ABI", async () => {
   `);
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(1);
 });
 
@@ -177,9 +171,7 @@ it("keeps nested async-generator captures on their by-value host ABI", async () 
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(3);
 });
 

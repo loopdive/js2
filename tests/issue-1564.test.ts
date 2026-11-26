@@ -13,16 +13,14 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { instantiateWasm } from "../src/runtime-instantiate.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string): Promise<unknown> {
   const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }
-  const built = buildImports(r.imports, {}, r.stringPool);
-  const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-  if (built.setExports) built.setExports(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => unknown>).test();
 }
 
