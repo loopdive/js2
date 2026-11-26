@@ -8,6 +8,7 @@
 // another.
 
 import { ts } from "../ts-api.js";
+import { deAliasedSymbol } from "../shared/binding-write-index.js";
 import type { IrSourceId, IrUnitId } from "./identity.js";
 import {
   IrPlanningIdentityInvariantError,
@@ -339,31 +340,13 @@ export function makeIrImportedFunctionResolver(
     }
   }
 
-  const deAlias = (symbol: ts.Symbol | undefined): ts.Symbol | undefined => {
-    if (!symbol) return undefined;
-    let current = symbol;
-    const seen = new Set<ts.Symbol>();
-    for (let depth = 0; depth < 32 && current.flags & ts.SymbolFlags.Alias; depth++) {
-      if (seen.has(current)) return undefined;
-      seen.add(current);
-      try {
-        const next = checker.getAliasedSymbol(current);
-        if (!next || next === current) return undefined;
-        current = next;
-      } catch {
-        return undefined;
-      }
-    }
-    return current.flags & ts.SymbolFlags.Alias ? undefined : current;
-  };
-
   // Live/reassigned function bindings cannot be represented by a cached ref to
   // the original funcIdx.  Record canonical symbols, not text, so shadowed
   // locals and same-named declarations in different modules do not poison one
   // another.
   const reassigned = new Set<ts.Symbol>();
   const noteSymbolWrite = (candidate: ts.Symbol | undefined): void => {
-    const symbol = deAlias(candidate);
+    const symbol = deAliasedSymbol(checker, candidate);
     if (symbol && (symbol.declarations ?? []).some(ts.isFunctionDeclaration)) reassigned.add(symbol);
   };
   const noteWrite = (identifier: ts.Identifier): void => {
@@ -462,7 +445,7 @@ export function makeIrImportedFunctionResolver(
   }
 
   const targetForSymbol = (symbol: ts.Symbol | undefined): ResolvedTarget | undefined => {
-    const target = deAlias(symbol);
+    const target = deAliasedSymbol(checker, symbol);
     if (!target || reassigned.has(target)) return undefined;
     const declarations = target.declarations ?? [];
     const functions = declarations.filter(ts.isFunctionDeclaration);

@@ -20,20 +20,14 @@
  * `with` / direct `eval`.
  */
 import { ts } from "../ts-api.js";
-import {
-  hasDynamicScope,
-  identifierWritesOf,
-  outermostParenthesized,
-  type IdentifierWrite,
-} from "../shared/binding-writes.js";
+import { hasDynamicScope, outermostParenthesized, type IdentifierWrite } from "../shared/binding-writes.js";
+import { bindingWrites } from "../shared/binding-write-index.js";
 import {
   isValueReference,
   sourceMayWriteGlobalObject,
   sourceRunsDynamicCode,
 } from "../shared/intrinsic-prototype-writes.js";
 import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var-declaration-lists.js";
-
-const identifierWritesCache = new WeakMap<ts.Identifier, readonly IdentifierWrite[]>();
 
 /**
  * Every write of the script var `declaration` anywhere in its source (its own initializer included), or `undefined`
@@ -56,29 +50,10 @@ export function preparedBindingRewritten(checker: ts.TypeChecker, name: ts.Ident
   return identifierWrites(checker, name).some((write) => write.target !== name);
 }
 
-/**
- * The identifier writes of the binding `name` declares, by checker identity. A shorthand target (`({ f } = o)`)
- * resolves to its property, so its binding is the shorthand's value symbol.
- */
+/** The identifier writes of the binding `name` declares, in its own file (`binding-write-index.ts`). */
 function identifierWrites(checker: ts.TypeChecker, name: ts.Identifier): readonly IdentifierWrite[] {
-  let writes = identifierWritesCache.get(name);
-  if (writes === undefined) {
-    const binding = checker.getSymbolAtLocation(name);
-    const found: IdentifierWrite[] = [];
-    const visit = (node: ts.Node): void => {
-      for (const write of identifierWritesOf(node)) {
-        const { parent } = write.target;
-        const symbol = ts.isShorthandPropertyAssignment(parent)
-          ? checker.getShorthandAssignmentValueSymbol(parent)
-          : checker.getSymbolAtLocation(write.target);
-        if (symbol === binding) found.push(write);
-      }
-      ts.forEachChild(node, visit);
-    };
-    ts.forEachChild(name.getSourceFile(), visit);
-    identifierWritesCache.set(name, (writes = found));
-  }
-  return writes;
+  const binding = checker.getSymbolAtLocation(name);
+  return binding ? bindingWrites(checker, [name.getSourceFile()], binding) : [];
 }
 
 /**
