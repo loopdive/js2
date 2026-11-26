@@ -23,7 +23,7 @@ import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
-import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../value-tags.js"; // (#4491 T11)
+import { emitIsUndefF64, HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
@@ -65,6 +65,7 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
+import { emitExternrefDefaultCheck } from "../statements/destructuring.js";
 import { tryEmitSpecOrderedArrayAssignDrive, tryEmitSpecOrderedObjectAssign } from "../dstr-assign-iterator-drive.js"; // (#6651 G1/V7)
 import { isProvablyNonIterableStructSource } from "../dstr-non-iterable-guard.js"; // (#6651 G4)
 import { resolveComputedKeyExpression } from "../literals.js";
@@ -3282,18 +3283,14 @@ export function emitObjectDestructureFromLocal(
  */
 function emitElementIsUndefined(ctx: CodegenContext, fctx: FunctionContext, elemType: ValType, local: number): void {
   if (elemType.kind === "externref") {
-    const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-    flushLateImportShifts(ctx, fctx);
     fctx.body.push({ op: "local.get", index: local });
-    fctx.body.push(undefIdx !== undefined ? { op: "call", funcIdx: undefIdx } : { op: "ref.is_null" });
+    emitExternrefDefaultCheck(ctx, fctx, local);
   } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
     fctx.body.push({ op: "local.get", index: local });
     fctx.body.push({ op: "ref.is_null" });
   } else if (elemType.kind === "f64") {
     fctx.body.push({ op: "local.get", index: local });
-    fctx.body.push({ op: "i64.reinterpret_f64" });
-    fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS });
-    fctx.body.push({ op: "i64.eq" });
+    emitIsUndefF64(fctx.body);
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
   }
