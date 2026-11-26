@@ -35,9 +35,10 @@ import { moduleDeclares } from "./select-planned-closure-operands.js";
  * to be the program's only startup source: a read in a script that runs first would otherwise go unseen. The
  * dynamic home needs it too: each script's module-init stores the hoisted `undefined` into its own globals, so a
  * script that runs first would read the carrier's null. A called eval source breaks neither rule. It declares
- * nothing, so it stores no hoisted `undefined` and owns no binding asked about here. It runs only from its site in
- * the startup source, after that source's prologue. And the site is a direct eval, so its caller has no typed
- * home (`sourceRunsDynamicCode`) and no write list (`hasDynamicScope`): no proof the eval text's uses could break.
+ * nothing and stores into no identifier (a text that does is no site, `eval-literal.ts`: the write walks see only the
+ * declaring file), so it stores no hoisted `undefined`, owns no binding asked about here and writes none. It runs
+ * only from its site in the startup source, after that source's prologue. Its reads break no proof: the site is a
+ * direct eval, so its caller has no typed home (`sourceRunsDynamicCode`).
  * `storesDynamic` (the lane's dynamic provenance, absent without a carrier) says whether a store may be the
  * dynamic value.
  */

@@ -555,7 +555,7 @@ function singleSourceHasHardTypeErrors(ast: Pick<TypedAST, "checker" | "diagnost
   return ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
 }
 
-function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
+export function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
   if (checker && isJsDefaultInferredParamFalsePositive(diag, checker)) return false;
@@ -1563,7 +1563,7 @@ function finalizePipelineModule(
  */
 // Don't stop on type errors – the compiler can still generate code for many cases
 // Only stop on syntax errors (parsing failures), except tolerated ones
-const TOLERATED_SYNTAX_CODES = new Set([
+export const TOLERATED_SYNTAX_CODES = new Set([
   1156, // "'let' declarations can only be declared inside a block"
   1313, // "The body of an 'if' statement cannot be the empty statement"
   1344, // "A label is not allowed here"

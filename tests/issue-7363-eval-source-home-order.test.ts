@@ -78,12 +78,13 @@ function prepare(entry: string, extra: Record<string, string> = {}, edges: reado
 
 describe("#7363 A3 — a script var keeps its home beside called eval sources", () => {
   it("stops at the eval site, not at the var, whichever comes first", async () => {
-    expect(await gaps('var x = 1;\neval("x = x + 1");')).toEqual([`${CALLED} in <module-init>`]);
-    expect(await gaps('eval("x = x + 1");\nvar x = 1;')).toEqual([`${CALLED} in <module-init>`]);
+    expect(await gaps('var x = 1;\neval("x + 1");')).toEqual([`${CALLED} in <module-init>`]);
+    expect(await gaps('eval("x + 1");\nvar x = 1;')).toEqual([`${CALLED} in <module-init>`]);
   });
 
-  it("compiles the entry's var and the eval text's write of it, and runs the entry", async () => {
-    const source = `var x = 1;\n${deadSite("x = 2")}\nx = 3;\nif (x !== 3) throw 1;`;
+  // (RV7432 B2) A text that writes `x` is no site: the reads proof would not see the write.
+  it("compiles the entry's var and the eval text's read of it, and runs the entry", async () => {
+    const source = `var x = 1;\n${deadSite("x + 2")}\nx = 3;\nif (x !== 3) throw 1;`;
     expect(run(await compile(source, options))).toEqual({
       sources: ["test.js", literalEvalFileName(0)],
       startup: "returned",
@@ -139,8 +140,8 @@ describe("#7363 A3 — an eval source follows its caller", () => {
   });
 
   it("lowers the entry first: a gap of the eval text does not come before the site's", async () => {
-    // `q` is in no scope: lowered first, the eval text would stop at it.
-    const [error] = errorsOf(await compile('eval("typeof q;");', options));
+    // The array literal's dynamic element has no IR lowering yet: lowered first, the eval text would stop at it.
+    const [error] = errorsOf(await compile('var x = 1;\neval("[x];");', options));
     expect([error!.message, error!.file]).toEqual([`${CALLED} in <module-init>`, "test.js"]);
   });
 

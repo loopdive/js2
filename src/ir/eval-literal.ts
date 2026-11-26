@@ -4,8 +4,9 @@
  *
  * A site qualifies when running its text as a separate sloppy Script, in the program's one global scope, is what
  * PerformEval does with it: the call sits in global code of a sloppy Script under no scope that binds names of its
- * own, and the text is a valid Script that declares nothing. The Prepared entry adds each qualifying text as the
- * script `<eval:N>.js`; this module owns the site predicate and the receipt that a site and a script belong together.
+ * own, and the text is a valid Script that declares nothing and writes no identifier. The Prepared entry adds each
+ * qualifying text as the script `<eval:N>.js`; this module owns the site predicate and the receipt that a site and a
+ * script belong together.
  */
 import { ts } from "../ts-api.js";
 import { foldedEvalDeclarationNames } from "../frontend/eval/declaration-names.js";
@@ -14,6 +15,7 @@ import {
   foldedEvalStaticSyntaxError,
   parseEvalSource,
 } from "../frontend/eval/script.js";
+import { identifierWritesOf } from "../shared/binding-writes.js";
 import { planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { resolvesToSourceBinding } from "./analysis/ast-scope.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
@@ -154,8 +156,9 @@ function isLexicalList(node: ts.Node): boolean {
 }
 
 /**
- * The text is a Script, not a Module, that PerformEval runs without a SyntaxError, declares nothing, holds no nested
- * eval, and lowers as one init chunk.
+ * The text is a Script, not a Module, that PerformEval runs without a SyntaxError, declares nothing, stores into no
+ * identifier, holds no nested eval, and lowers as one init chunk. The static check here is the spec's; the Prepared
+ * entry also keeps a text only when the compile's gates pass it as they pass an entry (`test262-prepared-entry.ts`).
  */
 function textRunsAsScript(call: ts.CallExpression, text: string): boolean {
   const script = parseEvalSource(text, false, false);
@@ -163,30 +166,42 @@ function textRunsAsScript(call: ts.CallExpression, text: string): boolean {
   return (
     !ts.isExternalModule(script.sourceFile) &&
     foldedEvalStaticSyntaxError(call, true, script, names, undefined) === undefined &&
-    !returnsOutsideFunction(script.sourceFile) &&
+    !scriptEarlyError(script.sourceFile, undefined) &&
     names.varNames.size === 0 &&
     names.blockFunctionNames.size === 0 &&
-    !declaresOrEvaluates(script.sourceFile) &&
+    !bindsOrEvaluates(script.sourceFile) &&
     planModuleInitChunks(script.statements.map((node) => ({ node }))).length <= 1
   );
 }
 
 /**
- * A `return` outside every function of the text: a Script early error. The shared check does not report it yet:
- * adding the rule there changes the legacy fold's output for `eval("return;")` (parse-failure-5.js).
+ * A `return` outside every function of the text, or an `await` outside every async one (`async`: undefined at the
+ * top level, else whether the nearest enclosing function is async): Script early errors the shared check does not
+ * report. TypeScript parses both and reports them only as semantic diagnostics, which no compile gate refuses. Adding
+ * the `return` rule to the shared check would change the legacy fold's output for `eval("return;")`
+ * (parse-failure-5.js).
  */
-function returnsOutsideFunction(node: ts.Node): boolean {
-  if (ts.isReturnStatement(node)) return true;
-  return !ts.isFunctionLike(node) && ts.forEachChild(node, returnsOutsideFunction) === true;
+function scriptEarlyError(node: ts.Node, async: boolean | undefined): boolean {
+  if ((ts.isReturnStatement(node) && async === undefined) || (ts.isAwaitExpression(node) && async !== true))
+    return true;
+  const inner = ts.isFunctionLike(node)
+    ? (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Async) !== 0
+    : async;
+  return ts.forEachChild(node, (child) => scriptEarlyError(child, inner)) === true;
 }
 
-/** A `var`/`let`/`const` list or a class anywhere in the text, or the name `eval`. */
-function declaresOrEvaluates(node: ts.Node): boolean {
+/**
+ * A `var`/`let`/`const` list or a class anywhere in the text, a store into an identifier, or the name `eval`. A store
+ * could rewrite a binding of the caller, and the proofs over a script binding see only the writes in its own file
+ * (`preparedBindingRewritten`). A store into the text's own parameter refuses too: no scope walk tells the two apart.
+ */
+function bindsOrEvaluates(node: ts.Node): boolean {
   if (
     ts.isVariableDeclarationList(node) ||
     ts.isClassDeclaration(node) ||
-    (ts.isIdentifier(node) && node.text === "eval")
+    (ts.isIdentifier(node) && node.text === "eval") ||
+    identifierWritesOf(node).length > 0
   )
     return true;
-  return ts.forEachChild(node, declaresOrEvaluates) === true;
+  return ts.forEachChild(node, bindsOrEvaluates) === true;
 }

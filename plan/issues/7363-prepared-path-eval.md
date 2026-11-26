@@ -365,8 +365,9 @@ Findings:
 - `src/ir/eval-literal.ts` holds the site predicate (A0's, plus `return` outside a function and "one init chunk"),
   the pairing and the receipt. `present()` parses the entry only when its text contains `eval`, adds `<eval:N>.js`
   per qualifying site, and passes `literalEvalSources` through `runPreparedIrPipelinePresentation` into
-  `preparation`. A module-goal compile adds none; without `allowJs` a site refuses by name
-  (`prepared-literal-eval-requires-allowjs`); a supplied file with an eval source's name is refused.
+  `preparation`. A module-goal compile adds none; without `allowJs` a site refused by name
+  (`prepared-literal-eval-requires-allowjs`; since RV7432 round 1 it adds none); a supplied file with an eval
+  source's name is refused.
 - `prepareIrProgramSources` runs the receipt, passes `called` to `buildIrModuleInitPlan`, and gives `lowerCall` the
   capability `literalEvalHasCalledSource`. A related statement site refuses with
   `eval literal has a called source; its call needs the %eval% identity test (#7363 A4)`.
@@ -469,3 +470,51 @@ it (`module-binding-script-var.ts`): A4 must make it write the home or refuse.
 No file passes or compiles on main or here. On the real harness 72 files stop at an expression-position site
 (`direct call to "eval" has no exact AST-site plan`, A5's), 22 at the A2 label (A4's), and 24 at another gap
 before any site.
+
+### Review RV7432 round 1 (2026-11-26, base `origin/main` `c3b7be66`)
+
+The fresh-context review blocked on two findings; both are fixed on `claude/prepared-eval-a7` (origin/main merged in).
+
+- **B1: an eval source added compile errors.** A text that fails a compile gate (`l: l: 1`, a TS-only syntax, a
+  hard type error) made a program fail that compiles on main, even with a site that never runs. Fix, in
+  `withLiteralEvalSources` (`test262-prepared-entry.ts`): the program is analyzed without the texts (main's analysis)
+  and with them. The texts join only when (1) the compile's own gates pass each text as they pass a JavaScript entry
+  (the syntax gate with `TOLERATED_SYNTAX_CODES`, `isHardTypeScriptDiagnostic`, `sourceEarlyErrors`, all reused from
+  `compiler.ts`), and (2) the other sources' diagnostics are unchanged. Any other diagnostic of a text is tolerated as
+  in an entry: `eval("undeclaredX")` still claims (coordinator's scope change of 2026-11-26; #7487 depends on it).
+  Otherwise no text joins and every site keeps its slice-1 refusal at select, so the program is main's.
+  - Why (2): a member store in a text declares a JS expando property of a caller binding. Measured:
+    `var o = {}; var n = 1; … eval("o.p = 's'") …; n = o.p` adds TS2322 to the **entry**. Such a change names no
+    text, so it is all or nothing. Filtering diagnostics by file alone would miss it, and it would leave the dropped
+    source in the program.
+  - Cost: one more analysis for a file with a qualifying site, when F0 elided its graph. Census wall time on the 118
+    files: 11 s on main, 12 s here (real harness).
+  - Predicate: `await` outside every async function of a text is a Script early error that only TypeScript's
+    semantic check reports, which no gate refuses. It joins `return` in `scriptEarlyError` (`eval-literal.ts`).
+  - Without `allowJs`, no text joins: the old `prepared-literal-eval-requires-allowjs` refusal failed a program main
+    compiles.
+- **B2: writes in a text were invisible to the binding proofs.** `preparedBindingRewritten` walks only the declaring
+  file. Fix (b), the smaller one: a text that stores into any identifier is no site (`bindsOrEvaluates`,
+  `identifierWritesOf`). A store into the text's own parameter refuses too: no scope walk tells it from a caller
+  binding. The comments in `function-declaration-values.ts` and `module-binding-script-var-home.ts` now state this
+  invariant. Option (a), scanning the called sources in the write walk, is A4's when it admits writes.
+
+Proofs:
+
+- Tests: `tests/issue-7363-eval-source-admission.test.ts` (36). The review's five rows and its two reached rows,
+  each under both diagnostic settings; the expando row; a hard type error; the undeclared-global claim; a malformed
+  text; nine write shapes; the A4-shaped `g` rewrite. 29 fail on the pre-fix head, as does the reworded `allowJs` test
+  of the A2 file; the 7 that pass there are controls. Eight
+  mutations (each gate, the comparison and its eval-file filter, `await`, the writes rule, `allowJs`) each turn at
+  least one test red. Three A3 tests read instead of writing in the text.
+- Fail sets: the 55 listed files (51 on main) fail the same 47 tests as main.
+- Ordinary-pipeline bytes: identical on the 100-file sample, default and standalone.
+- Census, 118 A0 files, both harnesses, against main: no file earlier or later. Stand-in: 100 identical and 18 at the
+  same site with the A2 label (was 94/24). Real harness: 102 and 16 (was 96/22). The six that went back to main's
+  label have texts that write.
+- Gates pass, LOC and function also with `LOC_GATE_BASE` = `c3b7be66`. No new grant: `compiler.ts` only exports
+  two existing names.
+
+Left open: a text the IR cannot lower (`[x]`, `delete x`, `with`, a read of a caller function as a value) still
+fails a program whose site never runs. That is a lowering gap of the called init, not a diagnostic. The census
+shows no such file, because a reached site stops first. A4 must claim a site only when its source's unit lowered.

@@ -93,10 +93,10 @@ describe("#7363 A2 — a qualifying site adds a called source and refuses by nam
     });
   });
 
-  it("refuses by name without allowJs, since an eval source is a JavaScript root", async () => {
-    expect(await gaps('eval("1");', { allowJs: false })).toEqual([
-      "a literal eval source is a JavaScript root and needs allowJs",
-    ]);
+  it("adds no source without allowJs, since an eval source is a JavaScript root (RV7432 B1)", async () => {
+    const ts = { allowJs: false, fileName: "test.ts" };
+    expect(await gaps('eval("1");', ts)).toEqual([`${NO_PROVIDER} in <module-init>`]);
+    expect(await gaps(DEAD_SITE, ts)).toEqual([]);
   });
 
   it("refuses a supplied file that takes an eval source's name", async () => {

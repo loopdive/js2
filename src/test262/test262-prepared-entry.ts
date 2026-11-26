@@ -1,11 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
-import { analyzeMultiSource } from "../checker/index.js";
+import { analyzeMultiSource, type MultiTypedAST } from "../checker/index.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import { elideDeadBindings } from "./prepared-dead-bindings.js";
-import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
+import {
+  isHardTypeScriptDiagnostic,
+  preparedFrontendRejectionObservation,
+  runPreparedIrPipelinePresentation,
+  TOLERATED_SYNTAX_CODES,
+} from "../compiler.js";
+import { sourceEarlyErrors } from "../compiler/prepared-pipeline-boundary.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
@@ -366,19 +372,57 @@ function adapterRefusal(entryFile: string, code: string, detail: string, message
     { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
   ]);
 }
-/** The source graph plus one `<eval:N>.js` script per qualifying literal eval site of the entry (#7363). */
-function withLiteralEvalSources(files: Record<string, string>, texts: readonly string[]): Record<string, string> {
-  if (texts.length === 0) return files;
-  const names = new Set(Object.keys(files).map(normalizeMultiFileName));
+/**
+ * (#7363) `files` plus one `<eval:N>.js` script per qualifying literal eval site of the entry, with its analysis, when
+ * the scripts add nothing that fails the compile and change no other source's diagnostics; otherwise `files` and
+ * `without`, its analysis, and every site keeps its slice-1 refusal at select. A script fails the compile exactly as a
+ * JavaScript entry does, through the compile's own gates: a syntax error outside the tolerated list, a hard type error
+ * or an ES early error. Any other diagnostic of a text, such as a read of an undeclared global, is tolerated as in an
+ * entry. A text reaches another source's diagnostics when a member store in it declares a JS expando property of a
+ * caller binding; such a change names no text, so then none joins.
+ */
+function withLiteralEvalSources(
+  files: Record<string, string>,
+  without: MultiTypedAST,
+  texts: readonly string[],
+  analyze: (graph: Record<string, string>) => MultiTypedAST,
+  options: Test262CompileOptions,
+): { readonly graph: Record<string, string>; readonly ast: MultiTypedAST } {
+  if (texts.length === 0) return { graph: files, ast: without };
+  const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
+  const evalNames = new Set(texts.map((_, index) => normalizeMultiFileName(literalEvalFileName(index))));
   const graph: Record<string, string> = Object.create(null);
   Object.assign(graph, files);
   texts.forEach((text, index) => {
     const name = literalEvalFileName(index);
-    if (names.has(normalizeMultiFileName(name)))
+    if (supplied.has(normalizeMultiFileName(name)))
       invalidRequest(`source name ${name} is reserved for a literal eval source`);
     Object.defineProperty(graph, name, { value: text, enumerable: true });
   });
-  return graph;
+  const ast = analyze(graph);
+  const isEvalSource = (file: ts.SourceFile | undefined) =>
+    file !== undefined && evalNames.has(normalizeMultiFileName(file.fileName));
+  const failsCompile = (source: ts.SourceFile) =>
+    ast.syntacticDiagnostics.some(
+      (diagnostic) =>
+        diagnostic.file === source &&
+        diagnostic.category === ts.DiagnosticCategory.Error &&
+        !TOLERATED_SYNTAX_CODES.has(diagnostic.code),
+    ) ||
+    ast.diagnostics.some((diagnostic) => diagnostic.file === source && isHardTypeScriptDiagnostic(diagnostic, ast.checker)) ||
+    sourceEarlyErrors(source, options).some((error) => error.severity !== "warning");
+  const othersReport = (diagnostics: readonly ts.Diagnostic[]) =>
+    diagnostics
+      .filter((diagnostic) => !isEvalSource(diagnostic.file))
+      .map(({ file, start, code, messageText }) =>
+        [file?.fileName, start, code, ts.flattenDiagnosticMessageText(messageText, "\n")].join(":"),
+      )
+      .sort()
+      .join("\n");
+  const quiet =
+    !ast.sourceFiles.some((source) => isEvalSource(source) && failsCompile(source)) &&
+    othersReport(ast.diagnostics) === othersReport(without.diagnostics);
+  return quiet ? { graph, ast } : { graph: files, ast: without };
 }
 function present(
   files: Record<string, string>,
@@ -415,22 +459,19 @@ function present(
   // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
   const suppliedAst = analyze(exactFiles);
   const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
+  const analyzedAst = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
   // (#7363) The eval sources join after F0, which elides only a one-source graph and keeps every name a literal eval
   // text mentions; so the sites are the elided entry's.
   const entryKey = Object.keys(analyzedFiles).find(
     (key) => normalizeMultiFileName(key) === normalizeMultiFileName(entryFile),
   )!;
-  // Module code is strict, so no direct eval in it runs as a sloppy Script.
+  // Module code is strict, so no direct eval in it runs as a sloppy Script; and a text is a JavaScript root, which
+  // only an allowJs program holds.
   const evalTexts =
-    options.inferModuleStrictArguments === true ? [] : literalEvalTexts(entryKey, analyzedFiles[entryKey]!);
-  if (evalTexts.length > 0 && options.allowJs !== true)
-    return adapterRefusal(
-      entryFile,
-      "prepared-literal-eval-requires-allowjs",
-      "a literal eval source is a JavaScript root and needs allowJs",
-    );
-  const graph = withLiteralEvalSources(analyzedFiles, evalTexts);
-  const ast = graph === exactFiles ? suppliedAst : analyze(graph);
+    options.inferModuleStrictArguments === true || options.allowJs !== true
+      ? []
+      : literalEvalTexts(entryKey, analyzedFiles[entryKey]!);
+  const { graph, ast } = withLiteralEvalSources(analyzedFiles, analyzedAst, evalTexts, analyze, options);
   if (!completeAnalyzedGraph(graph, entryFile, ast))
     return adapterRefusal(
       entryFile,
@@ -438,7 +479,7 @@ function present(
       "frontend did not retain the complete supplied name/text graph",
     );
   const literalEvalSources =
-    evalTexts.length === 0 ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, evalTexts.length);
+    graph === analyzedFiles ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, evalTexts.length);
   // (#7363) An eval source's supplied text is its own; the entry's is the unelided one.
   const supplied = new Map(
     [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [
