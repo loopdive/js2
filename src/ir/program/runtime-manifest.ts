@@ -18,8 +18,6 @@ import type { IntrinsicSourceLocation } from "../core/intrinsic-contracts.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "../runtime/contracts/prepared.js";
 import { classifyIrFailure, IrInvariantError } from "../../shared/contracts/ir-preparation-errors.js";
-import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
-import { PreparedIrProgramInvariantError } from "./errors.js";
 import { locatedFailure, preparedIrProgramOwner } from "./owner.js";
 import { preparedIrReadonlyMap } from "./data.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";

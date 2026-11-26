@@ -1544,7 +1544,7 @@ export function prepareIrProgramSources(
   });
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
-  // (#7446) Inventory select-stage refusals hold here too: no body producer runs a class's static block or initializer.
+  // (#7446) Inventory select-stage refusals hold on the Prepared path too; refuse before any body is lowered.
   const refused = inventory.terminalUnits.find((unit) => unit.directFailure !== undefined);
   if (refused) return locatedFailure({ inventory, derivedUnits: [] }, refused.id, refused.directFailure!);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
