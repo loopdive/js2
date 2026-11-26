@@ -69,14 +69,6 @@ export function functionNameForKey(oracle: TypeOracle, property: ts.Symbol): str
 }
 
 /**
- * (#7425) The name a struct field gets for `property`: `@@<name>` for a well-known symbol key, the spelling the
- * literal compiler and the `o[Symbol.iterator]` read use, and the checker's name otherwise.
- */
-export function structFieldKeyForProperty(oracle: TypeOracle, property: ts.Symbol): string {
-  return keyOfProperty(oracle, property, (name) => `@@${name}`) ?? property.name;
-}
-
-/**
  * (#7427) The key a built-in prototype member has in the native-prototype tables: `@@<id>` (`WELL_KNOWN_SYMBOL_IDS`)
  * for a well-known symbol and the name itself for a string key.
  */

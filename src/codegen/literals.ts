@@ -2710,6 +2710,13 @@ export function resolveWellKnownSymbol(name: string): string | undefined {
   return wellKnownSymbolId(name) === undefined ? undefined : `@@${name}`;
 }
 
+/** `@@<name>` for a `[Symbol.<well-known>]` key; only this tells it from a string key `["@@<name>"]`. */
+export function wellKnownSymbolKeyOf(expr: ts.Expression): string | undefined {
+  return ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Symbol"
+    ? resolveWellKnownSymbol(expr.name.text)
+    : undefined;
+}
+
 /**
  * (#5142) Reverse of {@link wellKnownSymbolId}: the JavaScript spelling of a
  * well-known symbol id, e.g. `7` → `"match"`. The `@@<id>` member keys used by
@@ -2947,16 +2954,11 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
  * - Enum member access: [MyEnum.Key]
  */
 export function resolveComputedKeyExpression(ctx: CodegenContext, expr: ts.Expression): string | undefined {
-  // Well-known Symbol property access: [Symbol.iterator], [Symbol.toPrimitive], etc.
-  // Map these to reserved names like "@@iterator", "@@toPrimitive" at compile time.
+  const wellKnown = wellKnownSymbolKeyOf(expr);
+  if (wellKnown !== undefined) return wellKnown;
   if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.expression)) {
     const objName = expr.expression.text;
     const propName = expr.name.text;
-
-    if (objName === "Symbol") {
-      const wellKnown = resolveWellKnownSymbol(propName);
-      if (wellKnown !== undefined) return wellKnown;
-    }
 
     // Property access for enum members: [MyEnum.Key]
     // Check this after Symbol since resolveConstantExpression doesn't know about enums.
@@ -3718,10 +3720,12 @@ export function compileObjectLiteralForStruct(
     const matchingProps = expr.properties.filter((p) => {
       if (ts.isShorthandPropertyAssignment(p)) return p.name.text === field.name;
       if (ts.isMethodDeclaration(p)) {
-        const key = ts.isComputedPropertyName(p.name)
-          ? resolveComputedKeyExpression(ctx, p.name.expression)
-          : p.name.text;
-        return key === field.name;
+        return (
+          !!p.name &&
+          ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
+            (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
+            (ts.isNumericLiteral(p.name) && p.name.text === field.name))
+        );
       }
       return resolvePropertyNameText(ctx, p) === field.name;
     });
