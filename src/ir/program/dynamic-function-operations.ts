@@ -8,12 +8,11 @@
  * object as the receiver.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, boolean, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
   holdsErrors,
@@ -27,36 +26,11 @@ type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
 
-/** The Boolean carrier `instanceof` and the realm's tests answer with (the chains' `TEST_RESULT` is unbranded). */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-
 /**
  * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects
  * (`IS_OBJECT`).
  */
 type Builders = ChainBuilders & { readonly program: LegalizationProgram; readonly objects: readonly CarrierKind[] };
-
-const boolean = (value: boolean, result: IrValueId): IrInstr => ({
-  kind: "const",
-  value: { kind: "bool", value },
-  result,
-  resultType: BOOLEAN,
-});
-
-/**
- * Whether the once-evaluated `value` is one of `of`, into a fresh value: the kind tests of those `value` may hold, or
- * constant where it may hold all of them or none.
- */
-function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly CarrierKind[]) {
-  const held = b.kinds.kindsOf(value);
-  const cond = b.fresh();
-  const tested = held.filter((kind) => of.includes(kind));
-  const instrs =
-    tested.length === held.length || tested.length === 0
-      ? [boolean(tested.length !== 0, cond)]
-      : b.anyKind(instr, tested, value, cond);
-  return { instrs, cond };
-}
 
 /** A TypeError with `message`, then the arm's unread `answer` into `result`. */
 const throwing = (b: Builders, message: string, answer: (result: IrValueId) => IrInstr) => (result: IrValueId) =>
@@ -85,7 +59,7 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
   };
   if (instr.strict) return [read];
   b.kinds.learn(instr.result!, b.objects);
-  const { instrs, cond } = holds(b, instr, receiver, b.objects);
+  const { instrs, cond } = b.holds(instr, receiver, b.objects);
   return [
     read,
     ...instrs,
@@ -120,7 +94,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   );
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
-  const isConstructor = holds(b, instr, callee, ["function"]);
+  const isConstructor = b.holds(instr, callee, ["function"]);
   // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
   // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
   const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
@@ -132,7 +106,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
         : IS_OBJECT[kind]
           ? b.abort(instr, s)
           : [realmCall("js.object.create-default", [], s)];
-    const isObject = holds(b, instr, answer, b.objects);
+    const isObject = b.holds(instr, answer, b.objects);
     return [
       ...getPrototype(b, callee, prototype),
       ...b.kindChain(instr, prototype, object, link, b.admitted, CARRIER),
@@ -175,8 +149,8 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   const hasInstance = (r: IrValueId): IrInstr[] => {
     const valueObjects = b.kinds.kindsOf(value).filter((kind) => IS_OBJECT[kind]);
     const prototype = b.fresh();
-    const objectValue = holds(b, instr, value, b.objects);
-    const prototypeObject = holds(b, instr, prototype, b.objects);
+    const objectValue = b.holds(instr, value, b.objects);
+    const prototypeObject = b.holds(instr, prototype, b.objects);
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
@@ -194,7 +168,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     ];
     return [...objectValue.instrs, b.branch(objectValue.cond, ordinary, (s) => [unread(s)], r, BOOLEAN)];
   };
-  const callable = holds(b, instr, target, ["function"]);
+  const callable = b.holds(instr, target, ["function"]);
   return [
     ...callable.instrs,
     b.branch(

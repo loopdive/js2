@@ -408,6 +408,7 @@
         "src/runtime/wasmgc/values/to-primitive-method-bodies.ts",
         "src/runtime/wasmgc/values/to-primitive-wrapper-bodies.ts",
         "src/runtime/wasmgc/values/string-equality-body.ts",
+        "src/runtime/wasmgc/values/string-compare-body.ts",
         "src/runtime/wasmgc/values/symbol-carrier-bodies.ts",
         "src/runtime/wasmgc/values/boolean-bodies.ts",
         "src/runtime/wasmgc/values/bigint-primitive-bodies.ts",
@@ -2416,7 +2417,7 @@
       "layer": "foundation"
     },
     {
-      "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "path": "src/shared/contracts/dynamic-operator-helpers.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -15162,6 +15163,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/string-compare-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-string-equality.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
@@ -17312,6 +17318,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-comparisons.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/dynamic-error-constructors.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -17333,6 +17344,14 @@
       "destination": "frontend-ts",
       "owner": "7354-prepared-path",
       "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/dynamic-comparison-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "The front end's comparison lowering over the dynamic carrier (#7354 L0a): which operand pairs take the carrier, and the relational helper call; the TypeScript half moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/realm-static-call.ts",

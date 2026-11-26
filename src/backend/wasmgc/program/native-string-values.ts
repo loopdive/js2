@@ -559,8 +559,12 @@ export function reserveNativeStringValueResources(
           booleans,
           input.valueRequirements!,
           dependencies,
-          input.plan.dynamicValues.strictEqStrings
-            ? { anyStrTypeIdx: strings.layout.anyStrTypeIdx, flatten: flatten.flatten, equals: equality!.equals }
+          input.plan.dynamicValues.strictEqStrings || input.plan.dynamicValues.stringCompare
+            ? {
+                layout: strings.layout,
+                flatten: flatten.flatten,
+                equals: input.plan.dynamicValues.strictEqStrings ? equality!.equals : undefined,
+              }
             : undefined,
         )
       : undefined;

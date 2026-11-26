@@ -49,7 +49,6 @@ import { abortBody, owningRefusals } from "./abort-bodies.js";
 import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
 import { skipTransparentExpressions, unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import { constBindingNumber, isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
-import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import {
   staticStringMethodArgument,
   staticStringNumber,
@@ -116,10 +115,6 @@ import { tryLowerRealmStaticCall } from "./realm-static-call.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
   IR_DYN_ADD_FN,
-  IR_DYN_GE_FN,
-  IR_DYN_GT_FN,
-  IR_DYN_LE_FN,
-  IR_DYN_LT_FN,
   IR_DYN_METHOD_CALL_0_FN,
   IR_DYN_CALL_VALUE_FN,
   IR_DYN_CALL_BOX_FN,
@@ -129,6 +124,13 @@ import {
 } from "../codegen/dyn-ops.js";
 import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
+import {
+  carrierOperand,
+  comparisonTakesCarrier,
+  emitStringRelational,
+  relOperandToF64,
+  tryLowerDynamicRelational,
+} from "./dynamic-comparison-lowering.js";
 import {
   type PrototypeBorrowCall,
   irArrayPrototypeBorrowHelperName,
@@ -6260,7 +6262,10 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
     );
     if (value === null) throw new Error("ordinary Get contract returned no value");
     if (result.kind === "callable") return cx.builder.emitOrdinaryGetCallableResult(value, result.signature);
-    if (boolean) return cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
+    if (boolean)
+      return functionObjects.createsFunctionObjects(cx.resolver)
+        ? cx.builder.emitBox(value, irDynamic())
+        : cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
     return cx.builder.emitIntrinsic("js.number.unbox", [value]);
   }
   return null;
@@ -9292,7 +9297,7 @@ function tryLowerNativeBufferOperation(expr: ts.Expression, cx: LowerCtx): IrVal
     builder: cx.builder,
     funcName: cx.funcName,
     lower: (operand, hint) => lowerExpr(operand, cx, hint),
-    toNumber: (value) => relOperandToF64(value, cx.builder.typeOf(value), cx),
+    toNumber: (value) => relOperandToF64(value, cx.builder.typeOf(value), cx.builder),
     toDynamic: (value, operand) => boxConcreteToDynamic(value, cx.builder.typeOf(value), operand, cx),
   });
 }
@@ -10330,27 +10335,6 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
  * sentinel pattern, so from-ast reads no `nativeStrings`.
  */
 export { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
-
-/**
- * (#3167) Emit a both-string relational `<`/`>`/`<=`/`>=`. Calls the mode-
- * resolved compare helper for a -1/0/1 sign, then folds to the operator's
- * boolean via a signed i32 compare of the sign against 0 (`foldOp`). Total
- * for two strings — the sign is never the dynamic-path `2` sentinel.
- */
-function emitStringRelational(
-  lhs: IrValueId,
-  rhs: IrValueId,
-  foldOp: "i32.lt_s" | "i32.gt_s" | "i32.le_s" | "i32.ge_s",
-  cx: LowerCtx,
-): IrValueId {
-  const sign = cx.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], irVal({ kind: "i32" }));
-  if (sign === null) {
-    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/from-ast: string compare produced void result (${cx.funcName})`);
-  }
-  const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
-  return cx.builder.emitBinary(foldOp, sign, zero, irVal({ kind: "i32" }));
-}
 
 function lowerStringMethodCall(
   methodName: string,
@@ -13484,8 +13468,8 @@ function lowerCompoundAssignment(
   // invariant (producer-promise): `compoundWriteAdmissible` admits exactly the numeric compound operators — #7144.
   if (binaryOp === undefined)
     throw new Error(`ir/from-ast: admitted compound operator has no binary form in ${cx.funcName}`);
-  const numericLhs = relOperandToF64(lhs, logicalType, cx);
-  const numericRhs = relOperandToF64(rhsValue, rhsType, cx);
+  const numericLhs = relOperandToF64(lhs, logicalType, cx.builder);
+  const numericRhs = relOperandToF64(rhsValue, rhsType, cx.builder);
   if (numericLhs === null || numericRhs === null)
     throw new Error(`ir/from-ast: admitted numeric compound has no numeric operands in ${cx.funcName}`);
   const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
@@ -15102,12 +15086,15 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     irOperandFamily(lt, expr.left),
     irOperandFamily(rt, expr.right),
   );
-  if ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) {
-    const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx);
+  const host = functionObjectLoweringHost(cx);
+  if (
+    ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) ||
+    comparisonTakesCarrier(op, lt, rt, host)
+  ) {
+    const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, cx);
     if (dynEq !== null) return dynEq;
     if (op === ts.SyntaxKind.PlusToken) {
-      const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
-      const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
+      const [dynL, dynR] = [carrierOperand(lhs, expr.left, host), carrierOperand(rhs, expr.right, host)];
       if (dynL !== null && dynR !== null) {
         return emitDynamicAdd(dynL, dynR, cx);
       }
@@ -15121,7 +15108,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // byte-inertness as the eq arm — reachable only once the S5.P scan admits
     // dynamic-relational bodies (restricted to a numeric-literal counter-
     // operand, where ARC never takes the both-strings branch).
-    const dynRel = tryLowerDynamicRelational(op, lhs, rhs, lt, rt, cx);
+    const dynRel = tryLowerDynamicRelational(expr, op, lhs, rhs, lt, rt, host);
     if (dynRel !== null) return dynRel;
     // #2949 S5.5 — dynamic numeric arithmetic: `-`/`*`/`/`/`%` where either
     // operand is a boxed-any carrier. Each dynamic operand is ToNumber'd to
@@ -15180,27 +15167,12 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       case ts.SyntaxKind.ExclamationEqualsEqualsToken:
       case ts.SyntaxKind.ExclamationEqualsToken:
         return cx.builder.emitStringEq(lhs, rhs, true);
-      // (#3167) String relational operators `<` `>` `<=` `>=` — §7.2.13
-      // IsLessThan for two String operands is lexicographic code-unit
-      // comparison (NOT locale, NOT numeric). Both operands are statically
-      // `IrType.string` here (the mixed-string case already threw above), so
-      // the compare is always well-defined: emit a call to the mode-resolved
-      // compare helper (`IR_STRING_COMPARE_FN` → native `__str_compare` /
-      // host `string_compare`, resolved by `resolveFunc`), which yields a
-      // -1/0/1 sign i32, then FOLD the sign to the operator's boolean via a
-      // signed i32 compare against 0. This mirrors legacy `emitAnyRelational`'s
-      // both-string arm (binary-ops.ts) but stays representation-agnostic in
-      // from-ast (the #3156 emit-a-named-call pattern — no new IR node kind).
-      // The -1/0/1 sign is total for two strings (never the dynamic path's
-      // `2` incomparable sentinel), so `sign {<,>,<=,>=} 0` is exact.
+      // (#3167) Two strings by code units, the sign of the compare folded (`emitStringRelational`).
       case ts.SyntaxKind.LessThanToken:
-        return emitStringRelational(lhs, rhs, "i32.lt_s", cx);
       case ts.SyntaxKind.GreaterThanToken:
-        return emitStringRelational(lhs, rhs, "i32.gt_s", cx);
       case ts.SyntaxKind.LessThanEqualsToken:
-        return emitStringRelational(lhs, rhs, "i32.le_s", cx);
       case ts.SyntaxKind.GreaterThanEqualsToken:
-        return emitStringRelational(lhs, rhs, "i32.ge_s", cx);
+        return emitStringRelational(op, lhs, rhs, functionObjectLoweringHost(cx));
       default:
         // invariant (producer-promise): `binaryOperandsAdmissible` admits exactly the string operators above — #7144.
         throw new Error(
@@ -15983,26 +15955,26 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
 /**
  * #2949 S5.2 — lower equality through the canonical dynamic carrier, for an
  * operand pair `binaryOperandsAdmissible` admitted (at least one operand is
- * dynamic, the other boxes). Returns `null` for a non-equality operator.
+ * dynamic, the other boxes) or (#7354 L0a) `comparisonTakesCarrier` took.
+ * Returns `null` for a non-equality operator or an operand of no carrier.
  */
 function tryLowerDynamicEq(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
   lhs: IrValueId,
   rhs: IrValueId,
-  lt: IrType,
-  rt: IrType,
   cx: LowerCtx,
 ): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx));
+    return withNodeSourceSite(cx, expr, () => tryLowerDynamicEq(expr, op, lhs, rhs, cx));
   const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   if (!loose && !isStrictEqualityOperator(op)) return null;
   const negate = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
-  const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
+  const host = functionObjectLoweringHost(cx);
+  const dynL = carrierOperand(lhs, expr.left, host);
   if (dynL === null) return null;
-  const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
+  const dynR = carrierOperand(rhs, expr.right, host);
   if (dynR === null) return null;
   return cx.builder.emitDynEq(dynL, dynR, { loose, negate });
 }
@@ -16095,80 +16067,6 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
 }
 
 /**
- * #2949 S5.3 — lower `dyn < x` / `dyn > x` / `dyn <= x` / `dyn >= x` (either or
- * both operands dynamic) as a NUMERIC-ABSTRACT relational compare: each dynamic
- * operand is ToNumber'd to `f64` via `dyn.to_number`, then the existing
- * `f64.lt`/`gt`/`le`/`ge` compare (result `i32`) runs. Returns `null` (clean
- * demote) for a non-relational operator, or for a concrete operand this slice
- * cannot feed the f64 compare (see {@link relOperandToF64}) — including the
- * string×string lexicographic case, which is DEFERRED (a boxed-string operand
- * ToNumbers to NaN in gc / `Number(s)` in host: spec-correct ONLY against a
- * numeric counter-operand, which is why the S5.P scan restricts admission to a
- * numeric-literal counter-operand).
- */
-function tryLowerDynamicRelational(
-  op: ts.SyntaxKind,
-  lhs: IrValueId,
-  rhs: IrValueId,
-  lt: IrType,
-  rt: IrType,
-  cx: LowerCtx,
-): IrValueId | null {
-  let binop: IrBinop;
-  let runtimeName: string;
-  switch (op) {
-    case ts.SyntaxKind.LessThanToken:
-      binop = "f64.lt";
-      runtimeName = IR_DYN_LT_FN;
-      break;
-    case ts.SyntaxKind.LessThanEqualsToken:
-      binop = "f64.le";
-      runtimeName = IR_DYN_LE_FN;
-      break;
-    case ts.SyntaxKind.GreaterThanToken:
-      binop = "f64.gt";
-      runtimeName = IR_DYN_GT_FN;
-      break;
-    case ts.SyntaxKind.GreaterThanEqualsToken:
-      binop = "f64.ge";
-      runtimeName = IR_DYN_GE_FN;
-      break;
-    default:
-      return null;
-  }
-  if (lt.kind === "dynamic" && rt.kind === "dynamic") {
-    const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], irVal({ kind: "i32" }));
-    if (result === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: dynamic relational helper ${runtimeName} produced no result in ${cx.funcName}`);
-    }
-    return result;
-  }
-  const lf = relOperandToF64(lhs, lt, cx);
-  if (lf === null) return null;
-  const rf = relOperandToF64(rhs, rt, cx);
-  if (rf === null) return null;
-  return cx.builder.emitBinary(binop, lf, rf, irVal({ kind: "i32" }));
-}
-
-/**
- * #2949 S5.3/S5.5 — coerce ONE numeric-abstract operand to `f64` (shared by the
- * relational compare and the numeric-arithmetic arm): a dynamic carrier
- * ToNumbers via `dyn.to_number`; a concrete `f64` is used as-is. Any other
- * concrete kind (i32/ref/string) returns `null` so the caller demotes cleanly —
- * these slices only convert the dynamic side (numeric literals lower to `f64`
- * under the f64 hint the operands were lowered with, so `dyn > 0` / `dyn - 1`
- * are covered; a boolean partner arrives already converted by
- * `lowerBinaryOperands`, #7282).
- */
-function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | null {
-  if (t.kind === "dynamic") return cx.builder.emitDynToNumber(v);
-  const tv = asVal(t);
-  if (tv && tv.kind === "f64") return v;
-  return null;
-}
-
-/**
  * #2949 S5.5 — a numeric operator other than `+` (`- * / %`, the bitwise
  * operators) with a dynamic operand: ToNumber each dynamic operand
  * (`dyn.to_number`, see {@link relOperandToF64}), then the number arithmetic
@@ -16188,9 +16086,9 @@ function tryLowerDynamicArithmetic(
   cx: LowerCtx,
 ): IrValueId | null {
   if (!isToNumericOperator(op)) return null;
-  const lf = relOperandToF64(lhs, lt, cx);
+  const lf = relOperandToF64(lhs, lt, cx.builder);
   if (lf === null) return null;
-  const rf = relOperandToF64(rhs, rt, cx);
+  const rf = relOperandToF64(rhs, rt, cx.builder);
   if (rf === null) return null;
   return emitNumberBinary(op, lf, rf, expr.left, expr.right, cx);
 }

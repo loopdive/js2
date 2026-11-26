@@ -146,17 +146,12 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     expect(await run(program(3 - answer))).toBe("threw");
   });
 
-  // Loose equality other than a tag test is not lowered (`typeof` comparisons: slice Ty's tests).
+  // (#7354 L0a) Loose equality of two dynamic values is lowered now (tests/issue-7354-l0a-loose-equality.test.ts).
   it.each([
     [
       "`== null`",
       "function q(v) { return v == null; }\nif (q(undefined) !== true) throw 1;",
       "bare 'null' in non-reference context (f64)",
-    ],
-    [
-      "loose equality",
-      "function q(v, w) { return v == w; }\nif (q(1, 1) !== true) throw 1;",
-      "dynamic operation dyn.eq (loose) has no Prepared intrinsic",
     ],
     // The other from-ast paths the externref-carrier flag switches on; each still refuses before it matters.
     [

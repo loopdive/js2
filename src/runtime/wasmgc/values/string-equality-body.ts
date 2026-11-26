@@ -7,8 +7,9 @@ export type StringEqualityLayout = Pick<
   "nativeStrTypeIdx" | "nativeStrDataTypeIdx" | "anyStrTypeIdx" | "hashedStrTypeIdx"
 >;
 
-function flattenParameters(flatType: number, handles: readonly [number, number]): Instr[] {
-  return handles.flatMap<Instr>((funcIdx, index) => [
+/** Each string local of `indices` flattened in place (an already flat string skips the call). */
+export function flattenLocals(flatType: number, flattenHandle: number, indices: readonly number[]): Instr[] {
+  return indices.flatMap<Instr>((index) => [
     { op: "local.get", index },
     { op: "ref.test", typeIdx: flatType },
     { op: "i32.eqz" },
@@ -17,7 +18,7 @@ function flattenParameters(flatType: number, handles: readonly [number, number])
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index },
-        { op: "call", funcIdx },
+        { op: "call", funcIdx: flattenHandle },
         { op: "local.set", index },
       ],
     },
@@ -207,7 +208,8 @@ export function buildStringEqualityLocals(layout: StringEqualityLayout): LocalDe
   ];
 }
 
-function castFlatReads(body: readonly Instr[], flatType: number): Instr[] {
+/** Every read of a flat string field cast to the flat type, the locals holding `$AnyString`. */
+export function castFlatReads(body: readonly Instr[], flatType: number): Instr[] {
   return body.flatMap<Instr>((instruction) => {
     if (instruction.op === "struct.get" && instruction.typeIdx === flatType)
       return [{ op: "ref.cast", typeIdx: flatType }, instruction];
@@ -231,13 +233,10 @@ export function buildStringEqualityDefinition(
   flattenHandle: number,
   lazy: boolean,
 ): { locals: LocalDef[]; body: Instr[] } {
-  const handles: readonly [number, number] = [flattenHandle, flattenHandle];
-  const body = buildStringEqualityBody(layout, lazy, lazy ? flattenParameters(layout.nativeStrTypeIdx, handles) : []);
+  const flatten = flattenLocals(layout.nativeStrTypeIdx, flattenHandle, [0, 1]);
+  const body = buildStringEqualityBody(layout, lazy, lazy ? flatten : []);
   return {
     locals: buildStringEqualityLocals(layout),
-    body: [
-      ...(lazy ? [] : flattenParameters(layout.nativeStrTypeIdx, handles)),
-      ...castFlatReads(body, layout.nativeStrTypeIdx),
-    ],
+    body: [...(lazy ? [] : flatten), ...castFlatReads(body, layout.nativeStrTypeIdx)],
   };
 }

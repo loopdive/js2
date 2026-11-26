@@ -3,7 +3,8 @@
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
  * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
- * the `undefined` probe, (#7354 Ty) the string `typeof` test and (#7354 Fa) the function test. Every body
+ * the `undefined` probe, (#7354 Ty) the string `typeof` test, (#7354 Fa) the function test and (#7354 L0a) the string
+ * compare. Every body
  * is a shared pure builder; the number and Boolean carrier functions they call are the issued primitive
  * owners', never a lookalike.
  */
@@ -15,6 +16,8 @@ import type {
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
+import { buildStringCompareDefinition } from "../../../runtime/wasmgc/values/string-compare-body.js";
+import type { NativeStringLayout } from "../../../runtime/wasmgc/values/string-layouts.js";
 import { buildClosureRootTest } from "../../../runtime/wasmgc/values/closure-invocation-bodies.js";
 import {
   buildExternRefTestBody,
@@ -50,6 +53,8 @@ export interface NativeDynamicValueSelection {
   readonly strictEq: boolean;
   /** (#7354 Str) A native string can reach the carrier, so strict equality takes the string arm. */
   readonly strictEqStrings: boolean;
+  /** (#7354 L0a) Two string-kinded values ordered by code units (a relational operator's string arm). */
+  readonly stringCompare: boolean;
   readonly toBoolean: boolean;
   readonly undefinedValue: boolean;
   readonly isUndefined: boolean;
@@ -75,6 +80,7 @@ export function selectNativeDynamicValues(
   const selection = {
     strictEq: has("js.value.strict_eq"),
     strictEqStrings: stringsCarried && has("js.value.strict_eq"),
+    stringCompare: has("js.value.string_compare"),
     toBoolean: has("js.value.to_boolean"),
     undefinedValue: has("js.value.undefined"),
     isUndefined: intrinsics.some(
@@ -95,6 +101,7 @@ const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
 const ROWS = [
   ["strictEq", "strict-eq", "__js_strict_eq", { params: [EXTERNREF, EXTERNREF], results: [I32] }],
+  ["stringCompare", "string-compare", "__js_string_compare", { params: ["any-string", "any-string"], results: [I32] }],
   ["toBoolean", "to-boolean", "__is_truthy", { params: [EXTERNREF], results: [I32] }],
   ["undefinedValue", "undefined-value", "__js_undefined", { params: [], results: [EXTERNREF] }],
   ["isUndefined", "is-undefined", "__extern_is_undefined", { params: [EXTERNREF], results: [I32] }],
@@ -119,7 +126,7 @@ export function declareNativeDynamicValueResources(
       space: "function",
       name,
       signature: {
-        params: [...signature.params],
+        params: signature.params.map((type) => (type === "any-string" ? anyString : type)),
         results: signature.results.map((type) => (type === "any-string" ? anyString : type)),
       },
     }),
@@ -136,6 +143,7 @@ export function declareNativeDynamicValueResources(
 
 export interface NativeDynamicValueReservations {
   readonly strictEq?: FunctionReservation;
+  readonly stringCompare?: FunctionReservation;
   readonly toBoolean?: FunctionReservation;
   readonly undefinedValue?: FunctionReservation;
   readonly isUndefined?: FunctionReservation;
@@ -144,12 +152,24 @@ export interface NativeDynamicValueReservations {
   readonly isFunction?: FunctionReservation;
   readonly unsupported?: FunctionReservation;
 }
-/** (#7354 Str) The issued string resources strict equality's string arm calls. */
+/**
+ * The issued string resources the dynamic value's string operations call: the layout and the flatten, which
+ * (#7354 L0a) the string compare and (Str) strict equality's string arm read, and `equals`, which only that arm calls
+ * (issued where a native string can reach the carrier and strict equality is selected).
+ */
 export interface NativeDynamicValueStrings {
-  readonly anyStrTypeIdx: number;
+  readonly layout: NativeStringLayout;
   readonly flatten: FunctionReservation;
-  readonly equals: FunctionReservation;
+  readonly equals: FunctionReservation | undefined;
 }
+/** Strict equality's string arm: the strings' type, flatten and `equals`, where `equals` was issued. */
+const stringEquality = (strings: NativeDynamicValueStrings, equals: FunctionReservation) => ({
+  anyStrTypeIdx: strings.layout.anyStrTypeIdx,
+  strFlattenIdx: strings.flatten.handle,
+  strEqualsIdx: equals.handle,
+});
+/** No string arm: no native string reaches the carrier. */
+const NO_STRING_EQUALITY = { anyStrTypeIdx: -1, strFlattenIdx: undefined, strEqualsIdx: undefined } as const;
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly values: NativeValueReservations;
@@ -230,12 +250,13 @@ export function fillNativeDynamicValueResources(
         unboxNumIdx: values.functions.unboxNumber.handle,
         unboxBoolIdx: booleans!.unboxBoolean.handle,
         numberEquality: "number-equal",
-        anyStrTypeIdx: strings?.anyStrTypeIdx ?? -1,
-        strFlattenIdx: strings?.flatten.handle,
-        strEqualsIdx: strings?.equals.handle,
+        ...(strings?.equals ? stringEquality(strings, strings.equals) : NO_STRING_EQUALITY),
       }),
     });
   }
+  // The reservation passes `strings` whenever the string compare is selected (native-string-values.ts).
+  if (pack.stringCompare)
+    tx.fillFunction(pack.stringCompare, buildStringCompareDefinition(strings!.layout, strings!.flatten.handle));
   // The admitted carriers are the number and Boolean boxes, the `undefined` singleton, the null reference and
   // (#7354 Str) a native string, falsy when empty; no BigInt reaches a Prepared dynamic value, so that arm is absent.
   const carrierStrings = owner.dependencies.strings;
