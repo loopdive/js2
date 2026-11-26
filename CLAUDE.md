@@ -75,7 +75,10 @@ How it is enforced:
 **The goal is measured on the Prepared whole-program path (decision of
 2026-11-16).** "IR-only" means a test passes under `TEST262_COMPILER_PATH=ir`
 (front door `wholeProgram: { kind: "prepared-program-required" }`), the figure
-the site publishes and CI measures on every merge to main. On 2026-11-16 that
+the figure CI measures on every merge to main for the current edition only
+(`scripts/test262-current-edition.json`, ES5; the job summary lists the
+per-test diff and the job fails on a pass → not-pass of that edition, #7551)
+and daily for the whole corpus, which is what the site publishes. On 2026-11-16 that
 path passed no positive ES5 test: every test stops inside the shared harness
 prelude. It shares only `lowerFunctionAstToIr` with the ordinary pipeline, not
 the selector or the codegen-backed resolver, so a file with zero legacy units

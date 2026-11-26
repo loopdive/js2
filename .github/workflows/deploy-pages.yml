@@ -154,7 +154,9 @@ jobs:
           // Edition artifacts are optional (older measurements predate them): absent means unmeasured.
           const optional = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return undefined; } };
           let latest;
-          // Main is measured on every merge; the history keeps the newest valid measurement of each day.
+          // Only full-corpus runs (daily/dispatch) carry this name; per-merge runs measure one
+          // edition under test262-ir-standalone-edition-measurement and never reach the site (#7551).
+          // The history keeps the newest valid measurement of each day.
           const days = new Set();
           for (const artifact of artifacts.filter(a => !a.expired && a.workflow_run?.head_branch === 'main')
               .sort((a, b) => b.id - a.id)) {

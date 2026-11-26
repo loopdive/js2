@@ -440,6 +440,28 @@ wholly inside `promote-baseline`, and `write-run-cache-bot`, the only other
 side-effecting job, is `push` + `github-merge-queue[bot]` only and never fires
 on a dispatch.
 
+### Per-merge IR measurement: current edition only (#7551)
+
+The IR-path (`TEST262_COMPILER_PATH=ir`, standalone) measurement in
+`test262-sharded.yml` has two scopes:
+
+- **Every merge to main (push):** only the current ES edition, set in
+  `scripts/test262-current-edition.json` (ES5, 8 shards). The job summary
+  shows pass, fail and compile_error counts and the per-test diff against the
+  nearest earlier IR measurement on the first-parent lineage. The artifact is
+  `test262-ir-standalone-edition-measurement`.
+  - `merge complete IR standalone measurement` fails when a test of that
+    edition went pass → not-pass.
+  - With no comparable earlier measurement, the summary says **"No baseline
+    — not compared"** and the job passes. That happens on the first run, or
+    after an edition switch or an eval-engine change.
+  - This job is not a required check and runs after the merge, so it reports
+    a regression; it does not block one.
+- **Daily (schedule) and dispatch:** the full corpus, 102 shards, artifact
+  `test262-ir-standalone-measurement`. This is the only IR artifact the site
+  reads (`deploy-pages.yml` lists artifacts by that name), so site IR numbers
+  are as of the last full run.
+
 ### Pushing to `main` from a workflow — the rebuild tax (#3915)
 
 Two facts about the merge queue that are non-obvious, and each of which sent

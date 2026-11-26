@@ -231,3 +231,41 @@ about 10 min. Daily: about 950 once.
 **Size.** Part B touches the required check's content, `promote-baseline`
 triggers, the staleness alert and auto-park messaging. It should be its own
 PR stacked on this one (`claude/ci-legacy-daily`), after owner sign-off.
+
+## Validation (Part A, local, 2026-11-26)
+
+- **Edition list.** `test262-edition-scope.ts paths` on test262 `f49d9d65`
+  lists 9,174 ES5 files. The promoted standalone baseline (48,735 rows)
+  holds **9,029 ES5 rows** by the same classifier, which equals the edition
+  ratchet's ES5 `total`. Every one of those rows is in the list, and none is
+  missing from it.
+  - The 145 extra files are all under `test/intl402/`, which the runner's
+    category walk does not discover. The filter is intersected with the
+    runner's own discovery, so they are never run, and the per-merge run
+    measures 9,029.
+- **Report on real IR rows.** The baseline was the concatenated
+  `irgap-n26{a..d}` IR results: 411 rows, all ES5. Three cases:
+  - Candidate with one pass flipped to fail (and one fail to pass): exit 1,
+    listing `test/built-ins/Object/create/15.2.3.5-1-1.js → fail` as a
+    regression and one improvement.
+  - Candidate identical to the baseline: exit 0, 0 regressions.
+  - No baseline: exit 0, with "No baseline — not compared".
+- **Ratchet after the classifier move.** On the promoted baseline it reports
+  `ES5 9028 → 9029, OK`, so its classification is unchanged.
+- **`fetch-baseline` against loopdive/js2.** The lineage walk and the
+  artifact listing selected run 45788961847's full measurement. The download
+  itself is blocked by this sandbox's proxy (artifact blob host), not by the
+  script. CI uses the same `gh run download` that `deploy-pages.yml` already
+  relies on.
+- **Tests and checks.**
+  - `scripts/test262-ir-pages-artifacts.test.mjs`: 57/57, which covers plan
+    scopes, the matrix, the artifact names and the step conditions.
+  - `tests/issue-7551-ir-edition-scope.test.ts`: 10/10.
+  - Both workflow files parse (yaml 2.8.3).
+- **Proven only by the first push to main after merge:**
+  - the 8-shard edition run itself;
+  - the per-shard wall time (estimated 4.5–6 min);
+  - the first edition run's "No baseline" notice. Its nearest earlier
+    measurement is a pre-#7551 full artifact without `scope.json`, so that
+    run cannot compare. From the second merge on, it compares against the
+    previous edition run.

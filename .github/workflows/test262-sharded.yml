@@ -1898,16 +1898,33 @@ jobs:
           retention-days: 30
 
   compiler-path-measurement-plan:
-    name: select full-corpus IR standalone measurement
-    # Every merge to main is measured, as the legacy lane is: a shard takes
-    # about 80 s because a file the IR does not fully lower is refused at
-    # compile time, so the whole matrix costs about 2 runner-hours. The daily
-    # schedule covers days without a test262-relevant push.
+    name: select IR standalone measurement scope
+    # #7551 — two scopes, one job graph:
+    #   push (every merge to main) → the CURRENT ES edition only
+    #     (scripts/test262-current-edition.json: edition + shard count), diffed
+    #     per test against the nearest earlier IR measurement; uploaded as
+    #     `test262-ir-standalone-edition-measurement`.
+    #   schedule (daily) / workflow_dispatch → the full corpus, 102 shards
+    #     (~300 runner-min: a shard takes ~2 min because a file the IR does not
+    #     fully lower is refused at compile time); uploaded as
+    #     `test262-ir-standalone-measurement`, the only artifact the site reads.
+    # The distinct artifact names are what keep an edition run from ever being
+    # read as a whole-corpus measurement.
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.plan.outputs.run }}
+      scope: ${{ steps.plan.outputs.scope }}
+      edition: ${{ steps.plan.outputs.edition }}
+      chunks: ${{ steps.plan.outputs.chunks }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      artifact: ${{ steps.plan.outputs.artifact }}
     steps:
+      - name: Read the current-edition config
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/test262-current-edition.json
+          sparse-checkout-cone-mode: false
       - name: Select automatic or explicit measurement
         id: plan
         env:
@@ -1917,6 +1934,7 @@ jobs:
           COMPILER_PATH: ${{ inputs.compiler_path }}
           MEASUREMENT_TARGET: ${{ inputs.measurement_target }}
         run: |
+          export CURRENT_EDITION="$(cat scripts/test262-current-edition.json)"
           node --input-type=module <<'NODE'
           // IR_MEASUREMENT_PLAN_START
           const scheduled = process.env.EVENT_NAME === 'schedule';
@@ -1925,10 +1943,19 @@ jobs:
           if (manual && (process.env.COMPILER_PATH !== 'ir' || process.env.MEASUREMENT_TARGET !== 'standalone'))
             throw new Error('Only IR standalone is supported; JS Host results are historical');
           const run = scheduled || merged || manual;
-          const cells = run ? [{ compilerPath: 'ir', target: 'standalone', chunks: 102 }] : [];
+          const current = JSON.parse(process.env.CURRENT_EDITION);
+          if (merged && !(typeof current.edition === 'string' && Number.isInteger(current.chunks) && current.chunks > 0))
+            throw new Error('scripts/test262-current-edition.json needs an edition and a positive chunk count');
+          const scope = merged ? 'edition' : 'full';
+          const chunks = scope === 'edition' ? current.chunks : 102;
+          const edition = scope === 'edition' ? current.edition : '';
+          const artifact = scope === 'edition' ? 'test262-ir-standalone-edition-measurement' : 'test262-ir-standalone-measurement';
+          const cells = run ? [{ compilerPath: 'ir', target: 'standalone', scope, edition, chunks }] : [];
           console.log(JSON.stringify({ run, cells, promotion: false }));
+          const matrix = JSON.stringify(Array.from({ length: chunks }, (_, i) => i + 1));
           const { appendFileSync } = await import('node:fs');
-          appendFileSync(process.env.GITHUB_OUTPUT, `run=${run}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            `run=${run}\nscope=${scope}\nedition=${edition}\nchunks=${chunks}\nmatrix=${matrix}\nartifact=${artifact}\n`);
           // IR_MEASUREMENT_PLAN_END
           NODE
 
@@ -1941,111 +1968,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chunk:
-          [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            24,
-            25,
-            26,
-            27,
-            28,
-            29,
-            30,
-            31,
-            32,
-            33,
-            34,
-            35,
-            36,
-            37,
-            38,
-            39,
-            40,
-            41,
-            42,
-            43,
-            44,
-            45,
-            46,
-            47,
-            48,
-            49,
-            50,
-            51,
-            52,
-            53,
-            54,
-            55,
-            56,
-            57,
-            58,
-            59,
-            60,
-            61,
-            62,
-            63,
-            64,
-            65,
-            66,
-            67,
-            68,
-            69,
-            70,
-            71,
-            72,
-            73,
-            74,
-            75,
-            76,
-            77,
-            78,
-            79,
-            80,
-            81,
-            82,
-            83,
-            84,
-            85,
-            86,
-            87,
-            88,
-            89,
-            90,
-            91,
-            92,
-            93,
-            94,
-            95,
-            96,
-            97,
-            98,
-            99,
-            100,
-            101,
-            102,
-          ]
+        chunk: ${{ fromJSON(needs.compiler-path-measurement-plan.outputs.matrix) }}
         target:
           - name: standalone
             test262_target: standalone
@@ -2058,7 +1981,7 @@ jobs:
       TEST262_COMPILER_PATH: ir
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
-      TEST262_CHUNK_TOTAL: "102"
+      TEST262_CHUNK_TOTAL: ${{ needs.compiler-path-measurement-plan.outputs.chunks }}
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ github.run_attempt }}-ir-standalone-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
@@ -2066,7 +1989,7 @@ jobs:
       JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
       TEST262_IT_TIMEOUT_MS: ${{ matrix.target.test262_target == 'standalone' && '300000' || '' }}
       TEST262_FULL_RUNTIME_EVAL: ""
-      TEST262_PATH_FILTER: "" # Full corpus, never a PR scope.
+      TEST262_PATH_FILTER: "" # Never a PR scope; the edition scope uses the exact file list below.
       JS2WASM_TEMPORAL_CACHE: ""
 
     steps:
@@ -2088,6 +2011,15 @@ jobs:
             --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*
+
+      - name: Select the current edition's tests (#7551)
+        # The runner filters discovery before it partitions, so the plan's
+        # chunk count splits exactly this list.
+        if: needs.compiler-path-measurement-plan.outputs.scope == 'edition'
+        run: |
+          node --experimental-strip-types scripts/test262-edition-scope.ts paths \
+            --test262 test262 --out "$RUNNER_TEMP/edition-paths.txt"
+          echo "TEST262_PATH_FILTER_FILE=$RUNNER_TEMP/edition-paths.txt" >> "$GITHUB_ENV"
 
       - name: Run shard
         run: |
@@ -2144,10 +2076,19 @@ jobs:
     needs: [compiler-path-measurement-plan, test262-ir-measurement-shard]
     if: needs.compiler-path-measurement-plan.outputs.run == 'true'
     runs-on: ubuntu-latest
+    # actions:read — the edition scope lists and downloads earlier IR
+    # measurement artifacts (cross-run) for its per-test baseline.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SCOPE: ${{ needs.compiler-path-measurement-plan.outputs.scope }}
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          # The edition baseline is searched on the first-parent lineage.
+          fetch-depth: ${{ needs.compiler-path-measurement-plan.outputs.scope == 'edition' && 30 || 1 }}
       - uses: ./.github/actions/setup-node-pnpm
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v7
@@ -2155,20 +2096,50 @@ jobs:
           pattern: test262-measurement-ir-standalone-shard-*
           path: ir-shards
           merge-multiple: true
-      - name: Validate all 102 shards before reporting any verdict
+      - name: Validate every planned shard before reporting any verdict
+        env:
+          EXPECTED_SHARDS: ${{ needs.compiler-path-measurement-plan.outputs.chunks }}
         run: |
           mkdir -p ir-measurement/ir/runs
           cat ir-shards/test262-measurement-ir-standalone-results-*.jsonl > ir-measurement/results.jsonl
           # The validator takes one --manifest per shard file (as the other
-          # lanes pass them); a single file holding an array of all 102 reads
-          # as one malformed manifest and fails every run.
+          # lanes pass them); a single file holding an array of all of them
+          # reads as one malformed manifest and fails every run.
           manifests=()
           for manifest in ir-shards/*.complete.json; do
             manifests+=(--manifest "$manifest")
           done
           node scripts/validate-test262-completeness.mjs --input ir-measurement/results.jsonl \
-            "${manifests[@]}" --expected-shards 102
+            "${manifests[@]}" --expected-shards "$EXPECTED_SHARDS"
+      - name: Record the measurement's scope (#7551)
+        # Read back by a later edition run that picks this one as its baseline.
+        env:
+          EDITION: ${{ needs.compiler-path-measurement-plan.outputs.edition }}
+          SOURCE_SHA: ${{ github.sha }}
+          EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
+        run: |
+          TEST262_SHA=$(git -C test262 rev-parse HEAD) node --input-type=module -e "
+            import { writeFileSync } from 'node:fs';
+            const { SCOPE: scope, EDITION: edition, SOURCE_SHA: sourceSha, TEST262_SHA: test262Sha, EVAL_ENGINE: evalEngine } = process.env;
+            writeFileSync('ir-measurement/scope.json', JSON.stringify({ scope, ...(edition ? { edition } : {}), sourceSha, test262Sha, evalEngine }, null, 2));"
+      - name: Fetch the nearest earlier IR measurement (#7551)
+        if: env.SCOPE == 'edition'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Starts at the parent: this commit's own artifact is the one being made.
+        run: node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline --from HEAD^ --dest ir-baseline
+      - name: Report the edition against that baseline (#7551)
+        id: edition_report
+        if: env.SCOPE == 'edition'
+        run: |
+          set +e
+          node --experimental-strip-types scripts/test262-edition-scope.ts report \
+            --results ir-measurement/results.jsonl --meta ir-measurement/scope.json --test262 test262 \
+            --baseline-dir ir-baseline --summary ir-measurement/edition-report.md --json ir-measurement/edition-report.json
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          cat ir-measurement/edition-report.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Build requested IR report including compiler failures
+        if: env.SCOPE == 'full'
         env:
           INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
         run: |
@@ -2180,6 +2151,7 @@ jobs:
             --output ir-measurement/test262-standalone-ir-report.json --compiler-path ir \
             --target standalone --baseline-sha "${{ github.sha }}" --max-unclassified-root-causes "$failure_ceiling" "${proposals[@]}"
       - name: Classify the IR results by ES edition
+        if: env.SCOPE == 'full'
         # The regular lane's own generators, over the IR rows: an output named
         # `test262-editions.json` also writes the category and per-file edition
         # maps beside it. Raw (unlabelled) output stays out of the artifact; the
@@ -2195,6 +2167,7 @@ jobs:
               --standalone-editions ir-editions-raw/test262-editions.json --sha "${{ github.sha }}" \
             || echo "::warning::IR edition buckets failed; the IR view will show editions as unmeasured"
       - name: Record separate status and run history
+        if: env.SCOPE == 'full'
         env:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -2243,11 +2216,21 @@ jobs:
           NODE
       - uses: actions/upload-artifact@v6
         with:
-          name: test262-ir-standalone-measurement
+          # Distinct names per scope (#7551): the site reads only the full one.
+          name: ${{ needs.compiler-path-measurement-plan.outputs.artifact }}
           path: ir-measurement
           if-no-files-found: error
-          # The daily run carries the 90-day history; per-merge runs only keep the site current.
-          retention-days: ${{ github.event_name == 'push' && 14 || 90 }}
+          # The daily full run carries the 90-day history; per-merge edition runs only serve as baselines.
+          retention-days: ${{ env.SCOPE == 'edition' && 14 || 90 }}
+      - name: Fail on an edition regression (#7551)
+        # After the upload, so a regressed main commit is still the next run's baseline.
+        if: env.SCOPE == 'edition' && steps.edition_report.outputs.exit != '0'
+        env:
+          EDITION: ${{ needs.compiler-path-measurement-plan.outputs.edition }}
+          REPORT_EXIT: ${{ steps.edition_report.outputs.exit }}
+        run: |
+          echo "::error::the $EDITION IR measurement report exited $REPORT_EXIT — the job summary lists the regressed tests"
+          exit 1
 
   test262-shard:
     # Heavy 102-shard standalone test262 (#2519) fires ONLY for baseline/manual contexts
