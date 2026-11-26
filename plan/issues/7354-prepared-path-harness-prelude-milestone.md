@@ -5782,8 +5782,8 @@ files, all `onlyStrict`.
 
   - Before, main c3b7be667a: **0 / 22 pass**. All 22 trap in the test's function expression, whose abort body stands
     for "ir/from-ast: compound property write on dynamic not in IR scope".
-  - The 411 sample is unaffected (it holds none of these files). Its runner is the one documented on
-    `claude/7354-o411-sample` (`plan/samples/README-7354-o411.md` there); it is quoted again in the PR.
+  - The 411 sample is unaffected (it holds none of these files). Its list, tally script and exact runner command are
+    committed with this plan: `plan/samples/7354-o411.txt`, `7354-tally411.mjs`, `README-7354-o411.md`.
 - **Desugared proxy (B1).** Measured on main c3b7be667a with the real harness (assert.js + sta.js, strict prologue).
   Each of the 22 programs with `obj.prop OP= 20` rewritten as `var t = obj.prop OP 20; obj.prop = t;` **passes**
   (22 / 22). That runs, end to end, on what main already lowers:
