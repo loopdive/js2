@@ -8,12 +8,11 @@
  * object as the receiver.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, booleanConst, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
   holdsErrors,
@@ -27,21 +26,11 @@ type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
 
-/** The Boolean carrier `instanceof` and the realm's tests answer with (the chains' `TEST_RESULT` is unbranded). */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-
 /**
  * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects
  * (`IS_OBJECT`).
  */
 type Builders = ChainBuilders & { readonly program: LegalizationProgram; readonly objects: readonly CarrierKind[] };
-
-const boolean = (value: boolean, result: IrValueId): IrInstr => ({
-  kind: "const",
-  value: { kind: "bool", value },
-  result,
-  resultType: BOOLEAN,
-});
 
 /**
  * Whether the once-evaluated `value` is one of `of`, into a fresh value: the kind tests of those `value` may hold, or
@@ -53,7 +42,7 @@ function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly Carri
   const tested = held.filter((kind) => of.includes(kind));
   const instrs =
     tested.length === held.length || tested.length === 0
-      ? [boolean(tested.length !== 0, cond)]
+      ? [booleanConst(tested.length !== 0, cond)]
       : b.anyKind(instr, tested, value, cond);
   return { instrs, cond };
 }
@@ -171,7 +160,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   if (b.program.objects.namesSymbol) gap("instanceof in a program that names 'Symbol'");
   const { value, target } = instr;
   const result = instr.result!;
-  const unread = (r: IrValueId) => boolean(false, r);
+  const unread = (r: IrValueId) => booleanConst(false, r);
   const hasInstance = (r: IrValueId): IrInstr[] => {
     const valueObjects = b.kinds.kindsOf(value).filter((kind) => IS_OBJECT[kind]);
     const prototype = b.fresh();

@@ -35,6 +35,8 @@ const CONTRACTS = [
   ["js.object.descriptor-define", [REF, REF, REF], []],
   ["js.object.descriptors-define", [REF, REF], []],
   ["js.object.own-descriptor", [REF, REF], [REF]],
+  // (#7471) OrdinaryDelete of a canonical key
+  ["js.object.delete", [REF, REF], [BOOL]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {

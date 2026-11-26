@@ -2,15 +2,15 @@
 //
 // #7354 H2 — the routes to a script binding other than an identifier reference. A script `var` or function
 // declaration is a property of the global object (§9.1.1.4, §16.1.7), so the global object as a value, dynamic code,
-// `with`, `Object.defineProperty`, `delete` and a parameter initializer (§10.2.11) reach it too. The Prepared path
-// models only identifier writes (`preparedBindingRewritten`, module-binding-script-var.ts), which is sound because
-// each of these routes refuses or aborts at its own site. Each program writes the binding through one route, then
-// reads it: it must refuse or end at the run-time abort, never read a stale value. A slice that admits a route
-// replaces its rows with node agreement.
+// `with`, `Object.defineProperty` and a parameter initializer (§10.2.11) reach it too. The Prepared path models only
+// identifier writes (`preparedBindingRewritten`, module-binding-script-var.ts), which is sound because each of these
+// routes refuses or aborts at its own site. Each program writes the binding through one route, then reads it: it must
+// refuse or end at the run-time abort, never read a stale value. A slice that admits a route replaces its rows with
+// node agreement: (#7471) `delete` of the binding answers `false` and writes nothing (the last block).
 import { describe, expect, it } from "vitest";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";
-import { preparedOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { agreesWithNode, preparedOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 240_000;
 
@@ -29,7 +29,6 @@ const ROUTES: Record<string, (value: string) => string> = {
   "a parameter initializer": (v) => `function p(a = (f = ${v})) { var f; } p();`,
   "sloppy-function `this`": (v) => `(function(){ this.f = ${v}; })();`,
   "Object.defineProperty": (v) => `Object.defineProperty(this, "f", { value: ${v} });`,
-  delete: () => `var d = delete f;`,
 };
 
 const BINDINGS: Record<string, (route: (value: string) => string) => string> = {
@@ -72,4 +71,19 @@ describe("#7354 H2 — each route to a script binding refuses or aborts at its s
     },
     SLOW,
   );
+});
+
+// (#7471) `delete` of a declared script binding answers `false` and writes nothing (§13.5.1.2 steps 3-4, the binding
+// non-configurable), so its route is node agreement now.
+describe("#7354 H2 — delete of a script binding writes nothing", () => {
+  it.each(
+    Object.entries(BINDINGS).flatMap(([binding, program]) => [
+      [binding, "at top level", `${program(() => "var d = delete f;")} out = out + String(d);`],
+      [
+        binding,
+        "inside a called function",
+        `${program(() => "function w(){ return delete f; } var d = w();")} out = out + String(d);`,
+      ],
+    ]),
+  )("answers %s %s as node does", (_binding, _position, source) => agreesWithNode(source), SLOW);
 });

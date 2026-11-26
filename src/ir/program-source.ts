@@ -848,7 +848,7 @@ export interface IrProgramSourceInput {
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
-  readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+  readonly codeStrictness?: (node: ts.Node) => boolean;
   /**
    * (#7354 U) Present: a function whose body cannot be lowered gets the run-time abort as its body and is recorded
    * here (`abort-bodies.ts`). Absent: the program is refused. Only the test262 Prepared entry switches it on.

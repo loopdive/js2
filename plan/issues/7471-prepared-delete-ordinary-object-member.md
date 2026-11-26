@@ -1,10 +1,11 @@
 ---
 id: 7471
 title: "Prepared path: `delete obj.prop` on an ordinary object"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 feasibility: medium
@@ -13,6 +14,15 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7354, 7372, 3518]
+# 2026-11-26 (slices 1 and 2): src/ir/from-ast.ts grows by the delete dispatch's second arm,
+# `lowerReferencelessDelete` (a name answers `false` unevaluated, any other non-reference operand `true`), plus
+# the Prepared-gated receiver boxing and the resolver hook it reads. The arm sits beside `lowerDynamicDelete` because
+# both are answers of the one `delete` dispatch in `lowerExpr` and read from-ast's scope (`classifyIdentifierRead`,
+# `cx.scope`), which no other module owns. src/ir/integration.ts +2: the delete helper names now come from the shared
+# leaf `src/shared/contracts/dynamic-delete-helper.ts` (one import of three names that prettier wraps).
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
 ---
 
 # #7471 — Prepared path: `delete obj.prop` on an ordinary object
@@ -209,3 +219,54 @@ runner. S12.2_A2 still stops at `this["__variable"]` (Session B), so slice 2 add
 - The from-ast change is the resolver answer plus the receiver boxing that reads and writes already do.
 - No growth grant is expected. If `from-ast.ts` grows (slice 2's identifier arm), a dated grant will explain why the
   arm sits beside the other `delete` arms.
+
+## Implementation notes (2026-11-26, slices 1 and 2)
+
+What landed, and where it departs from the plan:
+
+- **Helper names.** The leaf is `src/shared/contracts/dynamic-delete-helper.ts`, beside `dynamic-add-helper.ts` and
+  `in-operator-helper.ts`, not under `src/ir/`: those leaves are where a name both codegen and the IR read lives, since
+  codegen imports nothing from the IR. `codegen/ir-dynamic-delete.ts` keeps its body and its strictness rule
+  (`irDeleteSiteIsStrict`); only the names moved.
+- **Strictness (B1).** The Prepared resolver asks the compiler's own `preparedCodeStrictness`, now typed over any
+  `ts.Node` (a node stands for the code that encloses it), so a write and a delete follow one rule. Unknown strictness
+  is strict, as `dyn.member_set`'s `sloppy` is. `inferModuleStrictArguments` only matters for a module-flagged
+  source, so the B1 test uses `export {};` with no top-level `var` (the Prepared path stores no module-goal var).
+- **Legalization.** `memberAccess` / `constantKey` take a `MemberSite`; `dynamicMemberDelete` is a third `Access`.
+  The run-time abort of an access is now the abort into a fresh value and then the access's unread answer (the shape
+  `functionChainAnswer` already used), so a Boolean-typed chain can abort. Reads and writes answer the same way
+  (their unread answer is `undefined`). `BOOLEAN` and a constant-Boolean builder moved into
+  `dynamic-value-chains.ts`, folding the two private copies in `dynamic-function-operations.ts` and
+  `dynamic-prototype-methods.ts`. The string `length` / index rule is one helper (`stringOwnKey`) for read and delete.
+- **`caller` / `arguments` of a function.** V8 gives a sloppy function own non-configurable `caller` and `arguments`
+  (`delete f.caller` is `false` in node), the specification does not (the realm answers `true`). Where a value may be
+  a function the delete of either refuses by name, as G1 does for V8's error keys. Not in the plan.
+- **Receiver boxing (B3).** A probe showed a function-local object reaching the delete as the raw externref. The
+  boxing is gated on a Prepared-only resolver answer, `dynamicDeleteBoxesExternref`; the ordinary resolver never sets
+  it, and its selector admits only dynamic parameters as receivers.
+- **Slice 2.** `lowerReferencelessDelete` sits before `lowerDynamicDelete` in the one dispatch. It unwraps the
+  transparent wrappers (`skipOuterExpressions`: parentheses and TS type wrappers, which JavaScript does not have).
+  `arguments` is not a scope binding on this path, so the arm names it: an unshadowed `arguments` inside a non-arrow
+  function is that function's binding. Such a function aborts today at its argument count (`dyn.arguments_length`),
+  which the test pins. `undefined` and `Infinity` refuse with `NaN` (global-object properties, Session B).
+- **Not testable today.**
+  - `Object.freeze` is not a native static on this path, so the frozen-object case cannot be written.
+  - A `with` scope binding never reaches the arm: an object literal lowers as a realm object here, and
+    `lowerWithStatement` only binds a closed `object`. The refusal stays (B2), and the test pins today's earlier stop.
+  - A string-only receiver cannot be had in a `var` (its kinds include `undefined`), so `delete s.length` / `s["0"]`
+    are pinned as run-time aborts, not compile-time refusals.
+  - A literal primitive receiver (`delete (1).x`) is a typed `f64`, not a dynamic value, and still demotes; the
+    primitive arms are tested through a dynamic parameter.
+- **Pins moved.** `tests/issue-7354-m-refusals.test.ts`: the delete row is now a computed-key delete (the constant key
+  runs). `tests/issue-7354-h2-script-binding-routes.test.ts`: the `delete` route left the refuse-or-abort table, since a
+  delete of a declared script binding writes nothing; its eight rows are node agreement now. The #3518 contract table
+  has the `js.object.delete` row; the provider table iterates the manifest and needed no edit.
+- **Mutants** (`tests/issue-7471-prepared-delete.test.ts`, each restored after): primitive arm `true`→`false` 1 test
+  fails; object arm answering `true` 11; strict branch dropped 3; helper-name dispatch swapped 5; Prepared resolver
+  swapped to `isStrictContext(site)` (`irDeleteSiteIsStrict`'s rule) 1 (the B1 test); row bound to `hasOwn` 13; the
+  identifier arm answering `true` 6; the comma arm answering `false` 1; `arguments` not recognised 1. The `withField`
+  refusal mutant fails nothing: unreachable today (see above).
+- **Yield** (`scripts/ir-census/prepared-census.mts --harness real`, base `41f0654e8` vs this branch): the three
+  Object rows go from `delete has no IR lowering` to `pass`. `S12.2_A2` now stops at `this["__variable"]` (`'this'
+  reference outside an instance method body`), `S15.1.1.1_A3_T2` at `delete of "NaN", which only the global object
+  holds`, `S11.13.2_A5.2_T2` at `with target/body outside the closed-object IR slice`: all Session B's.

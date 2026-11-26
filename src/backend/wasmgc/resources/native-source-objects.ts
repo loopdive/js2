@@ -272,6 +272,7 @@ const ROWS = {
         findOwn: kernel.functions.findOwn.handle,
       }),
   },
+  "js.object.delete": { binds: ({ kernel }) => kernel.functions.deleteOwn },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */
 export type NativeSourceObjectFeature = keyof typeof ROWS;

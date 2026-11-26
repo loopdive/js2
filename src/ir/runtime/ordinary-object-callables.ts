@@ -86,6 +86,8 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // requiring the enumerable attribute when `selector` is 1.
   "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
+  // (#7471) OrdinaryDelete (§10.1.10.1) of a canonical key on an ordinary or function object.
+  "js.object.delete": declaration("js.object.delete", [EXTERNAL, EXTERNAL], [BOOLEAN]),
 });
 
 /**

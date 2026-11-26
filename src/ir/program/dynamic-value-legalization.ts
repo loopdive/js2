@@ -34,8 +34,12 @@ import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.j
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
+import {
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+} from "../../shared/contracts/dynamic-delete-helper.js";
 import { gap } from "./dynamic-value-gap.js";
-import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
+import { dynamicMemberDelete, dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
@@ -102,7 +106,7 @@ export function legalizeDynamicValues(
   const conversions = conversionBuilders(builders, program);
   const { stringOf, toNumber } = conversions;
   const addition = additionBuilder(builders, conversions);
-  // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
+  // (#7354 O4, O3, #7471) What a member read, write or delete is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
@@ -253,12 +257,14 @@ export function legalizeDynamicValues(
         ]);
       }
       // A front-end dynamic helper (`__ir_dyn_lt`, ...) has no runtime declaration; (#7354 Str2-c) `__ir_dyn_add`
-      // is the dynamic `+`, expanded here.
+      // is the dynamic `+` and (#7471) `__ir_dyn_delete_{strict,sloppy}` a member delete, expanded here.
       // (#7354 Fa) The function-value projection's packed callable is its own carrier payload.
       case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
         const symbol = instr.target.binding.kind === "runtime" ? instr.target.binding.symbol : undefined;
+        if (symbol === IR_DYN_DELETE_STRICT_HELPER || symbol === IR_DYN_DELETE_SLOPPY_HELPER)
+          return dynamicMemberDelete(memberAccess, instr, symbol === IR_DYN_DELETE_STRICT_HELPER);
         const objectStatic = symbol === undefined ? undefined : objectStaticOfHelper(symbol);
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
