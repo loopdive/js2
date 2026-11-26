@@ -412,29 +412,30 @@ export function buildBuiltinFunctionArgument(
   ];
 }
 /**
- * Call(callee, receiver, args) of a built-in through the kernel's `callVector`, leaving the result. With arguments the
- * vector is built in the externref local `vector`; without, it is passed as made.
+ * Call(callee, receiver, args) of a built-in through the kernel's `callVector`, leaving the result. Arguments are pushed
+ * onto a vector built in their externref local `vector`; without, the new vector is passed as made.
  */
+export interface BuiltinCallArguments {
+  readonly vector: number;
+  readonly values: readonly (readonly Instr[])[];
+}
 export function buildBuiltinVectorCall(
   d: Pick<BuiltinFunctionBodyOperands, "newVector" | "push" | "vectorTypeIdx" | "callVector">,
   callee: readonly Instr[],
   receiver: readonly Instr[],
-  args: readonly (readonly Instr[])[],
-  vector?: number,
+  args?: BuiltinCallArguments,
 ): Instr[] {
   const tail: Instr[] = [
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: d.vectorTypeIdx },
     call(d.callVector),
   ];
-  if (vector === undefined) {
-    if (args.length) throw new Error("builtin vector call: arguments need a vector local");
-    return [...callee, ...receiver, call(d.newVector), ...tail];
-  }
+  if (!args) return [...callee, ...receiver, call(d.newVector), ...tail];
+  const { vector, values } = args;
   return [
     call(d.newVector),
     { op: "local.set", index: vector },
-    ...args.flatMap((arg): Instr[] => [get(vector), ...arg, call(d.push)]),
+    ...values.flatMap((value): Instr[] => [get(vector), ...value, call(d.push)]),
     ...callee,
     ...receiver,
     get(vector),
@@ -447,13 +448,10 @@ export function buildBuiltinFunctionMethodDefinition(
 ): BuiltinFunctionDefinition {
   return {
     locals: [{ name: "arguments", type: { kind: "externref" } }],
-    body: buildBuiltinVectorCall(
-      d,
-      [get(0)],
-      [get(1)],
-      Array.from({ length: arity }, (_, index) => [get(index + 2)]),
-      arity + 2,
-    ),
+    body: buildBuiltinVectorCall(d, [get(0)], [get(1)], {
+      vector: arity + 2,
+      values: Array.from({ length: arity }, (_, index) => [get(index + 2)]),
+    }),
   };
 }
 export function buildBuiltinFunctionSlotDefinition(
