@@ -8,6 +8,7 @@
 // via funcMap. It returns `undefined` when the callee is not one of these
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
+import { varMayHoldNonClosure } from "./var-non-closure-writes.js";
 import { liveResultBridge, liveResultBridgeable } from "./dispatch-extern-result-bridge.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
@@ -1723,17 +1724,21 @@ function compileBoundIdentifierCall(
     // Route it through the dynamic boundary below instead of committing to a
     // stale `closureMap`/local signature and nulling a different funcref cast.
     const calleeComesFromElementRead = bindingIsPopulatedFromElementRead(ctx, expr.expression);
+    // (#7334) Nor does one describe a var that also stores a value other than
+    // a closure or nullish; it skips the checker-signature ladder below too.
+    const calleeMayHoldNonClosure = varMayHoldNonClosure(ctx, expr.expression);
+    const closureInfoStale = calleeComesFromElementRead || calleeMayHoldNonClosure;
     let closureInfo =
       isLocallyShadowed ||
       nestedBindingVisible ||
       defaultExpressionImport !== undefined ||
       calleeIsParameterBinding ||
-      calleeComesFromElementRead ||
+      closureInfoStale ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : (bindingClosureInfo ?? ctx.closureMap.get(funcName));
 
-    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined && !calleeComesFromElementRead) {
+    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined && !closureInfoStale) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
     // (#4133) An out-of-scope nested binding lets the closure/local paths above
@@ -1844,7 +1849,7 @@ function compileBoundIdentifierCall(
         const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
         if (nativeSpreadCall !== undefined) return nativeSpreadCall;
       }
-      if (callSigs && callSigs.length > 0 && !heterogeneousCallableCapture) {
+      if (callSigs && callSigs.length > 0 && !heterogeneousCallableCapture && !calleeMayHoldNonClosure) {
         // Populate runtime callback candidates before compiling this HOF body.
         // Without the pre-scan, Test262's one-formal function expression is
         // compiled only after its two-formal JSDoc callback consumer, leaving

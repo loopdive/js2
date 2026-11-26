@@ -37,7 +37,6 @@ import { reserveBuiltinConstructorIdentityGlobal } from "./builtin-static-global
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { prepareRegExpExecProtocol } from "./regexp-exec-protocol.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -45,16 +44,19 @@ import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 import { emitToBoolean, getExternrefToStringProvider } from "./coercion-engine.js";
 import {
-  ensureDynamicStandaloneRegExpCompiler,
-  ensureStandaloneRegExpStruct,
-  hasStandaloneRegExpEngine,
   RE_FIELD_CLASS_TABLE,
   RE_FIELD_FLAGS,
   RE_FIELD_NGROUPS,
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
   RE_FIELD_SOURCE,
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import {
+  ensureDynamicStandaloneRegExpCompiler,
+  ensureStandaloneRegExpStruct,
+  hasStandaloneRegExpEngine,
 } from "./regexp-standalone.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -173,7 +175,7 @@ export function registerRegExpCtorRuntime(
   fctx: FunctionContext,
   withCtorGlobal: boolean,
 ): { structTypeIdx: number; ctorGlobal: number } | undefined {
-  const matchId = getWellKnownSymbolId("match");
+  const matchId = wellKnownSymbolId("match");
   if (matchId === undefined) return undefined;
   if (prepareRegExpExecProtocol(ctx, fctx) === undefined) return undefined;
   ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
@@ -215,7 +217,7 @@ export interface RegExpCtorLocals {
 }
 
 export function resolveRegExpCtorOps(ctx: CodegenContext, structTypeIdx: number): RegExpCtorOps | undefined {
-  const matchId = getWellKnownSymbolId("match");
+  const matchId = wellKnownSymbolId("match");
   const boxSymbol = ctx.funcMap.get("__box_symbol");
   const isUndefinedFn = ctx.funcMap.get("__extern_is_undefined");
   const toBoolean = emitToBoolean(ctx, EXTERNREF, []);

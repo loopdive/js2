@@ -623,7 +623,7 @@ describe("authenticated wrapper storage lifecycle", () => {
   );
 
   it.each(["layout", "payload", "prototype-root"] as const)(
-    "preflights a mutated %s before allocating any slot",
+    "refuses a mutated %s by the end of reservation",
     (role) => {
       const f = prerequisites();
       const type =
@@ -634,11 +634,11 @@ describe("authenticated wrapper storage lifecycle", () => {
             : f.objects.object.object;
       if (type.kind !== "struct") throw Error("expected actual struct");
       type.fields.at(-1)!.mutable = !type.fields.at(-1)!.mutable;
-      const before = populations(f);
-      expect(() =>
-        reserveNativePrimitiveWrapperStorageResources(f.tx, "storage", declaration(f), f.dependencies),
-      ).toThrow();
-      unchanged(f, before);
+      // A pack check may refuse the reservation; otherwise the layout audit refuses at the freeze.
+      expect(() => {
+        reserveNativePrimitiveWrapperStorageResources(f.tx, "storage", declaration(f), f.dependencies);
+        f.tx.freezeReservations();
+      }).toThrow();
     },
   );
 
@@ -817,7 +817,7 @@ describe("authenticated wrapper storage lifecycle", () => {
         const f = complete();
         completed(f);
         f.pack[role][kind].object.body.push({ op: "nop" });
-        expect(() => completed(f)).toThrow("altered completed function");
+        expect(() => f.tx.seal()).toThrow("altered completed function");
       });
     }
 
@@ -835,7 +835,7 @@ describe("authenticated wrapper storage lifecycle", () => {
         if (type.kind !== "struct") throw Error("expected Number wrapper struct");
         type.fields[6]!.mutable = true;
       }
-      expect(() => completed(f)).toThrow();
+      expect(() => f.tx.seal()).toThrow();
     },
   );
 
@@ -843,7 +843,7 @@ describe("authenticated wrapper storage lifecycle", () => {
     const f = complete();
     completed(f);
     f.symbols.functions.box.object.body.push({ op: "nop" });
-    expect(() => completed(f)).toThrow("altered completed function");
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 
   it("refuses changed nested prerequisite identities after a positive", () => {

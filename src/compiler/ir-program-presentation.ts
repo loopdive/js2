@@ -29,7 +29,7 @@ import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
 import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
-import { runtimeCensus, type NativeSetupSlots } from "./prepared-provider-census.js";
+import { callableCarried, runtimeCensus, unjoinedSupport, type NativeSetupSlots } from "./prepared-provider-census.js";
 import { physicalCallableMatches } from "./prepared-physical-signature.js";
 
 export interface IrProgramPresentationRequest {
@@ -316,8 +316,6 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
       "unproved-output-option",
       "source maps, C ABI and optimization require a separate complete presentation contract",
     );
-  if (output.errors.some((error) => error.severity === "error"))
-    gap("errors", "frontend-errors", "analyzed frontend errors cannot become prepared artifacts");
   const expectedLinks = [...new Set(options.link ?? [])];
   if (
     expectedLinks.length !== (context.codegenOptions.link?.length ?? 0) ||
@@ -458,22 +456,22 @@ function checkAbiExports(
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
   const joinedExports = new Set<string>();
   // (#7354 D1, H, Str) Internal callables and unexported globals may carry the dynamic externref; callables a string.
-  const dynamic = (type: IrType | undefined) =>
-    nativeDynamicLane(capture.backend) && type?.kind === "val" && type.val.kind === "externref";
+  const native = nativeDynamicLane(capture.backend);
+  const dynamic = (type: IrType | undefined) => native && type?.kind === "val" && type.val.kind === "externref";
   const carried = (type: IrType) => (type.kind === "val" && numeric(type.val)) || dynamic(type);
   const inCall = (type: IrType) => type.kind === "string" || carried(type);
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
-      if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !inCall(type))))
+      const unitId =
+        plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
+      if (!mixed && (contract.promise || !callableCarried(program, contract, inCall, native ? unitId : undefined)))
         gap(
           "abi.callable",
           "non-numeric-contract",
           "promise/reference callable contracts require an explicit boundary producer",
           { bindingId: plan.id },
         );
-      const unitId =
-        plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
       const declaration = unitId && captures.get(unitId);
       const joins = (slot: PresentationSlot, type: IrType | undefined) =>
         sourceSlotMatches(slot, type) || dynamic(type);
@@ -683,7 +681,7 @@ function checkResourceDemand(
   }
   if (
     program.ir.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime) ||
-    program.runtimeSupport?.batches.length ||
+    unjoinedSupport(program, native) ||
     mod.asyncFunctions.size
   )
     gap("async", "async-demand", "source and prepared runtime must independently prove no async/support demand");
@@ -873,8 +871,8 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   if (mixed) checkMixedDemand(program, emission, capture.backend, captures, gap);
   const detached = mixed || checkResourceDemand(program, emission, capture.backend, gap);
   const startup = joinStartup(program, emission, capture.input, gap);
-  if (!mod.functions.length || !program.inventory.terminalUnits.length)
-    gap("emission", "empty-population", "presentation requires genuine nonempty emitted and terminal populations");
+  if (!mod.functions.length !== !program.inventory.terminalUnits.length)
+    gap("emission", "empty-population", "presentation requires an empty module exactly for an empty script");
   if (mixed)
     for (const row of emittedPhysicalSetupPlan(emission).asyncFrames?.frames ?? [])
       for (const callback of row.callbacks) joinedExports.add(callback.externalName);

@@ -36,6 +36,7 @@ import {
 } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
+import { optionalChainReceiverType } from "../builtin-subclass-receiver.js";
 import { tupleStructFields } from "./spread-arguments-call.js";
 
 export function findExternInfoForMember(
@@ -58,13 +59,21 @@ export function findExternInfoForMember(
 
 // ── Extern method calls ──────────────────────────────────────────────
 
+const NATIVE_COLLECTION_CLASSES = new Set(["Map", "Set", "ReadonlyMap", "ReadonlySet"]);
+
 function compileExternMethodCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
-  const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  const declaredReceiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  // (#7395) `m?.get(k)` on `Map | undefined`: the present part of the receiver names the native Map / Set dispatch
+  // below. Other classes keep the declared type: their host fallback has no import for a narrowed name (`RegExp_test`).
+  const presentReceiverType = optionalChainReceiverType(propAccess, declaredReceiverType);
+  const receiverType = NATIVE_COLLECTION_CLASSES.has(presentReceiverType.getSymbol()?.name ?? "")
+    ? presentReceiverType
+    : declaredReceiverType;
   const declaredClassName = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
   // (#7058) `ReadonlyMap` / `ReadonlySet` are type-only VIEWS of the same
   // native `$Map` / `$Set` (JSDoc `@type {ReadonlyMap<…>}` on a `new Map(…)`,

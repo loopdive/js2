@@ -18,10 +18,11 @@
  * own direct read inside the values it stores (`x = x + 1`): if every other value is typed, so is that one.
  */
 import { ts } from "../ts-api.js";
-import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
-import { scriptVarWrites } from "./module-binding-script-var.js";
+import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
+import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 
 type Carries = (expression: ts.Expression) => boolean;
@@ -36,13 +37,14 @@ export interface SourceDynamicProvenance {
 /**
  * The provenance of a program, over its `startupSources` (see `irOwnedScriptVarHome`). Without a `dynamicCarrier`
  * on the lane no script `var` gets the dynamic home. `resultIsDynamic` is the unannotated-result contract, which
- * asks `carries` of each returned value.
+ * asks `carries` of each returned value; `parameterIsDynamic` the parameter contract.
  */
 export function sourceDynamicProvenance(
   checker: ts.TypeChecker,
   startupSources: readonly ts.SourceFile[],
   dynamicCarrier: boolean,
   resultIsDynamic: (declaration: ts.FunctionDeclaration, carries: Carries) => boolean,
+  parameterIsDynamic: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => boolean,
 ): SourceDynamicProvenance {
   const any = checker.getAnyType();
   const homes = new Map<IrModuleBindingDeclaration, IrScriptVarHome | undefined>();
@@ -64,34 +66,41 @@ export function sourceDynamicProvenance(
   const classify = irOwnedScriptVarHome(checker, startupSources, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
-  // from-ast is the authority on a local: it types the local from the value it is created with and refuses a
-  // later store of another type. So the local holds the dynamic value exactly when that first value may be it; a
-  // local without an initializer (a catch binding too) starts as `undefined`.
+  // from-ast is the authority on a local: it types the local from the value it is created with (or its syntactic
+  // annotation, never a JSDoc tag: `syntacticAnnotation`) and refuses a later store of another type. So an
+  // unannotated local holds the dynamic value exactly when that first value may be it; a local without an
+  // initializer (a catch binding too) starts as `undefined`.
   const localCarries = (declaration: ts.VariableDeclaration): boolean =>
     once(
       locals,
       declaration,
       true,
-      () => declaration.initializer === undefined || carries(declaration.initializer, declaration),
+      () =>
+        syntacticAnnotation(declaration) === undefined &&
+        (declaration.initializer === undefined || carries(declaration.initializer, declaration)),
     );
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
     if (declaration === undefined) return true;
     if (declaration === self) return false;
-    // An untyped or `any` parameter is checker `any` (above); an annotated one is typed by its annotation, and the
-    // flow rule checks every argument against it.
-    if (ts.isParameter(declaration)) return false;
+    // An untyped or `any` parameter is checker `any` (above); a syntactically annotated one is typed by its
+    // annotation, and the flow rule checks every argument against it. (#7354 W2) A JSDoc-tagged one is not: the
+    // parameter contract says whether it holds the dynamic value.
+    if (ts.isParameter(declaration))
+      return ts.isFunctionDeclaration(declaration.parent) && parameterIsDynamic(declaration.parent, declaration);
     if (!ts.isVariableDeclaration(declaration)) return true;
     // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` of the
     // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and
-    // the resolver refuses a dynamic store into it). Any other variable is a local.
-    if (isTopLevelStatementDeclaration(declaration)) return scriptVarHome(declaration) === "dynamic";
+    // the resolver refuses a dynamic store into it). (#7372) So is a script `var` nested in top-level code. Any
+    // other variable is a local.
+    if (isTopLevelStatementDeclaration(declaration) || isModuleInitVarList(declaration.parent))
+      return scriptVarHome(declaration) === "dynamic";
     return localCarries(declaration);
   };
   const callCarries = (call: ts.CallExpression): boolean => {
-    const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
-    if (callee === undefined || !ts.isFunctionDeclaration(callee) || callee.body === undefined) return true;
+    const callee = sourceFunctionCallee(checker, call);
+    if (callee === undefined) return true;
     return once(results, callee, true, () => resultIsDynamic(callee, (value) => carries(value)));
   };
   // Fail-closed: a kind not modelled here may be the dynamic value.
@@ -138,4 +147,21 @@ export function sourceDynamicProvenance(
     }
   };
   return { scriptVarHome, carries: (expression) => carries(expression) };
+}
+
+/**
+ * The source function declaration with a body that `call` calls directly, if any. (#7354 H2) A call of a rewritten
+ * declaration reads its binding, which may hold any value.
+ */
+export function sourceFunctionCallee(
+  checker: ts.TypeChecker,
+  call: ts.CallExpression,
+): ts.FunctionDeclaration | undefined {
+  const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
+  return callee !== undefined &&
+    ts.isFunctionDeclaration(callee) &&
+    callee.body !== undefined &&
+    !preparedBindingRewritten(checker, callee.name!)
+    ? callee
+    : undefined;
 }

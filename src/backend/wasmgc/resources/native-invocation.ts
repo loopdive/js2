@@ -8,7 +8,7 @@ import type {
   TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
-import { assertNativeInvocationRequirementsCurrent } from "../../../ir/program/native-invocation-requirements.js";
+import { assertNativeInvocationRequirementsIssued } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeObjectAccessRequirements } from "../../../ir/program/native-object-access-requirements.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
@@ -77,6 +77,8 @@ export interface NativeInvocationReservations {
     readonly extras: GlobalReservation;
   };
   readonly undefinedValue: FunctionReservation;
+  /** (#7354 C2) `js.closure.receiver`: the `__current_this` the dispatcher installed. */
+  readonly receiver?: FunctionReservation;
   readonly isUndefined: FunctionReservation;
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
@@ -117,7 +119,7 @@ function authenticate(
   const selected = substrateSelection(dependencies);
   if (selected.value !== undefined)
     requireNativeInvocationSubstrateReservations(tx, selected.value, substrateDependencies(dependencies));
-  assertNativeInvocationRequirementsCurrent(requirements);
+  assertNativeInvocationRequirementsIssued(requirements);
   if (requirements.gaps.length) fail(requirements.gaps.map((gap) => `${gap.unitId}: ${gap.detail}`).join("; "));
   requireNativeSourceClosureTypes(tx, dependencies.source, requirements.source);
   requireNativeValueReservations(tx, dependencies.values, dependencies.valuePlan, dependencies.valueDependencies);
@@ -201,6 +203,7 @@ export function reserveNativeInvocationResources(
   tx.assertReservationKeysAvailable([
     ...(borrowedSubstrate.value === undefined ? substratePlan.reservationKeys : []),
     ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
+    ...(requirements.receiver ? [key("receiver")] : []),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
   ]);
@@ -227,6 +230,9 @@ export function reserveNativeInvocationResources(
     params: [],
     results: [{ kind: "externref" }],
   });
+  const receiver = requirements.receiver
+    ? tx.reserveFunction(key("receiver"), "__closure_receiver", { params: [], results: [{ kind: "externref" }] })
+    : undefined;
   const isUndefined = tx.reserveFunction(key("is-undefined"), "__closure_is_undefined", {
     params: [{ kind: "externref" }],
     results: [{ kind: "i32" }],
@@ -255,6 +261,7 @@ export function reserveNativeInvocationResources(
     errors,
     globals,
     undefinedValue,
+    ...(receiver ? { receiver } : {}),
     isUndefined,
     methods,
     ...(applyVector ? { applyVector } : {}),
@@ -272,6 +279,7 @@ export function reserveNativeInvocationResources(
         ? nativeInvocationSubstrateReservationInventory(tx, substrate).functions
         : []),
       undefinedValue,
+      ...(receiver ? [receiver] : []),
       isUndefined,
       ...methods.map((row) => row.function),
       ...(applyVector ? [applyVector] : []),
@@ -323,6 +331,19 @@ export function nativeInvocationGetterDispatch(
   return selected[0]!.function;
 }
 
+/** (#7354 O2) The dispatchers the realm calls a source getter (arity 0) and setter (arity 1) through, if it may. */
+export function nativeInvocationAccessorCalls(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+): { readonly get: FunctionReservation; readonly set: FunctionReservation } | undefined {
+  requireNativeInvocationReservations(tx, pack);
+  if (!pack.requirements.realmAccessors) return undefined;
+  const method = (arity: number) => pack.methods.find((row) => row.arity === arity)?.function;
+  const [get, set] = [method(0), method(1)];
+  if (!get || !set) fail("realm accessor calls lack their method reservations");
+  return Object.freeze({ get, set });
+}
+
 export function nativeInvocationFunctions(
   tx: PhysicalModuleReservations,
   pack: NativeInvocationReservations,
@@ -336,7 +357,7 @@ function entries(
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  return callables.entries.map((row) => {
+  const arms = callables.entries.map((row): NativeClosureMethodEntry => {
     const info = row.signature.info;
     const booleanResult =
       objectResultIsBoolean(row.source.closureSubtype?.signature.returnType) &&
@@ -371,14 +392,30 @@ function entries(
           },
     };
   });
+  // (#7354 F2) An arm is a function of its types alone (it calls through the closure's own funcref): its allocation,
+  // self and lifted function types, which fix its parameters, and whether its result is boxed as a Boolean. Closures
+  // with the same key share one arm, so a dispatcher over every source closure (a call through a dynamic value) grows
+  // with the program's signatures, not with its closures.
+  const seen = new Set<string>();
+  return arms.filter((arm) => {
+    const boolean = arm.result.kind === "value" && arm.result.boxBoolean !== undefined;
+    const key = `${arm.allocationTypeIdx}:${arm.selfTypeIdx}:${arm.funcTypeIdx}:${boolean}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-/** Bodies are shared canonical recipes; only the existing unit owner supplies lifted slots. */
+/**
+ * Bodies are shared canonical recipes; only the existing unit owner supplies lifted slots. (#7354 P1)
+ * `builtinMethods`: the realm holds built-in methods a program can call through a value (`ClosureInvocationFailure`).
+ */
 export function fillNativeInvocationResources(
   tx: PhysicalModuleReservations,
   pack: NativeInvocationReservations,
   callables: NativeSourceClosureCallables,
   exception: TagReservation | TagImportReservation,
+  builtinMethods = false,
 ): void {
   const owner = requireOwner(tx, pack);
   if (owner.filled) fail("duplicate fill");
@@ -415,6 +452,7 @@ export function fillNativeInvocationResources(
       literal.kind === "global"
         ? { kind: "global" as const, index: tx.physicalIndex(literal.global) }
         : { kind: "callable" as const, handle: literal.function.handle },
+    ...(builtinMethods || pack.requirements.realmAccessors ? { builtinRootTypeIdx: owner.layout.rootTypeIdx } : {}),
   };
   if (owner.borrowedSubstrate.value === undefined) fillNativeInvocationSubstrateResources(tx, owner.substrate);
   else requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
@@ -425,6 +463,8 @@ export function fillNativeInvocationResources(
     locals: [],
     body: [{ op: "global.get", index: state.undefinedGlobal }, { op: "extern.convert_any" }],
   });
+  if (pack.receiver)
+    tx.fillFunction(pack.receiver, { locals: [], body: [{ op: "global.get", index: state.currentThis }] });
   tx.fillFunction(pack.isUndefined, {
     locals: [],
     body: buildClosureUndefinedTest(0, values.types.anyValue.typeIndex),

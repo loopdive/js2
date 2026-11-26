@@ -169,7 +169,6 @@ import { collectErrorInstanceOfTags, ERROR_FAMILY_CTOR_NAMES } from "./builtin-t
 import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) closure → prototype identity edge
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { getWellKnownSymbolId } from "./literals.js"; // (#6651 I2) @@hasInstance id
 import { moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js"; // (#6651 I2)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
@@ -179,6 +178,7 @@ import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -1281,7 +1281,7 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
 
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
-  const hasInstanceId = getWellKnownSymbolId("hasInstance");
+  const hasInstanceId = wellKnownSymbolId("hasInstance");
   if (
     externGetIdx === undefined ||
     boxSymbolIdx === undefined ||

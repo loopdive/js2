@@ -7,6 +7,7 @@ import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
   buildBoxNumberType,
   buildBoxBooleanType,
+  buildExternRefTestBody,
   buildToBooleanBody,
   buildToBooleanLocals,
 } from "../../runtime/wasmgc/values/primitive-layouts.js";
@@ -1170,19 +1171,7 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   //     for wasi) strings are NativeString structs at `ctx.anyStrTypeIdx`.
   //     If that type isn't registered, return 0 (no string in scope).
   if (ctx.anyStrTypeIdx >= 0) {
-    const strTypeIdx = ctx.anyStrTypeIdx;
-    registerNative("__typeof_string", externrefToI32, [
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: strTypeIdx },
-    ]);
+    registerNative("__typeof_string", externrefToI32, buildExternRefTestBody(ctx.anyStrTypeIdx));
   } else {
     registerNative("__typeof_string", externrefToI32, [{ op: "i32.const", value: 0 }]);
   }

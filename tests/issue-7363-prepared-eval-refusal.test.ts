@@ -13,6 +13,7 @@ import { irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { ts } from "../src/ts-api.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+import { agreesWithNode } from "./helpers/prepared-node-agreement.js";
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -28,12 +29,19 @@ const options = {
 const INVARIANT = "certified global eval lost an owning predicate";
 const refusal = (owner: string) => `ir/from-ast: eval statement has no eval provider in ${owner}`;
 const ordinaryCall = (owner: string) => `ir/from-ast: direct call to "eval" has no exact AST-site plan in ${owner}`;
-const DYNAMIC_CALL = "dynamic operation __ir_dyn_call_argument has no Prepared intrinsic";
+// (#7354 F2) A call through the catch binding: no function value in the program, so always the TypeError.
+const DYNAMIC_CALL =
+  "dynamic operation js.closure.call:1 in a program that creates no function value has no Prepared intrinsic";
 const PATTERN = "whole-program binding pattern requires the existing destructuring producer";
 
-/** The compile's refusals. The checker's remarks on a binding named `eval` are warnings and are left out. */
+/**
+ * The compile's refusals. The checker's remarks on a binding named `eval` are warnings and are left out. (#7354 U)
+ * Without abort bodies, under which an eval refused inside a function becomes that function's abort body.
+ */
 const gaps = async (source: string) =>
-  (await compile(source, options)).errors.filter((error) => error.severity === "error").map((error) => error.message);
+  (await compile(source, options, undefined, "refuse")).errors
+    .filter((error) => error.severity === "error")
+    .map((error) => error.message);
 
 describe("#7363 slice 1 — an eval statement on the Prepared path refuses by name", () => {
   // A top-level literal that declares nothing is a called source since #7363 A2: still refused, with its own label.
@@ -54,7 +62,8 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["the indirect (0, eval) spelling", '(0, eval)("1");', "<module-init>"],
     // Not lexical: what the global binding holds when the call runs is slice 2's question.
     ["a write through globalThis", 'function f() { eval("1"); }\nglobalThis.eval = function (x) { return x; };', "f"],
-    ["a write through this", 'function f() { eval("1"); }\nthis.eval = function (x) { return x; };\nf();', "f"],
+    // (#7354 C2) "a write through this" (`this.eval = …` beside `f()`) now refuses first at the receiverless direct
+    // call of f, which reads `this` through the eval.
     // A binding in a scope that does not enclose the call.
     ["another function's parameter", 'function f() { eval("1"); }\nfunction g(eval) { return eval; }', "f"],
     ["another function's inner function", 'function f() { eval("1"); }\nfunction g() { function eval() {} }', "f"],
@@ -79,7 +88,7 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["a hoisted local var", 'function f() { eval("1"); var eval = 1; }', ordinaryCall("f")],
     ["a block function, for its function", 'function f() { eval("1"); { function eval() {} } }', ordinaryCall("f")],
     ["a block function, for its file", 'function f() { eval("1"); }\n{ function eval() {} }', ordinaryCall("f")],
-    ["a parameter", 'function f(eval) { eval("1"); }\nf(function (v) { return v; });', DYNAMIC_CALL],
+    ["a parameter", 'function f(eval) { eval("1"); }\nf(1);', DYNAMIC_CALL],
     [
       "a destructured parameter",
       'function f({ eval }) { eval("1"); }\nf({ eval: 1 });',
@@ -100,13 +109,13 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["a block const", '{ const eval = 1; eval("1"); }', ordinaryCall("<module-init>")],
     ["a loop head let", 'function f() { for (let eval = 0; eval < 1; eval++) { eval("1"); } }', ordinaryCall("f")],
     ["a switch let", 'function f() { switch (1) { case 1: let eval = 1; default: eval("1"); } }', ordinaryCall("f")],
-    [
-      "a named function expression",
-      '(function eval() { eval("1"); })();',
-      "ir/from-ast: only direct calls supported in Phase 2 (<module-init>)",
-    ],
   ])("does not take %s for the global eval", async (_label, source, gap) => {
     expect(await gaps(source)).toEqual([gap]);
+  });
+
+  // (#7354 T) The IIFE used to refuse as a call through a value; now it runs, and `eval` is the expression itself.
+  it("does not take a named function expression for the global eval", async () => {
+    await agreesWithNode("var d = 0;\n(function eval(x) { d = d + x; if (d < 3) eval(1); })(1);\nvar out = 'd' + d;");
   });
 
   // `class eval` is a SyntaxError (class code is strict), which the front end reports before any lowering.

@@ -65,7 +65,16 @@ export function planHostAsyncDynamicUnits(
     const facts = dynamicFunctionFacts(fn);
     if (!facts.types.length) continue;
     const reject = (detail: string) => gaps.push({ unitId: fn.unitId, detail });
-    if (projection.backend !== "wasmgc" || projection.target !== "host" || !candidates.has(fn.unitId)) {
+    // (#7354 O1) Off the host lane only the source's dynamic contracts give a dynamic value its carrier
+    // (`source-dynamic-contracts.ts`): one that reaches here, such as an unplanned member read, had none.
+    if (projection.target !== "host") {
+      const operation = facts.instructions.find((instruction) => instruction.kind.startsWith("dyn."));
+      reject(
+        `body ${fn.name} keeps ${operation ? `dynamic operation ${operation.kind}` : "a dynamic value"} that no dynamic contract legalized`,
+      );
+      continue;
+    }
+    if (projection.backend !== "wasmgc" || !candidates.has(fn.unitId)) {
       reject(`body ${fn.name} has no accepted host async dynamic carrier`);
       continue;
     }

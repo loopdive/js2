@@ -51,7 +51,6 @@ import {
   MATCH_VEC_FIELD_INDICES,
   MATCH_VEC_FIELD_INPUT,
   MATCH_VEC_FIELD_GROUPS,
-  REGEX_ANCHORED_LITERAL_ALTS_MARKER,
   REGEX_UNSUPPORTED_DYNAMIC_PATTERN,
   regexI32ArrayType,
 } from "./native-regex.js";
@@ -59,7 +58,6 @@ import { buildIndexedAnchoredLiteralAltProgram } from "./regex-anchored-alt-inde
 import {
   type CompiledRegex,
   parseFlags,
-  ReOp,
   RegexUnsupportedError,
   RE_FLAG_D,
   RE_FLAG_G,
@@ -97,7 +95,22 @@ import { nativeStringRepr } from "./builtin-scaffold.js";
 import { emitRegExpProtoToStringBody } from "./regexp-proto-to-string.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, registerStructType } from "./registry/types.js";
+import { REGEX_ANCHORED_LITERAL_ALTS_MARKER, ReOp } from "../runtime/contracts/regexp-bytecode.js";
+import {
+  buildNativeRegExpType,
+  NATIVE_REGEXP_STRUCT_NAME,
+  RE_FIELD_CLASS_TABLE,
+  RE_FIELD_FLAGS,
+  RE_FIELD_LASTINDEX,
+  RE_FIELD_LASTINDEX_NONWRITABLE,
+  RE_FIELD_LASTINDEX_RAW,
+  RE_FIELD_LASTINDEX_RAW_PRESENT,
+  RE_FIELD_NGROUPS,
+  RE_FIELD_NSCRATCH,
+  RE_FIELD_PROG,
+  RE_FIELD_SOURCE,
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
 import {
   STANDALONE_REGEXP_CARRIER_TEST_HELPER,
   STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
@@ -115,7 +128,6 @@ import {
   fileMentionsSymbolMatch,
   fileObservesRegExpExecProtocol,
 } from "./regexp-symbol-protocol-call.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import { hostRegExpRegisterInstrs } from "./helpers/host-regexp-search.js";
 import {
@@ -130,6 +142,7 @@ import {
   TOKEN_STAR,
   TOKEN_UNSUPPORTED,
 } from "./regexp-dynamic-pattern.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
 
@@ -223,7 +236,6 @@ export function usesNativeRegExpProvider(ctx: CodegenContext): boolean {
   return hasStandaloneRegExpEngine(ctx);
 }
 
-const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
 // g/i/y from Phase 2a, m/s from 2c, d/u/v from 2d (#1911 — `d` does not
 // change MATCHING semantics; the `.indices` result surface is #1914's lane;
 // u/v code-point atoms resolve via compile-time host enumeration, Slice B).
@@ -1028,43 +1040,6 @@ export function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression)
 }
 
 /**
- * The `$NativeRegExp` struct (#1539). Holds the flags bitfield, the
- * capture-group count, the compiled bytecode program, the class table, and the
- * source pattern string. Field order is load-bearing — codegen reads by
- * `fieldIdx`.
- *
- * NOTE: field[1] must NOT be a ref-to-array. `getArrTypeIdxFromVec` (in
- * registry/types.ts) is a *structural* heuristic that classifies any struct
- * whose field[1] is a ref-to-array as a "vec struct", which makes
- * `coerceType` ref→externref attach `__make_iterable` (a JS host import). With
- * the array fields at slots 0/1 that misfires and breaks standalone purity
- * (#682's struct dodged this by having `flags:i32` at field[1]); putting the
- * i32 scalars first keeps the struct off that heuristic.
- */
-export const RE_FIELD_FLAGS = 0;
-export const RE_FIELD_NGROUPS = 1;
-export const RE_FIELD_PROG = 2;
-export const RE_FIELD_CLASS_TABLE = 3;
-export const RE_FIELD_SOURCE = 4;
-export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guards
-// (#4439) Exported for the reflective `String.prototype.match` body, which must
-// resolve the `g` flag and reset `lastIndex` at RUNTIME — the borrowed form has
-// no regex EXPRESSION for `staticRegExpFlags` to read.
-export const RE_FIELD_LASTINDEX = 6;
-// Keep the legacy f64 slot for the common numeric fast path, but preserve a
-// non-numeric assignment opaquely until g/y exec applies ToLength. This mirrors
-// the host lane's deferred-lastIndex contract without widening every existing
-// numeric reflection site.
-export const RE_FIELD_LASTINDEX_RAW = 7;
-export const RE_FIELD_LASTINDEX_RAW_PRESENT = 8;
-// (#6651 B6) [[Writable]] of the own `lastIndex` data property, inverted so a
-// fresh carrier's default `0` is the spec's `writable: true` (§22.2.3.3). Set
-// only by `Object.defineProperty(re, "lastIndex", {writable: false})`; read by
-// the runtime `[[Set]]` arms in `regexp-lastindex-carrier.ts`. `$`-prefixed so
-// the closed-struct ladders never expose it as a property.
-export const RE_FIELD_LASTINDEX_NONWRITABLE = 9;
-
-/**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
  * reading both fields from a `$NativeRegExp` struct local (#1959). The caps
  * array carries the real capture slots plus the scratch slots that back
@@ -1129,44 +1104,10 @@ export function escapeRegExpPattern(pattern: string): string {
 }
 
 export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
-  const existing = ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+  const existing = ctx.structMap.get(NATIVE_REGEXP_STRUCT_NAME);
   if (existing !== undefined) return existing;
-
-  const i32ArrIdx = regexI32ArrayType(ctx);
-  const i32ArrRef: ValType = { kind: "ref", typeIdx: i32ArrIdx };
-  const typeIdx = ctx.mod.types.length;
-  // (#5142) The pattern fields are MUTABLE: Annex B §B.2.4.1
-  // `RegExp.prototype.compile` recompiles a regexp IN PLACE, so the receiver's
-  // program / flags / source have to be replaceable on an existing struct.
-  // There is exactly one `$NativeRegExp` heap type and nothing reads it through
-  // a subtype, so widening mutability is additive.
-  const fields = [
-    { name: "flags", type: { kind: "i32" } as ValType, mutable: true },
-    { name: "nGroups", type: { kind: "i32" } as ValType, mutable: true },
-    { name: "prog", type: i32ArrRef, mutable: true },
-    { name: "classTable", type: i32ArrRef, mutable: true },
-    { name: "source", type: nativeStringType(ctx), mutable: true },
-    // Scratch capture-slot count for PROGRESS empty-loop guards (#1959). The VM
-    // caps array is sized `2*nGroups + nScratch`; scratch slots are never
-    // reported as captures. Field added after source to keep lastIndex last.
-    { name: "nScratch", type: { kind: "i32" } as ValType, mutable: true },
-    // [[LastIndex]] (§22.2.7.1) — keep the numeric slot for the hot path, and
-    // pair it with an opaque raw value/presence bit for deferred ToLength of
-    // object assignments (`re.lastIndex = {valueOf(){...}}`).
-    { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
-    { name: "lastIndexRaw", type: { kind: "externref" } as ValType, mutable: true },
-    { name: "lastIndexRawPresent", type: { kind: "i32" } as ValType, mutable: true },
-    { name: "$lastIndexNonWritable", type: { kind: "i32" } as ValType, mutable: true },
-  ];
-  ctx.mod.types.push({
-    kind: "struct",
-    name: STANDALONE_REGEXP_STRUCT_NAME,
-    fields,
-  });
-  ctx.structMap.set(STANDALONE_REGEXP_STRUCT_NAME, typeIdx);
-  ctx.typeIdxToStructName.set(typeIdx, STANDALONE_REGEXP_STRUCT_NAME);
-  ctx.structFields.set(STANDALONE_REGEXP_STRUCT_NAME, fields);
-  return typeIdx;
+  const layout = buildNativeRegExpType(regexI32ArrayType(ctx), ctx.anyStrTypeIdx);
+  return registerStructType(ctx, layout.name, layout.fields);
 }
 
 /**
@@ -3060,7 +3001,7 @@ function isStandaloneRegExpValue(
   valueType: ValType | null,
 ): valueType is ValType & { typeIdx: number } {
   if (!valueType || (valueType.kind !== "ref" && valueType.kind !== "ref_null")) return false;
-  return valueType.typeIdx === ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+  return valueType.typeIdx === ctx.structMap.get(NATIVE_REGEXP_STRUCT_NAME);
 }
 
 /**
@@ -5047,7 +4988,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
       subject === undefined ||
       !isStringLikeArg(ctx, subject) ||
       (limit !== undefined && (regExpArgType(ctx, limit).flags & ts.TypeFlags.NumberLike) === 0);
-    const splitId = getWellKnownSymbolId("split");
+    const splitId = wellKnownSymbolId("split");
     if (observed && splitId !== undefined) {
       ensureRegExpNativeProtoGlue(ctx);
       const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, splitId);
@@ -5066,7 +5007,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
       subject === undefined ||
       replacement === undefined ||
       !isStringLikeArg(ctx, subject);
-    const replaceId = getWellKnownSymbolId("replace");
+    const replaceId = wellKnownSymbolId("replace");
     if (observed && replaceId !== undefined) {
       ensureRegExpNativeProtoGlue(ctx);
       const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, replaceId);
@@ -5092,7 +5033,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
     const observed = fileObservesRegExpExecProtocol(expr) || !isStringLikeArg(ctx, strExpr);
     if (observed) {
       ensureRegExpNativeProtoGlue(ctx);
-      const symbolId = getWellKnownSymbolId(symbolMethod);
+      const symbolId = wellKnownSymbolId(symbolMethod);
       if (symbolId !== undefined) {
         const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, [strExpr], symbolId);
         if (routed !== undefined) return routed;
@@ -5297,6 +5238,29 @@ export function emitStandaloneRegExpToStringFromExpr(
   acc = repr.concat(acc, flagsInstrs);
   for (const instr of acc) fctx.body.push(instr);
   return repr.resultType;
+}
+
+/**
+ * `re.exec(s)`, `re.test(s)`, `re.toString()` and `re.compile(p, f)` (#5142, Annex B §B.2.4.1) on a RegExp receiver,
+ * through the native provider. Shared by the plain call path and `re?.m(…)` (#7395), which must not reach the
+ * generic receiver ladder: it has no RegExp arm and would ask the host for `RegExp_test`.
+ */
+export function tryCompileStandaloneRegExpMethod(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): InnerResult | undefined {
+  for (const arm of [
+    tryCompileStandaloneRegExpExec,
+    tryCompileStandaloneRegExpTest,
+    tryCompileStandaloneRegExpToString,
+    tryCompileStandaloneRegExpCompile,
+  ]) {
+    const result = arm(ctx, fctx, expr, propAccess);
+    if (result !== undefined) return result;
+  }
+  return undefined;
 }
 
 export function tryCompileStandaloneRegExpToString(
@@ -5695,7 +5659,7 @@ export function ensureStandaloneRegExpToStringDyn(ctx: CodegenContext): number |
   const existing = ctx.funcMap.get(STANDALONE_REGEXP_TO_STRING_DYN);
   if (existing !== undefined) return existing;
   if (!usesNativeRegExpProvider(ctx)) return undefined;
-  const structTypeIdx = ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+  const structTypeIdx = ctx.structMap.get(NATIVE_REGEXP_STRUCT_NAME);
   if (structTypeIdx === undefined) return undefined;
   const repr = nativeStringRepr(ctx);
   if (repr === undefined || ctx.anyStrTypeIdx < 0) return undefined;
@@ -5762,7 +5726,7 @@ export function ensureStandaloneRegExpCarrierToStringHelper(ctx: CodegenContext)
 
 /** (#4465) The `$__StandaloneRegExp` struct type index, when the module has one. */
 export function standaloneRegExpStructTypeIdx(ctx: CodegenContext): number | undefined {
-  return ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+  return ctx.structMap.get(NATIVE_REGEXP_STRUCT_NAME);
 }
 
 // ── #2175 S1: RegExp builtin-prototype glue ───────────────────────────────────

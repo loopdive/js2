@@ -30,9 +30,10 @@
         "src/shared/contracts/ir-counted-string-site-id.ts",
         "src/shared/contracts/string-surrogate.ts",
         "src/shared/contracts/linear-memory-layout.ts",
-        "src/shared/contracts/f64-value-markers.ts"
+        "src/shared/contracts/f64-value-markers.ts",
+        "src/shared/contracts/prepared-validation.ts"
       ],
-      "minModules": 11
+      "minModules": 12
     },
     {
       "id": "wasm-model",
@@ -278,9 +279,10 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
-        "src/runtime/contracts/well-known-symbols.ts"
+        "src/runtime/contracts/well-known-symbols.ts",
+        "src/runtime/contracts/regexp-bytecode.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "backend-wasmgc",
@@ -326,6 +328,7 @@
         "src/backend/wasmgc/resources/native-prototype-layouts.ts",
         "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
         "src/backend/wasmgc/resources/native-object-get.ts",
+        "src/backend/wasmgc/resources/native-source-objects.ts",
         "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
@@ -364,10 +367,13 @@
         "src/runtime/wasmgc/values/string-layouts.ts",
         "src/runtime/wasmgc/values/string-literal-bodies.ts",
         "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/emit-idioms.ts",
+        "src/runtime/wasmgc/values/json-bodies.ts",
         "src/runtime/wasmgc/values/primitive-layouts.ts",
         "src/runtime/wasmgc/values/number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-grammar.ts",
         "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/parse-number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-bodies.ts",
         "src/runtime/wasmgc/values/string-to-bigint-body.ts",
         "src/runtime/wasmgc/values/string-flatten-bodies.ts",
@@ -417,6 +423,11 @@
         "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+        "src/runtime/wasmgc/values/source-object-bodies.ts",
+        "src/runtime/wasmgc/values/kernel-get-body.ts",
+        "src/runtime/wasmgc/values/source-function-object-bodies.ts",
+        "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
+        "src/runtime/wasmgc/values/object-static-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -451,9 +462,13 @@
         "src/runtime/wasmgc/values/realm-object-layouts.ts",
         "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
-        "src/runtime/wasmgc/values/number-from-value-body.ts"
+        "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "src/runtime/wasmgc/values/regexp-carrier-layouts.ts",
+        "src/runtime/wasmgc/values/regexp-vm-arms.ts",
+        "src/runtime/wasmgc/values/regexp-vm-bodies.ts",
+        "src/runtime/wasmgc/values/regexp-search-body.ts"
       ],
-      "minModules": 99
+      "minModules": 103
     },
     {
       "id": "standalone-platform",
@@ -1867,6 +1882,21 @@
       "layer": "ir-analysis",
       "entries": ["src/ir/analysis/contracts/linear-memory-layout.ts", "src/ir/analysis/backend-legality.ts"],
       "minModules": 14
+    },
+    {
+      "layer": "runtime-contracts",
+      "entries": ["src/runtime/contracts/regexp-bytecode.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/regexp-carrier-layouts.ts",
+        "src/runtime/wasmgc/values/regexp-vm-arms.ts",
+        "src/runtime/wasmgc/values/regexp-vm-bodies.ts",
+        "src/runtime/wasmgc/values/regexp-search-body.ts"
+      ],
+      "minModules": 4
     }
   ],
   "nonModules": [
@@ -1993,6 +2023,46 @@
     }
   ],
   "files": [
+    {
+      "path": "src/ir/switch-case-tests.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend switch case-test admission shared by the selector and from-ast; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/identifier-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/function-declaration-values.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend function declarations read as values (the walk, their startup homes and module-init trampolines); moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/program-source-direct-calls.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend direct-call plans of top-level code and closures for the Prepared source producer; moves with program-source's frontend half."
+    },
+    {
+      "path": "src/ir/describe-ir-type.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Debug rendering of an IrType for from-ast's and the function-object lowering's refusal texts; moves with from-ast's frontend half."
+    },
     {
       "path": "src/ir/function-object-lowering.ts",
       "state": "unmigrated",
@@ -2161,6 +2231,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/parse-number-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/string-number-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -2191,7 +2266,22 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/ir/program/issued-packs.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-value-resources.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/settled-verdict.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-allocations.ts",
       "state": "clean",
       "layer": "ir-program"
     },
@@ -2232,6 +2322,16 @@
     },
     {
       "path": "src/runtime/wasmgc/values/error-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/emit-idioms.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/json-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -2312,6 +2412,21 @@
     },
     {
       "path": "src/shared/contracts/in-operator-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-call-helpers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/settled-verdict.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -2759,6 +2874,14 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
+    },
+    {
+      "path": "src/checker/well-known-symbol-keys.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Source-key recovery for symbol-keyed properties (#7410); isolate the compiler-library identity dependency (checker/index.ts) with the other library-identity users before certifying the frontend boundary."
     },
     {
       "path": "src/cjs-rewrite.ts",
@@ -5301,14 +5424,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/emit-idioms.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
       "path": "src/codegen/empty-vec-store.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5491,6 +5606,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/var-non-closure-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Scan of a var's writes for a value other than a closure or nullish, steering legacy's identifier-call routes (#7334); move into a frontend analysis module once it no longer needs CodegenContext."
     },
     {
       "path": "src/codegen/expressions/call-namespace-static.ts",
@@ -6589,7 +6712,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/function-expected-argument-count.ts",
+      "path": "src/shared/function-expected-argument-count.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6814,14 +6937,6 @@
     },
     {
       "path": "src/codegen/helpers/arguments-registration.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/helpers/body-references-own-this.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -11588,6 +11703,11 @@
       "layer": "wasm-emit"
     },
     {
+      "path": "src/emit/debug-names.ts",
+      "state": "unmigrated",
+      "layer": "wasm-emit"
+    },
+    {
       "path": "src/emit/encoder.ts",
       "state": "unmigrated",
       "layer": "wasm-emit"
@@ -13195,6 +13315,14 @@
       "nextBoundary": "TypeScript-AST plan plus builder lowering of the JS environment's `Object.create({}, { <literal data descriptors> })`, shared by the selector and from-ast (#7276); folds into the #7338 statics table when that environment adopts it."
     },
     {
+      "path": "src/ir/regexp-literal-admission.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7364",
+      "nextBoundary": "TypeScript-AST rule for which static RegExp constructions a lane builds, shared by the selector and from-ast (#7364); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/object-statics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13257,6 +13385,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
+      "path": "src/shared/body-references-own-this.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Pure-AST question whether a function reads its own `this`, shared by codegen's receiver plumbing and the Prepared path's `this` binding (#7354 C2); becomes a frontend fact when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/shared/named-evaluation.ts",
@@ -13755,7 +13891,7 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/property-key-fold.ts",
+      "path": "src/shared/property-key-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -14553,6 +14689,16 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/prepared-validation.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-program-errors.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-identity.ts",
       "state": "clean",
       "layer": "foundation"
@@ -14718,6 +14864,11 @@
     },
     {
       "path": "src/wasm/physical/owned-function-data.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/validate-module.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -15229,6 +15380,31 @@
     },
     {
       "path": "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/source-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/kernel-get-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/source-function-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-static-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -16623,6 +16799,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-source-objects.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
@@ -16958,6 +17139,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/prepared-validator.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/backend/wasmgc/lowering/dynamic-scratch.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
@@ -17004,6 +17190,14 @@
       "nextBoundary": "Separate strict Test262 request capture and frontend analysis from prepared-program orchestration and optional legacy API delegation before compiler-layer activation."
     },
     {
+      "path": "src/test262/prepared-dead-bindings.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Moves with the strict Test262 frontend analysis it serves: a source-text pre-pass over frontend diagnostics, before compiler-layer activation."
+    },
+    {
       "path": "src/test262/test262-prepared-runtime.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17028,12 +17222,44 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-code-strictness.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The code strictness the compiler hands the Prepared source producer (#7354 O3), read from codegen's isStrictContext so src/ir imports no codegen helper; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
+      "path": "src/compiler/prepared-formatter-census.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The number formatter's part of the Prepared provider census (#7354 Str2-c): joins the formatter setup, scratch, adapter provider and runtime-support batch to their canonical declarations; moves with prepared-provider-census.ts at compiler-layer activation."
+    },
+    {
       "path": "src/ir/source-dynamic-contracts.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "7354",
       "nextBoundary": "Checker-certified `any` parameter/result contracts of the Prepared source producer (#7354 D1); moves with program-source.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/abort-bodies.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "Abort bodies of the Prepared source producer (#7354 U): AST ownership of a refusal and the retry record; moves with program-source.ts under frontend/ts, the one-block body builder with from-ast's IR half."
+    },
+    {
+      "path": "src/ir/program-source-units.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "The per-unit body producer moved out of prepareIrProgramSources (#7354 U); moves with program-source.ts under frontend/ts."
     },
     {
       "path": "src/ir/function-returns.ts",
@@ -17053,6 +17279,115 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-carrier-types.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/function-value-projection.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-chains.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-kinds.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-gap.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-member-access.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-function-operations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-statics.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-prototype-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-error-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-realm-families.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-family-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/builtin-global-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/realm-static-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source recognition of a native Object static's call form (#7354 O1) beside its symbolic helper call; the TypeScript half moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/program/builtin-prototype-keys.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-realm-calls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/ordinary-to-primitive.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/source-plain-objects.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "The checker-and-source predicate whether a Prepared program's objects are plain (#7354 O2): which literals and member writes could change ToPrimitive or a built-in prototype; moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/program/number-to-string-target.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/typeof-comparisons.ts",
       "state": "clean",
       "layer": "ir-program"
     },
@@ -17311,6 +17646,31 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/runtime/contracts/regexp-bytecode.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-carrier-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-vm-arms.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-vm-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-search-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     }
   ]
 }

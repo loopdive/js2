@@ -1,10 +1,11 @@
 ---
 id: 7360
 title: "`x ?? 7` with `x: number | undefined` returns NaN for `undefined` on the ordinary pipeline"
-status: ready
+status: done
 sprint: current
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-19
+completed: 2026-11-19
 priority: high
 horizon: s
 feasibility: medium
@@ -55,3 +56,86 @@ not in Phase 1 IR scope (f)` for `x?: number`).
 - The four shapes answer like node on both targets; a parameter, a local and a property of type
   `number | undefined` under `??`, `??=` and `?.`-adjacent forms are swept.
 - No change for a plain `number` operand of `??` (its bytes stay identical).
+
+## Implementation Plan (2026-11-19)
+
+Legacy codegen only (no `src/ir/` change; the IR paths refuse these shapes, see above).
+
+- **Owner of the fact.** `src/codegen/value-tags.ts` already owns the f64 `undefined` representation
+  (`UNDEF_F64_BITS`, `pushUndefF64`, `emitIsUndefF64`). Add one predicate there, `f64MayHoldUndefined(ctx, expr,
+  type)`: the Wasm type is f64 and either carries the `undefSentinel` brand or `ctx.oracle.nullabilityOf(expr)` says
+  the static type admits `undefined`.
+- **Three nullish tests ask it, none adds its own test:** `compileNullishCoalescing` (`??`,
+  `expressions/logical-ops.ts`) and both `??=` arms of `expressions/operator-assignment.ts` (the variable arm and
+  `emitLogicalAssignmentPattern`, which now takes its target expression, as every caller already had it). Each
+  emits `emitIsUndefF64` instead of folding an f64 to "never nullish". The bits compare is exact, so an ordinary NaN
+  (`0 / 0`, `NaN`) stays a number; a NaN read from data with the sentinel's exact bits does not (#7367). `===`/`==` (`binary-ops.ts`) and `typeof` already tested the sentinel and are unchanged.
+- **Duplicate removed.** `??` and the variable `??=` arm each spelled out the same reference nullish test
+  (`ref.is_null` or `__extern_is_undefined`); it is now one helper, `emitRefIsNullish` in `logical-ops.ts`, used by
+  both (same bytes). The property `??=` arm tests `__extern_is_undefined` only for `externref` and stays as it is.
+- **Quality criterion.** One predicate, one emitter, reused at all three sites; no second sentinel test. A plain
+  `number` operand keeps the old short-circuit, so its bytes stay identical.
+- **#7361** (typeof from the operand's source type, IR `from-ast.ts`) has no fact on this path to reuse: its
+  `isValueVoid`/void-leaf split is an IR lowering detail, and legacy `typeof` over `number | undefined` already
+  answers correctly (swept below).
+
+## Result (2026-11-19, base `origin/main` ee3fcdd610)
+
+Before → after, both targets (node in brackets):
+
+| shape | before | after |
+| --- | --- | --- |
+| param `x ?? 7` (207) | NaN | 207 |
+| param `x ?? s()` with counter (10207) | NaN | 10207 |
+| param `x ??= 7` (207) | NaN | 207 |
+| optional property `o.a ?? 7` (207) | NaN | 207 |
+| `a: number \| undefined` property `?? 7` (207) | NaN | 207 |
+| optional property / class field `??=` (207) | — | 207 |
+| genuine `NaN` under `??`, `??=`, optional param | NaN (correct) | NaN (correct) |
+
+Already correct and kept: local copy, optional parameter, `number | null`, `number | null | undefined`, `o?.a ?? 7`,
+default parameter, `=== undefined`, `== null`, `typeof`, plain `number` under `??`.
+`tests/issue-7360-nullish-f64-undefined.test.ts`: 20 programs × gc/standalone, compared with node's answers.
+
+Byte identity: 100 test262 files (coalesce + logical-assignment + Array.prototype.map + `for`), gc and standalone,
+binary sha1 identical before/after (200/200).
+
+Nearby tests (`coalesce-operator`, `ir-nullish-coalesce`, `issue-4616/5197/5357/5366/7106`,
+`logical-assignment{,-property}`): 44 failures, the identical set on the base, so not caused by this change.
+
+### Left open (separate owner)
+
+An **uninitialised module global** `let g: number | undefined;` starts as `f64.const 0`
+(`module-global-registration.ts`), so `g === undefined` and `g ?? 7` read `0`. The nullish tests are right; the
+slot's initial value is wrong. A Wasm global initializer must be a constant expression, so the fix is either an
+exact-bits `f64.const` of `UNDEF_F64_BITS` or a module-init store; not taken here. Needs its own issue id
+(allocation was not available to this lane).
+
+## Review round 1 (RV7307, 2026-11-19, on 80908eb248)
+
+| finding | answer |
+| --- | --- |
+| 1 (must-fix) `x ?? "d"` / `{}` / `1n` / `true` lost the number: `nullishJoinCarrier` had no arm for an f64 left side, so the left arm was coerced into the right arm's type. | Fixed: an f64 left arm joins at `externref` (or at `$AnyValue` when that is the right arm), which boxes the number; booleans keep their boolean box. Tests: every right-hand kind (string, object, BigInt, boolean, null, number) × defined/undefined left, both targets. |
+| 2 (should-fix) `x! ?? 7`, `(x as number) ?? 7` stayed NaN. | Fixed: `f64MayHoldUndefined` also asks the operand under `skipOuterExpressions` (the shared peel from `shared/binding-writes.ts`, as #7361 uses). Tests for `x!`, `as`, parentheses, `satisfies`. |
+| 2 (should-fix) `x?.toFixed(1)` on `number \| undefined`. | Not fixed here: a different defect, already on main. `compileOptionalCallExpression` treats every non-reference receiver as nullish and returns `undefined` even for `x = 2` (also for `x?: number`). The predicate is the same, but the defined arm needs a method call on a value receiver held in a temp, which that module has no lowering for. Needs its own issue (id requested from the lead). |
+| 3 (should-fix) "a genuine NaN never matches the sentinel" is false. | Corrected in `value-tags.ts`, this file and the test header; filed as #7367 (DataView / Float64Array reads of the sentinel's bits). Not fixed here. |
+
+Also seen while testing finding 1, already on main: `b === 1n` with `b: number | bigint` folds to `false` (the
+value is a correct BigInt box; `typeof b` answers `"bigint"`). The BigInt test row therefore checks `typeof`.
+
+## Review round 2 (RV7307, 2026-11-19, on b210f2d40b)
+
+| finding | answer |
+| --- | --- |
+| `f64MayHoldUndefined` peels with `skipOuterExpressions` (`shared/binding-writes.ts`), not codegen's designated `skipTransparentExpressions`. | Switched. The two peel the same five wrappers (parentheses, `as`, `<T>x`, `satisfies`, `!`), so nothing else changes. `skipOuterExpressions` stays: `shared/intrinsic-prototype-writes.ts` and `binding-writes.ts` itself still use it. Folding the two helpers into one is a separate cleanup. |
+| `(x!) ??= 7` stays NaN for `undefined` (also on main). | Fixed, and it was not the predicate. `compileLogicalAssignment` chose its arm from the raw `expr.left`, so a wrapped target (`(x)`, `x!`, `(o.a!)`) matched no arm and reported "Logical assignment only supported for simple identifiers…". `compileExpressionBody` discards that diagnostic together with the body when an expression yields no value, and pushes a default instead. The statement compiled to `f64.const 0; drop`: no assignment at all, for `??=`, `\|\|=` and `&&=`, on any target type. It now peels the target once with `skipTransparentExpressions` and dispatches on what it wraps; the identifier arm hands that same node to `f64MayHoldUndefined`. Tests: `(x!)`, `(x)`, `x!` and `(o.a!)` under `??=`, defined / `undefined` / NaN input, both targets. |
+
+Not fixed here, same family, already on main:
+
+- `(x as number) ??= 7`: TypeScript accepts it; `isInvalidAssignmentTarget` (`compiler/early-errors/predicates.ts`)
+  peels only parentheses and `!`, so it is refused as "Invalid left-hand side in assignment". No test row.
+- `(x) += 1` and `(x!) = 5` are dropped the same silent way: `compileCompoundAssignment` peels nothing and
+  `compileAssignment` peels parentheses only. Measured: `(x) += 1` leaves `x` at 2 (node 3), `(x!) = 5` leaves 2
+  (node 5).
+- The silent part is the wider defect: any expression arm that reports an error and returns `null` compiles to a
+  default value with no diagnostic, unless the error is marked sticky.

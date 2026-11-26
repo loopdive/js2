@@ -34,9 +34,13 @@ afterEach(() => vi.restoreAllMocks());
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
 /** A compile never yields to the event loop: a turn first lets the worker answer vitest's RPC between compiles. */
-async function compileYielding(source: string, compileOptions: Test262CompileOptions) {
+async function compileYielding(
+  source: string,
+  compileOptions: Test262CompileOptions,
+  unlowerableBodies?: "abort" | "refuse",
+) {
   await new Promise((resolve) => setImmediate(resolve));
-  return compile(source, compileOptions);
+  return compile(source, compileOptions, undefined, unlowerableBodies);
 }
 
 /** Compile a script through the strict Prepared entry, run its top-level code and report whether it threw. */
@@ -57,8 +61,12 @@ async function run(source: string, fileName?: string): Promise<"returned" | "thr
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string, target: "standalone" | "gc" = "standalone", fileName?: string) {
-  const result = await compileYielding(source, options(target, fileName));
+  const result = await compileYielding(source, options(target, fileName), "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -138,18 +146,8 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     expect(await run(program(3 - answer))).toBe("threw");
   });
 
-  // typeof answers a string (slice Str); loose equality other than a tag test is not lowered.
+  // Loose equality other than a tag test is not lowered (`typeof` comparisons: slice Ty's tests).
   it.each([
-    [
-      "typeof",
-      'function p(v) { return typeof v !== "object"; }\nif (!p(1)) throw 1;',
-      "dynamic operation dyn.typeof has no Prepared intrinsic",
-    ],
-    [
-      "isPrimitive (blocked by typeof)",
-      'function isPrimitive(v) { return !v || (typeof v !== "object" && typeof v !== "function"); }\nif (!isPrimitive(1)) throw 1;',
-      "dynamic operation dyn.typeof has no Prepared intrinsic",
-    ],
     [
       "`== null`",
       "function q(v) { return v == null; }\nif (q(undefined) !== true) throw 1;",
@@ -166,11 +164,7 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
       "function f(v) { var r = 0; for (var k in v) { r++; } return r; }\nf(null);",
       "dynamic for-in runtime is unavailable in f",
     ],
-    [
-      "a function-object property write",
-      "function g() {}\nfunction h() { g.x = 2; return 0; }\nh();",
-      'identifier "g" is not in scope in h',
-    ],
+    // (#7354 F1b) A function-object property write is lowered now (tests/issue-7354-f1b-function-object-writes.test.ts).
     [
       "a primitive wrapper's ToPrimitive",
       "function h(v) { return new Number(1) == v; }\nh(1);",

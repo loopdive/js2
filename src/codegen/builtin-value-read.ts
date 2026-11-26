@@ -99,6 +99,7 @@ import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 import { sourceWritesRegExpProtoSymbol } from "./regexp-proto-symbol-writes.js"; // (#6651 B9)
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -169,33 +170,6 @@ export const BUILTIN_CTOR_NAMES = new Set([
   "SuppressedError",
 ]);
 
-// Well-known Symbol IDs (inlined from literals.ts to avoid circular deps)
-const WELL_KNOWN_SYMBOLS: Record<string, number> = {
-  iterator: 1,
-  hasInstance: 2,
-  toPrimitive: 3,
-  toStringTag: 4,
-  species: 5,
-  isConcatSpreadable: 6,
-  match: 7,
-  replace: 8,
-  search: 9,
-  split: 10,
-  unscopables: 11,
-  asyncIterator: 12,
-  dispose: 13,
-  asyncDispose: 14,
-  // (#3573) `matchAll` drifted out of this mirror of the literals.ts table
-  // (id 15 there) — its absence made `hasNativeBuiltinConstantHandler` refuse
-  // `Symbol.matchAll` value reads under --target standalone even though the
-  // downstream constant emitter supports it. Keep in sync with literals.ts.
-  matchAll: 15,
-};
-
-function getWellKnownSymbolId(name: string): number | undefined {
-  return WELL_KNOWN_SYMBOLS[name];
-}
-
 /**
  * (#1888 S6-c) Math/Number constant property names that have a Wasm-native
  * fall-through emitter further down in `compileMemberRead` (the `f64.const`
@@ -207,7 +181,7 @@ function getWellKnownSymbolId(name: string): number | undefined {
  * sync with the `mathConstants` / `numberConstants` tables below (the single
  * source of truth is those tables; this mirror only decides whether the
  * `__get_builtin` shortcut must yield to them). Symbol well-knowns
- * (`Symbol.iterator` etc.) are covered separately via `getWellKnownSymbolId`.
+ * (`Symbol.iterator` etc.) are covered separately via `wellKnownSymbolId`.
  */
 const MATH_CONSTANT_PROPS = new Set(["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"]);
 const NUMBER_CONSTANT_PROPS = new Set([
@@ -417,13 +391,13 @@ function hasNativeBuiltinConstantHandler(builtinName: string, propName: string):
   if (builtinName === "Math") return MATH_CONSTANT_PROPS.has(propName);
   if (builtinName === "Number") return NUMBER_CONSTANT_PROPS.has(propName);
   // (#2610) `Symbol.<wellKnown>` as a VALUE folds to its small i32 sentinel id
-  // at the downstream constant emitter (`getWellKnownSymbolId`, ~line 4072) —
+  // at the downstream constant emitter (`wellKnownSymbolId`, ~line 4072) —
   // host-free, no builtin-prototype object needed (NOT #2175-gated). Defer the
   // standalone builtin-static-value-read refusal to it, mirroring the
   // Math/Number constant defers above. Gate is exact: only the well-known
   // names the emitter actually folds (a non-well-known `Symbol.foo` returns
   // undefined here, so it still refuses-loud — correct, no constant exists).
-  if (builtinName === "Symbol") return getWellKnownSymbolId(propName) !== undefined;
+  if (builtinName === "Symbol") return wellKnownSymbolId(propName) !== undefined;
   // (#2595) `<TypedArrayName>.BYTES_PER_ELEMENT` static read has a downstream
   // constant emitter; defer the standalone `__get_builtin` refusal to it.
   if (propName === "BYTES_PER_ELEMENT") return builtinName in TYPED_ARRAY_BYTES_PER_ELEMENT;
@@ -901,7 +875,7 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
     return undefined;
   }
-  const symbolId = getWellKnownSymbolId(key.name.text);
+  const symbolId = wellKnownSymbolId(key.name.text);
   if (symbolId === undefined) return undefined;
 
   const receiver = skipTransparentExpressions(expr.expression);
@@ -1813,7 +1787,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
 // module-private in property-access.ts; the move makes them cross-module, so
 // they are exported here (no behaviour change — export visibility only).
 export {
-  getWellKnownSymbolId,
   tryEmitBuiltinNamespaceConstantValue,
   typedArrayViewSignedness,
   hasNativeBuiltinConstantHandler,
