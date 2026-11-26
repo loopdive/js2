@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #2723 Slice A — the reference linear PikeVM (`regex/linear.ts`) and the
- * backtracking VM's hand-off to it (`regex/vm.ts` `search`).
+ * #2723 Slice A — the reference linear PikeVM (`regexp-compiler/reference/linear.ts`) and the
+ * backtracking VM's hand-off to it (`regexp-compiler/reference/vm.ts` `search`).
  *
  * The PikeVM must report exactly what the backtracking VM reports — same
  * match, same captures — for every linear-safe program, at every start

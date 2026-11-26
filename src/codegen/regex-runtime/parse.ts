@@ -2,7 +2,7 @@
 /**
  * #6677 — the recursive-descent PARSER of the runtime RegExp compiler, as Wasm.
  *
- * A line-for-line port of the grammar in `regex/parse.ts` (ES2024 §22.2.1 +
+ * A line-for-line port of the grammar in `regexp-compiler/parse.ts` (ES2024 §22.2.1 +
  * Annex B.1.2) that builds the flat AST described in `env.ts`. Differences
  * from the compile-time parser are deliberate and all on the refusing side:
  * anything whose answer depends on Unicode data the runtime does not carry

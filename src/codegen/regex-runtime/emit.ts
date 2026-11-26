@@ -2,7 +2,7 @@
 /**
  * #6677 — the bytecode EMITTER of the runtime RegExp compiler, as Wasm.
  *
- * A port of `regex/compile.ts` `Emitter.compileNode` over the flat AST: the
+ * A port of `regexp-compiler/compile.ts` `Emitter.compileNode` over the flat AST: the
  * same Thompson/backtracking lowering (SPLIT/JMP), the same PROGRESS guards
  * for nullable loops (#1959), CLEAR at iteration heads (#1960), lookaround
  * sub-programs appended after MATCH (#1911, lookbehind bodies emitted

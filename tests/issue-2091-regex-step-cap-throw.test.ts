@@ -7,7 +7,7 @@
  * reference VM) / `0` (Wasm `__regex_run`) — a silent wrong answer
  * indistinguishable from a genuine no-match. Catastrophic-backtracking patterns
  * (`(a+)+b` against a long all-`a` non-matching subject) burn the cap and hit
- * this. Now both the reference VM (`regex/vm.ts`) and the native Wasm matcher
+ * this. Now both the reference VM (`regexp-compiler/reference/vm.ts`) and the native Wasm matcher
  * (`native-regex.ts` `__regex_run`) throw a catchable `RangeError`.
  *
  * Part 1 unit-tests the TS reference VM directly (the spec the Wasm mirrors).

@@ -482,7 +482,7 @@ export function progressArm(operands: Operands): Instr[] {
   // Empty-iteration guard (§22.2.2.3.1, #1959): if sp == caps[a] (the loop
   // entry recorded by a preceding SAVE), the body matched empty — fail the
   // iteration so backtracking takes the quantifier's exit arm. Otherwise
-  // pc++. Mirrors the PROGRESS case in regex/vm.ts.
+  // pc++. Mirrors the PROGRESS case in regexp-compiler/reference/vm.ts.
   return [
     { op: "local.get", index: SP },
     { op: "local.get", index: CAPS },
@@ -510,7 +510,7 @@ export function clearArm(operands: Operands): Instr[] {
   const { i32ArrayTypeIdx: i32Arr } = operands;
   // Reset capture slots a..b (inclusive) to -1 (§22.2.2.3.1, #1960). TMPI is
   // the loop cursor (general i32 scratch — does not overlap backref state).
-  // Mirrors the CLEAR case in regex/vm.ts; backtrack restore is handled by
+  // Mirrors the CLEAR case in regexp-compiler/reference/vm.ts; backtrack restore is handled by
   // the enclosing SPLIT's caps snapshot.
   return [
     { op: "local.get", index: A },
@@ -557,7 +557,7 @@ export function anchorArm(operands: Operands, eol: boolean): Instr[] {
   // terminator (the unit at sp-1 is a LT), EOL also matches right before a
   // line terminator (the unit at sp is a LT). The neighbour read is guarded
   // by an in-bounds check so it can never trap. `\r\n` is two terminators, so
-  // an anchor between them still matches. Mirrors anchorArm in regex/vm.ts.
+  // an anchor between them still matches. Mirrors anchorArm in regexp-compiler/reference/vm.ts.
   //
   // matched = baseEq || (a != 0 && multilineEq)
   return [
@@ -653,7 +653,7 @@ function isWordInstrs(local: number): Instr[] {
 }
 
 /** WBOUND (#1912): operand a = negated (`\B`). Mirrors the WBOUND arm in
- *  regex/vm.ts. CH already holds the "after" unit ((sp<slen) ? data[soff+sp]
+^ *  regexp-compiler/reference/vm.ts. CH already holds the "after" unit ((sp<slen) ? data[soff+sp]
  *  : -1, computed at dispatch entry); the "before" unit is loaded into TMPI.
  *  matched = (isWord(before) != isWord(after)) ^ negated. */
 export function wboundArm(operands: Operands): Instr[] {
@@ -719,7 +719,7 @@ function foldChIf(): Instr[] {
 }
 
 /** BACKREF (#1912): operand a = group index, b = case-insensitive. Mirrors
- *  the BACKREF arm in regex/vm.ts: an unset group matches empty (§22.2.2.9
+ *  the BACKREF arm in regexp-compiler/reference/vm.ts: an unset group matches empty (§22.2.2.9
  *  step 3); otherwise the captured span is compared unit-by-unit at sp.
  *  FAILED doubles as the mismatch flag for the compare loop. */
 export function backrefArm(operands: Operands): Instr[] {
@@ -887,7 +887,7 @@ export function backrefArm(operands: Operands): Instr[] {
 }
 
 /** LOOKAROUND (#1911): operand a = sub-program entry pc, b = bit0 negated |
- *  bit1 behind. Mirrors the LOOKAROUND arm in regex/vm.ts: snapshot caps,
+ *  bit1 behind. Mirrors the LOOKAROUND arm in regexp-compiler/reference/vm.ts: snapshot caps,
  *  recursively run the sub-program at sp (dir = behind ? -1 : +1, same caps
  *  array — the Wasm VM mutates in place), then keep the sub's captures only
  *  on a positive success; every other outcome restores the snapshot. The

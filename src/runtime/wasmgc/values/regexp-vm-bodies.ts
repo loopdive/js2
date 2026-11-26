@@ -529,7 +529,7 @@ export function buildRegExpRunBody(operands: Readonly<RegExpRunOperands>): RegEx
     // so legitimate LINEAR matches over long subjects (measured ~5 steps/unit
     // for `^\p{L}+$`(u); the property-escapes complement subjects are ~1.1M
     // units) fit, while runaway backtracking (Ω(n²)/Ω(2ⁿ)) still exceeds it.
-    // Mirrors regexStepBudget in regex/vm.ts — keep the two in lockstep.
+    // Mirrors regexStepBudget in regexp-compiler/reference/vm.ts — keep the two in lockstep.
     { op: "local.get", index: SLEN },
     { op: "i32.const", value: REGEX_STEP_CAP_LEN_SATURATION },
     { op: "local.get", index: SLEN },

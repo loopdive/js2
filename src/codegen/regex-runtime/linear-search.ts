@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #2723 Slice A — the Wasm twin of `regex/linear.ts`: a linear PikeVM over the
+ * #2723 Slice A — the Wasm twin of `regexp-compiler/reference/linear.ts`: a linear PikeVM over the
  * standalone regex bytecode, taking over a search whose backtracking attempt
  * exhausted its step budget.
  *

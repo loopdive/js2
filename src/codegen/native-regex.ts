@@ -12,7 +12,7 @@
  * backtracking VM (`__regex_run`) that interprets it. The VM's body is built by
  * `src/runtime/wasmgc/values/regexp-vm-bodies.ts`, which takes module indices
  * instead of a `CodegenContext` so the Prepared IR path can bind the same
- * function (#7369); the reference VM in `regex/vm.ts` is the executable spec it
+ * function (#7369); the reference VM in `regexp-compiler/reference/vm.ts` is the executable spec it
  * mirrors opcode-for-opcode. See the issue file's "Implementation Notes
  * (sd-1539)" for the why-bytecode-not-specialised-emission rationale.
  */
@@ -2407,7 +2407,7 @@ export function ensureRegexFlagsStr(ctx: CodegenContext): number {
   const N = 2; // i32 — appended count
 
   // Spec getter order (§22.2.6.4): hasIndices, global, ignoreCase, multiline,
-  // dotAll, unicode, unicodeSets, sticky. Bit values from regex/bytecode.ts.
+  // dotAll, unicode, unicodeSets, sticky. Bit values from regexp-compiler/bytecode.ts.
   const SPEC_ORDER: Array<[bit: number, codeUnit: number]> = [
     [64 /* RE_FLAG_D */, 0x64], // d
     [1 /* RE_FLAG_G */, 0x67], // g
