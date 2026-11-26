@@ -55,61 +55,89 @@ The "pass" rows in `.test262-cache/test262-current.jsonl` are the frozen JS-host
 
 ## Implementation Plan
 
-Owner: lane S25 (lead decision, 2026-11-26). The plan is reviewed before any code.
+Owner: lane S25 (lead decision, 2026-11-26). Revised after the plan review (PRV BLOCKER on `9e876ee467`, 5 text points).
+
+### Copy inventory (measured on main `a9cdc885`)
+
+The drain-and-sink logic exists in five harness places, plus four test-side "reduced" mirrors:
+
+| # | where | what it is | plan |
+|---|---|---|---|
+| 1 | `scripts/test262-worker.mjs` `drainAndCaptureNativeStdout` / `captureNativeStdout` (~L1852–1912) | production, sharded worker | moved into the new module unchanged |
+| 2 | `scripts/test262-worker.mjs` `standaloneLinkedPeers` (~L1919) | production peer lookup | moved into the new module unchanged |
+| 3 | `tests/test262-runner.ts` `runOriginalHarnessVariant` (~L4579–4612) | in-process runner; the bug is here | replaced by a call |
+| 4 | `tests/test262-shared.ts` (~L1124–1160) | production, #3496 multi-module fixture path | replaced by a call |
+| 5 | `tests/issue-6723-standalone-linked-{print,errors}.test.ts` `drainAndRead` | reduced mirror of 1 (linked rounds) | folded onto the helper |
+| 6 | `tests/issue-6685.test.ts` `readSink` (L48–55) | reduced mirror of 1 (single module) | folded onto the helper |
+| 7 | `tests/issue-3469-standalone-async-completion-sink.test.ts` `drainAndReadSink` (L40–50) | reduced mirror of 1 | folded; its `"<no sink exports>"` sentinel stays as an explicit check before the call |
+
+**Not copies, and left alone:** the embedder drains in `issue-6685.test.ts` L91 and L126. Those tests drive
+`__drain_microtasks` and then observe the console capability; the drain call is the behaviour under test, not a harness
+mirror.
 
 ### Target structure
 
-- **New module `scripts/test262-native-drain.mjs`.** It sits beside the other shared runner/worker modules
-  (`test262-import-object.mjs`, `negative-verdict.mjs`, `test262-runtime-verdict.mjs`), which
-  `tests/test262-runner.ts` already imports from `scripts/`. It exports two functions:
-  - `drainAndCaptureNativeStdout(exports, peers, append)`: the worker's current body, moved unchanged, with
-    `currentLinkedPeers` passed in instead of read from module state. It returns the first drain error or `null`.
-  - `captureNativeStdout(exports, append)`: moved unchanged.
-- **`scripts/test262-worker.mjs`.** Delete both functions and import them. The one call site (~L2734) passes
-  `currentLinkedPeers`. This is a pure move: same calls in the same order, same error handling.
-- **`tests/test262-runner.ts` `runOriginalHarnessVariant` (~L4579–4612).**
-  - Replace the hand-copied drain and stdout block with one call to the shared helper, passing `[]` for peers (the
-    in-process runner has no linked peers).
-  - Change the condition from `target === "standalone" && meta.flags?.includes("async")` to
-    `meta.flags?.includes("async")`, the same keying the worker uses since #6685. The helper is feature-detected on
-    the exported intrinsics.
-  - Rename `standaloneDrainError` to `drainError`; its later use is unchanged.
-- **Duplicates removed.** Four copies of the drain/stdout loop become one: the worker's, the runner's, and the two
-  "reduced" copies in `tests/issue-6723-standalone-linked-{print,errors}.test.ts`. The 6723 tests call the shared
-  helper instead of their local `drainAndRead`, keeping their assertions.
+- **New `scripts/test262-native-drain.mjs`.** It sits beside the shared modules `tests/test262-runner.ts` already imports
+  (`test262-import-object.mjs`, `negative-verdict.mjs`) and exports:
+  - `linkedPeerExports(target, result, importObj)` (rows 1–2: the worker's `standaloneLinkedPeers`, renamed for what it
+    returns);
+  - `drainAndCaptureNativeStdout(exports, peers, append)`;
+  - `captureNativeStdout(exports, append)`.
+
+  All are moved unchanged; `peers` is a parameter instead of the worker's `currentLinkedPeers` module state.
+- **Worker.** It deletes rows 1–2 and imports them. Same calls in the same order. This is a pure move.
+- **Runner** (row 3).
+  - Condition: `meta.flags?.includes("async")`, keyed like the worker since #6685, instead of
+    `target === "standalone" && …async`.
+  - Peers: `linkedPeerExports(target, result, imports)`. The runner does instantiate `result.linkedModules`, so it now
+    drains linked peers exactly as the worker does. There is no divergence left.
+  - Rename `standaloneDrainError` to `drainError`.
+- **`test262-shared.ts`** (row 4): the same call, with the same peer lookup for its multi-module fixture.
+- **Tests** (rows 5–7): call the helper. **The 6723 tests assert `drainError === null`**, which keeps them as strict as
+  the throwing original.
 
 ### What does not change
 
-- **Published verdicts.** The worker change is a move with identical behaviour, so CI's standalone and linked
-  measurements stay untouched.
-- **Verdict scoring.** It is not a verdict-logic change: the marker poll, the timeout and the pass/fail rules are
-  untouched.
-- **No `src/` change.**
+- Verdict scoring: marker poll, timeout and pass/fail rules.
+- No `src/` change.
+- Published standalone and linked CI measurements: the worker change is a move with identical behaviour; see acceptance 3.
 
 ### Acceptance criteria
 
-1. **Flip list.** Run all 280 root test files that call `runTest262File` on base (main) and on the branch, single fork,
-   each file alone; the results are JSON reports. Report every per-test flip (fail→pass, pass→fail) in the PR body.
-   **pass→fail must be 0.** The expected fail→pass is JS-target async rows that stopped at "async completion marker not
-   observed".
-2. **issue-1363.** `tests/issue-1363.test.ts`, with its test262 path fixed (repo-relative `TEST262_ROOT`, as in #7494),
-   passes on the default target. The path fix ships in this PR.
-3. **Worker equivalence.** Run the two 6723 tests and a `TEST262_PATH_FILTER` run of 20 async test262 files through
-   `scripts/run-test262-vitest.sh`, standalone and honest lanes, before and after. Row status, error and output must
-   be identical.
+1. **Flip list.** All **283** root test files that reference `runTest262File` are run on base (main) and on the branch:
+   one vitest process per file, single fork, JSON report. Each file runs under an external wall timeout of 15 min
+   (`timeout 900`). A file that hits the timeout or exits without a report counts as a flip.
+   - Report every per-test flip (fail→pass, pass→fail, *→hang) in the PR body.
+   - pass→fail and *→hang must be 0.
+   - Expected fail→pass: the JS-target async rows that stopped at "async completion marker not observed", among them
+     `tests/issue-1363.test.ts`. Its repo-relative `TEST262_ROOT` path fix ships here.
+2. **No copies left.**
+   - Check: `rg -l "__drain_microtasks" tests scripts | xargs rg -l "__stdout_char"`. This finds aliased forms too, such
+     as `(exp.__drain_microtasks as () => void)()`.
+   - Allowed hits after the change:
+     - `scripts/test262-native-drain.mjs`, the one implementation.
+     - The frozen instruments under `scripts/lib/fixtures/frame-delay-original-instruments/*.txt`, which must not
+       change.
+     - Embedder tests that compile their own module and read its sink as the behaviour under test:
+       `tests/equivalence/issue-6995-*`, `issue-6996-*`, `tests/helpers/native-delay-combinator-source-receipts.mjs`,
+       `tests/issue-3518-async-frame-body-source-preservation`, `issue-3542`, `issue-3548`, `issue-4574-*`.
+   - `test262-worker.mjs`, `test262-runner.ts`, `test262-shared.ts` and the 6723, 6685 and 3469 tests must not appear.
+3. **Worker equivalence.** Before and after, run `scripts/run-test262-vitest.sh` with `TEST262_PATH_FILTER` on 20 async
+   test262 files: 10 single-module and 10 multi-module fixture rows (`_FIXTURE` imports). Do this in the standalone and
+   honest lanes, and once with `TEST262_ORACLE_MODE=linked`. Row `status`, `error` and output must be identical. The
+   6723, 6685 and 3469 tests must pass.
 4. **Quality.**
-   - One drain helper, zero copies left (`rg "__stdout_char\(" tests scripts` shows only the helper and fixtures that
-     test it).
-   - No new single-use abstraction.
+   - One implementation.
+   - No new single-use abstraction (the module has 4 importers).
    - The ratchet gates pass.
    - A fresh-context adversarial review verdict is recorded in the PR.
 
 ### Risks
 
-- **New failures behind the marker.** Rows that used to stop at "marker not observed" may now complete and fail with
-  `AsyncTestFailure`. Those are pre-existing semantic failures that were hidden before, not regressions. Any such
-  pass→fail is investigated and reported, not accepted silently.
-- **Blast radius.** 280 files. The before/after run is the guard; no expectation is changed to absorb a flip.
+- **Hidden failures surface.** Rows that stopped at "marker not observed" may now complete and fail with
+  `AsyncTestFailure`. They are listed, not absorbed. A pass→fail blocks landing until investigated.
+- **Hangs.** A continuation that re-enqueues itself could spin the in-process drain. The external per-file timeout
+  catches that, and it counts as a flip.
 
 ## Not in scope
 
