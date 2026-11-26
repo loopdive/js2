@@ -1,7 +1,7 @@
 ---
 id: 7519
 title: "Ordinary pipeline: a Script's restricted global lexical class or binding pattern does not throw SyntaxError"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
@@ -47,3 +47,70 @@ instantiation throw), so it is its own reviewed change with a byte diff limited 
 - Every program above throws SyntaxError at the start of `__module_init`, default and standalone.
 - One predicate for both pipelines; the per-declarator call is gone.
 - Output unchanged for programs without a restricted lexical name.
+
+## Implementation Plan
+
+Written 2026-11-26, stacked on PR 7489 (#7499, head `1451f3b1`). That PR adds `src/shared/script-lexical-names.ts`
+(`scriptGlobalLexicalNames`, `restrictedGlobalLexicalName`).
+
+### Measured first (PR 7489 head; ordinary = `compile`, standalone, instantiated and run; Prepared = test262 entry)
+
+| Program (`.ts` Script) | ordinary today | Prepared on PR 7489 |
+| --- | --- | --- |
+| `declare let NaN: number;` | runs | refused `restricted-global-lexical` |
+| `declare class NaN {}` | runs | refused `restricted-global-lexical` |
+| `declare const undefined: any;` | runs | refused `restricted-global-lexical` |
+| `class NaN {}` (`.js`) | **runs** (this issue) | refused `restricted-global-lexical` |
+
+An ambient declaration binds nothing at run time, so GlobalDeclarationInstantiation has no name to reject. The
+ordinary pipeline already skips it: `hasDeclareModifier` at the top of the `VariableStatement` arm of
+`collectDeclarations`. The shared walker does not skip it. So switching the ordinary pipeline to the predicate as-is would
+make these TS programs throw, a regression. On the Prepared path it is an over-refusal: no wrong value, but the
+wrong label for a program that tsc rejects anyway (TS2451 against lib's `declare var NaN`).
+
+### Target structure
+
+1. **The ambient test moves to `src/shared`.** `git mv src/ir/ambient-declarations.ts src/shared/ambient-declarations.ts`.
+   Its three importers (`ir/identity.ts`, `ir/class-method-names.ts`, `ir/prepared-select-refusals.ts`) change only
+   the import path. Its `compiler-boundaries.json` entry keeps its classification under the new path. It is the
+   AST-only test both pipelines need, and `src/shared` is where the walker that uses it lives.
+2. **The walker skips ambient statements.** In `scriptGlobalLexicalNames`, a statement for which
+   `isAmbientDeclaration(statement)` holds contributes no name. The predicate, the Prepared rule (#7499) and
+   `recordSourceGlobalEnvironment` (`codegen/index.ts`) all inherit this; none gets its own filter.
+3. **The ordinary pipeline asks the predicate once per source.** In `collectDeclarations`
+   (`src/codegen/declarations.ts`), before the top-level statement loop:
+   `ctx.restrictedGlobalLexicalName ??= restrictedGlobalLexicalName(sourceFile)?.text;`. `??=` keeps today's rule
+   that the first collision across sources wins. Then:
+   - `noteRestrictedGlobalLexicalName` and its per-declarator call in the `let`/`const` identifier arm are deleted.
+   - Its spec comment (§16.1.7 steps 5.c-d, Module skip) is not lost: it already lives on the predicate and on the
+     throw in `declarations/module-init-prologue.ts`.
+   - The throw in that prologue and `moduleInitPrologueMayEmit` are unchanged; they read the same `ctx` field.
+
+### Reuse and removal
+
+- Reuses: the shared walker and predicate (#7499), the existing `ctx.restrictedGlobalLexicalName` field and its
+  prologue throw, and `isAmbientDeclaration` (moved, not copied).
+- Removes: `noteRestrictedGlobalLexicalName` (its own three-name test and Module check) and the per-declarator call.
+- Code-quality acceptance:
+  - one walker, one predicate and one ambient test serve both pipelines;
+  - `GLOBAL_CONSTANTS` is the only list of the three names on this path;
+  - no new `ctx` field, and no new filter at any caller.
+
+### Acceptance
+
+- **Correctness, ordinary pipeline, default and standalone, compiled and run:** these throw SyntaxError before any
+  statement runs (the `__module_init` prologue): `class NaN {}`, `class undefined {}`, `let {a: NaN} = {a:1};`,
+  `let [Infinity] = [1];`, `const {Infinity} = {Infinity:1};`, and still `let NaN = 1;`.
+- **Not thrown:** `var NaN;`, a Module (`let NaN = 1; export {};`), `{ let NaN = 1; }`, and the three ambient `.ts`
+  forms above.
+- **Prepared:** the three ambient forms are no longer refused as `restricted-global-lexical`. The #7499 pin test gains
+  them as "not refused by this rule".
+- **Bytes:** ordinary output changes only for programs with a restricted class or pattern name. The byte check is
+  default and standalone on a 100-file test262 sample, plus the TS test sources whose top level has `declare let`,
+  `declare const` or `declare class`. Those exercise the walker change in `recordSourceGlobalEnvironment`.
+
+### Yield (measured with #7499's walker scan)
+
+0 test262 files. The only Script with a top-level restricted lexical is `decl-lex-restricted-global.js` (`let undefined;`),
+which the ordinary pipeline already throws on. This is a correctness fix for the class and pattern forms.
+
