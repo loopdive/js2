@@ -353,7 +353,10 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   edition only (`scripts/test262-current-edition.json`, ES5, 8 shards).
   - It diffs per test against the IR measurement of the group's base commit.
   - Any pass → not-pass of that edition fails the check, and auto-park parks
-    the PR with the regressed tests listed.
+    the PR with the regressed tests listed. `compile_timeout` counts. So does
+    a test the run dropped, when the test262 revision is unchanged.
+  - A crashed report or a failed baseline download is infra: the queue
+    retries, nothing is parked.
   - With no comparable baseline, the summary says "No baseline — not
     compared". That happens on the first run, after an edition switch, or
     after an eval-engine change.
@@ -367,12 +370,17 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
     summary names the commits merged since the last green daily run.
   - Landing-page and baseline numbers are as of the last green daily run.
   - `refresh-baseline.yml` is dispatch-only. **Nothing forces a baseline
-    refresh automatically.** A floor older than 30 h fails
+    refresh automatically.** A floor older than 36 h (the cron fires hours
+    late) fails
     `baseline-floor-staleness-alert.yml` loudly (age plus last green daily
     run), and that is all it does. Its auto-heal was removed (owner decision
     2026-11-26), because after a failed daily run it would bank the
     regression. A forced refresh is a manual dispatch.
-- **Rollback:** revert the #7551 Part B commit.
+- **Rollback:** this is the gate only; the alert-only staleness rule stays.
+  A plain `git revert` of the Part B commits conflicts. Instead, restore the
+  gate's files from the last Part A commit `dff600c97f`. The exact
+  `git checkout` command is in `docs/ci-policy.md` ("The merge-queue test262
+  gate").
 
 **The authoritative host oracle is the LINKED harness (#3451 slice 6, oracle
 v14, 2026-09-17).** CI's host (`gc`) shards run `TEST262_ORACLE_MODE=linked`:

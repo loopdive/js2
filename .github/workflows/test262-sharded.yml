@@ -18,7 +18,9 @@ on:
   #     (high-water floor, edition ratchet, #1897) and baseline promotion, plus
   #     the full-corpus IR measurement. Legacy and other-edition regressions
   #     are detected there, AFTER the fact, not blocked.
-  # Rollback: revert the #7551 Part B commit.
+  # Rollback (gate only): restore this file and the gate tests from the last
+  # Part A commit dff600c97f — exact command in docs/ci-policy.md ("The
+  # merge-queue test262 gate"); a plain revert of the Part B commits conflicts.
   #
   # This comment previously claimed "full 57-shard test262 runs at PR-time AND
   # in merge_group", describing the pre-#2519 serial-queue model. It outlived
@@ -57,6 +59,7 @@ on:
       - "scripts/test262-edition-scope.ts"
       - "scripts/test262-current-edition.json"
       - "scripts/lib/gh-api-retry.mjs"
+      - "scripts/lib/regression-annotation.mjs"
       # Part of the merge_group gating logic (it decides which manifest
       # changes the matcher never sees), so a change to it must be validated
       # by exactly what it might skip.
@@ -651,39 +654,18 @@ jobs:
     # `test262-shard` and `promote-baseline` gate on its success.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # actions:read — query the artifacts REST API of THIS repo (a cross-run
-    # read), same permission the #1956 predecessor-group step already uses.
-    permissions:
-      contents: read
-      actions: read
     outputs:
       hit: ${{ steps.probe.outputs.hit }}
     steps:
+      # The #3448 HIT path (reuse the merge group's legacy artifact on push) is
+      # gone with the queue's legacy matrix; schedule and dispatch always run a
+      # fresh matrix, so the answer is always MISS. The job stays because
+      # `test262-shard`, the providers and `promote-baseline` gate on it.
       - name: Probe for test262-group-<sha> artifact
         id: probe
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -uo pipefail
-          # workflow_dispatch (manual rerun) must ALWAYS run a fresh full matrix
-          # — that is the entire point of a manual rerun — so never short-circuit
-          # it via an artifact, even if a same-SHA group artifact still exists.
-          if [ "${{ github.event_name }}" != "push" ]; then
-            echo "hit=false" >> "$GITHUB_OUTPUT"
-            echo "Non-push event (${{ github.event_name }}) — forcing MISS, full matrix runs."
-            exit 0
-          fi
-          ART_NAME="test262-group-${{ github.sha }}"
-          # Pick the newest non-expired artifact with this exact name.
-          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
-            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' 2>/dev/null || echo "")
-          if [ -n "$ART_ID" ]; then
-            echo "hit=true" >> "$GITHUB_OUTPUT"
-            echo "HIT: ${ART_NAME} (id=${ART_ID}) present — promote-baseline will reuse it; skipping the 114-job test262-shard matrix."
-          else
-            echo "hit=false" >> "$GITHUB_OUTPUT"
-            echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
-          fi
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+          echo "${{ github.event_name }}: always MISS since #7551 — the full matrix runs."
 
   # #2928 E7 / #4013 / #4242 P1-S2 — build the SELECTED standalone eval
   # provider ONCE, canary-verify it, and distribute it to every standalone
@@ -2007,7 +1989,14 @@ jobs:
   test262-ir-measurement-shard:
     name: test262 IR standalone measurement shard ${{ matrix.chunk }}
     needs: [compiler-path-measurement-plan]
-    if: needs.compiler-path-measurement-plan.outputs.run == 'true'
+    # (#7551) `!cancelled()` + explicit results: `changes` (an ancestor of the
+    # plan) does not run on schedule, and GitHub propagates a skipped ancestor
+    # through the plan's always() into any dependant without a status function
+    # (the #3611 hazard) — the daily full run would be skipped silently.
+    if: |
+      !cancelled() &&
+      needs.compiler-path-measurement-plan.result == 'success' &&
+      needs.compiler-path-measurement-plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -2119,7 +2108,14 @@ jobs:
   merge-ir-measurement:
     name: merge complete IR standalone measurement
     needs: [compiler-path-measurement-plan, test262-ir-measurement-shard]
-    if: needs.compiler-path-measurement-plan.outputs.run == 'true'
+    # (#7551) Same status function as the shards. Every shard must succeed: a
+    # shard's infrastructure failure skips this job (the failed shard job is
+    # what auto-park judges) instead of failing validation here.
+    if: |
+      !cancelled() &&
+      needs.compiler-path-measurement-plan.result == 'success' &&
+      needs.test262-ir-measurement-shard.result == 'success' &&
+      needs.compiler-path-measurement-plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     # actions:read — the edition scope lists and downloads earlier IR
     # measurement artifacts (cross-run) for its per-test baseline.
@@ -2697,7 +2693,7 @@ jobs:
     # (#7551) Retired from the queue: `merge_group` gates on the IR current
     # edition (`test262-ir-measurement-shard`, `merge complete IR standalone
     # measurement`), and the legacy lane runs daily (`test262-shard` on
-    # schedule). Rollback is a revert of the #7551 Part B commit.
+    # schedule). Rollback: docs/ci-policy.md ("The merge-queue test262 gate").
     if: false
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
@@ -3576,57 +3572,14 @@ jobs:
             exit 1
           fi
 
-      # #1668 — HARD stale-baseline guard. The catastrophic guard above (and the
-      # full regression gate) are only as trustworthy as the baseline they
-      # diff against. The baseline is refreshed per-merge by the promote-baseline
-      # job → js2wasm-baselines repo. If that pipeline ever silently breaks, the
-      # baseline falls behind relevant main changes and the gates go blind to
-      # new regressions (they'd compare against an ancient state). This fails
-      # the REQUIRED check when the baseline's recorded main-sha is too far
-      # behind main HEAD for test262-relevant source/config paths.
-      #
-      # Important: baseline-refresh commits also advance main, often with
-      # [skip ci], and must not count as drift. Count only commits whose file
-      # list matches scripts/test262-paths-match.sh; that preserves the hard
-      # stale-baseline signal while ignoring generated baseline/doc churn.
-      - name: Stale-baseline guard (#1668)
-        if: env.SHARDS_RAN == 'true'
-        env:
-          MAX_BASELINE_COMMITS_BEHIND: "50"
-        run: |
-          if [ ! -d /tmp/cat-baselines ]; then
-            echo "::warning::baselines clone missing — skipping stale-baseline guard."
-            exit 0
-          fi
-          # Baseline commit subject: "chore(test262): refresh baseline — N/T pass (<main-sha>)"
-          BSHA=$(git -C /tmp/cat-baselines log -1 --format=%s | grep -oE '[0-9a-f]{7,40}' | tail -1)
-          if [ -z "$BSHA" ]; then
-            echo "::warning::could not parse baseline main-sha from commit subject — skipping stale-baseline guard."
-            exit 0
-          fi
-          # blob:none — the drift count below only needs commits + trees
-          # (rev-list + diff-tree --name-only), so don't download 200 commits
-          # worth of blobs into this depth-1 checkout (~30s saved).
-          git fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
-          COMMITS=$(git rev-list "${BSHA}..origin/main" 2>/dev/null || true)
-          TOTAL_BEHIND=0
-          BEHIND=0
-          for sha in $COMMITS; do
-            TOTAL_BEHIND=$((TOTAL_BEHIND + 1))
-            CHANGED=$(git diff-tree --no-commit-id --name-only -r "$sha")
-            if [ "$(printf '%s\n' "$CHANGED" | bash scripts/test262-paths-match.sh)" = "true" ]; then
-              BEHIND=$((BEHIND + 1))
-            fi
-          done
-          if [ "$TOTAL_BEHIND" -ge 200 ] && ! git cat-file -e "${BSHA}^{commit}" 2>/dev/null; then
-            echo "::error::could not find baseline main-sha ${BSHA} in fetched history; cannot evaluate stale-baseline guard."
-            exit 1
-          fi
-          echo "Baseline main-sha ${BSHA} is ${BEHIND} test262-relevant commit(s) behind origin/main (${TOTAL_BEHIND} total commits, max ${MAX_BASELINE_COMMITS_BEHIND})."
-          if [ "$BEHIND" -gt "$MAX_BASELINE_COMMITS_BEHIND" ]; then
-            echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} test262-relevant commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
-            exit 1
-          fi
+      # (#7551) The #1668 stale-baseline guard (fail when the promoted baseline
+      # is > 50 test262-relevant commits behind main) is gone. It now only ran
+      # on the daily legacy run, where a day of merges routinely exceeds it
+      # (24 h windows found in the #7551 review: 65/202, 45/146, 29/97
+      # relevant/total commits) and a
+      # failure skips promotion, so every later daily run would fail the same
+      # way. A promotion that stops landing is caught by the floor-AGE alert
+      # (baseline-floor-staleness-alert.yml), which does not lock itself.
 
       # (#6461) Deferred failure for the #2097 standalone high-water floor.
       #
@@ -3677,28 +3630,6 @@ jobs:
           path: |
             merged-reports/**
           if-no-files-found: warn
-
-      # #1956 — publish this group's merged JSONLs keyed by the GROUP HEAD
-      # SHA. The merge queue builds groups incrementally, so the NEXT queued
-      # group's head commit has THIS group's head as its first parent — its
-      # regression-gate can therefore download this artifact and diff against
-      # its exact predecessor, isolating only its own PR's delta (no cross-PR
-      # drift, no ALLGREEN masking once the queue batches >1). 3-day
-      # retention comfortably covers queue lifetimes; an expired/missing
-      # artifact just falls back to the runs-cache / latest-main baseline.
-      #
-      # Only measured standalone rows belong in this artifact. The push
-      # consumer validates them and fetches the frozen host snapshot separately
-      # for legacy publishing mirrors, keeping its original SHA and timestamp.
-      - name: Publish group results for predecessor diffing (#1956)
-        if: env.STANDALONE_RAN == 'true' && github.event_name == 'merge_group'
-        uses: actions/upload-artifact@v6
-        with:
-          retention-days: 3
-          name: test262-group-${{ github.event.merge_group.head_sha }}
-          path: |
-            merged-reports/test262-standalone-results-merged.jsonl
-          if-no-files-found: error
 
       # (#7551) The legacy lane is no longer a merge gate, so a breach found by
       # the daily run is AFTER THE FACT: name what landed since the last green

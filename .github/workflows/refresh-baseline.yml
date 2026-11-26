@@ -1,40 +1,31 @@
-name: Baseline Refresh (scheduled + emergency)
+name: Baseline Refresh (manual + emergency)
 
-# Two modes (#1078 emergency; #2562 scheduled anti-staleness):
+# Two modes, both manual (workflow_dispatch). #1078 introduced the emergency
+# mode; #2562 added an 8-hourly scheduled refresh, which #7551 removed:
 #
-#   1. SCHEDULED (cron) — a NORMAL baseline promote of current main's ACTUAL
-#      test262 state, run on a timer so the baseline never goes content-stale
-#      during a stretch of docs/CI-only merges (which advance main but never
-#      re-promote, because the test262-sharded.yml promote-baseline job only
-#      fires on test262-relevant pushes). This is NOT a force/emergency refresh:
-#      it records main's true current conformance (main is already-merged code,
-#      so recording its state never "bakes in" a regression past a PR gate). It
-#      requires no confirmation. Cadence: every 8h, offset from the top-of-hour
-#      Actions rush.
+#   1. NORMAL (force_baseline_refresh=false) — promotes current main's ACTUAL
+#      test262 state. No confirmation needed.
 #
-#   2. EMERGENCY (workflow_dispatch with force_baseline_refresh=true + confirm
-#      _force="YES") — disaster-recovery UNCONDITIONAL promote that ignores the
-#      regression gate. Both inputs are required; the confirmation prevents
-#      accidental forced overwrites.
+#   2. EMERGENCY (force_baseline_refresh=true + confirm_force="YES") —
+#      disaster-recovery UNCONDITIONAL promote that ignores the regression gate.
+#      Both inputs are required; the confirmation prevents accidental forced
+#      overwrites.
 #
 # Both modes run test262 on current `main` and promote the result to the
 # committed baseline + the loopdive/js2wasm-baselines repo. An audit commit
 # records who/what triggered the refresh and the pass/total numbers; the commit
-# subject distinguishes a scheduled-normal refresh from a forced one.
+# subject distinguishes a normal refresh from a forced one.
 #
-# Usage (emergency): Actions → Baseline Refresh → Run workflow
-#   force_baseline_refresh: true
-#   confirm_force: "YES"
-# Usage (scheduled): automatic; or Run workflow with force_baseline_refresh:false
-#   for a manual NORMAL refresh of current main (no confirmation needed).
-
-# (#7551) The 8-hourly cron is GONE. The daily `test262-sharded.yml` schedule
-# is now the single place the legacy lane runs: the same full matrix, but with
-# the floor, ratchet and #1897 gates before it promotes — this workflow
-# promotes without them, so running it on a timer between daily audits would
-# bank a regression unexamined. It stays dispatch-only: the manual NORMAL
-# refresh and the EMERGENCY refresh. Nothing dispatches it automatically: the
-# staleness alert no longer auto-heals (owner decision 2026-11-26).
+# (#7551) No timer and no automation dispatches this workflow any more. The
+# daily `test262-sharded.yml` schedule is the single place the legacy lane
+# runs: the same full matrix, but with the floor, ratchet and #1897 gates
+# before it promotes. This workflow promotes WITHOUT them, so running it on a
+# timer between daily audits would bank a regression unexamined, and the floor
+# staleness alert no longer auto-heals through it (owner decision 2026-11-26).
+#
+# Usage: Actions → Baseline Refresh → Run workflow
+#   normal:    force_baseline_refresh: false
+#   emergency: force_baseline_refresh: true, confirm_force: "YES"
 on:
   workflow_dispatch:
     inputs:
@@ -61,12 +52,12 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # #2562 — a run is FORCED (emergency) only on a confirmed workflow_dispatch.
-  # schedule (and a non-forced dispatch) are NORMAL refreshes. Computed once
+  # A non-forced dispatch is a NORMAL refresh. Computed once
   # here so every job/step can branch on the SAME definition.
   IS_FORCED: ${{ github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES' }}
 
 concurrency:
-  # Both modes promote main's baseline — a scheduled run and an emergency run
+  # Both modes promote main's baseline — a normal run and an emergency run
   # must never race each other, so they share one group. cancel-in-progress is
   # false so a refresh always runs to completion (latest-wins is handled by the
   # promote step's fetch+re-anchor retry loops, mirrored from promote-baseline).
@@ -83,19 +74,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # #2562 — confirmation is required ONLY for an emergency (forced) dispatch.
-      # A scheduled run, or a non-forced manual dispatch, is a NORMAL refresh and
+      # A non-forced manual dispatch is a NORMAL refresh and
       # needs no confirmation. Reject the dangerous half-states: force requested
       # without "YES", or "YES" given without force.
       - name: Validate emergency confirmation (forced dispatch only)
         env:
-          EVENT_NAME: ${{ github.event_name }}
           FORCE: ${{ inputs.force_baseline_refresh }}
           CONFIRM: ${{ inputs.confirm_force }}
         run: |
-          if [ "$EVENT_NAME" = "schedule" ]; then
-            echo "✓ Scheduled NORMAL baseline refresh — records main's current test262 state (no force, no confirmation needed)."
-            exit 0
-          fi
           if [ "$FORCE" = "true" ]; then
             if [ "$CONFIRM" != "YES" ]; then
               echo "ERROR: an EMERGENCY (forced) refresh requires confirm_force=\"YES\" (got: '$CONFIRM')."

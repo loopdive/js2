@@ -280,16 +280,38 @@ Other decisions:
   the main tip's push/queue artifact. A test asserts this.
 - **Dead HOST_RAN-only gates** are left in place and filed as their own
   cleanup issue (see `related`).
-- **Rollback.** Part B is one commit, `ci(#7551): merge queue gates on IR ×
-  current edition; legacy test262 runs daily ✓`. It carries the workflows,
-  scripts, tests and docs. `git revert <that commit>` restores:
-  - the 102-shard legacy merge_group gate;
-  - push-time promotion;
-  - the 8-hourly refresh;
-  - the commit-count staleness rule.
+- **Rollback (the gate only — the alert-only staleness rule must survive).**
+  Part B is several commits:
+  - `5d7abeaf87`: the gate and the daily cadence;
+  - `3c90c135e2`: the auto-heal removal;
+  - the review-fix commits.
 
-  No baseline file or required-check name changes, so the revert needs
-  nothing else. The push-time IR edition measurement from Part A stays.
+  `git revert 5d7abeaf87` does **not** apply on the Part B head: 7 files
+  overlap with `3c90c135e2`. Reverting both would also bring back the
+  auto-heal. The verified procedure restores the gate's files from the last
+  Part A commit, `dff600c97f`, in one PR:
+
+  ```bash
+  git checkout dff600c97f -- \
+    .github/workflows/test262-sharded.yml .github/workflows/refresh-baseline.yml \
+    .github/workflows/retry-test262-baseline.yml scripts/test262-ir-pages-artifacts.test.mjs \
+    tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
+    tests/issue-4153-test262-sharded-pr-gating.test.ts tests/issue-4350-baseline-refresh-cron.test.ts \
+    tests/test262-baseline-auto-retry.test.ts tests/test262-per-lane-gating.test.ts
+  ```
+
+  - **Brought back:** the 102-shard legacy merge_group gate, promotion on
+    push and the 8-hourly refresh.
+  - **Kept:**
+    - `baseline-floor-staleness-alert.yml` and
+      `check-baseline-floor-staleness.mjs` (age-based, alert only; the
+      no-auto-heal test lives in `tests/issue-7551-ir-edition-scope.test.ts`,
+      outside the restored set);
+    - the auto-park changes;
+    - the scope script.
+  - **By hand:** edit the Cadence text in CLAUDE.md and `docs/ci-policy.md`.
+  - Required-check names and baseline files are unchanged. The procedure was
+    verified in a throwaway worktree (see "Review fixes, Part B").
 
 ## Validation (Part A, local, 2026-11-26)
 
@@ -415,3 +437,92 @@ Other decisions:
     before retrying (tested).
   - The measurement upload has `overwrite: true`, so a re-run of failed jobs
     re-uploads.
+
+## Review fixes, Part B (2026-11-26)
+
+- **B1 (daily full IR run silently skipped).**
+  - `test262-ir-measurement-shard` and `merge-ir-measurement` now carry
+    `!cancelled() && needs.<plan>.result == 'success' && …`.
+  - The merge job also requires `needs.test262-ir-measurement-shard.result
+    == 'success'`, so a shard's infrastructure failure skips it. The failed
+    shard job is then what auto-park judges.
+  - New `tests/issue-7551-job-skip-propagation.test.ts` models every event
+    (schedule, workflow_dispatch, push, merge_group, pull_request):
+    - each job's `if:` is evaluated three-valued;
+    - a job without a status function is skipped when a need may not run;
+    - any job that can run while a transitive ancestor may be skipped must
+      have a status function.
+  - The model flags the pre-fix conditions on schedule, and asserts the daily
+    run reaches both IR jobs, `test262-shard` and `merge-report`.
+  - The audit of the whole file found only one other hit:
+    `test262-standalone-linked`. It is dispatch-only, and its sole
+    conditional ancestor is gated on the same input, so it is listed with
+    that reason.
+- **B2 (daily run locking itself red).** The #1668 stale-baseline guard
+  (more than 50 relevant commits behind) is **dropped**, not re-based.
+  - After #7551 it only ran on the daily run, where a day of merges exceeds
+    it, and its failure skips promotion, so it never recovers.
+  - Its purpose, "promotion stopped landing", is covered by the floor-age
+    alert, which does not lock itself.
+  - Tested in `tests/issue-1897.test.ts`.
+- **B3 (`compile_timeout`).** **Gate all.** Every pass → not-pass, including
+  `compile_timeout`, is a regression.
+  - The legacy lane tolerated timeouts by count: soft 50 corroborated by the
+    aggregate compile time, hard 200 (`CT_HARD`, #3447). It did so because a
+    102-shard run on a contended pool produces timeouts in bulk.
+  - The IR edition run is 8 shards, and the runner already retries a
+    timed-out compile (#1589).
+  - How often ES5 IR rows time out on main is **unmeasured**:
+    - the IR artifacts cannot be downloaded from this sandbox;
+    - the shard logs, which are readable via `gh api …/jobs/<id>/logs`, do
+      not print per-status counts (blob reporter);
+    - a scan of all 102 shard logs of run 45788961847 found no
+      "Compile-timeout retries" line, which is uninformative for the same
+      reason.
+  - The summary says how many regressions are timeouts, so runner slowness
+    can be ruled out before fixing code. If timeouts park innocent PRs, add a
+    small documented cap.
+- **B4 (rollback).** The procedure is in the issue section above,
+  `docs/ci-policy.md`, CLAUDE.md and the workflow header. It was verified in
+  a throwaway worktree.
+- **B5 (infra vs. verdict in the queue).** The auto-park self-check covers
+  four cases:
+
+  | Failing step in the IR job | Next to the forwarding `IR current-edition gate (#7551)` | Result |
+  |---|---|---|
+  | Download of the baseline | yes | infra, no park |
+  | `Edition report did not complete (#7551) [infra]` (crash) | yes | infra, no park |
+  | `Fail on an edition regression (#7551)` | yes | **park** |
+  | IR shard runner kill (existing rule) | merge skipped, gate forwards | infra |
+
+  The park comment lists the regressed tests from the single annotation,
+  whose title is now defined once, in `scripts/lib/regression-annotation.mjs`.
+- **Nits.**
+  - Staleness threshold is now **36 h**. The cron fired 09:07–12:40 UTC on
+    2026-11-12..26 against 02:23 scheduled, giving start-to-start gaps of
+    22.8–25.8 h; a run takes 2–4 h before promoting.
+  - `mg-artifact-probe` keeps only its always-MISS answer; the dead push
+    branch is gone.
+  - The dead #1956 group-publish step is removed.
+  - `refresh-baseline.yml`:
+    - its title is now "Baseline Refresh (manual + emergency)";
+    - its header is rewritten and the dead `schedule` branch is removed;
+    - `retry-test262-baseline.yml` follows the rename, and now retries the
+      daily schedule run instead of push.
+  - `docs/ci-policy.md`: the `merge shard reports` rows and the
+    "refresh-baseline disabled" note are corrected, and the stale-guard row
+    is removed.
+  - The edition measurement upload uses `overwrite: true` (Part A).
+
+**Runner contention (answer, not implemented).**
+- The daily run starts about 204 matrix jobs at once: 102 legacy and 102 IR
+  shards, plus providers.
+- The repo has about 120 runners (the `gen-test262-mg-matrix.mjs` budget).
+- The schedule run has its own concurrency group, and GitHub Actions has no
+  job priority. So while the daily run's matrices drain, a queue group's 8 IR
+  shards wait behind them: the queue stalls for roughly the length of the
+  daily run. Today's schedule run took 11:08 → 15:03.
+- Proposed follow-up: give both daily matrices `strategy.max-parallel`
+  (e.g. 50 each, leaving at least 20 runners free), or stagger them with a
+  second cron for the full IR run. Either is a one-line change; I did not
+  make it because it changes dispatch-run timing too.

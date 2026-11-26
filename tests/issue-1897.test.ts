@@ -13,7 +13,7 @@ function readRepo(path: string): string {
 function standaloneGuardBlock(): string {
   const workflow = readRepo(".github/workflows/test262-sharded.yml");
   const start = workflow.indexOf("- name: Standalone regression guard (#1897)");
-  const end = workflow.indexOf("- name: Stale-baseline guard (#1668)", start);
+  const end = workflow.indexOf("- name: Compile-time regression guard", start);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
   return workflow.slice(start, end);
@@ -28,11 +28,13 @@ describe("#1897 standalone test262 merge gate", () => {
     const workflow = readRepo(".github/workflows/test262-sharded.yml");
     const standaloneReport = workflow.indexOf("- name: Build merged standalone test262 report");
     const standaloneGuard = workflow.indexOf("- name: Standalone regression guard (#1897)");
-    const staleGuard = workflow.indexOf("- name: Stale-baseline guard (#1668)");
-
     expect(standaloneReport).toBeGreaterThanOrEqual(0);
     expect(standaloneGuard).toBeGreaterThan(standaloneReport);
-    expect(staleGuard).toBeGreaterThan(standaloneGuard);
+    // (#7551) The commit-count stale-baseline guard locked the daily run red
+    // (a day of merges exceeds it, and a failure skips promotion); the floor
+    // AGE alert covers a promotion that stops landing.
+    expect(workflow).not.toContain("- name: Stale-baseline guard (#1668)");
+    expect(workflow).not.toContain("MAX_BASELINE_COMMITS_BEHIND");
 
     const mergeReportJob = workflow.slice(workflow.indexOf("merge-report:"), workflow.indexOf("  regression-gate:"));
     expect(mergeReportJob).toContain("name: merge shard reports");

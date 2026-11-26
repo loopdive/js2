@@ -25,7 +25,7 @@
 // floor is frozen (#6979).
 //
 // Inputs (env or flags):
-//   --max-age-hours N     floor age before staleness is a breach (default 30; env MAX_FLOOR_AGE_HOURS)
+//   --max-age-hours N     floor age before staleness is a breach (default 36; env MAX_FLOOR_AGE_HOURS)
 //   --max-behind N        cap on the reported commit walk (default 25)
 //   --repo loopdive/js2wasm-baselines   baselines repo (default)
 //   --ref main            git ref of `main` to measure against (default origin/main)
@@ -53,9 +53,13 @@ const RAW_BASE = (repo) => `https://raw.githubusercontent.com/${repo}/main`;
 
 // (#7551) The standalone floor is promoted by the DAILY legacy run, so it
 // legitimately trails main by a whole day's merges. Staleness is therefore an
-// AGE: one daily cadence plus a full matrix run plus slack. The relevant-commit
+// AGE. The cron (02:23 UTC) is not punctual: on 2026-11-12..26 the daily run
+// started between 09:07 and 12:40 UTC, so start-to-start gaps were 22.8–25.8 h,
+// and a full legacy run takes ~2–4 h before it promotes. A floor can therefore
+// legitimately reach ~30 h; 36 h cannot false-alarm on that jitter, while one
+// fully missed daily promotion (~48 h) still breaches. The relevant-commit
 // count is still reported, but no longer decides.
-export const DEFAULT_MAX_FLOOR_AGE_HOURS = 30;
+export const DEFAULT_MAX_FLOOR_AGE_HOURS = 36;
 
 /** Age of a floor and whether it breaches; null when its timestamp is unusable (never a false breach). */
 export function floorAge(generatedAt, nowMs, maxAgeHours) {
@@ -253,7 +257,8 @@ export function classifyTest262Path(p) {
   if (
     p === "scripts/test262-edition-scope.ts" ||
     p === "scripts/test262-current-edition.json" ||
-    p === "scripts/lib/gh-api-retry.mjs"
+    p === "scripts/lib/gh-api-retry.mjs" ||
+    p === "scripts/lib/regression-annotation.mjs"
   )
     return "standalone";
   if (EXACT_TEST262_PATHS.has(p)) return "both";

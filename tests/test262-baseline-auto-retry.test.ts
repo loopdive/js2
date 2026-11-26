@@ -7,7 +7,7 @@ const WORKFLOW = readFileSync(resolve(ROOT, ".github/workflows/retry-test262-bas
 
 describe("Test262 baseline promotion retries", () => {
   it("uses one retry controller for both canonical baseline workflows", () => {
-    expect(WORKFLOW).toContain('workflows: ["Test262 Sharded", "Baseline Refresh (scheduled + emergency)"]');
+    expect(WORKFLOW).toContain('workflows: ["Test262 Sharded", "Baseline Refresh (manual + emergency)"]');
     expect(WORKFLOW).toContain("actions: write");
     expect(WORKFLOW).toContain("github.event.workflow_run.head_branch == 'main'");
   });
@@ -15,7 +15,7 @@ describe("Test262 baseline promotion retries", () => {
   it("retries bounded mainline failures without touching measurement runs", () => {
     expect(WORKFLOW).toContain("github.event.workflow_run.run_attempt < 3");
     expect(WORKFLOW).toContain(
-      "github.event.workflow_run.name == 'Test262 Sharded' && github.event.workflow_run.event == 'push'",
+      "github.event.workflow_run.name == 'Test262 Sharded' && github.event.workflow_run.event == 'schedule'",
     );
     expect(WORKFLOW).toContain("github.event.workflow_run.event == 'schedule'");
     expect(WORKFLOW).toContain("github.event.workflow_run.event == 'workflow_dispatch'");

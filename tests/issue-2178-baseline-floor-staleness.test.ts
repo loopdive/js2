@@ -74,6 +74,7 @@ describe("#2178 — pathsTouchTest262 mirrors the test262-paths allowlist", () =
       "scripts/test262-edition-scope.ts",
       "scripts/test262-current-edition.json",
       "scripts/lib/gh-api-retry.mjs",
+      "scripts/lib/regression-annotation.mjs",
       "tests/test262-slow-tests.json",
       "tests/test262-slow-tests-standalone.json",
       "tests/test262-slow-tests-future-lane.json",

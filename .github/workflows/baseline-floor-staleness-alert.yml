@@ -9,7 +9,7 @@ name: Baseline floor staleness alert (#2178)
 # `baseline_sha` = the main commit it was promoted for). The floor is supposed
 # to advance once a day via test262-sharded.yml's promote-baseline on the
 # daily schedule (#7551; it advanced on every push to main before that), so a
-# breach is an AGE above 30 h — a daily promotion that did not land.
+# breach is an AGE above 36 h — a daily promotion that did not land.
 # When a rapid burst of main pushes (the merge-queue "thrash") drops the
 # promote run for a standalone-shifting change, the floor stops advancing and
 # every PR on current main fails the guard against a stale floor — the queue
@@ -44,7 +44,7 @@ on:
       max_age_hours:
         description: "Floor staleness threshold (hours since the standalone floor was promoted) before this is a breach"
         required: false
-        default: "30"
+        default: "36"
         type: string
 
 permissions:
@@ -94,7 +94,7 @@ jobs:
         env:
           # (#7551) The floor is promoted by the DAILY legacy run, so it trails
           # main by up to a day of merges by design: breach on age, not count.
-          MAX_FLOOR_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_age_hours || '30' }}
+          MAX_FLOOR_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_age_hours || '36' }}
         run: |
           set +e
           OUT=$(node scripts/check-baseline-floor-staleness.mjs --json --ref main 2>staleness.log)

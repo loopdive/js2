@@ -118,10 +118,12 @@ export interface Counts {
 export const MISSING_STATUS = "missing";
 
 export interface EditionDiff {
-  /** pass -> not-pass, the gated set; `now` is MISSING_STATUS for a test this run did not report. */
+  /**
+   * pass -> not-pass, the gated set — including `compile_timeout` (owner rule:
+   * pass -> not-pass is a regression; the runner already retries a timed-out
+   * compile). `now` is MISSING_STATUS for a test this run did not report.
+   */
   regressions: { file: string; now: string }[];
-  /** pass -> compile_timeout: runner-load flake (#1192), listed but not gated. */
-  timeouts: string[];
   improvements: string[];
   /** In the edition now, absent from the baseline (new test262 files, or a baseline that never ran them). */
   unbaselined: number;
@@ -152,7 +154,7 @@ export function compareEditionRuns(
   paths: ReadonlySet<string>,
   sameTest262Revision: boolean,
 ): EditionDiff {
-  const diff: EditionDiff = { regressions: [], timeouts: [], improvements: [], unbaselined: 0, notComparable: [] };
+  const diff: EditionDiff = { regressions: [], improvements: [], unbaselined: 0, notComparable: [] };
   for (const file of paths) {
     const now = run.get(file);
     const was = baseline.get(file);
@@ -161,7 +163,6 @@ export function compareEditionRuns(
       if (sameTest262Revision) diff.regressions.push({ file, now: MISSING_STATUS });
       else diff.notComparable.push(file);
     } else if (was === undefined) diff.unbaselined++;
-    else if (was === "pass" && now === "compile_timeout") diff.timeouts.push(file);
     else if (was === "pass" && now !== "pass") diff.regressions.push({ file, now });
     else if (was !== "pass" && now === "pass") diff.improvements.push(file);
   }
@@ -245,7 +246,14 @@ export function renderSummary(r: Report): string {
     d.regressions.map((x) => `${code(x.file)} → ${x.now}`),
   );
   list("Improvements (not pass → pass)", d.improvements.map(code));
-  if (d.timeouts.length > 0) list("Not gated: pass → compile_timeout (runner-load flake)", d.timeouts.map(code));
+  const timedOut = d.regressions.filter((x) => x.now === "compile_timeout").length;
+  if (timedOut > 0)
+    lines.push(
+      `${timedOut} of the regressions are \`compile_timeout\`. They are gated (the runner already retries a ` +
+        "timed-out compile, #1589), but if they are the only ones, check the shard for runner slowness before " +
+        "fixing code.",
+      "",
+    );
   if (d.notComparable.length > 0)
     list("Not comparable (test262 revision changed): passed before, no row now", d.notComparable.map(code));
   if (d.unbaselined > 0) lines.push(`${d.unbaselined} test(s) of the edition have no row in the baseline.`, "");

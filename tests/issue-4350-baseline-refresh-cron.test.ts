@@ -51,17 +51,4 @@ describe("#4350 — the baseline keeps exactly one scheduled refresher", () => {
     expect(alert).toContain("MAX_FLOOR_AGE_HOURS:");
     expect(alert).toMatch(/- cron:\s*"23 \* \* \* \*"/);
   });
-
-  it("only alerts: nothing in the alert path dispatches a baseline refresh (owner decision 2026-11-26)", () => {
-    const code = read("baseline-floor-staleness-alert.yml")
-      .split("\n")
-      .filter((line) => !/^\s*#/.test(line))
-      .join("\n");
-    // No dispatch call (the messages may still NAME the manual lever).
-    expect(code).not.toMatch(/gh workflow run|actions\/workflows\/[^"]*\/dispatches/);
-    // Without actions:write it could not dispatch even if a step tried.
-    expect(code).not.toMatch(/actions:\s*write/);
-    // Still fails loudly on a breach.
-    expect(code).toMatch(/if: steps\.staleness\.outputs\.breach == 'true'[\s\S]*?exit 1/);
-  });
 });

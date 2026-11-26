@@ -84,16 +84,18 @@ describe("#7551 edition path list", () => {
 describe("#7551 per-test comparison", () => {
   const paths = new Set([ES5_A, ES5_B, ES5_C]);
 
-  it("gates pass -> not-pass, lists improvements, and does not gate pass -> compile_timeout", () => {
+  it("gates every pass -> not-pass, compile_timeout included, and lists improvements", () => {
     const diff = compareEditionRuns(
       statuses({ [ES5_A]: "compile_error", [ES5_B]: "pass", [ES5_C]: "compile_timeout", [ES2015]: "fail" }),
       statuses({ [ES5_A]: "pass", [ES5_B]: "fail", [ES5_C]: "pass", [ES2015]: "pass" }),
       paths,
       true,
     );
-    expect(diff.regressions).toEqual([{ file: ES5_A, now: "compile_error" }]);
+    expect(diff.regressions).toEqual([
+      { file: ES5_A, now: "compile_error" },
+      { file: ES5_C, now: "compile_timeout" },
+    ]);
     expect(diff.improvements).toEqual([ES5_B]);
-    expect(diff.timeouts).toEqual([ES5_C]);
     // ES2015 regressed too, but it is outside the edition.
     expect(diff.regressions.some((r) => r.file === ES2015)).toBe(false);
   });
@@ -216,10 +218,25 @@ describe("#7551 queue gate plumbing", () => {
     expect(comment).toContain(`  - ${ES5_B} -> compile_error`);
   });
 
+  // Kept outside the files a gate rollback restores, so the owner's
+  // no-auto-heal decision (2026-11-26) survives a rollback of the gate.
+  it("the staleness alert only alerts: nothing in it dispatches a baseline refresh", () => {
+    const code = readFileSync(join(process.cwd(), ".github/workflows/baseline-floor-staleness-alert.yml"), "utf-8")
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    // No dispatch call (the messages may still NAME the manual lever).
+    expect(code).not.toMatch(/gh workflow run|actions\/workflows\/[^"]*\/dispatches/);
+    // Without actions:write it could not dispatch even if a step tried.
+    expect(code).not.toMatch(/actions:\s*write/);
+    // Still fails loudly on a breach.
+    expect(code).toMatch(/if: steps\.staleness\.outputs\.breach == 'true'[\s\S]*?exit 1/);
+  });
+
   it("the floor goes stale by age, after a missed daily promotion, not by merge count", () => {
     const now = Date.parse("2026-11-27T12:00:00Z");
-    expect(floorAge("2026-11-26T02:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
-      ageHours: 33.5,
+    expect(floorAge("2026-11-25T22:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 37.5,
       breach: true,
     });
     expect(floorAge("2026-11-27T02:30:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({

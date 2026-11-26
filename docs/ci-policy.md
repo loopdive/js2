@@ -46,7 +46,7 @@ classic endpoint (`gh api repos/loopdive/js2wasm/branches/main/protection`) answ
 | Check name                          | Workflow file                           | What it gates                                                                                                                                                                                                                                                                                |
 | ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
-| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, the stale-baseline guard (#1668), and the **completed-edition per-row gates on both lanes** (per-edition ratchet; js-host #6786) — see §3 |
+| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | **merge queue (#7551):** the IR-path current-edition gate — fails on any pass → not-pass of the current edition against the base commit's IR measurement. **Daily / dispatch:** aggregates the 102 legacy standalone shards and runs the legacy gates (standalone net guard #1897, high-water floor #2097, per-edition ratchet), which there detect regressions after the fact — see §3 |
 | `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
 | `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
 | `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | js-host rolling-baseline diff (`scripts/diff-test262.ts`). A **net** gate, not a per-row one: fails when net (improvements − wasm-change regressions) < 0, when any path bucket has > 50 regressions, when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions, or on any uncatchable-trap growth (#3189). A +5 / −4 diff passes it. Pass→fail rows of a **completed** edition are blocked by `merge shard reports` instead — see "What blocks a pass→fail row" in §3 |
@@ -333,18 +333,12 @@ Two test262 workflows currently run on PRs:
     back. If GH013 recurs, first confirm the ruleset still lists the
     `DeployKey: always` bypass actor
     (`gh api /repos/loopdive/js2wasm/rulesets/16700772 --jq .bypass_actors`).
-  - ⚠️ **`refresh-baseline.yml` is `state=disabled_manually` and CANNOT be
-    dispatched** (verified 2026-07-25 and again 2026-08-01:
-    `gh api repos/loopdive/js2wasm/actions/workflows/265204741 --jq .state`; a
-    `workflow_dispatch` returns **HTTP 422 "Cannot trigger a
-    'workflow_dispatch' on a disabled workflow"** — it fails before doing
-    anything). It is the only non-active workflow in the repo. Any runbook
-    step that says "dispatch `refresh-baseline.yml` in EMERGENCY mode" —
-    historically the documented lever for a queue wedged on #1897 — **will
-    not execute today**. Treat that lever as unavailable until #3611 settles
-    its disposition, and do NOT re-enable it mid-incident: that restarts an
-    8-hourly cron and runs an unconditional, guard-ignoring promote, which is
-    the most dangerous available version of that action.
+  - **`refresh-baseline.yml` is enabled again and dispatch-only.** It was
+    `state=disabled_manually` on 2026-07-25 and 2026-08-01, when a dispatch
+    returned HTTP 422. It has been running since: dispatch runs were observed
+    on 2026-11-26. #7551 removed its 8-hourly cron, and nothing dispatches it
+    automatically. Its EMERGENCY mode is an unconditional, guard-ignoring
+    promote: use it by hand only.
     **Note `gh workflow list` simply OMITS disabled workflows**, so absence
     there is not evidence of non-existence — query the API by id or path.
   - **Before relying on ANY documented lever, check it is enabled**, not just
@@ -466,7 +460,20 @@ Owner decision, 2026-11-26.
 - With no comparable baseline, the summary says **"No baseline — not
   compared"** and the gate passes. That happens on the first run, after an
   edition switch, or after an eval-engine change.
-- `pass → compile_timeout` is listed but not gated.
+- **Every** pass → not-pass is gated, `compile_timeout` included. The
+  runner already retries a timed-out compile (#1589), so a timeout that
+  survives is a regression until shown otherwise. The summary counts how
+  many regressions are timeouts, so runner slowness can be ruled out first.
+  How often ES5 IR rows time out on main is unmeasured: the shard logs do
+  not print per-status counts, and artifacts were not readable here. If
+  timeouts park innocent PRs, add a small documented cap.
+- A baseline-passing test with no row in the run is a regression when the
+  test262 revision is unchanged (`missing`), and is listed as not
+  comparable when the revision changed. Edition runs are also validated
+  against the exact edition file list (`--expected-paths-file`).
+- A crashed report (any exit other than 0 or 3) fails the step "Edition
+  report did not complete (#7551) [infra]"; auto-park reads `[infra]` as
+  no verdict and does not park.
 - Auto-park copies the regressed-test annotation into its park comment. A
   failed baseline download is classified as infra, so the queue retries it
   instead of parking.
@@ -479,7 +486,11 @@ Owner decision, 2026-11-26.
   are as of the last green daily run.
 - `refresh-baseline.yml` is dispatch-only. Its 8-hourly cron promoted
   without gates.
-- `baseline-floor-staleness-alert.yml` breaches on floor **age** above 30 h.
+- `baseline-floor-staleness-alert.yml` breaches on floor **age** above 36 h.
+  The cron (02:23 UTC) actually started 09:07–12:40 UTC on 2026-11-12..26
+  (start-to-start gaps 22.8–25.8 h), and a run takes ~2–4 h before it
+  promotes, so a healthy floor can reach ~30 h. One fully missed
+  promotion (~48 h) still breaches.
   It **only alerts**: the run fails and names the age and the last green
   daily run. Its auto-heal, a forced `refresh-baseline.yml` dispatch, was
   removed (owner decision 2026-11-26), because after a failed daily run it
@@ -490,8 +501,26 @@ Owner decision, 2026-11-26.
 reads (`deploy-pages.yml` lists artifacts by that name), so site IR numbers
 are as of the last full run.
 
-**Rollback:** `git revert` the #7551 Part B commit. Required-check names and
-baseline files are unchanged, so nothing else needs to change.
+**Rollback (the gate only; the alert-only staleness rule stays):** a plain
+`git revert` of the Part B commits does not apply cleanly (5d7abeaf87 and
+the auto-heal removal 3c90c135e2 touch the same files). Instead, restore
+the gate's files from the last Part A commit, `dff600c97f`, in one PR:
+
+```bash
+git checkout dff600c97f -- \
+  .github/workflows/test262-sharded.yml .github/workflows/refresh-baseline.yml \
+  .github/workflows/retry-test262-baseline.yml scripts/test262-ir-pages-artifacts.test.mjs \
+  tests/issue-1897.test.ts tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts \
+  tests/issue-4153-test262-sharded-pr-gating.test.ts tests/issue-4350-baseline-refresh-cron.test.ts \
+  tests/test262-baseline-auto-retry.test.ts tests/test262-per-lane-gating.test.ts
+```
+
+That brings back the 102-shard legacy merge_group gate, promotion on push
+and the 8-hourly refresh. It leaves alone the alert-only, age-based
+staleness check (`baseline-floor-staleness-alert.yml`,
+`check-baseline-floor-staleness.mjs`), the auto-park changes and the
+scope script. Then edit the Cadence text in CLAUDE.md and this section by
+hand. Required-check names and baseline files are unchanged.
 
 ### Pushing to `main` from a workflow — the rebuild tax (#3915)
 
@@ -760,7 +789,6 @@ and the #1942 compile-time guard.)
 | --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | Catastrophic regression guard (#1668)   | host           | `Regressions with wasm-hash change` > 200 vs `test262-current.jsonl`                       | high (200) — only a codegen/harness catastrophe trips it |
 | **Standalone regression guard (#1897)** | **standalone** | net (`improvements − wasm-change regressions`) < −15 vs `test262-standalone-current.jsonl` | tight (15) — holds the current standalone floor          |
-| Stale-baseline guard (#1668)            | both           | baselines JSONL > 50 commits behind main HEAD (promotion pipeline broken)                  | n/a                                                      |
 | Per-edition ratchet, completed edition  | standalone     | any non-passing row of a `completed` edition (ES5), minus its `exceptions`                 | none                                                     |
 | Host completed-edition gate (#6786)     | host           | any pass→not-pass row of a `completed` edition vs `test262-current.jsonl`, any net         | none (quarantine + `compile_timeout` not counted)        |
 
@@ -1019,7 +1047,7 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 | Required check                      | Workflow              | What it protects against                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
-| `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
+| `merge shard reports`               | `test262-sharded.yml` | **in the merge queue:** the IR-path current-edition per-test gate (#7551) — each PR validated on its own merge_group ref against the measurement of the commit its group was built on. **On the daily run:** the legacy standalone lane's aggregate and gates (#1897, #2097, edition ratchet), not a merge gate — see §3. |
 | `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
 | `check for test262 regressions`     | `test262-sharded.yml` | js-host net gate (net ≥ 0, ≤ 50 per bucket, ratio, trap growth) below the inline catastrophic threshold. Not per-row: pass→fail rows of a completed edition are blocked by `merge shard reports` (§3, #6786).                                                                                                                                                                                                                                                                         |

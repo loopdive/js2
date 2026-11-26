@@ -341,14 +341,8 @@ describe("test262 per-lane gating — workflow wiring", () => {
     }
   });
 
-  it("publishes only measured standalone rows for queue promotion", () => {
-    const artifact = step("merge-report", "Publish group results for predecessor diffing (#1956)");
-    expect(stepIf("merge-report", "Publish group results for predecessor diffing (#1956)")).toBe(
-      "env.STANDALONE_RAN == 'true' && github.event_name == 'merge_group'",
-    );
-    expect(artifact).toContain("merged-reports/test262-standalone-results-merged.jsonl");
-    expect(artifact).not.toContain("merged-reports/test262-results-merged.jsonl");
-    expect(artifact).toContain("if-no-files-found: error");
+  it("no longer publishes legacy group results: the queue does not run the legacy matrix (#7551)", () => {
+    expect(job("merge-report")).not.toContain("Publish group results for predecessor diffing (#1956)");
   });
 
   it("the required-check decision still keys off SHARDS_RAN, not a single lane", () => {

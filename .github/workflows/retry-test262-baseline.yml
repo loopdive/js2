@@ -5,9 +5,11 @@ name: Retry transient Test262 baseline failures
 # is valid, and without a rerun the downstream promotion never executes. Keep
 # recovery in one place for both baseline-producing workflows: rerun only the
 # failed matrix cells, then let their existing merge/promotion jobs continue.
+# (#7551) Test262 Sharded promotes from its daily `schedule` run, no longer
+# from push, so that is the run retried here.
 on:
   workflow_run:
-    workflows: ["Test262 Sharded", "Baseline Refresh (scheduled + emergency)"]
+    workflows: ["Test262 Sharded", "Baseline Refresh (manual + emergency)"]
     types: [completed]
 
 permissions:
@@ -27,9 +29,9 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.run_attempt < 3 &&
       (
-        (github.event.workflow_run.name == 'Test262 Sharded' && github.event.workflow_run.event == 'push') ||
+        (github.event.workflow_run.name == 'Test262 Sharded' && github.event.workflow_run.event == 'schedule') ||
         (
-          github.event.workflow_run.name == 'Baseline Refresh (scheduled + emergency)' &&
+          github.event.workflow_run.name == 'Baseline Refresh (manual + emergency)' &&
           (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
         )
       )
