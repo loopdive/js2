@@ -7455,3 +7455,76 @@ function never ran. Example: `function t() { var o = { t: true, n: 1 }; return o
   - **Follow-up:** admit `dynamic + object/function` on the Prepared lane.
 - Rows 237 and 579 of `check:prepared-bytes` change bytes against round 1 (the `bothNullish` shape) and still return
   node's answer. The ordinary probes are identical.
+
+## Slice L0b plan (2026-11-26, branch `claude/7354-l0b` from `claude/7354-l0` 8a7f1ada7d)
+
+Statement and expression shapes. Every arm is gated on the Prepared lane (`createsFunctionObjects`), and
+`from-ast.ts` (17235 lines at the base) must not grow.
+
+### Measured at the base (51 probes, `.tmp/l0b.json`; 0 wrong)
+
+| shape | today |
+|---|---|
+| `;` in a body, an `if` arm or a loop body | refused / abort: `unsupported body statement EmptyStatement`, `unexpected statement before tail` |
+| `switch` on a dynamic or string home, mixed or non-literal tests | refused / abort: `switch disc must lower to i32/f64`, `string-tested switch disc lowered to dynamic`, `switch-case-test-mixed`, `switch-case-test-nonliteral` |
+| more arguments than parameters | refused: `call to f has 2 args, expected 1` |
+| a void call used as a value | refused: `call to f returned void used as expression` |
+| a ternary whose arms differ (number vs undefined/null, string vs undefined) | refused: `ternary branches have different types` |
+| a mutable string local in a function | abort: `mutable binding 's' (string) has no slot representation` |
+| `null` under a number hint (`var x = null` in a function, `{ n: null }`) | refused / abort: `bare 'null' in non-reference context (f64)` |
+| `j = i++`, `j = --i` | refused / abort: `PostfixUnaryExpression`, `value-position prefix update` |
+| `true + 1` | refused: `'+' operands not provably both-number or string-concatenable (boolean/number)` |
+
+`String(a < b)` already works on the L0a head. `i += 2` in value position works.
+
+### Design and placement
+
+- **EmptyStatement** (§14.4: completes empty).
+  - `lowerStmt` returns at an EmptyStatement.
+  - `lowerStatementList` drops EmptyStatements before choosing the tail.
+  - One predicate lives in a new sibling module, `src/ir/statement-shapes.ts`.
+- **switch** (§14.12.4).
+  - The disc is lowered once, with the hint the tests imply, as today.
+  - When the typed ladder cannot take it (a disc of another type, mixed or non-literal tests), the lane takes a
+    carrier dispatch: the disc goes into a carrier slot, and each test in source order is evaluated lazily and compared
+    by `js.value.strict_eq` in a nested `if` chain that writes the clause index.
+  - The existing index ladder (`emitSwitch`) then runs unchanged; `default` keeps its place, because the ladder already
+    handles it.
+  - The string dispatch (`lowerStringSwitchDispatch`, about 70 lines) moves beside the carrier dispatch, in a new module
+    `src/ir/switch-dispatch.ts`. That pays for from-ast's new call.
+- **Extra arguments** (§10.2.11, §13.3.8.1).
+  - `planUnderArityDirectCall` becomes one arity plan for both directions, moved out of from-ast.
+  - Extra arguments are lowered as discarded expressions after the supplied ones, before the call.
+  - A callee that names `arguments` keeps the refusal.
+- **A void call used as a value** (§10.2.1.4): on the lane the value is the dynamic `undefined` after the call.
+- **A mixed ternary.** On the lane, when the arms' IR types differ and each boxes, both arms are boxed into the carrier
+  inside their own buffers; the join is dynamic.
+- **A mutable string local.** On the lane it takes the dynamic slot representation; the initial write and every
+  assignment box the string, and reads are dynamic.
+- **`null` under a non-reference hint.** On the lane it is the carrier's null, whatever the hint; the user converts it.
+- **Value-position `++`/`--`** (§13.4.2–13.4.5).
+  - `lowerIncrementDecrement` returns the old ToNumeric value and the new value.
+  - Prefix in value position answers the new value, postfix the old one.
+  - Statement position is unchanged.
+- **`true + 1`.** On the lane, `+` over a Boolean and a number boxes both and takes the dynamic `+`, through the same
+  box route as the comparisons (`carrierOperand`).
+
+### Still refused (by name)
+
+- nested function declarations (L0c);
+- a closure writing a captured local (ref cells, own slice);
+- array literals (#7352);
+- `arguments`;
+- `switch` with two `default`s (an early error anyway);
+- a `case` test of no carrier kind.
+
+### Tests and proof
+
+- `tests/issue-7354-l0b-*.test.ts`, one per family: node agreement plus a wrong twin, at top level and in a function.
+  - switch: lazy order logged, fallthrough, `default` first/middle/last, `"1"` vs `1`, NaN never matches.
+  - Extra arguments: side effects in order.
+- The 51 base probes plus the L0a probe sets, base → head: nothing right changes, 0 wrong.
+- Ordinary bytes identical; `check:prepared-bytes` with every difference explained.
+- The 197 targeted rows and the sample through the runner, each new pass with a failing twin; all gates.
+- Quality: from-ast does not grow; no second ladder (the carrier dispatch feeds the existing `emitSwitch`); one arity
+  plan; every arm gated on the lane.
