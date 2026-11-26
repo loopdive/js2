@@ -89,13 +89,18 @@ runner. S12.2_A2 still stops at `this["__variable"]` (Session B), so slice 2 add
      (`src/ir/runtime/ordinary-object-callables.ts`).
    - Its physical row in `ROWS` (`src/backend/wasmgc/resources/native-source-objects.ts`) binds the kernel's
      `deleteOwn`, the way the other bound rows do.
-2. **Strictness: two helper names, one source (PRV-7471 B1, option b).**
-   - The Prepared resolver answers `dynamicDeleteSymbol(site)` exactly as the ordinary one does:
-     `irDynamicDeleteHelperName(irDeleteSiteIsStrict(site))`, i.e. `__ir_dyn_delete_strict` /
-     `__ir_dyn_delete_sloppy`.
-   - Both pipelines then decide strictness with one function, `irDeleteSiteIsStrict` (legacy's `isStrictContext`).
-   - The two names and `irDeleteSiteIsStrict` move from `src/codegen/ir-dynamic-delete.ts` to a leaf module under
-     `src/ir/` that both import, so `src/ir/program/` takes no `codegen` import. The legacy wrapper keeps its body.
+2. **Strictness: two helper names; each pipeline keeps its own rule (PRV-7471 B1, option b).**
+   - The legacy names `__ir_dyn_delete_strict` / `__ir_dyn_delete_sloppy` (`irDynamicDeleteHelperName`) move from
+     `src/codegen/ir-dynamic-delete.ts` to a leaf module under `src/ir/` that both pipelines import, so
+     `src/ir/program/` takes no `codegen` import. The legacy wrapper keeps its body.
+   - The Prepared resolver answers `irDynamicDeleteHelperName(isStrictContext(site, inferModuleStrictArguments))`.
+     That is the rule `preparedCodeStrictness` applies (`src/compiler/prepared-code-strictness.ts`), the one
+     `dyn.member_set`'s `sloppy` comes from, so a write and a delete in one program follow the same strictness.
+   - It is not `irDeleteSiteIsStrict`. That function uses `isStrictContext`'s default `inferModuleStrict = true`, so the
+     test262 wrapper's synthetic `export` would make a sloppy row strict, and a sloppy delete of a non-configurable
+     property would throw instead of answering `false`.
+   - The ordinary resolver keeps `irDeleteSiteIsStrict` unchanged, so its bytes do not move. Making legacy honour
+     the option would change legacy verdicts and needs its own reviewed change.
    - No new IR op: the call already carries the receiver and the key, and the name carries the strictness.
 3. **Legalization arm, plugged into `Access` (PRV-7471 B1).**
    - `memberAccess` and `constantKey` now take a `MemberSite` instead of `MemberGet | MemberSet`: the instruction (for
@@ -155,6 +160,8 @@ runner. S12.2_A2 still stops at `this["__variable"]` (Session B), so slice 2 add
   - a configurable data property removed (`true`, and it reads `undefined` after);
   - an absent key and an inherited key (`true`, the prototype untouched);
   - a non-configurable property: `false` with the value kept in sloppy code, a caught TypeError in strict code;
+  - a sloppy script-goal program (`inferModuleStrictArguments: false`) whose delete of a non-configurable property
+    answers `false`, the TypeError being its wrong twin (PRV-7471 B1);
   - a frozen object (PRV-7471 point 7): `deleteOwn` checks `sealed` and the configurable bit. The test shows that
     `Object.freeze` leaves the entry non-configurable or sets `sealed`. If neither holds, the kernel also tests
     `OBJ_FLAG_FROZEN` (one condition, beside `sealed`);
@@ -185,6 +192,7 @@ runner. S12.2_A2 still stops at `this["__variable"]` (Session B), so slice 2 add
   - the per-kind arms;
   - the strict TypeError branch;
   - the helper-name dispatch (strict ↔ sloppy);
+  - the Prepared resolver's strictness swapped to `irDeleteSiteIsStrict` (the B1 test must fail);
   - the contract's row binding;
   - the identifier arm's `withField` refusal.
 - Yield: the o411 sample through S3's runner command, base vs head, every changed row named. Expected +3.
@@ -196,7 +204,8 @@ runner. S12.2_A2 still stops at `this["__variable"]` (Session B), so slice 2 add
 - The contract is a table row plus a declaration plus a physical row binding an existing kernel function.
 - The legalization arm is a third `Access` passed to the one `memberAccess` chain (now over a `MemberSite`), not a
   copy of it.
-- The delete helper names and `irDeleteSiteIsStrict` live once, in an `src/ir/` leaf module both pipelines import.
+- The delete helper names live once, in an `src/ir/` leaf module both pipelines import; each pipeline applies its own
+  strictness rule, the Prepared one shared with `dyn.member_set`.
 - The from-ast change is the resolver answer plus the receiver boxing that reads and writes already do.
 - No growth grant is expected. If `from-ast.ts` grows (slice 2's identifier arm), a dated grant will explain why the
   arm sits beside the other `delete` arms.
