@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { compile as compileOrdinary } from "../src/index.js";
 import { compoundWriteAdmissible } from "../src/ir/analysis/operand-admissibility.js";
 import { supportsIrBackendTargetCapability, type IrBackendTargetProfile } from "../src/ir/backend/legality.js";
-import { preparedScriptRefusal, runPreparedScript } from "./helpers/prepared-script-run.js";
+import { runPreparedScript } from "./helpers/prepared-script-run.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -70,15 +70,20 @@ describe("#7375 — a numeric compound reads a boolean or string right-hand side
     expect(await runPreparedScript(`${program} if (${fails}) throw 1;`)).toBe("threw");
   });
 
-  // Not this issue's; each refuses by name.
-  it.each([
-    // The binary form `x = x * "3"` refuses identically: a typed number slot has no dynamic carrier to box into.
-    ["a string into a typed number slot", 'var x = 2; x *= "3"; if (x !== 6) throw 1;', "dynamic carrier"],
-    // `+` is the dynamic add of #7354 Str2, not a ToNumber operator.
-    ["`+=` with a boolean", "var x; x = 7; x += true; if (x !== 8) throw 1;", "__ir_dyn_add"],
-  ])("refuses %s by name", async (_, program, message) => {
-    expect(await preparedScriptRefusal(program)).toContain(message);
-  });
+  // Main carries this since the plan was written: a typed number slot now has a dynamic carrier to box the string into.
+  it.each([["a string into a typed number slot", 'var x = 2; x *= "3";', "x !== 6", "x !== 7"]])(
+    "%s",
+    async (_, program, holds, fails) => {
+      for (const [check, verdict] of [
+        [holds, "returned"],
+        [fails, "threw"],
+      ] as const) {
+        const source = `${program} if (${check}) throw 1;`;
+        expect(nodeVerdict(source), source).toBe(verdict);
+        expect(await runPreparedScript(source), source).toBe(verdict);
+      }
+    },
+  );
 
   it("asks the lane's capability in the one table", () => {
     const op = ts.SyntaxKind.AsteriskEqualsToken;

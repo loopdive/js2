@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11566,
-    "fail": 127,
+    "pass": 11569,
+    "fail": 124,
     "ce": 11,
     "skip": 0,
     "total": 11704,
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 74,
-        "fail": 2,
+        "pass": 76,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 97
+        "pct": 100
       },
       {
         "name": "Symbol.match",
@@ -462,12 +462,12 @@
       },
       {
         "name": "const",
-        "pass": 12,
-        "fail": 1,
+        "pass": 13,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 13,
-        "pct": 92
+        "pct": 100
       },
       {
         "name": "error-stack-accessor",
@@ -2186,9 +2186,9 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4348,
+    "pass": 4347,
     "fail": 1245,
-    "ce": 199,
+    "ce": 200,
     "skip": 0,
     "total": 5792,
     "pct": 75,
@@ -2303,9 +2303,9 @@
       },
       {
         "name": "top-level-await",
-        "pass": 181,
+        "pass": 180,
         "fail": 46,
-        "ce": 30,
+        "ce": 31,
         "skip": 0,
         "total": 257,
         "pct": 70
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4579,
+    "pass": 4580,
     "fail": 197,
-    "ce": 145,
+    "ce": 144,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4480,
+        "pass": 4481,
         "fail": 106,
-        "ce": 25,
+        "ce": 24,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4725,
-    "fail": 656,
+    "pass": 4732,
+    "fail": 649,
     "ce": 64,
     "skip": 0,
     "total": 5445,

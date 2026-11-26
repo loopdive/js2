@@ -1,7 +1,8 @@
 ---
 id: 7375
 title: "Prepared path: compound assignment with a non-numeric right-hand side"
-status: in-progress
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
@@ -156,10 +157,12 @@ Built:
 - **from-ast's compound arm** reads that right-hand side with `numericReaderOperandToF64`, the binary form's
   steps: a boolean is its 0 / 1 (`booleanToNumber`, factored out of `booleansReadAsNumbers`); a string is boxed
   (`boxConcreteToDynamic`) and read with `dyn.to_number`.
-- **The Prepared resolver asks the capability set** for the first time. The native dynamic lane's resolver
-  (`programDynamicContracts`, `src/ir/source-dynamic-contracts.ts`) answers through the same legality predicate,
-  on a standalone wasmgc profile, and only for the capabilities its dynamic contracts cover
-  (`native-dynamic-to-number`). Every other capability stays unasked, so what the path admits does not move.
+- **The Prepared resolver answers the capability** through the same legality predicate. After the merge of
+  2026-11-26 this is the one capability answer main already had (#7354 T, `prepareSourceBuiltinResolvers` in
+  `src/ir/program-source-units.ts`, which answered `number-to-string` alone). It now answers the set
+  `{number-to-string, native-dynamic-to-number}` through `supportsIrBackendTargetCapability` on a standalone wasmgc
+  profile. A second answer in `source-dynamic-contracts.ts` was dropped. Every other capability stays unanswered,
+  so what the path admits does not move.
 - **Cleanup:** the selector's `supportsBackendCapability` option spelled out the 28-member capability union
   inline; it now names `IrBackendTargetCapability`.
 
@@ -223,3 +226,32 @@ Suspended 2026-11-20 (budget window end, C lead's wind-down).
   3. Open the PR with `hold`. In the body: the capability is the first one the Prepared resolver asks, plus the
      from-ast grant justification.
 - **Open:** no review yet.
+
+## Re-measured after merging main (2026-11-26, main `6694a8b83`)
+
+- **The gap still reproduces on main.** `var x; x = true; x *= true;` refuses with `compound assign RHS has no
+  numeric carrier (got i32)`. `function f() { var x; x = 2; x *= "3"; return x; }` compiles to an abort body (#7354
+  U) and traps when called. On this branch both run with node's answer.
+- **Out-of-scope note revised.** `var x = 2; x *= "3"` (a typed number slot) now runs on this branch with node's
+  answer: main gave typed programs a dynamic carrier since the plan was written. It is a run test now, no longer a
+  refusal. `x += true` runs on main itself (Str2's dynamic `+`) and is not this issue's.
+- **Merge conflicts:**
+  - from-ast's capability union: main's `RegExpBuildCapability` plus `native-dynamic-to-number`.
+  - The Prepared capability answer: folded into main's #7354 T resolver; see above.
+  - A new caller on main (#7330, a string slot's `+=`) passes the capability too.
+  - The test helper: this branch's superset.
+- **Tests:**
+  - `tests/issue-7375-compound-non-numeric-rhs.test.ts`: 39/39.
+  - #7354, #7372, prepared-entry/-runtime, #7188, #7193, es5-standalone-instanceof, #7340, es5-dynamic-compound:
+    2312/2313. The one failure, `issue-7354-o-objects` "refuses what the later steps build, by name", fails
+    identically on main.
+  - The #7144 sweep: only #7408's four rows are red, as on main.
+- **JS-environment bytes** vs main: identical on the 9 isolated programs (`.js`/`.ts`) and on the 250-file sample
+  (both targets).
+- **Ordinary standalone:** 52/52 programs give node's answer on this branch (48 take the IR path) and on main (4
+  do).
+- **Census of the 30 files** (stand-in harness, `scripts/ir-census`, now on main): all get past the gap and next
+  stop at `unknown class Test262Error`. Standalone test262 verdicts: 30/30 pass on main and on this branch.
+- **Gates:** typecheck, loc and func (also with `LOC_GATE_BASE=origin/main`: from-ast +23,
+  plannedClosureOperandRefusal +2, both granted above), coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles.

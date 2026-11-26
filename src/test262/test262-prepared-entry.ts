@@ -3,6 +3,8 @@ import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
 import { analyzeMultiSource } from "../checker/index.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
+import type { ts } from "../ts-api.js";
+import { elideDeadBindings } from "./prepared-dead-bindings.js";
 import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
@@ -10,6 +12,10 @@ import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
+import { AbortBodies, type AbortBodyRow } from "../ir/abort-bodies.js";
+
+type DeadBindingElision = typeof elideDeadBindings;
+type UnlowerableBodies = "abort" | "refuse";
 
 export interface RequiredPreparedRequest {
   readonly kind: "prepared-program-required";
@@ -272,6 +278,7 @@ interface ResultRecord {
   readonly binary?: Uint8Array;
   readonly adapterManifest?: JavaScriptAdapterManifestV1;
   readonly hostImportInventory?: NonNullable<CompileResult["hostImportInventory"]>;
+  readonly abortBodies?: readonly AbortBodyRow[];
 }
 const results = new WeakMap<CompileResult, ResultRecord>();
 function current(result: CompileResult): ResultRecord | undefined {
@@ -312,6 +319,13 @@ export function requiredPreparedFinalArtifactObservation(result: CompileResult):
 export function requiredPreparedFailure(result: CompileResult): RequiredPreparedFailure | undefined {
   return current(result)?.outcome;
 }
+/**
+ * (#7354 U) The functions of a compiled program whose body is the run-time abort, in source order. A trap whose top
+ * frame is one of their names is that abort.
+ */
+export function requiredPreparedAbortBodies(result: CompileResult): readonly AbortBodyRow[] | undefined {
+  return current(result)?.abortBodies;
+}
 /** Only the shared compiler's real syntax/early branch can supply this observation. */
 export function requiredPreparedFrontendFailure(result: CompileResult): RequiredPreparedFrontendFailure | undefined {
   return current(result)?.frontendFailure;
@@ -350,6 +364,8 @@ function present(
   entryFile: string,
   options: Test262CompileOptions,
   singleSource = false,
+  elide: DeadBindingElision = elideDeadBindings,
+  unlowerableBodies: UnlowerableBodies = "abort",
 ): CompileResult {
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
@@ -392,12 +408,17 @@ function present(
         },
       ],
     );
-  const ast = analyzeMultiSource(exactFiles, entryFile, undefined, {
-    allowJs: options.allowJs,
-    skipSemanticDiagnostics: options.skipSemanticDiagnostics,
-    ...(options.platform ? { platform: options.platform } : {}),
-  });
-  if (!completeAnalyzedGraph(exactFiles, entryFile, ast))
+  const analyze = (graph: Record<string, string>) =>
+    analyzeMultiSource(graph, entryFile, undefined, {
+      allowJs: options.allowJs,
+      skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+      ...(options.platform ? { platform: options.platform } : {}),
+    });
+  // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
+  const suppliedAst = analyze(exactFiles);
+  const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
+  const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
+  if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
     return failed(
       { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },
       [
@@ -411,13 +432,18 @@ function present(
         },
       ],
     );
+  const supplied = new Map(Object.entries(exactFiles).map(([file, text]) => [normalizeMultiFileName(file), text]));
+  const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;
   // The public single-source compiler always applies its parser-syntax gate,
   // including allowJs. Multi-source calls retain their captured option policy.
   const pipelineOptions = singleSource
     ? (freezePreparedIrValue({ ...options, strictJsSyntax: true }) as Test262CompileOptions)
     : options;
   const errors: CompileError[] = [];
-  const outcome = runPreparedIrPipelinePresentation({
+  // This entry measures how far the path reaches: a body it cannot lower aborts when run instead of refusing all.
+  const abortBodies = unlowerableBodies === "abort" ? new AbortBodies() : undefined;
+  const outcome = runPreparedIrPipelinePresentation(
+    {
     userSourceFiles: ast.sourceFiles,
     entryAst: {
       sourceFile: ast.entryFile,
@@ -426,14 +452,18 @@ function present(
       diagnostics: ast.diagnostics,
       syntacticDiagnostics: ast.syntacticDiagnostics,
     },
-    multiAst: ast,
+    // Single-source: the public single-source compiler's type gate refuses hard TypeScript diagnostics, allowJs
+    // included; a graph exempts allowJs input from it.
+    multiAst: singleSource ? null : ast,
     errors,
     codegenOptions: { link: options.link ?? [], sourceMap: options.sourceMap === true },
     sourcesContent: new Map(ast.sourceFiles.map((source) => [source.fileName, source.text])),
     diagnosticAnchor: ast.entryFile,
     runEarlyErrorsOnAllowJs: singleSource || options.enforceJsEarlyErrors === true,
     options: pipelineOptions,
-  });
+    },
+    abortBodies,
+  );
   if (outcome.kind === "output-failed") {
     // Query immediately for this call's actual outcome. No duplicate early-error
     // detection, text/name inference, registration API or decoded certificate.
@@ -445,7 +475,7 @@ function present(
           backend: profile.backend,
           target: profile.target,
           diagnostics: observed.diagnostics,
-          sources: ast.sourceFiles.map((source) => ({ file: source.fileName, text: source.text })),
+          sources: ast.sourceFiles.map((source) => ({ file: source.fileName, text: suppliedText(source) })),
         }) as RequiredPreparedFrontendFailure)
       : undefined;
     return failed(outcome, outcome.errors, frontendFailure);
@@ -513,16 +543,27 @@ function present(
     hostImportInventory: freezePreparedIrValue(result.hostImportInventory) as NonNullable<
       CompileResult["hostImportInventory"]
     >,
+    ...(abortBodies ? { abortBodies: freezePreparedIrValue(abortBodies.rows()) as readonly AbortBodyRow[] } : {}),
   });
   return result;
 }
 
-export async function compile(source: string, options?: Test262CompileOptions): Promise<CompileResult> {
+/**
+ * `elide` and `unlowerableBodies` are test seams only: a test passes the identity to compare the gate's verdict without
+ * the elision, and "refuse" to compare the program's refusal without abort bodies.
+ */
+export async function compile(
+  source: string,
+  options?: Test262CompileOptions,
+  elide: DeadBindingElision = elideDeadBindings,
+  unlowerableBodies: UnlowerableBodies = "abort",
+): Promise<CompileResult> {
   if (!selected(options)) return legacy.compile(source, options);
   const captured = strictOptions(undefined, options);
   if (captured.fileName !== undefined && typeof captured.fileName !== "string")
     invalidRequest("fileName must be a string");
-  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true);
+  const file = captured.fileName ?? "input.ts";
+  return present({ [file]: source }, file, captured, true, elide, unlowerableBodies);
 }
 export async function compileMulti(
   files: Record<string, string>,

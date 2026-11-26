@@ -21,7 +21,7 @@ import {
 import { ts } from "../ts-api.js";
 import { isPrimitiveLiteral } from "./descriptor-literal.js";
 import { referencesNamed } from "./dynamic-home-uses.js";
-import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./program/builtin-prototype-keys.js";
 
 /** An empty object value in either spelling. */
 export type EmptyObjectExpression = ts.ObjectLiteralExpression | ts.NewExpression;

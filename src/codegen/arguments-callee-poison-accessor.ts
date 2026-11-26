@@ -46,9 +46,9 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { ensureArrayNativeProtoGlue } from "./array-object-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { ensureStandaloneNativeMethodClosure } from "./native-proto.js";
 import { reserveArgumentsOwnDefine } from "./arguments-length-brand.js"; // (#6964)
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const POISON_FUNC_NAME = "__args_callee_poison";
 
@@ -166,7 +166,7 @@ export function seedArgumentsIteratorProperty(ctx: CodegenContext, fctx: Functio
   const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   const defineIdx = reserveArgumentsOwnDefine(ctx, false); // (#6964)
-  const iteratorId = getWellKnownSymbolId("iterator");
+  const iteratorId = wellKnownSymbolId("iterator");
   if (boxSymbolIdx === undefined || defineIdx === undefined || iteratorId === undefined) return;
 
   fctx.body.push({ op: "local.get", index: argsLocalIdx });

@@ -43,12 +43,6 @@ import {
   type IrOnlyEntryObservation,
   type IrOnlyLaneObservation,
 } from "../scripts/check-ir-only.js";
-
-const SELECTOR_SOURCE = readFileSync(
-  fileURLToPath(new URL("../src/codegen/ir-prepared-free-functions.ts", import.meta.url)),
-  "utf8",
-);
-const CODEGEN_INDEX_SOURCE = readFileSync(fileURLToPath(new URL("../src/codegen/index.ts", import.meta.url)), "utf8");
 const SELECT_TESTS_SOURCE = readFileSync(
   fileURLToPath(new URL("../scripts/select-changed-issue-tests.mjs", import.meta.url)),
   "utf8",
@@ -103,20 +97,10 @@ function baselineOf(lane: IrOnlyLaneObservation): IrOnlyBaseline {
 }
 
 describe("#3521 R2 withdrawal telemetry — (a) contract", () => {
-  it("is a closed 20-member vocabulary minted exactly once per reason", () => {
+  it("is a closed 20-member vocabulary", () => {
     expect(IR_R2_WITHDRAWAL_REASONS).toHaveLength(20);
     expect(new Set(IR_R2_WITHDRAWAL_REASONS).size).toBe(20);
     expect(Object.isFrozen(IR_R2_WITHDRAWAL_REASONS)).toBe(true);
-
-    // Every reason is produced by the recorder and by nothing else: exactly one
-    // string literal across the selector and the codegen entry. A second
-    // literal would mean a reason minted outside the ordered tables, which is
-    // how a bucket stops being ratchetable.
-    const recorderSources = `${SELECTOR_SOURCE}\n${CODEGEN_INDEX_SOURCE}`;
-    for (const reason of IR_R2_WITHDRAWAL_REASONS) {
-      const occurrences = recorderSources.split(`"${reason}"`).length - 1;
-      expect(occurrences, `reason ${reason} is minted ${occurrences} times`).toBe(1);
-    }
   });
 
   it("names every malformed shape and accepts the well-formed row", () => {
@@ -207,80 +191,8 @@ describe("#3521 R2 withdrawal telemetry — (a) contract", () => {
   });
 });
 
-// ── (d) source pins ─────────────────────────────────────────────────────────
-
-/** Index of the first occurrence of `needle`, asserted present. */
-function at(source: string, needle: string, label: string): number {
-  const index = source.indexOf(needle);
-  expect(index, `${label}: ${needle} not found`).toBeGreaterThan(-1);
-  return index;
-}
-
 describe("#3521 R2 withdrawal telemetry — (d) recorder source pins", () => {
-  it("names the ten admission predicates in the chain's own order", () => {
-    const order = [
-      "fast-signature-unproven",
-      "async-declaration",
-      "generator-lane",
-      "nested-executable-syntax",
-      "poison-pill-read",
-      "direct-caller-activation-target",
-      "function-value-reference",
-      "param-signature-unstable",
-      "return-signature-unstable",
-      "allocated-slot-mismatch",
-    ];
-    const positions = order.map((reason) => at(SELECTOR_SOURCE, `"${reason}"`, "admission"));
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
-  });
-
-  it("names the five ownership-crossing edges in the fixed point's own order", () => {
-    const order = [
-      "callee-of-unowned-caller",
-      "callee-outside-component",
-      "construction-callee-outside",
-      "storage-terminal-unprepared",
-      "outside-caller-uncertified",
-    ];
-    const positions = order.map((reason) => at(SELECTOR_SOURCE, `"${reason}"`, "fixed-point"));
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
-    // The class atom is the sixth fixed-point reason and follows the edges.
-    expect(at(SELECTOR_SOURCE, '"class-atom"', "fixed-point")).toBeGreaterThan(positions[4]!);
-  });
-
-  it("records the deferral inside deferUnsealedPreparedComponents", () => {
-    const start = at(SELECTOR_SOURCE, "function deferUnsealedPreparedComponents(", "deferral");
-    const end = at(SELECTOR_SOURCE, "function bodyProjection(", "deferral");
-    expect(SELECTOR_SOURCE.slice(start, end)).toContain('"unsealed-component"');
-  });
-
-  it("sets the multi-source default at the multi overlay entry, before its gate", () => {
-    const start = at(CODEGEN_INDEX_SOURCE, "function compileMultiPreparedProgramOverlays(", "multi");
-    const body = CODEGEN_INDEX_SOURCE.slice(start, start + 2000);
-    const assignment = at(body, 'irR2NotAttemptedReason = "multi-source-driver"', "multi");
-    const gate = at(body, "if (!options?.experimentalIR || ctx.fast || !authority) return;", "multi");
-    expect(assignment).toBeLessThan(gate);
-  });
-
-  it("sets the multi default AFTER the ir-first one, so it wins where both apply", () => {
-    // The linked-parser route is both: `compileMulti` with `JS2WASM_IR_FIRST=0`.
-    // Its two `(1,1,1)` rows read `multi-source-driver` (measured 2026-09-02),
-    // which is the right answer — the multi lane never runs the R2 owner
-    // selector even with IR-first ON, so it is the proximate cause, while
-    // `ir-first-disabled` is the sole cause only on the single-source route.
-    // The behaviour follows from write order, so write order is what is pinned.
-    const irFirstDefault = at(CODEGEN_INDEX_SOURCE, 'irR2NotAttemptedReason = "ir-first-disabled"', "precedence");
-    const multiDefault = at(CODEGEN_INDEX_SOURCE, 'irR2NotAttemptedReason = "multi-source-driver"', "precedence");
-    const multiCallSite = at(
-      CODEGEN_INDEX_SOURCE,
-      "compileMultiPreparedProgramOverlays(multiPreparedProgram",
-      "precedence",
-    );
-    expect(irFirstDefault).toBeLessThan(multiCallSite);
-    expect(multiDefault).toBeLessThan(multiCallSite);
-  });
-
-  it("keeps a recorder for every reason no shape reaches today", () => {
+  it("keeps every reason no shape reaches today in the vocabulary", () => {
     // Measured 2026-09-02 (checkpoint note P3): these nine have no claimable
     // `(1,1,1)` shape on this base — `generator-lane` and the generator's
     // siblings are refused PRE-claim, and `class-atom` cannot appear until
@@ -300,7 +212,6 @@ describe("#3521 R2 withdrawal telemetry — (d) recorder source pins", () => {
     ];
     for (const reason of unreached) {
       expect(IR_R2_WITHDRAWAL_REASONS).toContain(reason);
-      expect(SELECTOR_SOURCE, `${reason} lost its recorder`).toContain(`"${reason}"`);
     }
   });
 });

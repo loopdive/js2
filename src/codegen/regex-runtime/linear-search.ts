@@ -20,10 +20,10 @@
  * `sp` is unused (every thread in a list sits at that list's position), and
  * `caps` is shared copy-on-write between forked threads.
  */
-import type { Instr, LocalDef, ValType } from "../../ir/types.js";
+import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
-import { INSTR_WIDTH, ReOp } from "../regex/bytecode.js";
+import { INSTR_WIDTH, ReOp } from "../../runtime/contracts/regexp-bytecode.js";
 import {
   I32,
   Locals,
@@ -439,9 +439,6 @@ function defineSearch(T: LinearTypes, funcIdx: number, fn: LinearCallees): void 
   });
 }
 
-/** `__regex_run`'s result when a linear-safe program exhausted its step budget. */
-const RUN_BUDGET_EXHAUSTED = -1;
-
 /**
  * The linear fallback is emitted only on the host-free targets (standalone,
  * WASI). The JS-host lane runs the same native engine but keeps its output
@@ -453,55 +450,11 @@ function linearFallbackEnabled(ctx: CodegenContext): boolean {
 }
 
 /**
- * Instrs for `__regex_run`'s budget-exhaustion branch, ahead of its RangeError
- * throw: a linear-safe program checks its backtrack stack back into the pool
- * global (as the VM's other exits do) and returns {@link RUN_BUDGET_EXHAUSTED}
- * instead. Only a top-level run can get here — a linear-safe program has no
- * LOOKAROUND, so it never recurses. Empty off the host-free targets.
+ * `__regex_linear_safe`, which `__regex_run` asks ahead of its step-cap throw,
+ * or `undefined` off the host-free targets.
  */
-export function regexRunBudgetHandoff(
-  ctx: CodegenContext,
-  progLocal: number,
-  stackLocal: number,
-  stackPoolGlobal: number,
-  dependencies: RegexLinearDependencies,
-): Instr[] {
-  if (!linearFallbackEnabled(ctx)) return [];
-  const safeIdx = ensureRegexLinearSafe(ctx, dependencies);
-  return if_(call(safeIdx, get(progLocal)), [
-    ...get(stackLocal),
-    { op: "global.set", index: stackPoolGlobal },
-    ...ret(c(RUN_BUDGET_EXHAUSTED)),
-  ]);
-}
-
-/**
- * Instrs spliced right after `__regex_search`'s `__regex_run` call, whose
- * result is on the stack: on {@link RUN_BUDGET_EXHAUSTED} return the linear
- * search's answer for the rest of the scan (`searchArgs` = the
- * `__regex_search_linear` arguments, start = the failed attempt's position);
- * otherwise leave the result for the caller's match test. `resultLocal` is
- * the index of the one i32 local returned in `locals`.
- */
-export function regexSearchBudgetFallback(
-  ctx: CodegenContext,
-  resultLocal: number,
-  searchArgs: readonly number[],
-  dependencies: RegexLinearDependencies,
-): { instrs: Instr[]; locals: LocalDef[] } {
-  if (!linearFallbackEnabled(ctx)) return { instrs: [], locals: [] };
-  const searchIdx = ensureRegexSearchLinear(ctx, dependencies);
-  return {
-    instrs: [
-      { op: "local.tee", index: resultLocal },
-      ...if_(eq(get(resultLocal), c(RUN_BUDGET_EXHAUSTED)), ret(call(searchIdx, ...searchArgs.map(get)))),
-      ...get(resultLocal),
-    ],
-    locals: [{ name: "runResult", type: I32 }],
-  };
-}
-
-function ensureRegexLinearSafe(ctx: CodegenContext, dependencies: RegexLinearDependencies): number {
+export function ensureRegexLinearSafe(ctx: CodegenContext, dependencies: RegexLinearDependencies): number | undefined {
+  if (!linearFallbackEnabled(ctx)) return undefined;
   const existing = ctx.nativeRegexHelpers.get("__regex_linear_safe");
   if (existing !== undefined) return existing;
   const funcIdx = mintDefinedFunc(ctx);
@@ -510,7 +463,15 @@ function ensureRegexLinearSafe(ctx: CodegenContext, dependencies: RegexLinearDep
   return funcIdx;
 }
 
-function ensureRegexSearchLinear(ctx: CodegenContext, dependencies: RegexLinearDependencies): number {
+/**
+ * `__regex_search_linear`, which `__regex_search` hands a budget-exhausted scan
+ * to, or `undefined` off the host-free targets.
+ */
+export function ensureRegexSearchLinear(
+  ctx: CodegenContext,
+  dependencies: RegexLinearDependencies,
+): number | undefined {
+  if (!linearFallbackEnabled(ctx)) return undefined;
   const existing = ctx.nativeRegexHelpers.get("__regex_search_linear");
   if (existing !== undefined) return existing;
   const T = linearTypes(ctx, dependencies);

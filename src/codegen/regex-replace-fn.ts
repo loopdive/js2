@@ -49,6 +49,8 @@ import {
   RE_FIELD_NGROUPS,
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
+} from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import {
   ensureRuntimeToStringIdx,
   hasStandaloneRegExpEngine,
   loadStandaloneRegExpStruct,

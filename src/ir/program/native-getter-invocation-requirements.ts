@@ -7,10 +7,7 @@ import {
   type NativeObjectAccessRequirements,
   type NativeObjectGetterDemand,
 } from "./native-object-access-requirements.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "./native-source-closure-requirements.js";
+import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { objectResultIsBoolean, proveObjectGetterReturns } from "./native-object-result-values.js";
 
@@ -137,7 +134,6 @@ export function reconcileNativeGetterInvocationRequirements(
   source: NativeSourceClosureRequirements,
   access: NativeObjectAccessRequirements,
 ) {
-  assertNativeSourceClosureRequirementsCurrent(source);
   assertNativeObjectAccessRequirementsCurrent(access);
   if (
     source.demands.program !== access.demands.program ||

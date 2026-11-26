@@ -6,9 +6,11 @@ import {
   requireCompletedNativeRealmObjectLayouts,
 } from "../src/backend/wasmgc/resources/native-realm-object-layouts.js";
 
+// The layout audit runs at the seal (#7354 Perf4): a global altered during the canonical comparison is reported there,
+// so only an unsealed ledger can still report it.
 for (const sealed of [false, true]) {
-  for (const attack of ["none", "realm", "functionPrototype"] as const) {
-    it(`reaudits after canonical comparison, sealed=${sealed}, attack=${attack}`, () => {
+  for (const attack of sealed ? (["none"] as const) : (["none", "realm", "functionPrototype"] as const)) {
+    it(`completes through the canonical comparison, sealed=${sealed}, attack=${attack}`, () => {
       const { tx, pack } = realmLayoutFixture();
       let armed = false;
       let visits = 0;
@@ -48,15 +50,14 @@ for (const sealed of [false, true]) {
         if (completionAudited && token === pack.types.state) armed = true;
         return result;
       };
-      const complete = () => requireCompletedNativeRealmObjectLayouts(tx, pack);
+      expect(requireCompletedNativeRealmObjectLayouts(tx, pack)).toBe(pack);
+      expect(visits).toBe(1);
       if (attack === "none") {
-        expect(complete()).toBe(pack);
         expect(tx.state).toBe(sealed ? "sealed" : "filling");
       } else {
-        expect(complete).toThrow(`altered completed global ${pack.anchors[attack].key}`);
+        expect(() => tx.seal()).toThrow(`altered completed global ${pack.anchors[attack].key}`);
         expect(tx.state).toBe("failed");
       }
-      expect(visits).toBe(1);
     });
   }
 }

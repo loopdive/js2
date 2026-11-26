@@ -201,3 +201,101 @@ Code quality:
 6. No second call mechanism beside #7349's.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Slice B2c-1 plan — `parseFloat` / `parseInt` bodies move to the native runtime (2026-11-19)
+
+Lead decision 2026-11-19: before B2b's realm rows can bind the native implementations, move the pure body
+builders out of codegen into `src/runtime/wasmgc/values/`, one PR per surface, bytes identical. Inventory of
+the surfaces (codegen vs runtime, standalone): the Object constructor and the primitive wrappers already have
+realm builders (`object-constructor-body.ts`, `to-object-body.ts`, `primitive-wrapper-bodies.ts`; the legacy
+`__new_Number/String/Boolean` store a different representation, so there is nothing to move); `isNaN` /
+`isFinite` are single inline operations; the Error constructor body is already shared (`error-bodies.ts`);
+Math's transcendental functions are self-hosted from `src/stdlib/math.ts`. `parseFloat` and `parseInt` are the
+first surface with real bodies still in codegen.
+
+**Target structure.** `src/runtime/wasmgc/values/parse-number-bodies.ts`, beside `string-number-bodies.ts` and
+`decimal-scale-bodies.ts`, which `__str_to_number` already uses: `buildParseFloatDefinition` and
+`buildParseIntDefinition`, each `(bindings) → { locals, body }`. Bindings: the native string types, the decimal
+power table (`DecimalPowerResources`, parseFloat only) and the argument prologue (`flatString(argLocal)`: the
+instructions that leave a flat native string, which codegen supplies with its finalize-filled ToString arm).
+`src/codegen/parse-number-native.ts` keeps only what touches the module: the function type, the handle, the
+`funcMap` row, the pow10 global and the prologue's pending ToString arm.
+
+**What it removes.** (Corrected after review RV7323b.) The parseFloat digit loops duplicated
+`buildDecimalMantissa` (`string-number-bodies.ts`, `__str_to_number`'s) except for local indices and a 4-instruction
+`mant = 0; sawDigit = 0` init: they are one exported builder now, taking a locals record, with the init left to
+the caller; its dead `strDataTypeIdx` parameter goes. The move itself makes the two bodies bindable by the realm
+without a second implementation.
+
+**Acceptance.** Bytes identical on every test262 file whose source names `parseInt` or `parseFloat`, on the
+default, standalone and linear targets (measured with a scratch hashing script; review RV7323b asked not to
+commit a third byte-identity tool beside `prove-emit-identity.mjs` and `byte-diff-corpus.mts`, and to count
+rows that fail on both trees separately from identical binaries);
+`parse-number-native.ts` shrinks; the new file joins the `native-runtime` layer. Quality: the builders read
+no context, only their bindings.
+
+**B2c-1 measured (2026-11-19, main `89e4748241`).** A scratch hashing script over the 216 test262
+files whose source names `parseInt` / `parseFloat` plus a 103-file random control sample (317 files, 925
+rows): 0 rows differ. Binaries compared: 291 default and 291 standalone (13 files compile on neither tree, 13
+are runner skips). The linear target compiles none of these harness-wrapped files on either tree (the linear
+backend has no `try` / `catch`), and nothing under `src/codegen-linear/` imports the moved code, so linear is
+unaffected by construction. `buildParseFloatDefinition` stays under the 300-line budget by calling the shared
+`buildDecimalMantissa`; the codegen side has an `emitParseFloat` beside `emitParseInt` and `emitStrToNumber`.
+`tests/issue-1663.test.ts` (1 row) and `tests/issue-6969-parse-number-tostring.test.ts` (8 parseFloat rows)
+fail identically on main `89e4748241`; `issue-2654` and `parseint-edge` pass.
+
+## Slice B2c-2 plan — Error message slot and JSON quote / parse-primitive bodies move to the native runtime (2026-11-19)
+
+Second surface of the B2c move (B2c-1: `parseFloat` / `parseInt`, PR #7323): pure body builders leave codegen
+for `src/runtime/wasmgc/values/`, bytes identical, so the realm can bind them later.
+
+**Target structure.**
+
+- `buildUndefinedAwareMessageSlot(anyTypeIdx, argCount, existingLocalCount)` joins `buildErrorConstructorBody`
+  in `error-bodies.ts`, which codegen (`registry/error-types.ts`) and the backend (`native-errors.ts`) already
+  share. Codegen's `fillErrorCtorUndefinedMessage` keeps the finalize patch and the "no `$AnyValue` reserved"
+  test, now made once before the loop instead of per constructor.
+- New `json-bodies.ts`: `buildJsonQuoteStringDefinition(bindings)` and
+  `buildJsonParsePrimitiveDefinition(bindings)`, each `→ { locals, body }`. Bindings: `$AnyString`,
+  `$NativeString`, `$__str_data`, the `__str_flatten` handle and, for the parser, `$AnyValue`.
+  `src/codegen/json-runtime.ts` keeps registration only: function type, handle, `funcMap` row, the
+  `ensureNativeStringHelpers` / `ensureAnyValueType` calls, and one `registerJsonHelper` both share.
+- `counterLoopInstrs` (`emit-idioms.ts`, #3105) moves with its only user from `src/codegen/` to
+  `src/runtime/wasmgc/values/`: the runtime layer may not import codegen.
+
+**What it reuses / removes.** Both JSON bodies opened with the same flatten preamble (differing only in the
+local that takes the offset) and the same `c = data[i]` read: now `flatStringPreamble(b, offLocal)` and
+`readCodeUnit(d)`. The quote builders' private `cEq` and the parser's `cEq` become one. Inside the parser the
+three digit loops share `digitLoop`, the two mantissa updates `accumulateMantissa`, the two power loops
+`scaleByTenLoop(op, step)`, the four `$AnyValue` boxes `boxAnyValue`. `emitJsonParsePrimitive` (534 lines) and
+`emitJsonQuoteString` (328), both over the function budget, are gone; no new function exceeds 300 lines.
+
+**Acceptance.** Bytes identical on default, standalone and linear over every test262 file whose source names
+`JSON` or calls a native Error constructor (`Error(`, `TypeError(`, …), plus the 103-file control sample
+(`scripts/check-bytes-identical.mts` from B2c-1); the two JSON bodies' instruction trees identical to base;
+the surfaces' tests fail identically on base and head; the new files join the `native-runtime` layer.
+Quality: the builders read only their bindings.
+
+**B2c-2 measured (2026-11-19, main `89e4748241`).** `check-bytes-identical.mts` over 1,004 test262 files (362
+whose source names `JSON`, 550 that call a native Error constructor, plus the 103-file control sample;
+2,728 rows): 0 rows differ. Binaries compared: 762 default, 762 standalone, 3 linear (100 files compile on
+neither tree, 142 are runner skips; linear compiles almost none of the harness-wrapped files, as in B2c-1).
+`__json_parse_primitive` is not reachable from any test262 file: its only caller, `tryEmitJsonParsePrimitive`,
+is `void`-ed in `call-namespace-static.ts` since `JSON.parse` moved to the `__json_parse_text` codec. Both JSON
+bodies were therefore also dumped on base and head with a mocked context (`.tmp/b2c2-dump.test.ts`): the
+pushed function records, instruction trees included, are identical byte for byte, as is the call order of
+type, handle and `funcMap` registration. Sizes: `json-runtime.ts` 991 → 109 lines, `error-types.ts`
+1,081 → 1,006; `json-bodies.ts` 822 (largest function `qQuoteBuilders`, 259, moved unchanged);
+`error-bodies.ts` 59 → 137. Fourteen test files for these surfaces (`issue-1342`, `issue-1599*`,
+`issue-1636-json-stringify`, `issue-2933`, `issue-6651-error-undefined-message`, `issue-4376`, `issue-4262`,
+`issue-5161`, `issue-2029-…-standalone`, `issue-3518-native-string-error-resources`, `issue-3105`): 160 pass /
+21 fail on both trees, the same rows.
+
+**RV7330 follow-up (2026-11-19).** `__json_parse_primitive` is deleted instead of moved (review S2): it was
+unreachable, so moving it kept a second decimal scanner alive for nothing. Removed: `buildJsonParsePrimitiveDefinition`
+and its helpers (`digitLoop`, `accumulateMantissa`, `scaleByTenLoop`, `boxAnyValue`, `skipJsonWhitespace`, …),
+`emitJsonParsePrimitive`, `tryEmitJsonParsePrimitive` and its `void` reference. With one body left,
+`registerJsonHelper` and `jsonBodyBindings` fold into `emitJsonQuoteString`, and `flatStringPreamble` loses its
+offset-local parameter. A `tests/issue-1599-runtime.test.ts` row pins that runtime `JSON.parse` emits
+`__json_parse_text` and never `__json_parse_primitive`. The three copies of the flatten preamble across the
+native runtime (review S1) are #7402, after #7323 and #7330 land.

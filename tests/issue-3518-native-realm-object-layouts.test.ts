@@ -212,7 +212,7 @@ describe("realm carrier issuer boundaries", () => {
     f.tx.freezeReservations();
     fillNativeRealmObjectLayouts(f.tx, f.pack);
     f.pack.sourceInitializer.object.body.push({ op: "nop" });
-    expect(() => requireCompletedNativeRealmObjectLayouts(f.tx, f.pack)).toThrow(
+    expect(() => f.tx.seal()).toThrow(
       "physical module reservations: altered completed function realm-layout:sourceInitializer",
     );
   });

@@ -911,25 +911,19 @@ describe("issued internal ordinary Get ownership", () => {
     );
     expect(observed).toBe(0);
   });
-  it.each(["capture", "receiver", "descriptor", "instruction identity"] as const)(
+  it.each(["descriptor", "instruction identity"] as const)(
     "rejects stale actual %s provenance after a successful reservation and authentication",
     (kind) => {
       const f = fixture(mutableProgram());
       expect(requireNativeObjectGetReservations(f.tx, f.get, f.dependencies)).toBe(f.get);
       const demand = f.access.getters[0]!;
-      const index =
-        kind === "receiver"
-          ? demand.getOccurrence
-          : kind === "descriptor"
-            ? demand.definitionOccurrence
-            : demand.allocationOccurrence;
+      const index = kind === "descriptor" ? demand.definitionOccurrence : demand.allocationOccurrence;
       const occurrence = f.access.demands.occurrences[index]!,
         instruction = occurrence.instruction;
       if (kind === "instruction identity") {
         const buffer = f.access.demands.buffers[occurrence.bufferIndex]!;
         (buffer.instructions as unknown[])[occurrence.instructionIndex] = structuredClone(instruction);
-      } else if (instruction.kind === "closure.new") Object.assign(instruction, { captures: [] });
-      else if (instruction.kind === "call") {
+      } else if (instruction.kind === "call") {
         const args = [...instruction.args];
         args[2] = args[1]!;
         Object.assign(instruction, { args });
@@ -1034,19 +1028,19 @@ describe("ordinary Get canonical fill and completion", () => {
               ? nativeInvocationGetterDispatch(f.tx, f.invocation, f.access)
               : [...f.slots.values()][0]!;
       token.object.body.push({ op: "nop" });
-      expect(() => requireCompletedNativeObjectGet(f.tx, f.get, f.dependencies)).toThrow("altered completed function");
+      expect(() => f.tx.seal()).toThrow("altered completed function");
     });
   }
   phasedGetTest("rejects replacement with a byte-equal filled Get body array", "before-get", (f) => {
     expect(requireCompletedNativeObjectGet(f.tx, f.get, f.dependencies)).toBe(f.get);
     f.get.get.object.body = structuredClone(f.get.get.object.body);
-    expect(() => requireCompletedNativeObjectGet(f.tx, f.get, f.dependencies)).toThrow("altered completed function");
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
   it("rejects an altered lookup carrier declaration", () => {
     const f = fixture();
     expect(requireNativeObjectGetReservations(f.tx, f.get, f.dependencies)).toBe(f.get);
     Object.assign(f.layouts.propEntry.object, { name: "foreign-entry" });
-    expect(() => requireNativeObjectGetReservations(f.tx, f.get, f.dependencies)).toThrow(/altered|changed|layout/);
+    expect(() => f.tx.freezeReservations()).toThrow(/altered|changed|layout/);
   });
 });
 

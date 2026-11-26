@@ -21,11 +21,12 @@
 //   • Triage done against the local runner sees one giant undifferentiated
 //     bucket where CI sees distinct failures — message-derived cluster labels
 //     become meaningless exactly where they are needed most.
-//   • `originalNegativeMatches` decides a runtime-negative verdict by
-//     searching the detail for `meta.negative.type`. The opaque label contains
-//     no type name, so a standalone runtime-negative test that threw the RIGHT
-//     error was scored `fail` locally and `pass` in CI — a VERDICT divergence,
-//     not just a message one. That divergence is measured below.
+//   • The local runtime-negative verdict then searched the detail for
+//     `meta.negative.type`. The opaque label contains no type name, so a
+//     standalone runtime-negative test that threw the RIGHT error was scored
+//     `fail` locally and `pass` in CI — a VERDICT divergence, not just a
+//     message one. That divergence is measured below. (Since #7354 X every lane
+//     reads the thrown value through `readThrownValue` and matches its kind.)
 //
 // This is the same family as a vacuous pass: the machinery misreporting what
 // actually happened. The structural remedy is one implementation
@@ -36,9 +37,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { renderHarnessThrownText, tryNativeExnRender } from "../scripts/lib/wasm-exn-render.mjs";
+import { readThrownValue, tryNativeExnRender } from "../scripts/lib/wasm-exn-render.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
-import { extractWasmExceptionMessage, runTest262File } from "./test262-runner.js";
+import { runTest262File } from "./test262-runner.js";
 
 const HARNESS_AVAILABLE = existsSync(join(__dirname, "..", "test262", "harness", "assert.js"));
 if (!HARNESS_AVAILABLE && process.env.CI) {
@@ -82,7 +83,7 @@ describe("#3613 both lanes render the SAME thrown payload identically", () => {
     expect(typeof payload?.name).not.toBe("string");
   });
 
-  it("renderHarnessThrownText (local original-harness path) recovers the real message, not the opaque label", async () => {
+  it("readThrownValue (every lane's reader) recovers the real message and kind, not the opaque label", async () => {
     const instance = await instantiateStandalone();
     let caught: unknown;
     try {
@@ -90,26 +91,11 @@ describe("#3613 both lanes render the SAME thrown payload identically", () => {
     } catch (e) {
       caught = e;
     }
-    const rendered = renderHarnessThrownText(caught, instance);
-    expect(rendered).toContain("PARITY-MARKER-42");
-    // The error TYPE must survive too — `originalNegativeMatches` needs it.
-    expect(rendered).toContain("TypeError");
-    expect(rendered).not.toContain("non-stringifiable payload");
-  });
-
-  it("agrees with extractWasmExceptionMessage (the CI worker's renderer) on the same payload", async () => {
-    const instance = await instantiateStandalone();
-    let caught: unknown;
-    try {
-      (instance.exports as { test: () => number }).test();
-    } catch (e) {
-      caught = e;
-    }
-    const localPath = renderHarnessThrownText(caught, instance);
-    const workerPath = extractWasmExceptionMessage(caught, instance);
-    // Same thrown value ⇒ same reported message. This single assertion is what
-    // would have caught the drift.
-    expect(localPath).toBe(workerPath);
+    const { kinds, text } = readThrownValue(caught, { instance });
+    expect(text).toContain("PARITY-MARKER-42");
+    expect(text).not.toContain("non-stringifiable payload");
+    // The error KIND must survive too — the runtime-negative verdict matches it.
+    expect(kinds).toEqual(["TypeError"]);
   });
 
   it("the native renderer is the mechanism (removing it reproduces the opaque label)", async () => {
@@ -129,11 +115,9 @@ describe("#3613 both lanes render the SAME thrown payload identically", () => {
     expect(tryNativeExnRender({ exports: {} }, payload)).toBeNull();
   });
 
-  it("host-lane behaviour is unchanged: a host Error still renders `Name: message`", () => {
-    // The name prefix is load-bearing for runtime-negative matching. Pin it so
-    // a future "simplification" cannot drop it.
-    expect(renderHarnessThrownText(new TypeError("boom"))).toBe("TypeError: boom");
-    expect(renderHarnessThrownText("plain string")).toBe("plain string");
+  it("a host Error reads its kind beside its message; a string has no kind", () => {
+    expect(readThrownValue(new TypeError("boom"))).toEqual({ kinds: ["TypeError", "TypeError"], text: "boom" });
+    expect(readThrownValue("TypeError: plain string")).toEqual({ kinds: [], text: "TypeError: plain string" });
   });
 });
 
@@ -142,8 +126,8 @@ const runIf = HARNESS_AVAILABLE ? describe : describe.skip;
 runIf("#3613 the divergence was a VERDICT divergence, not just a message one", () => {
   it("a standalone runtime-negative test whose expected error IS thrown scores pass", async () => {
     // Before the shared renderer, the detail read "uncaught Wasm-GC exception
-    // (non-stringifiable payload)", which contains no "TypeError", so
-    // `originalNegativeMatches` returned false and the local runner scored
+    // (non-stringifiable payload)", which contains no "TypeError", so the
+    // local runtime-negative match returned false and the local runner scored
     // `fail` where CI scored `pass`.
     const dir = mkdtempSync(join(tmpdir(), "render-parity-"));
     const file = join(dir, "runtime-negative.js");

@@ -13,26 +13,62 @@ import {
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
+  heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 
+/**
+ * What a built-in entry is: one of the realm's two bootstrap functions, (#7354 P1) a method the realm's
+ * Object.prototype holds, or (#7354 G1) a member of a family the realm holds (an Error constructor,
+ * `Error.prototype.toString`), whose own properties and holder come from the catalog. A call of a method or a family
+ * member through the dispatcher is the run-time abort: the Prepared path writes its algorithm where a call reads it
+ * (`dynamic-prototype-methods.ts`, `dynamic-error-constructors.ts`).
+ */
+export type NativeBuiltinFunctionBehavior =
+  | "function-prototype"
+  | "throw-type-error"
+  | "object-prototype-method"
+  | "native";
+/** (#7354 G1) A property value the kernel seeds: a string, or the realm's entry or object with that catalog id. */
+export type NativeBuiltinPropertyValue =
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "intrinsic"; readonly id: string };
+/** (#7354 G1) A non-enumerable data property the kernel seeds on an entry's bag or on a realm object. */
+export interface NativeBuiltinProperty {
+  readonly key: string;
+  readonly value: NativeBuiltinPropertyValue;
+  readonly writable: boolean;
+  readonly configurable: boolean;
+}
+/** (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one. */
+export interface NativeBuiltinObject {
+  readonly id: string;
+  readonly prototype: string;
+  readonly properties: readonly NativeBuiltinProperty[];
+}
 export interface NativeBuiltinFunctionRequirement {
   readonly id: string;
-  readonly behavior: "function-prototype" | "throw-type-error";
+  readonly behavior: NativeBuiltinFunctionBehavior;
   readonly signatureId: string;
   readonly metadataId: string;
   readonly initialName: string;
   readonly initialLength: number;
   readonly userFormalCount: number;
-  readonly prototype: "object-prototype" | "function-prototype";
-  readonly constructible: false;
+  /** `object-prototype`, `function-prototype`, or (#7354 G1) an earlier entry's id (a NativeError's %Error%). */
+  readonly prototype: string;
+  /** (#7354 G1) An Error constructor; its [[Construct]] is the call site's, never the kernel's. */
+  readonly constructible: boolean;
   readonly aliases: readonly string[];
+  /** (#7354 G1) A family member's own properties beyond `length` and `name`. */
+  readonly properties?: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequirements {
   readonly key: string;
   readonly intrinsics: readonly NativeBuiltinFunctionRequirement[];
+  /** (#7354 G1) The held families' ordinary objects, each after the object it links to. */
+  readonly objects?: readonly NativeBuiltinObject[];
 }
 export interface NativeBuiltinFunctionRequestDependencies {
   readonly arguments: NativeArgumentVectorReservations;
@@ -52,7 +88,10 @@ export interface NativePublicBuiltinFunctionRequest {
   readonly signatureId: string;
   readonly metadataId: string;
 }
-/** Full catalog declarations, including unavailable algorithms. This is never a completion grant. */
+/**
+ * Full catalog declarations, including unavailable algorithms: (#7354 G1) every row the realm holds
+ * (`heldCatalogRows`). This is never a completion grant.
+ */
 export interface NativePublicBuiltinFunctionRequests extends NativeBuiltinFunctionRequestIssuer {
   readonly realm: NativeRealmRequirements;
   readonly key: string;
@@ -112,7 +151,8 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
   dataTree(input);
   if (typeof input.key !== "string" || !input.key || !Array.isArray(input.intrinsics) || !input.intrinsics.length)
     fail("invalid key or empty intrinsic population");
-  if (Object.keys(input).some((key) => key !== "key" && key !== "intrinsics")) fail("unknown requirement field");
+  if (Object.keys(input).some((key) => !["key", "intrinsics", "objects"].includes(key)))
+    fail("unknown requirement field");
   const ids = new Set<string>(),
     aliases = new Set<string>(),
     behaviors = new Set<string>();
@@ -131,25 +171,32 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
             "prototype",
             "constructible",
             "aliases",
+            "properties",
           ].includes(key),
       )
     )
       fail("unsupported dynamic naming, async, or constructor requirement");
-    if (!["function-prototype", "throw-type-error"].includes(row.behavior) || behaviors.has(row.behavior))
-      fail("unavailable or duplicate intrinsic behavior");
+    const method = row.behavior === "object-prototype-method" || row.behavior === "native";
+    if (!["function-prototype", "throw-type-error", "object-prototype-method", "native"].includes(row.behavior))
+      fail("unavailable intrinsic behavior");
+    if (!method && behaviors.has(row.behavior)) fail("duplicate bootstrap intrinsic behavior");
     behaviors.add(row.behavior);
+    // A bootstrap function is anonymous with length 0; a method carries its catalog name and length.
     if (
       typeof row.initialName !== "string" ||
-      row.initialName !== "" ||
+      (row.initialName === "") === method ||
       !Number.isSafeInteger(row.initialLength) ||
-      row.initialLength !== 0 ||
+      row.initialLength < 0 ||
+      (!method && row.initialLength !== 0) ||
       row.userFormalCount !== 0
     )
       fail("unsupported intrinsic name/length/formal metadata (dynamic and infinite lengths require another owner)");
-    if (
-      row.constructible !== false ||
-      row.prototype !== (row.behavior === "function-prototype" ? "object-prototype" : "function-prototype")
-    )
+    // (#7354 G1) A family member links to %Function.prototype% or to an earlier entry (a NativeError to %Error%).
+    const linked =
+      row.behavior === "function-prototype"
+        ? row.prototype === "object-prototype"
+        : row.prototype === "function-prototype" || (row.behavior === "native" && ids.has(row.prototype));
+    if (!linked || (row.constructible && row.behavior !== "native"))
       fail("unsupported prototype role or construct capability");
     for (const id of [row.id, row.signatureId, row.metadataId]) {
       if (typeof id !== "string" || !id || ids.has(id)) fail("missing or duplicate request identity");
@@ -286,10 +333,9 @@ interface PublicOwner {
 }
 const publicOwners = new WeakMap<NativePublicBuiltinFunctionRequests, PublicOwner>();
 function publicLiterals(tx: PhysicalModuleReservations, owner: PublicOwner) {
-  const catalog = owner.realm.description.catalog;
   const texts = [
     ...new Set(
-      catalog.intrinsics.flatMap((row) => [
+      heldCatalogRows(owner.realm.description).flatMap((row) => [
         ...(row.callable ? [row.callable.initialName] : []),
         ...row.properties.flatMap((property) => [
           ...(property.key.kind === "string" ? [property.key.value] : []),
@@ -306,11 +352,11 @@ export function declareNativePublicBuiltinFunctionRequests(
   dependencies: NativeBuiltinFunctionRequestDependencies,
 ): NativePublicBuiltinFunctionRequests {
   if (tx.state !== "reserving") fail("public declaration requires reservation phase");
-  assertNativeRealmRequirementsCurrent(realm);
+  assertNativeRealmRequirementsIssued(realm);
   authenticate(tx, dependencies);
   const key = realm.description.key + ":public-builtins";
   const intrinsics = Object.freeze(
-    realm.description.catalog.intrinsics.flatMap((intrinsic) => {
+    heldCatalogRows(realm.description).flatMap((intrinsic) => {
       if (!intrinsic.callable) return [];
       if (!Number.isSafeInteger(intrinsic.callable.length) || intrinsic.callable.length < 0)
         fail("dynamic or infinite public builtin length needs its actual algorithm owner");
@@ -361,7 +407,7 @@ export function requireNativePublicBuiltinFunctionRequests(
   const owner = publicOwners.get(pack);
   if (!owner || owner.tx !== tx || (expectedRealm !== undefined && owner.realm !== expectedRealm))
     fail("foreign or copied public request issuer");
-  assertNativeRealmRequirementsCurrent(owner.realm);
+  assertNativeRealmRequirementsIssued(owner.realm);
   authenticate(tx, owner.dependencies);
   for (const role of ["arguments", "argumentPlan", "strings"] as const)
     if (owner.dependencies[role] !== owner.identities[role]) fail("changed public dependency identities");
