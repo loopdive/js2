@@ -13,7 +13,8 @@
  * mechanism, and nothing behind that gap is seen.
  *
  * With `--base`, each report starts with the files that pass now and did not
- * pass in the base run, and those that passed there and no longer do.
+ * pass in the base run, and those that passed there and no longer do, over the
+ * files both runs measured.
  */
 import { readRows } from "./analyze.mjs";
 import { MECHANISMS, mechanismOf, sourceWithIncludes } from "./prepared-mechanisms.mjs";
@@ -101,14 +102,32 @@ function report(path) {
   return out.join("\n\n");
 }
 
-/** Passes gained and lost against an older run of the same files. */
+/**
+ * Passes gained and lost against an older run. Only files both runs measured
+ * are compared; a file in one run only is listed apart, never as a flip.
+ */
 function passDelta(rows, baseRows) {
-  const passed = new Set(baseRows.filter((row) => row.status === "pass").map((row) => row.file));
-  const now = rows.filter((row) => row.status === "pass").map((row) => row.file);
-  const gained = now.filter((file) => !passed.has(file)).sort();
-  const lost = [...passed].filter((file) => !now.includes(file)).sort();
-  const list = (files) => files.map((file) => `- \`${file}\``).join("\n") || "- none";
-  return `Passes gained (${gained.length}):\n${list(gained)}\n\nPasses lost (${lost.length}):\n${list(lost)}`;
+  const base = new Map(baseRows.map((row) => [row.file, row.status === "pass"]));
+  const measured = new Set(rows.map((row) => row.file));
+  const gained = [];
+  const lost = [];
+  for (const row of rows) {
+    if (!base.has(row.file)) continue;
+    const passes = row.status === "pass";
+    if (passes && !base.get(row.file)) gained.push(row.file);
+    if (!passes && base.get(row.file)) lost.push(row.file);
+  }
+  const onlyNow = rows.filter((row) => !base.has(row.file)).length;
+  const onlyBase = baseRows.filter((row) => !measured.has(row.file)).length;
+  const list = (files) =>
+    files
+      .sort()
+      .map((file) => `- \`${file}\``)
+      .join("\n") || "- none";
+  return (
+    `Passes gained (${gained.length}):\n${list(gained)}\n\nPasses lost (${lost.length}):\n${list(lost)}\n\n` +
+    `Not compared: ${onlyNow} files only in this run, ${onlyBase} only in the base run.`
+  );
 }
 
 const argv = process.argv;

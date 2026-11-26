@@ -30,7 +30,7 @@ export const MECHANISMS = {
   "compound assignment with a non-numeric RHS": "#7375",
   "boxing a native call result": "Fb follow-up · #7349",
   "ToPrimitive of an object": "O2 · #7354 slice O",
-  "function value in + or ToString": "integration alarm: Fa × Str2 / Ty per-kind tables",
+  "function value in + or ToString": "Fa × Str2 / Ty per-kind tables (`dynamic-value-kinds.ts`)",
   "script-var home: repeated var": "S10 · #7372 slice 1b",
   "script-var home: object literal": "O · #7352",
   "script-var home: array literal": "O · #7352",
