@@ -16,22 +16,23 @@
 //      are fixed-position byte sequences, so this byte-presence check is a
 //      reliable proxy.)
 //
-//   2. The benchmark-harness fix: `benchmarks/compare-runtimes.ts` now passes
+//   2. The benchmark-harness fix: the harness passes
 //      `--disable-custom-descriptors` to `wasm-opt`, which prevents Binaryen
 //      from re-emitting refs as exact even when the source binary still has
 //      leaf-final types (e.g. `--target gc` browser builds piped through the
 //      same harness).
 //
-//      Test: read the harness file and assert the flag is present in the
-//      default `WASM_OPT_FLAGS`.
+//      Test: assert the flag is present in the harness's wasm-opt arguments.
+//      The original harness, `benchmarks/compare-runtimes.ts`, moved to the
+//      private labs repo with PR #59 (chore/remove-private-content-from-public,
+//      ~2026-04-27; plan/agent-context/dev-1125-bench.md). The public benchmark
+//      harness that still runs wasm-opt is the landing-page wasmtime lane,
+//      whose flags live in `LANDING_WASM_OPT_ARGS`
+//      (scripts/lib/landing-wasmtime-runtime.mjs).
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { compile } from "./src/index.js";
-
-const here = resolve(fileURLToPath(import.meta.url), "..");
+import { LANDING_WASM_OPT_ARGS } from "../scripts/lib/landing-wasmtime-runtime.mjs";
 
 const ARRAY_SUM_SOURCE = `
 /** @param {number} n @returns {number} */
@@ -91,7 +92,8 @@ describe("#1173 — no exact-ref encodings in --target wasi output", () => {
     // clause) as exact when run with --all-features. The harness explicitly
     // disables that proposal so wasmtime 44 keeps loading the optimized
     // binary.
-    const harness = readFileSync(resolve(here, "..", "benchmarks", "compare-runtimes.ts"), "utf-8");
-    expect(harness).toMatch(/--disable-custom-descriptors/);
+    // benchmarks/compare-runtimes.ts moved to the private labs repo (PR #59);
+    // the public wasm-opt harness is the landing wasmtime lane.
+    expect(LANDING_WASM_OPT_ARGS).toContain("--disable-custom-descriptors");
   });
 });
