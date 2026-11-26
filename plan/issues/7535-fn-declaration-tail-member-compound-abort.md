@@ -12,8 +12,8 @@ reasoning_effort: high
 task_type: bug
 area: ir
 goal: ir-full-coverage
-depends_on: [7492]
-related: [7354, 7492]
+depends_on: [7354]
+related: [7492]
 origin: "2026-11-26 RV7491 review of #7354 O7 (finding F5); pre-existing, not an O7 regression"
 ---
 
