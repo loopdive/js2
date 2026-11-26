@@ -6,22 +6,7 @@
 // the builtin parent must work, and `.message` must round-trip via the host.
 
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
-import { instantiateWithRuntime } from "./equivalence/helpers.js";
-
-async function compileAndInstantiate(source: string) {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  if (!WebAssembly.validate(result.binary)) {
-    throw new Error(`Invalid Wasm binary (WebAssembly.validate failed)\nWAT:\n${result.wat}`);
-  }
-  const instance = await instantiateWithRuntime(result);
-  return instance.exports as Record<string, Function>;
-}
+import { compileToWasm } from "./equivalence/helpers.js";
 
 describe("#1366a — class extends Error / TypeError / ... (host-constructible builtin subclassing)", () => {
   it("new MyError('x') instanceof MyError → true", async () => {
@@ -36,7 +21,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return (e instanceof MyError) ? 1 : 0;
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.test!()).toBe(1);
   });
 
@@ -52,7 +37,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return (e instanceof Error) ? 1 : 0;
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.test!()).toBe(1);
   });
 
@@ -68,7 +53,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return e.message;
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.test!()).toBe("hi");
   });
 
@@ -89,7 +74,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return (new MyTypeError("x") instanceof Error) ? 1 : 0;
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.isMyTypeError!()).toBe(1);
     expect(exports.isTypeError!()).toBe(1);
     expect(exports.isError!()).toBe(1);
@@ -108,7 +93,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
           return (e instanceof MyErr ? 1 : 0) + (e instanceof ${kind} ? 2 : 0) + (e instanceof Error ? 4 : 0);
         }
       `;
-      const exports = await compileAndInstantiate(source);
+      const exports = await compileToWasm(source);
       expect(exports.test!()).toBe(7);
     }
   });
@@ -120,7 +105,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return (e instanceof Error) ? 1 : 0;
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.test!()).toBe(1);
   });
 
@@ -139,7 +124,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return (p instanceof Point ? 1 : 0) + (p instanceof Error ? 2 : 0);
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     // Point instance is a struct, so instanceof Point is 1, instanceof Error is 0.
     expect(exports.test!()).toBe(1);
   });
@@ -162,7 +147,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         }
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.test!()).toBe("boom");
   });
 
@@ -184,7 +169,7 @@ describe("#1366a — class extends Error / TypeError / ... (host-constructible b
         return d.legs;
       }
     `;
-    const exports = await compileAndInstantiate(source);
+    const exports = await compileToWasm(source);
     expect(exports.test!()).toBe(4);
   });
 });
