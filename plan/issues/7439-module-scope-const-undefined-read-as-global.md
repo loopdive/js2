@@ -1,10 +1,11 @@
 ---
 id: 7439
 title: "A module-scope `const undefined = 42` is read as the global `undefined`"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-20
 updated: 2026-11-26
+completed: 2026-11-26
 priority: low
 horizon: s
 task_type: bug
