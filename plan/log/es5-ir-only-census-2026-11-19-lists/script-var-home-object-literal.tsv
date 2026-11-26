@@ -1,0 +1,1418 @@
+built-ins/Array/prototype/concat/S15.4.4.4_A2_T1.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/concat/S15.4.4.4_A2_T2.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/every/15.4.4.16-3-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/every/15.4.4.16-3-9.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/every/15.4.4.16-4-10.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/every/15.4.4.16-4-11.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/every/15.4.4.16-4-15.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/every/15.4.4.16-4-8.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/every/15.4.4.16-4-9.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/filter/15.4.4.20-9-9.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-10.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-12.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-3.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-6.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-b-8.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/filter/15.4.4.20-9-c-i-1.js	ir/from-ast: proven dynamic binding 'kValue' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/filter/15.4.4.20-9-c-i-13.js	module binding proto has no exact typed storage: not-direct
+built-ins/Array/prototype/forEach/15.4.4.18-3-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-13.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-14.js	ir/from-ast: proven dynamic binding 'obj2' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-15.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-16.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-17.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-18.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-24.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-25.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-3.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-3-9.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Array/prototype/forEach/15.4.4.18-4-10.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/forEach/15.4.4.18-4-11.js	module binding obj has no exact typed storage: not-direct
+built-ins/Array/prototype/forEach/15.4.4.18-4-15.js	module binding obj has no exact typed storage: not-direct
+built-ins/Function/15.3.5.4_2-52gs.js	module binding o has no exact typed storage: not-direct
+built-ins/Function/15.3.5.4_2-53gs.js	module binding o has no exact typed storage: not-direct
+built-ins/Function/15.3.5.4_2-54gs.js	module binding o has no exact typed storage: not-direct
+built-ins/Function/15.3.5.4_2-55gs.js	module binding o has no exact typed storage: not-direct
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5-16-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5-8-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5-8-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5-9-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5-9-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-13.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-14.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-15.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-9.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.2-4-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A6_T10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/S15.2.1.1_A2_T4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/S15.2.2.1_A2_T1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-102.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-104.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-105.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-106.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-108.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-109.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-110.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-111.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-155.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-156.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-157.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-158.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-159.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-161.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-162.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-163.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-164.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-17.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-18.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-181.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-182.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-183.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-184.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-185.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-187.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-188.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-189.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-19.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-190.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-20.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-21.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-22.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/create/15.2.3.5-4-23.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-236.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-237.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-238.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-240.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-241.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-242.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-243.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-25.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-26.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-27.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-271.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-272.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-273.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-275.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-276.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-277.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-278.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-4.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-40.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-51.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-52.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-53.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-55.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-56.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-57.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-58.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-2-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-2-14.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-2-3.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-2-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-2-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-3-1.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-2.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-3.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-4.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-5.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-7.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-3-8.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-1.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-a-15.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-a-16.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-a-2.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-3.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-4.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-5.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-100.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-101.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-102.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-103.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-104.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-105.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-106.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-107.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-109.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-11.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-110.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-111.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-112.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-113.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-114.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-115.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-116.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-117.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-118.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-119.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-12.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-121.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-122.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-123.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-124.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-125.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-126.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-127.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-128.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-129.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-13.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-130.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-131.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-132.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-133.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-134.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-135.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-137.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-143.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-144.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-145.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-147.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-148.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-149.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-15.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-150.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-16.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-166.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-17.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-172.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-173.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-175.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-176.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-177.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-178.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-179.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-18.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-180.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-181.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-182.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-183.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-184.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-185.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-186.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-188.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-189.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-190.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-191.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-192.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-193.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-194.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-195.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-196.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-197.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-198.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-200.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-201.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-202.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-203.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-204.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-205.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-206.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-207.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-208.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-209.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-210.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-211.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-212.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-213.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-214.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-216.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-217.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-223.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-226.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-228.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-231.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-232.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-233.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-235.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-236.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-237.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-238.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-59.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-61.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-62.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-64.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-65.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-66.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-68.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-69.js	module binding descObj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-70.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-71.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-b-72.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-73.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-74.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-75.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-76.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-77.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-78.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-79.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-80.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-81.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-82.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-84.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-87.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-93.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-94.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-96.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-97.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-98.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-5-b-99.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-6-a-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-10.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-100.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-101.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-102.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-103.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-104.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-105.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-106.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-107.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-108.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-109.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-11.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-111.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-6-a-2.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-26.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-6-a-27.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-6-a-3.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-32.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-6-a-34.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-6-a-4.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-40.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-42.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-43.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-44.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-45.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-46.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-47.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-49.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-5.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-51.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-53.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-55.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-56.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-57.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-58.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-59.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-60.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-61.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-62.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-63.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-64.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-65.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-66-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-66.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-67.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-68.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-69.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-7.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-70.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-71.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-72.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-73.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-74.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-75.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-76.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-77.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-78.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-79.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-8.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-80.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-81.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-82.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-83.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-84-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-84.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-85.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-86-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-86.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-87.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-88.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-89.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-9.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-90.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-91.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-92.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-93-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-93-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-93-3.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-93-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-93.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-95.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-96.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-97.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-98.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-99.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-13.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-14.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-15.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-16.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-17-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-17.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-18.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-19.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-20.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-21.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-22.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-23.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-24.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-25.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-26.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-27.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-28.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-29.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-3.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-30.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-31.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-32.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-33.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-34.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-35.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-36.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-37.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-38.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-39.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-40.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-41.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-42.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-43.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-44.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-45.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-46.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-48.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-6.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-2-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/defineProperty/15.2.3.6-2-9.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-100.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-101.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-102.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-103.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-104.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-105.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-106.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-107.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-108.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-109.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-110.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-111.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-112.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-113.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-114.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-115.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-116.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-117.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-118.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-119.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-120.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-121.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-123.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-124.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-125.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-126.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-127.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-129.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-130.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-131.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-132.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-133.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-134.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-135.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-136.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-137.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-138.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-139-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-139.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-140-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-140.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-141-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-141.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-142-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-142.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-143-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-143.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-144-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-144.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-145-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-145.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-146-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-146.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-147-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-147.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-148-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-148.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-149-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-149.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-151.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-152.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-153.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-154.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-155.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-156.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-157.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-158.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-159.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-160.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-161.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-162.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-163.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-164.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-165-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-165.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-166-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-166.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-167-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-167.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-168-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-168.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-169-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-169.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-170-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-170.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-171.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-172-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-172.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-173-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-173.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-174-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-174.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-175-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-175.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-177.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-178.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-179.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-180.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-181.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-182.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-183.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-184.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-185.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-186.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-187.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-188.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-189.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-190.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-191.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-192.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-193.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-194.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-195.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-196.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-197.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-198.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-199.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-20.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-200.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-202.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-203.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-204.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-205.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-206.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-207.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-208.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-209.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-21.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-210.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-211.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-212.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-213.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-214.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-215.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-216.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-217.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-218-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-218.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-219-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-219.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-22.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-220-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-220.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-221-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-221.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-222-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-222.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-223-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-223.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-224-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-224.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-225-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-225.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-226-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-226.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-227-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-227.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-228-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-228.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-23.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-230.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-231.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-232.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-235.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-236.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-237.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-238.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-239.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-24.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-240.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-241.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-242.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-243.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-244.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-245.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-246.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-247.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-248-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-248.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-249-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-249.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-25.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-250-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-250.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-251-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-251.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-252-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-252.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-253-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-253.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-254-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-254.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-255-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-255.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-256-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-256.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-257-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-257.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-258-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-258.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-26.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-260.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-261.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-262.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-27.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-28.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-29.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-30.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-31.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-32.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-33-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-33.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-34-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-34.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-35-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-35.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-36-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-36.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-37-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-37.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-38-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-38.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-39-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-39.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-40-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-40.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-41-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-41.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-42-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-42.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-43-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-43.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-45.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-46.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-47.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-48.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-49.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-50.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-51.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-52.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-53.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-54.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-55.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-56.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-57.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-58.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-59.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-60.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-61.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-62.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-63.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-64.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-65.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-66.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-67.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-68.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-70.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-71.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-72.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-73.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-74.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-75.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-76.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-77.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-78.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-79.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-80.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-81.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-82.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-83.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-84.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-85.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-86-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-86.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-87-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-87.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-88-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-88.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-89-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-89.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-90-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-90.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-91-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-91.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-92-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-92.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-93-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-93.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-94-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-94.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-95-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-95.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-96-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-96.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-98.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-3-99.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-10.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-100.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-101.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-102.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-103.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-104.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-105.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-106.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-107.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-108.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-109.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-11.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-110.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-111.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-112.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-113.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-114.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-115.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-12.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-13.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-14.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-15.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-16.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-17.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-18.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-19.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-2.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-20.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-21.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-22.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-23.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-24.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-25.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-26.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-27.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-28.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-29.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-3.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-30.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-31.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-32.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-326.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-327.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-328.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-329.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-330.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-331.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-332.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-333-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-333-6.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-333.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-334.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-335.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-336.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-337.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-338.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-339.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-340.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-341.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-342.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-343.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-344.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-345.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-346.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-347.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-348.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-349.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-350.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-351.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-352.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-353.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-354-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-354-10.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-354.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-355.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-356.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-357.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-358.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-359.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-360.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-361.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-362.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-363.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-364.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-365.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-366.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-367.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-368.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-369.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-370.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-371.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-372.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-373.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-374.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-375.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-376.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-377.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-378.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-379.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-380.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-381.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-382.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-383.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-384.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-385.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-386.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-387.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-388.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-389.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-390.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-391.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-392.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-393.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-394.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-395.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-396.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-397.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-398.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-399.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-4.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-412.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-413.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-416.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-422.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-423.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-424.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-425.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-426.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-427.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-428.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-429.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-430.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-431.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-432.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-433.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-434.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-435.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-436.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-437.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-438.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-439.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-440.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-441.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-442.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-443.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-444.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-445.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-446.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-447.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-448.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-449.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-450.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-451.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-452.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-453.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-454.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-455.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-456.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-457.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-458.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-459.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-46.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-460.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-461.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-462.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-463.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-464.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-465.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-466.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-467.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-468.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-469.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-47.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-470.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-471.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-472.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-473.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-474.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-475.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-476.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-477.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-478.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-479.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-48.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-480.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-481.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-482.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-483.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-484.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-485.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-486.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-487.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-488.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-489.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-49.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-490.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-491.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-492.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-493.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-494.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-495.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-496.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-497.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-498.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-499.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-5.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-50.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-500.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-501.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-502.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-503.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-504.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-505.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-506.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-507.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-508.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-509.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-51.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-510.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-511.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-512.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-513.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-514.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-515.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-516.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-517.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-518.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-519.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-52.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-520.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-521.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-522.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-523.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-524.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-525.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-526.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-527.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-528.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-529.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-53.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-530.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-531-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-531-10.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-531.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-532.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-533.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-534.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-535.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-536.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-537.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-538.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-539.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-54.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-540-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-540-6.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-540.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-541.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-542.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-543.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-544.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-545.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-546.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-547.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-548.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-549.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-55.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-550.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-551.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-552.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-553.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-554.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-555.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-556.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-557.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-558.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-559.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-56.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-560.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-561.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-562.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-563.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-564.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-565.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-566.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-567.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-568.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-569.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-57.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-570.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-571.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-572.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-573.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-574.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-575.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-576.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-577.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-58.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-588.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-589.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-59.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-590.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-591.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-592.js	module binding appointment has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-6.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-60.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-61.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-62.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-63.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-64.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-65.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-66.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-67.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-68.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-69.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-7.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-70.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-71.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-72.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-73.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-74.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-75.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-76.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-77.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-78.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-79.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-8.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-80.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-81.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-10.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-11.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-12.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-13.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-14.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-15.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-16.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-17.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-18.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-19.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-20.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-21.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-22.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-23.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-24.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-3.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-5.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-6.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-7.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-8.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82-9.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-82.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-83.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-84.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-85.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-86.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-87.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-88.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-89.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-9.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-90.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-91.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-92.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-93.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-94.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-95.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-96.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-97.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-98.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-99.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/defineProperty/8.12.9-9-b-i_1.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/8.12.9-9-b-i_2.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/8.12.9-9-c-i_1.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/8.12.9-9-c-i_2.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/defineProperty/S15.2.3.6_A2.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/freeze/15.2.3.9-2-2.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-3.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-a-3.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-a-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-a-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-b-i-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-b-i-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-c-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-c-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-c-3.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-2-c-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/freeze/15.2.3.9-3-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/freeze/15.2.3.9-4-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/freeze/15.2.3.9-4-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/freeze/15.2.3.9-4-3.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-13.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-14.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-15.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-16.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-17.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-18.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-19.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-20.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-21.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-22.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-23.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-24.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-25.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-26.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-27.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-28.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-29.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-3.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-30.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-31.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-32.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-33.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-34.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-35.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-36.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-37.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-38.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-39.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-40.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-41.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-42.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-43.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-44.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-45.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-47.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-9.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-2.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-3.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-4.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-5.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-8.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-9.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-223.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-224.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-226.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-227.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-228.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-230.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-231.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-232.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-234.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-235.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-236.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-238.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-239.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-240.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-241.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-242.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-243.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-244.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-245.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-246.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-247.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-248.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-249.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-250.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-3.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyNames/15.2.3.4-2-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-2-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-2-3.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-3-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-37.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-38.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-39.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-50.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/getPrototypeOf/15.2.3.2-2-19.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-22.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-23.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-24.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-25.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-26.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-27.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/isFrozen/15.2.3.12-2-1.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-2.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-2.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-3.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-5.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-7.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-8.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-b-i-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-c-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-c-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-3-28.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-2-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-2-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-2-3.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-2-4.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-2-5.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-2-6.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-2-7.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-2-8.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-3-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-3-5.js	ir/from-ast: proven dynamic binding 'literal' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-3-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-3-7.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-4-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-1.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-10.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-2.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-3.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-4.js	module binding obj has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-5.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-6.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-7.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-8.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-9.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/keys/15.2.3.14-5-a-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-5-a-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/keys/15.2.3.14-5-a-4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/preventExtensions/15.2.3.10-2-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/preventExtensions/15.2.3.10-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/preventExtensions/15.2.3.10-3-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/preventExtensions/15.2.3.10-3-22.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/preventExtensions/15.2.3.10-3-23.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Object/preventExtensions/15.2.3.10-3-24.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_10.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_11.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_12.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_13.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_14.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_15.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_16.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_17.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_18.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_19.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_20.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_23.js	ir/from-ast: proven dynamic binding 'base' initializer has no supported carrier (<module-init>)
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_26.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_27.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_28.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_29.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_3.js	ir/from-ast: proven dynamic binding 'base' initializer has no supported carrier (<module-init>)
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_30.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_31.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_32.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_33.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_34.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_35.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_36.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_37.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_38.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_39.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_4.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_40.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_41.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_42.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_43.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_44.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_45.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_46.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_47.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_48.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_49.js	module binding base has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_5.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_6.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_7.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_8.js	module binding o has no exact typed storage: not-direct
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_9.js	module binding o has no exact typed storage: not-direct
+harness/compare-array-arraylike.js	module binding fixture has no exact typed storage: unsupported
+harness/propertyhelper-verifyconfigurable-configurable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifyconfigurable-not-configurable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifyenumerable-enumerable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifyenumerable-not-enumerable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifynotconfigurable-configurable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifynotconfigurable-not-configurable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifynotenumerable-enumerable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifynotenumerable-not-enumerable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifynotwritable-not-writable-strict.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifynotwritable-writable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifywritable-not-writable.js	module binding obj has no exact typed storage: not-direct
+harness/propertyhelper-verifywritable-writable.js	module binding obj has no exact typed storage: not-direct
+intl402/NumberFormat/significant-digits-options-get-sequence.js	module binding options has no exact typed storage: not-direct
+language/directive-prologue/10.1.1-28-s.js	module binding obj has no exact typed storage: not-direct
+language/directive-prologue/get-accsr-not-first-runtime.js	module binding obj has no exact typed storage: not-direct
+language/eval-code/direct/cptn-nrml-expr-obj.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
+language/eval-code/direct/non-string-object.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
+language/eval-code/indirect/cptn-nrml-expr-obj.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
+language/eval-code/indirect/non-string-object.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
+language/expressions/assignment/11.13.1-1-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/assignment/11.13.1-2-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/assignment/8.12.5-3-b_2.js	module binding tempObj has no exact typed storage: not-direct
+language/expressions/assignment/8.12.5-5-b_1.js	module binding tempObj has no exact typed storage: not-direct
+language/expressions/assignment/S11.13.1_A5_T2.js	ir/from-ast: proven dynamic binding 'scope' initializer has no supported carrier (<module-init>)
+language/expressions/assignment/S11.13.1_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/assignment/S8.12.5_A1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/expressions/assignment/S8.12.5_A2.js	ir/from-ast: proven dynamic binding '_map' initializer has no supported carrier (<module-init>)
+language/expressions/call/11.2.3-3_4.js	module binding o has no exact typed storage: not-direct
+language/expressions/call/11.2.3-3_6.js	module binding o has no exact typed storage: not-direct
+language/expressions/call/11.2.3-3_7.js	module binding o has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-23-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-24-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-25-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-26-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-27-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-28-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-29-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-30-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-31-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-32-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-33-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-34-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-35-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-36-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-37-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-38-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-39-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-40-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-41-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-42-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-43-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/11.13.2-44-s.js	module binding obj has no exact typed storage: not-direct
+language/expressions/compound-assignment/S11.13.2_A5.10_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.11_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.1_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.2_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.3_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.4_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.6_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.7_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.8_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/compound-assignment/S11.13.2_A5.9_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/in/S8.12.6_A1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/in/S8.12.6_A2_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/in/S8.12.6_A3.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/instanceof/S11.8.6_A7_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/object/11.1.5_5-4-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.1.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.2.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.3.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.4.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A3.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A4.1.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A4.2.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/postfix-decrement/S11.3.2_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/postfix-increment/S11.3.1_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/prefix-decrement/S11.4.5_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/prefix-increment/S11.4.4_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/property-accessors/S8.12.3_A2.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/property-accessors/S8.12.3_A3.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/function-code/10.4.3-1-58-s.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-58gs.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-59-s.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-59gs.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-60-s.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-60gs.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-61-s.js	module binding o has no exact typed storage: not-direct
+language/function-code/10.4.3-1-61gs.js	module binding o has no exact typed storage: not-direct
+language/reserved-words/ident-name-global-property-accessor.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-global-property-memberexpr-str.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-global-property-memberexpr.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-global-property-prop-name.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-keyword-accessor.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-keyword-memberexpr-str.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-keyword-memberexpr.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-keyword-prop-name.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-reserved-word-literal-accessor.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-reserved-word-literal-memberexpr-str.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-reserved-word-literal-memberexpr.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/reserved-words/ident-name-reserved-word-literal-prop-name.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
+language/statements/for/12.6.3_2-3-a-ii-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+language/statements/function/S13.2.2_A18_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/statements/function/S13.2.2_A19_T2.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/statements/function/S13_A10.js	ir/from-ast: proven dynamic binding '__music_box' initializer has no supported carrier (<module-init>)
+language/statements/try/12.14-4.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/statements/try/12.14-7.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/statements/try/12.14-8.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/statements/with/12.10-0-3.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/statements/with/12.10-0-7.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/statements/with/12.10-7-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6.2_A1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6.2_A3.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6.2_A4.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6_A2_T1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6_A2_T2.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6_A3_T1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6_A3_T2.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/types/reference/8.7.2-3-1-s.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/types/reference/8.7.2-3-s.js	module binding _8_7_2_3 has no exact typed storage: not-direct
+language/types/reference/8.7.2-4-s.js	module binding _8_7_2_4 has no exact typed storage: not-direct
+language/types/reference/8.7.2-6-s.js	module binding _8_7_2_6 has no exact typed storage: not-direct
+language/types/reference/8.7.2-7-s.js	module binding _8_7_2_7 has no exact typed storage: not-direct
+language/types/reference/8.7.2-8-s.js	ir/from-ast: proven dynamic binding '_8_7_2_8' initializer has no supported carrier (<module-init>)

@@ -148,7 +148,7 @@ import {
 } from "../class-static-metadata.js";
 import { isClassStaticReflectiveMember } from "../class-static-descriptor.js"; // (#6767)
 import { standaloneClassProtoObjectApplies } from "../class-proto-object.js";
-import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
+import { expectedArgumentCountOfParams } from "../../shared/function-expected-argument-count.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";

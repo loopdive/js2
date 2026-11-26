@@ -1,0 +1,53 @@
+built-ins/String/prototype/replace/S15.5.4.11_A1_T9.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+built-ins/String/prototype/replace/S15.5.4.11_A4_T1.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/unprovable) — the unboxed numeric-
+built-ins/String/prototype/replace/S15.5.4.11_A4_T2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/unprovable) — the unboxed numeric-
+built-ins/String/prototype/replace/S15.5.4.11_A4_T3.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/unprovable) — the unboxed numeric-
+built-ins/String/prototype/replace/S15.5.4.11_A4_T4.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/unprovable) — the unboxed numeric-
+built-ins/String/prototype/trim/15.5.4.20-2-45.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (string/unprovable) — the unboxed numeric-add 
+built-ins/String/prototype/trim/15.5.4.20-3-3.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-3-4.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-3-5.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-3-6.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+built-ins/String/prototype/trim/15.5.4.20-3-7.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/asi/S7.9_A10_T1.js	ir/from-ast: Phase 1 requires matching operand types for '*' in <module-init>
+language/asi/S7.9_A10_T3.js	ir/from-ast: Phase 1 requires matching operand types for '*' in <module-init>
+language/asi/S7.9_A10_T5.js	ir/from-ast: Phase 1 requires matching operand types for '*' in <module-init>
+language/asi/S7.9_A5.5_T1.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (number/unprovable) — the unboxed numeric-add 
+language/asi/S7.9_A5.8_T1.js	ir/from-ast: value-position prefix update in <module-init>
+language/expressions/addition/S11.6.1_A2.1_T2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/number) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A2.1_T3.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (number/unprovable) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A2.2_T1.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/number) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A2.2_T3.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/number) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A2.4_T3.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/number) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A2.4_T4.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (number/unprovable) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A3.1_T1.1.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (boolean/boolean) — the unboxed numeric-add / 
+language/expressions/addition/S11.6.1_A3.1_T2.1.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (boolean/number) — the unboxed numeric-add / s
+language/expressions/addition/S11.6.1_A3.1_T2.2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (number/unprovable) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A3.1_T2.5.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (boolean/unprovable) — the unboxed numeric-add
+language/expressions/addition/S11.6.1_A3.2_T1.2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/unprovable) — the unboxed numeric-
+language/expressions/addition/S11.6.1_A3.2_T2.1.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (string/number) — the unboxed numeric-add / st
+language/expressions/addition/S11.6.1_A3.2_T2.3.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (string/unprovable) — the unboxed numeric-add 
+language/expressions/addition/S11.6.1_A3.2_T2.4.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (string/unprovable) — the unboxed numeric-add 
+language/expressions/compound-assignment/add-whitespace.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/expressions/concatenation/S9.8_A1_T2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/string) — the unboxed numeric-add 
+language/expressions/concatenation/S9.8_A2_T2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/string) — the unboxed numeric-add 
+language/expressions/concatenation/S9.8_A5_T2.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/string) — the unboxed numeric-add 
+language/expressions/does-not-equals/S11.9.2_A3.2.js	ir/from-ast: Phase 1 requires matching operand types for '!=' in <module-init>
+language/expressions/does-not-equals/S11.9.2_A3.3.js	ir/from-ast: Phase 1 requires matching operand types for '!=' in <module-init>
+language/expressions/equals/S11.9.1_A3.2.js	ir/from-ast: Phase 1 requires matching operand types for '==' in <module-init>
+language/expressions/equals/S11.9.1_A3.3.js	ir/from-ast: Phase 1 requires matching operand types for '==' in <module-init>
+language/expressions/postfix-decrement/whitespace.js	ir/from-ast: unsupported expression kind PostfixUnaryExpression in <module-init>
+language/expressions/postfix-increment/whitespace.js	ir/from-ast: unsupported expression kind PostfixUnaryExpression in <module-init>
+language/expressions/prefix-decrement/whitespace.js	ir/from-ast: value-position prefix update in <module-init>
+language/expressions/prefix-increment/whitespace.js	ir/from-ast: value-position prefix update in <module-init>
+language/expressions/void/S11.4.2_A4_T6.js	ir/from-ast: undefined-compare on f64 not in IR scope (<module-init>)
+language/function-code/S10.2.1_A2.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/statements/for/S12.6.3_A1.js	ir/from-ast: value-position prefix update in <module-init>
+language/statements/function/S13.2.1_A6_T1.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/statements/function/S13.2.1_A6_T3.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/statements/function/S13_A4_T2.js	ir/from-ast: value-position prefix update in __func
+language/statements/function/S13_A4_T3.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/statements/function/S13_A4_T4.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (string/unprovable) — the unboxed numeric-add 
+language/statements/function/S13_A9.js	dynamic operation __ir_dyn_add has no Prepared intrinsic
+language/types/number/S8.5_A5.js	ir/from-ast: '+' operands not provably both-number or string-concatenable (boolean/boolean) — the unboxed numeric-add / 
+language/types/reference/S8.7_A6.js	dynamic operation __ir_dyn_add has no Prepared intrinsic

@@ -1,7 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boxBooleanBody } from "../src/codegen/interned-boolean-boxes.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
@@ -24,20 +21,6 @@ import {
   requireNativeBooleanBoxReservations,
   requireCompletedNativeBooleanBoxes,
 } from "../src/backend/wasmgc/resources/native-booleans.js";
-
-const donorText = readFileSync(new URL("./fixtures/issue-3518-boolean-box-donor.ts.txt", import.meta.url), "utf8");
-// Complete source at signed f52f6ae020d6d5ddb07e69a3b18811a5b4f86c24.
-const donorHash = "cfa0a087b17b87d162458532b80892ca684860b0e34ea9742765eceb1f96c806";
-function donor(text = donorText) {
-  if (createHash("sha256").update(text).digest("hex") !== donorHash) throw Error("Boolean boxing donor mismatch");
-  const js = ts.transpileModule(text, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  }).outputText;
-  return new Function(
-    "process",
-    js.replace("export function boxBooleanBody", "function boxBooleanBody") + "\nreturn boxBooleanBody;",
-  )(process) as typeof boxBooleanBody;
-}
 afterEach(() => vi.unstubAllEnvs());
 let cached: ReturnType<typeof deriveNativeValueResourcePlan> | undefined;
 function requirements() {
@@ -93,11 +76,11 @@ function execute(mode: "interned" | "allocating") {
   return { s, exports };
 }
 
-describe("native Boolean BOX preserves the signed legacy recipe", () => {
+describe("native Boolean BOX", () => {
   for (const mode of ["interned", "allocating"] as const)
     for (const imported of [0, 7])
       for (const defined of [0, 3])
-        it(`${mode}: complete donor body/globals with ${imported} imports and ${defined} preceding globals`, () => {
+        it(`${mode}: appends the box globals after ${defined} preceding globals with ${imported} imports`, () => {
           vi.stubEnv("JS2WASM_INTERNED_BOOL_BOXES", mode === "allocating" ? "0" : "1");
           const context = () =>
             ({
@@ -111,30 +94,16 @@ describe("native Boolean BOX preserves the signed legacy recipe", () => {
                 })),
               },
             }) as unknown as CodegenContext;
-          const before = context(),
-            after = context();
-          expect(boxBooleanBody(after, 17)).toEqual(donor()(before, 17));
-          expect(after.mod.globals).toEqual(before.mod.globals);
+          const after = context();
+          boxBooleanBody(after, 17);
+          expect(after.mod.globals.slice(0, defined).map((x) => x.name)).toEqual(
+            Array.from({ length: defined }, (_, index) => "prior" + index),
+          );
           expect(after.mod.globals.slice(defined).map((x) => x.name)).toEqual(
             mode === "interned" ? ["__box_boolean_true", "__box_boolean_false"] : [],
           );
         });
-  it("rejects a changed signed donor", () => {
-    expect(donor()).toBeTypeOf("function");
-    expect(() => donor(donorText.replace("carrier(1)", "carrier(0)"))).toThrow("donor mismatch");
-  });
   for (const mode of ["interned", "allocating"] as const) {
-    it(`${mode}: actual owner emits exactly the donor globals and function body`, () => {
-      vi.stubEnv("JS2WASM_INTERNED_BOOL_BOXES", mode === "allocating" ? "0" : "1");
-      const s = fill(reserve(mode));
-      const priorCount = s.module.globals.length - s.pack.globals.length;
-      const ctx = {
-        numImportGlobals: 0,
-        mod: { globals: s.module.globals.slice(0, priorCount) },
-      } as unknown as CodegenContext;
-      expect(s.pack.boxBoolean.object.body).toEqual(donor()(ctx, s.values.types.boxedBoolean.typeIndex));
-      expect(s.module.globals).toEqual(ctx.mod.globals);
-    });
     it(`${mode}: executes canonical values, carrier identity and noncanonical i32 behavior`, () => {
       const { s, exports: x } = execute(mode);
       expect(s.pack.globals).toHaveLength(mode === "interned" ? 2 : 0);

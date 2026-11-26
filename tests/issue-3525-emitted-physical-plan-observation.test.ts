@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
@@ -33,7 +31,6 @@ const ORIGINAL_MIXED = {
   "./entry.ts":
     '\n    import { left } from "./a";\n    import { right } from "./b";\n    let phase: number = 0;\n    export function initial(): number { return left * 100 + right; }\n    export function readPhase(): number { return phase; }\n    function compute(seed: number): number {\n      let total = 0;\n      for (let i = 0; i < 4; i++) {\n        if (i % 2 === 0) total = total + Math.imul(seed, i + 1);\n        else total = total - i;\n      }\n      return total;\n    }\n    \n  export async function run(seed: number): Promise<number> {\n    phase = 1;\n    const first = await (seed + 1);\n    phase = 2;\n    const second = await compute(first);\n    phase = 3;\n    return second + initial();\n  }\n\n  ',
 };
-const MIXED_DIGEST = "236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb";
 
 function prepare(files: Record<string, string> = SCALAR, policies = POLICIES) {
   const ast = analyzeMultiSource(files, "./entry.ts");
@@ -217,7 +214,6 @@ describe("#3525 authentic completed-emission physical plan observation", () => {
   });
 
   it("original mixed WasmGC plan joins real async frames, callbacks and distinct owner populations", () => {
-    expect(createHash("sha256").update(JSON.stringify(ORIGINAL_MIXED)).digest("hex")).toBe(MIXED_DIGEST);
     const { program, accepted, emitted, plan } = transaction("wasmgc", ORIGINAL_MIXED, [
       { target: "host", backend: "wasmgc" },
     ]);

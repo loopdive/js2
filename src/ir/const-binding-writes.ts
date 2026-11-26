@@ -6,11 +6,9 @@
  * at run time it must throw a TypeError, which only the legacy lowering raises.
  * The selector therefore refuses a subject that writes a const
  * (`firstConstBindingWrite`), and (#7106) a destructuring declaration whose leaf
- * is written at all (`declarationBindingWritten`). The Prepared source producer
- * has no selector and asks the same question per unit (`refuseConstBindingWrite`).
+ * is written at all (`declarationBindingWritten`).
  */
 import { ts, forEachChild } from "../ts-api.js";
-import { IrUnsupportedError } from "./outcomes.js";
 import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../shared/binding-writes.js";
 import { collectPatternBindingNames, isFunctionScopeBoundary } from "./analysis/ast-scope.js";
 import { getFunctionOwnLocals } from "./analysis/binding-info.js";
@@ -29,19 +27,6 @@ export function firstConstBindingWrite(root: ts.Node): ts.Identifier | undefined
   };
   visit(root);
   return write;
-}
-
-/**
- * (#7434) The Prepared producer's twin of the selector's `const-write` refusal,
- * asked before lowering: from-ast's mutation pre-pass assumes no write reaches
- * a `const`, so a unit that lowers one fails an invariant instead of refusing.
- */
-export function refuseConstBindingWrite(roots: ts.Node | readonly ts.Node[]): void {
-  for (const root of [roots].flat()) {
-    const write = firstConstBindingWrite(root);
-    if (write)
-      throw new IrUnsupportedError("body-shape-rejected", "select", `const-write: write to const "${write.text}"`);
-  }
 }
 
 /**

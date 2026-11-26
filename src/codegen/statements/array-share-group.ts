@@ -12,6 +12,7 @@
 import type { TypeFact } from "../../checker/oracle.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+import { outermostTransparent } from "../../shared/transparent-expressions.js";
 
 /**
  * (#7154) A static type whose array value lives in the dynamic carrier: an
@@ -635,12 +636,12 @@ function memberUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpress
 }
 
 /**
- * (#7164) `xs[i]` / `xs.length` is safe only as an rvalue or as the direct
- * target of a plain `=`, a compound assignment or `++` / `--` on the bare
- * binding — the stores the length / element store paths handle. A for-of /
- * for-in target, a destructuring-pattern position, a wrapped (`as`, `!`, …)
- * target, or a store through another receiver (`xs.reverse().length += 7`)
- * escapes.
+ * (#7164) `xs[i]` / `xs.length` is safe only as an rvalue or as the target of
+ * a plain `=`, a compound assignment or `++` / `--` on the bare binding — the
+ * stores the length / element store paths handle, wrapped (`as`, `!`, parens)
+ * or not, since #7394 lowers a wrapped target as the bare one. A for-of /
+ * for-in target, a destructuring-pattern position, or a store through another
+ * receiver (`xs.reverse().length += 7`) escapes.
  */
 function elementUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpression, top: ts.Node): MemberUse {
   const parent = top.parent;
@@ -672,7 +673,8 @@ function elementUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpres
     op === ts.SyntaxKind.EqualsToken ||
     op === ts.SyntaxKind.PlusEqualsToken ||
     op === ts.SyntaxKind.MinusEqualsToken;
-  if (!handled || top !== access || !ts.isIdentifier(skipValueWrappers(access.expression))) return { kind: "escape" };
+  if (!handled || skipValueWrappers(top) !== access || !ts.isIdentifier(skipValueWrappers(access.expression)))
+    return { kind: "escape" };
   if (insidePatternDefault(parent)) return { kind: "escape" }; // `[a = (xs.length += 7)] = []`
   return { kind: "element" };
 }
@@ -742,11 +744,12 @@ function isPatternElement(node: ts.Node): boolean {
 function isGrowingLengthStore(id: ts.Identifier): boolean {
   const access = id.parent;
   if (!ts.isPropertyAccessExpression(access) || access.expression !== id || access.name.text !== "length") return false;
-  const store = access.parent;
+  const target = outermostTransparent(access);
+  const store = target.parent;
   if (
     !ts.isBinaryExpression(store) ||
     store.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-    store.left !== access
+    store.left !== target
   ) {
     return false;
   }
@@ -887,8 +890,23 @@ function isLengthUpdate(node: ts.Node): boolean {
   ) {
     target = node.left;
   }
-  while (target && ts.isParenthesizedExpression(target)) target = target.expression;
-  return target !== undefined && ts.isPropertyAccessExpression(target) && target.name.text === "length";
+  if (target === undefined) return false;
+  target = skipValueWrappers(target);
+  return ts.isPropertyAccessExpression(target) && target.name.text === "length";
+}
+
+/**
+ * (#7164) `x.length = n`, or `x[k] = v` with a key that may be "length" at run time: the pre-scan arms hole-aware
+ * reads before function emission, since finalization must not mint a Hole type. A wrapped target
+ * (`(x.length as any) = n`) is the same store (#7394).
+ */
+export function isPossibleLengthStore(node: ts.Node): boolean {
+  if (!ts.isBinaryExpression(node) || node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
+  const target = skipValueWrappers(node.left);
+  if (ts.isPropertyAccessExpression(target)) return target.name.text === "length";
+  if (!ts.isElementAccessExpression(target)) return false;
+  const key = target.argumentExpression;
+  return (!ts.isStringLiteralLike(key) || key.text === "length") && !ts.isNumericLiteral(key);
 }
 
 /** (#7164) Pre-scan hook: a length update arms hole-aware reads, as `x.length = n` does. */

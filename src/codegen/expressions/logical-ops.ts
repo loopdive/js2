@@ -13,6 +13,7 @@ import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { nullishJoinCarrier } from "./nullish-join-carrier.js";
+import { emitIsUndefF64, f64MayHoldUndefined } from "../value-tags.js";
 
 type MappedArgsInfo = NonNullable<FunctionContext["mappedArgsInfo"]>;
 
@@ -291,27 +292,33 @@ export function compileNullishCoalescing(
     return finishNullishBranch(ctx, fctx, expr, resultKind, tmp);
   }
 
-  // If the left side is a value type (i32/f64), it can never be null/undefined — short-circuit
+  if (f64MayHoldUndefined(ctx, expr.left, resultKind)) {
+    emitIsUndefF64(fctx.body);
+    return finishNullishBranch(ctx, fctx, expr, resultKind, tmp);
+  }
+
+  // Any other value type (i32/f64) can never be null/undefined — short-circuit
   if (resultKind.kind === "i32" || resultKind.kind === "f64") {
     releaseTempLocal(fctx, tmp);
     return resultKind;
   }
 
-  // Check if null or undefined (JS `??` triggers for both null and undefined)
-  // ref.is_null checks for wasm null; __extern_is_undefined checks for JS undefined
+  emitRefIsNullish(ctx, fctx, resultKind, tmp);
+  return finishNullishBranch(ctx, fctx, expr, resultKind, tmp);
+}
+
+/**
+ * The nullish test of a reference value (`??`, `??=`) that is on the stack and saved in local `tmp`: leaves an
+ * i32, non-zero when it is a Wasm null (`ref.is_null`) or JS `undefined` (`__extern_is_undefined`).
+ */
+export function emitRefIsNullish(ctx: CodegenContext, fctx: FunctionContext, type: ValType, tmp: number): void {
   fctx.body.push({ op: "ref.is_null" });
   const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
-  if (isUndefIdx !== undefined) {
-    fctx.body.push({ op: "local.get", index: tmp });
-    if (resultKind.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    fctx.body.push({ op: "call", funcIdx: isUndefIdx });
-    fctx.body.push({ op: "i32.or" });
-  }
-
-  return finishNullishBranch(ctx, fctx, expr, resultKind, tmp);
+  if (isUndefIdx === undefined) return;
+  fctx.body.push({ op: "local.get", index: tmp });
+  if (type.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "call", funcIdx: isUndefIdx }, { op: "i32.or" });
 }
 
 /**

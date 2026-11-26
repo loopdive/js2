@@ -56,6 +56,7 @@
 
 import { someReturnedValue } from "./function-returns.js";
 import { ts, forEachChild } from "../ts-api.js";
+import { switchCaseTests } from "./switch-case-tests.js";
 import { isStableDirectCallTarget, localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactGlobalEvalStatement } from "../eval-call-shape.js";
@@ -88,6 +89,7 @@ import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./modu
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
+import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
 import {
   type PrototypeBorrowCall,
   ambientStringPrototypeBorrow,
@@ -97,7 +99,7 @@ import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "../shared/property-key-fold.js";
 import {
   emptyObjectBinding,
   isEmptyObjectExpression,
@@ -169,6 +171,12 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import {
+  hostRegExpBuilt,
+  nativeStaticRegExpBuilt,
+  regExpLiteralBuilt,
+  type RegExpBuildAnswers,
+} from "./regexp-literal-admission.js";
 import { stringUseRefusal } from "./select-string-uses.js";
 import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
@@ -255,7 +263,7 @@ import {
   type OperandFamily,
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
-import { everyYieldedValue } from "./analysis/carrier-expression.js";
+import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -579,6 +587,13 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * `abi-signature-parity` guard compares against.
    */
   readonly jsDocParamLowersAsExternref?: (parameter: ts.ParameterDeclaration) => boolean;
+  /**
+   * (#7331) Does legacy register this unannotated function's result as the
+   * dynamic carrier because a returned value's checker type is stale (a
+   * binding written across domains)? The override map gives the IR function
+   * that result whatever the selector resolved from the lattice.
+   */
+  readonly resultWidensToDynamic?: (fn: ts.FunctionDeclaration) => boolean;
   /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
@@ -1894,7 +1909,12 @@ let currentDynamicParamNames = new Set<string>();
  */
 let currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
 // The current subject's resolved return kind: `concreteResultRecoversDynamic`
-// reads it to recover a dynamic `return` operand into a concrete result.
+// reads it to recover a dynamic `return` operand into a concrete result, and
+// `isPhase1ReturnValue` to refuse a carrier into a number. Module-init,
+// constructor-field and planned-closure walks keep the previous subject's
+// kind, as before #7331. None reaches a carrier `return` (a planned closure
+// refuses a carrier result first, `closure-return-type`), so for the
+// `isPhase1ReturnValue` read a stale kind could only refuse.
 let currentFnReturnKind: ResolvedKind = null;
 // (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
@@ -3738,13 +3758,7 @@ function dynamicUsesAreMoveOnly(
         ts.isPropertyAccessExpression(e.expression) &&
         isDynShaped(e.expression.expression)
       ) {
-        const narrowStringReplace =
-          e.expression.name.text === "replace" &&
-          e.arguments.length === 2 &&
-          e.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
-          e.arguments[0]!.getText() === "/_/g" &&
-          ts.isStringLiteralLike(e.arguments[1]!) &&
-          e.arguments[1]!.text === "";
+        const narrowStringReplace = isUnderscoreStripReplace(e);
         if (!currentDynMemberReadBuildable || !expectDyn) return false;
         if (!narrowStringReplace && !dynamicMethodCallIsAdmitted(e.expression.name.text, e.arguments.length)) {
           return false;
@@ -5521,17 +5535,6 @@ interface BreakScope {
 const NO_BREAKS: BreakScope = { inSwitch: false, names: NO_LABELS };
 
 /**
- * #2952 slice 4 — the numeric value of a claimable `case` test: a plain
- * NumericLiteral or prefix-minus NumericLiteral. EXACT mirror of
- * from-ast's `numericLiteralValue` (selector↔builder parity). `null`
- * for any other expression shape.
- */
-function stringCaseTestValue(expr: ts.Expression): string | null {
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-  return null;
-}
-
-/**
  * #2952 slice 6b — is there an indexed read anywhere in this value's own
  * producer subtree? (Nested closures are skipped: their bodies produce a
  * different value.)
@@ -5605,18 +5608,6 @@ function switchDiscHasIrStringCarrier(expr: ts.Expression, seen = new Set<ts.Var
   return switchDiscHasIrStringCarrier(declaration.initializer, seen);
 }
 
-function numericCaseTestValue(expr: ts.Expression): number | null {
-  if (ts.isNumericLiteral(expr)) return Number(expr.text.replace(/_/g, ""));
-  if (
-    ts.isPrefixUnaryExpression(expr) &&
-    expr.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(expr.operand)
-  ) {
-    return -Number(expr.operand.text.replace(/_/g, ""));
-  }
-  return null;
-}
-
 /**
  * #2952 slice 4 — shape-check `switch (disc) { case <numeric literal>:
  * ...; default: ... }`. Backed by `lowerSwitchStatement` (block-per-case
@@ -5644,30 +5635,10 @@ function isPhase1SwitchStatement(
     if (!isPhase1Expr(stmt.expression, scope, localClasses)) return shapeNo("switch-disc", stmt.expression);
     // The dispatch ladder takes an i32 / f64 (or string) discriminant, never the carrier.
     if (readsCarrier(stmt.expression)) return shapeNo("switch-disc-carrier", stmt.expression);
-    let defaults = 0;
-    // #2952 slice 6b — a clause test is a numeric OR a string literal. The two
-    // families are mutually exclusive within one switch: §14.12.9 dispatch is
-    // strict equality, so a numeric test can never match a string disc (and
-    // vice versa), and a mixed set would need both dispatch mechanisms in one
-    // ladder for zero real-world benefit. Reject the mixed shape outright.
-    let numericTests = 0;
-    let stringTests = 0;
-    for (const clause of stmt.caseBlock.clauses) {
-      if (ts.isCaseClause(clause)) {
-        if (numericCaseTestValue(clause.expression) !== null) {
-          numericTests++;
-        } else if (stringCaseTestValue(clause.expression) !== null) {
-          stringTests++;
-        } else {
-          return shapeNo("switch-case-test-nonliteral", clause.expression);
-        }
-      } else {
-        defaults++;
-        if (defaults > 1) return shapeNo("switch-multiple-defaults", clause);
-      }
-    }
-    if (numericTests > 0 && stringTests > 0) return shapeNo("switch-case-test-mixed", stmt.expression);
-    if (stringTests > 0) {
+    // #2952 slice 6b — every clause test a numeric literal, or every one a string literal (one shared predicate).
+    const tests = switchCaseTests(stmt);
+    if (tests.kind === "rejected") return shapeNo(tests.reason, tests.node);
+    if (tests.kind === "string") {
       // The string ladder lowers `disc === "lit"` through the IR's abstract
       // `string.eq` (mode-resolved at lower time: host `string_equals` /
       // native `__str_equals`), which requires the disc to be an
@@ -6483,9 +6454,44 @@ function isPhase1BodyStatement(
       return currentFnIsVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("body-return-bare-nonvoid", stmt);
     }
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   return shapeNo("body-unhandled-stmt", stmt);
+}
+
+/**
+ * (#7331) A returned value. A script var in its dynamic home (and a member
+ * read, method call or `+` over one) lowers to the carrier whatever the
+ * checker types it, and `coerceReturnValue` has no carrier-to-number arm, so a
+ * number result refuses it: `function h() { return p.length; }`. Where legacy
+ * widens the result to the carrier (`var n = 1; … n = 'x'; function h() {
+ * return n; }`), the override map gives the IR function that result too,
+ * whatever the lattice says, and the carrier returns as itself.
+ */
+function isPhase1ReturnValue(value: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>) {
+  if (currentFnReturnKind === "f64" && yieldsModuleCarrier(value) && !resultWidensToDynamic()) {
+    return shapeNo("return-carrier-into-number", value);
+  }
+  return isPhase1Expr(value, scope, localClasses);
+}
+
+function resultWidensToDynamic(): boolean {
+  const subject = currentSelectionSubject;
+  return (
+    subject !== null &&
+    ts.isFunctionDeclaration(subject) &&
+    currentSelectionOptions?.resultWidensToDynamic?.(subject) === true
+  );
+}
+
+const MODULE_CARRIER_LEAVES = {
+  binding: (node: ts.Identifier | ts.ThisExpression) => holdsCarrier(node),
+  call: (call: ts.CallExpression) => (ts.isPropertyAccessExpression(call.expression) ? undefined : false),
+};
+
+/** `value` lowers to the carrier through a script var in its dynamic home. */
+function yieldsModuleCarrier(value: ts.Expression): boolean {
+  return producesCarrier(value, MODULE_CARRIER_LEAVES);
 }
 
 /** (#7106 S3c) The implicit `return;` after a dynamic-return function's trailing statement. */
@@ -6510,7 +6516,7 @@ function isPhase1Tail(
       return isGenerator || isVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("tail-bare-return-nonvoid", stmt);
     // #7104 — `return undefined` in a dynamic-return function.
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   if (ts.isBlock(stmt)) {
     return isPhase1StatementList(stmt.statements, new Set(scope), localClasses, isGenerator, isVoidReturn);
@@ -8371,6 +8377,17 @@ const OBVIOUS_OPERAND_FAMILIES: Record<ObviousModuleValueFamily | "unknown", Ope
   unknown: "unknown",
 };
 
+/**
+ * The arms of a conditional over a module value lower to different carriers. A
+ * carrier arm (#7331) is the carrier whatever the checker types it (`c ?
+ * p.length : 0`), and the generic join has no carrier-to-number arm.
+ */
+function moduleValueConditionalArmsDiffer(expr: ts.ConditionalExpression): boolean {
+  if (yieldsModuleCarrier(expr.whenTrue) !== yieldsModuleCarrier(expr.whenFalse)) return true;
+  const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
+  return !whenTrueFamily || whenTrueFamily !== obviousModuleValueFamily(expr.whenFalse);
+}
+
 /** Narrow family evidence used only to reject representation mismatches. */
 function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily | undefined {
   const candidate = unwrapPhase1Parens(expr);
@@ -9223,37 +9240,20 @@ function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | 
   return arg;
 }
 
+/** (#7364) The selector's answers to the shared RegExp construction rule (`regexp-literal-admission.ts`). */
+const SELECTOR_REGEXP_LANE: RegExpBuildAnswers = {
+  supportsBackendCapability: (capability) => currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
+  nativeRegExpCompiles: (pattern, flags) => currentSelectionOptions?.nativeRegExpCompiles?.(pattern, flags) === true,
+  isLibOnlyBinding: selectorSeesLibOnlyBinding,
+};
+
 /**
  * Is the host RegExp (`env.RegExp_new`, the `RegExp` extern class) unavailable
  * on this lane? Every RegExp construct the IR would lower through it — a
- * literal, `new RegExp(…)`, a method on a RegExp value — refuses then. An
- * absent capability seam (bare selector) is not a refusal.
+ * literal, `new RegExp(…)`, a method on a RegExp value — refuses then.
  */
 function hostRegExpUnavailable(): boolean {
-  return currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false;
-}
-
-/**
- * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
- * consumes it: the receiver of `.test(…)` / `.exec(…)` (R1/R2), a discarded statement (which still throws an invalid
- * pair's SyntaxError), or (R3) an operand of `+`, which the `+` rule admits only beside a string (its
- * `RegExp.prototype.toString`). A property read (`/a/.source`) or a binding has no lowering for it yet.
- */
-function nativeStaticRegExp(expr: ts.Expression): boolean {
-  const pair = staticRegExpPair(expr, selectorSeesLibOnlyBinding);
-  const consumer = outermostParenthesized(expr).parent;
-  const methodReceiver =
-    ts.isPropertyAccessExpression(consumer) &&
-    ts.isCallExpression(consumer.parent) &&
-    consumer.parent.expression === consumer &&
-    matchRegExpCarrierCall(consumer.parent) !== undefined;
-  const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
-  return (
-    pair !== undefined &&
-    (methodReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
-    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
-    currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
-  );
+  return !hostRegExpBuilt(SELECTOR_REGEXP_LANE);
 }
 
 /** (#7106 levers R2, S2) A read of a match result: an `.exec` call's, or a `regexp-match` slot's. */
@@ -9690,7 +9690,7 @@ function binaryOperandFamily(
   )
     return "number";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || ts.isVoidExpression(candidate)) return "undefined";
-  if (nativeStaticRegExp(candidate)) return "regexp";
+  if (nativeStaticRegExpBuilt(candidate, SELECTOR_REGEXP_LANE)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
 }
@@ -9834,6 +9834,17 @@ function isSelectableNumberCompound(
   if (carrierHome && !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)) {
     return shapeNo("compound-dynamic-module-operand", expr.right);
   }
+  // (#7330) `+=` into a string slot concatenates, so only a string value has a lowering.
+  if (
+    holdsString(expr.left, scope, localClasses) &&
+    !compoundWriteAdmissible(
+      expr.operatorToken.kind,
+      "string",
+      holdsString(expr.right, scope, localClasses) ? "string" : rhsFamily,
+    )
+  ) {
+    return shapeNo("compound-string-operand", expr.right);
+  }
   // (#7338) Any other target takes no table carrier: the numeric compound needs a number.
   if (!carrierHome && lowersToCarrier(expr.right)) return shapeNo("compound-carrier-operand", expr.right);
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
@@ -9842,6 +9853,13 @@ function isSelectableNumberCompound(
   if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
+}
+
+/** A script var in its string home, or a checker- or literal-proven string. */
+function holdsString(target: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
+  const binding = moduleBinding(target);
+  if (binding) return binding.valueKind.kind === "string";
+  return expressionIsClassifiedString(target) || binaryOperandFamily(target, scope, localClasses) === "string";
 }
 
 /** `void e` beside the carrier where from-ast has no lowering (`voidCompareUnlowered`). */
@@ -12049,7 +12067,10 @@ function phase1NewExpression(
     return true;
   }
   if (ctorName === "RegExp" && isAmbientConstructor && hostRegExpUnavailable()) {
-    return nativeStaticRegExp(expr) || capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+    return (
+      nativeStaticRegExpBuilt(expr, SELECTOR_REGEXP_LANE) ||
+      capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr)
+    );
   }
   if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
@@ -12399,7 +12420,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `src/codegen/index.ts:3274-3278`). Only the host-RegExp lane registers
   // `env.RegExp_new`; elsewhere legacy's native engine owns the literal.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
-    if (!hostRegExpUnavailable() || nativeStaticRegExp(expr)) return true;
+    if (regExpLiteralBuilt(expr, SELECTOR_REGEXP_LANE)) return true;
     return capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr);
   }
   // Slice 1 (issue #1168): claim string literals and `null` so that
@@ -12778,12 +12799,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       currentProvenMixedConditionals.add(expr);
       return true;
     }
-    if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
-      const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
-      const whenFalseFamily = obviousModuleValueFamily(expr.whenFalse);
-      if (!whenTrueFamily || !whenFalseFamily || whenTrueFamily !== whenFalseFamily) {
-        return shapeNo("expr-module-value-conditional-mismatch", expr);
-      }
+    if (
+      (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) &&
+      moduleValueConditionalArmsDiffer(expr)
+    ) {
+      return shapeNo("expr-module-value-conditional-mismatch", expr);
     }
     // (#7113) A planned closure's dynamic parameter joined with `undefined` /
     // `null`: the generic tail types the arms `dynamic` vs `dynamic<tag:1>`
@@ -13705,7 +13725,7 @@ function isStaticSpreadSource(
  * `{ ["a"]: v }`, `` { [`a`]: v } ``, `{ [0]: v }` — since the IR object shape
  * is static and a folded key is indistinguishable from a plain one. Keys that
  * need a value environment (`const k = "a"`, `Symbol.iterator`, template
- * substitution, arithmetic) still reject: see `property-key-fold.ts` for why
+ * substitution, arithmetic) still reject: see `shared/property-key-fold.ts` for why
  * the fold is syntactic, and for the measurement showing a numeric key needs no
  * canonicalisation step (the scanner has already done it).
  */
@@ -13798,6 +13818,10 @@ function isPhase1ObjectLiteral(
       if (name === null) return shapeNo("objectlit-computed-key", prop.name);
       if (seen.has(name)) return shapeNo("objectlit-duplicate-key", prop.name); // duplicate key — defer
       seen.add(name);
+      // (#7332) from-ast lowers a field's value under an f64 hint, where `null` has no value
+      // (`nullValueAdmissible`); a conditional or comma may yield it too.
+      if (!everyYieldedValue(prop.initializer, (value) => value.kind !== ts.SyntaxKind.NullKeyword))
+        return shapeNo("objectlit-null-field", prop.initializer);
       if (!isPhase1Expr(prop.initializer, scope, localClasses))
         return shapeNo("objectlit-property-init", prop.initializer);
       continue;

@@ -16,6 +16,7 @@ import {
   compile,
   compileMulti,
   createIncrementalCompiler,
+  requiredPreparedAbortBodies,
   requiredPreparedEmission,
   requiredPreparedFailure,
   requiredPreparedFrontendFailure,
@@ -623,6 +624,24 @@ describe("Test262 strict prepared entry", () => {
     for (const spy of forbidden) expect(spy).not.toHaveBeenCalled();
   });
 
+  it("asks the single-source compiler's type gate: hard diagnostics refuse, other TypeScript errors are tolerated", async () => {
+    const js = { ...options(), target: "standalone", backend: "wasmgc", allowJs: true, fileName: "test.js" } as const;
+    const hard = await compile('var x = 1; x = "a";', js);
+    expect(hard.success).toBe(false);
+    expect(hard.errors.map((error) => error.code)).toEqual([2322]);
+    expect(requiredPreparedFailure(hard)?.kind).toBe("output-failed");
+    expect(requiredPreparedFrontendFailure(hard)).toBeUndefined();
+    // TS1213 is hard and an early error too: the early pass, asked first, still certifies the negative.
+    expect(requiredPreparedFrontendFailure(await compile("class let {}", js))?.phase).toBe("early");
+    const tolerated = await compile(
+      "export function f(): number { const a = 1 as 1; switch (a) { case 2: return 2; } return 1; }",
+      options(),
+    );
+    expect(tolerated.success).toBe(true);
+    expect(tolerated.errors.map((error) => [error.severity, error.code])).toEqual([["error", 2678]]);
+    expect(requiredPreparedEmission(tolerated)).toBeDefined();
+  });
+
   it("does not certify real hardened or unresolved-import refusals as syntax/early negatives", async () => {
     const hardened = await compile("const o: any = {}; o.__proto__ = {}; export const k = 1;", {
       ...options(),
@@ -636,10 +655,11 @@ describe("Test262 strict prepared entry", () => {
       "./entry.ts",
       options(),
     );
-    expect(resolution.success).toBe(false);
-    expect(resolution.errors.some((error) => error.code === 2307)).toBe(true);
+    // TS2307 is reported but not hard, as in the ordinary compiler; the call to the unresolved binding aborts when run.
+    expect(resolution.success).toBe(true);
+    expect(resolution.errors.map((error) => error.code)).toEqual([2307]);
     expect(requiredPreparedFrontendFailure(resolution)).toBeUndefined();
-    expect(requiredPreparedEmission(resolution)).toBeUndefined();
+    expect(requiredPreparedAbortBodies(resolution)?.map((row) => row.name)).toEqual(["read"]);
   });
 
   it("does not mint frontend ownership for an actual engine-rejected final binary", async () => {

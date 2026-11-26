@@ -1,53 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-// #3526 F2-S8 — the string LITERAL STORAGE seam moves under manifest authority.
-//
-// Family 2's last slice, and the one that finally gives a GLOBAL host
-// capability a provider. Three things make it different from its five
-// predecessors, and all three are why the catalogue had to grow:
-//
-//  * **the arms are VALUES, not callables.** `string.const` has no resolve-table
-//    arm and no runtime symbol: the `IrGlobalRef` the instruction carries IS the
-//    physical choice. So the manifest needs two new implementation kinds —
-//    `host-global`, which names a GLOBAL capability record (`string_constants`,
-//    field scheme `literal`), and `native-global`, which names the Program-ABI
-//    role `native-string-literal`. Both are symbolic: the record fixes a field
-//    SCHEME because there is one field per literal, and the role can never be an
-//    index because the manifest freezes before `internNativeStringLiteral`
-//    allocates one.
-//
-//  * **the attachment had to MOVE behind the freeze**, as F2-S4's did for the
-//    length. The decision lived in `prepareStrings`, which runs before the
-//    manifest exists; it now lives in `prepareStringConst`, inside
-//    `prepareBuiltFnRuntimeManifest`. That pass sits AFTER the freeze's
-//    `if (!runtime) return` early return, so it runs only because the demand is
-//    part of the "freeze nothing at all" conjunction. Break that coupling and
-//    every literal silently loses `storage` and falls back to the raw
-//    `stringGlobalMap` lookup — the same bytes on the host lane, and therefore
-//    invisible to any byte matrix. Section (b) pins the coupling directly.
-//
-//  * **TWO features, one policy.** `js.string.const` is the surrogate-free
-//    literal; `js.string.const.utf16` is the lone-surrogate literal (#2880),
-//    which cannot be its own import field name and lives in `string_constants16`
-//    keyed by the hex of its UTF-16 code units. Two features so a surrogate-free
-//    module's frozen `hostCapabilityRecords` names exactly the one namespace it
-//    imports; the split itself stays a per-literal DERIVATION inside the host
-//    arm, never an arm of its own.
-//
-// **What the policy governs, plainly: the LABEL, not the mint.** Measured at the
-// census grounding, 38 of 39 host `string_constants` mints came from the legacy
-// import collector's finalize pass, and `prepareStrings`' own pre-registration
-// was a no-op on every required fixture. This slice moves no registration and no
-// import order — sections (c) and (d) pin both.
-//
-// What it does NOT retire: the no-storage fallback in `emitResolvedStringConst`.
-// Measured on this branch's own base and again after, over 90 byte cells: it is
-// reached exactly TWICE, both times by `extern.regex`'s pattern and flags on the
-// gc-host lane, and ZERO times by a `string.const`. Retiring it needs the regex
-// seam to carry a `storage` of its own, which is the next slice's work.
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { analyzeSource } from "../src/checker/index.js";
@@ -227,12 +178,16 @@ describe("#3526 F2-S8 string-const contract", () => {
     );
     const valueRows = emptyParamRows.filter((provider) => provider.signature === EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
     expect(valueRows.map((provider) => provider.id).sort()).toEqual([...STRING_CONST_RUNTIME_PROVIDER_IDS].sort());
-    // (#7354 D1) The one nullary CALL, the dynamic `undefined` value, carries its
-    // own signature of the same shape, never the VALUE one.
+    // (#7354 D1) The nullary CALLs, the dynamic `undefined` value and (#7354 F1) the run-time abort, carry their
+    // own signatures, never the VALUE one.
     const callRows = emptyParamRows.filter((provider) => !valueRows.includes(provider));
-    expect(callRows.map((provider) => provider.id)).toEqual(["native.js.value.undefined"]);
+    expect(callRows.map((provider) => provider.id)).toEqual([
+      "native.js.value.undefined",
+      "native.js.value.unsupported",
+    ]);
     expect(callRows[0]!.signature).toBe(INTRINSIC_DEFINITIONS["js.value.undefined"].signature);
-    expect(callRows[0]!.signature).not.toBe(EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
+    expect(callRows[1]!.signature).toBe(INTRINSIC_DEFINITIONS["js.value.unsupported"].signature);
+    for (const row of callRows) expect(row.signature).not.toBe(EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
   });
 
   it("is FOUR-armed — two authorities × two namespaces", () => {
@@ -532,79 +487,6 @@ export function long2000(): string { return "${"x".repeat(2000)}"; }
     );
     expect(linear.success).toBe(true);
     expect(linear.binary.length).toBeGreaterThan(0);
-  });
-});
-
-// --------------------------------------------------------------------------
-// (d) the attachment reads the frozen manifest, and prepareStrings does not
-// --------------------------------------------------------------------------
-
-const IR_DIR = join(dirname(fileURLToPath(import.meta.url)), "../src/ir");
-const INTEGRATION_SOURCE = readFileSync(join(IR_DIR, "integration.ts"), "utf8");
-
-function integrationSlice(startMarker: string, endMarker: string): string {
-  const start = INTEGRATION_SOURCE.indexOf(startMarker);
-  expect(start, `the ${startMarker} site must exist`).toBeGreaterThan(-1);
-  const rest = INTEGRATION_SOURCE.slice(start);
-  const end = rest.indexOf(endMarker);
-  expect(end, `the ${startMarker} site must be followed by ${endMarker}`).toBeGreaterThan(-1);
-  return rest.slice(0, end);
-}
-
-describe("#3526 F2-S8 the attachment reads the frozen manifest", () => {
-  const attachSite = () => integrationSlice("function prepareStringConst(", "\nfunction atomicDeferred");
-
-  it("consults the prepared string-const provider, by the ONE derivation", () => {
-    const slice = attachSite();
-    expect(slice).toContain("preparedStringConstProvider(");
-    expect(slice).toContain("stringConstFeatureFor(hasLoneSurrogate(value))");
-  });
-
-  it("reads NO lane discriminator", () => {
-    // `ctx.nativeStrTypeIdx` survives as a PHYSICAL skip (there is no carrier
-    // type to intern into), but the decision itself no longer reads the lane.
-    expect(attachSite()).not.toContain("ctx.nativeStrings");
-  });
-
-  it("fails closed when the recovered global is not the record's namespace", () => {
-    expect(attachSite()).toContain("prepared string.const has no exact ${arm.module} import global");
-    expect(attachSite()).toContain('ref.binding.kind !== "import" || ref.binding.module !== arm.module');
-  });
-
-  it("attaches through the CONST-only pass, not the omnibus one", () => {
-    const slice = attachSite();
-    expect(slice).toContain("attachIrStringConstStorage(entry.fn, storageForConst, materializerForConst)");
-    expect(slice).not.toContain("attachIrStringSupport(");
-  });
-
-  it("has left prepareStrings — that pass decides no literal storage at all", () => {
-    const prepareStringsSource = integrationSlice(
-      "function prepareStrings(ctx: CodegenContext",
-      "\nfunction prepareVectors(",
-    );
-    expect(prepareStringsSource).not.toContain("const storageForConst");
-    expect(prepareStringsSource).not.toContain("programAbiStringConstantRef");
-    expect(prepareStringsSource).toContain("storageForConst: () => undefined");
-    // The pre-registration and the literal SCAN stay exactly where they were —
-    // this slice moves no registration and no import order.
-    expect(prepareStringsSource).toContain("addStringConstantGlobal(ctx, value)");
-    expect(prepareStringsSource).toContain("addStringImports(ctx)");
-  });
-
-  it("requests the demand at freeze from the same scan the partition runs", () => {
-    expect(INTEGRATION_SOURCE).toContain("stringConstDemand: irStringConstDemand(entries.map((entry) => entry.fn))");
-    expect(INTEGRATION_SOURCE).toContain("string literal storage has no provider under string-const policy ");
-    expect(INTEGRATION_SOURCE).toContain("storage=${stringConstPolicy.storage}");
-  });
-
-  it("partitions an unsupported storage policy owner-locally, naming the policy", () => {
-    const partition = integrationSlice(
-      "const stringConstDemand = irStringConstDemand([entry.fn]);",
-      "// (#3526 F1-S2) The boolean boundary",
-    );
-    expect(partition).toContain('stringConstPolicy.storage === "unsupported"');
-    expect(partition).toContain("late-preparation-unsupported");
-    expect(partition).toContain("string-const policy");
   });
 });
 

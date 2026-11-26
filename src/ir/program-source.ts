@@ -1,20 +1,21 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
+import { sourceBooleanAnyResult } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
-import { checkerAny, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
+import { checkerScalar, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
+import { lowerSourceUnit, type SourceUnitLowering } from "./program-source-units.js";
+import type { AbortBodies } from "./abort-bodies.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
-import { irUnitFuncRef, irUnitCallableBindingId } from "./callable-bindings.js";
+import { irUnitCallableBindingId } from "./callable-bindings.js";
 import {
   lowerFunctionAstToIr,
   typeNodeToIr,
-  type IrFromAstResolver,
   type IrFunctionSourceMapContext,
   type IrSourceMapNodeProjection,
 } from "./from-ast.js";
@@ -38,14 +39,13 @@ import type { IrProgramCallableBindingRecord } from "./program/callable-bindings
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
-import { makeModuleInitSynthetic } from "./module-init.js";
+import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
-import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
+import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
-import { refuseConstBindingWrite } from "./const-binding-writes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { preparedIrProgramOwner } from "./program.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
@@ -53,12 +53,9 @@ import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
-import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
+import { prepareSourceDirectCalls } from "./program-source-direct-calls.js";
+import { functionDeclarationValues, type FunctionValueGlobal } from "./function-declaration-values.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
-import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
-import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js";
-import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
-import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
   collectIrPromiseDelayOwners,
@@ -851,6 +848,12 @@ export interface IrProgramSourceInput {
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
+  readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+  /**
+   * (#7354 U) Present: a function whose body cannot be lowered gets the run-time abort as its body and is recorded
+   * here (`abort-bodies.ts`). Absent: the program is refused. Only the test262 Prepared entry switches it on.
+   */
+  readonly unlowerableBodies?: AbortBodies;
   /**
    * Explicit frontend lowering selection; not provider availability or
    * permission to emit. Omission preserves historical source lowering.
@@ -873,7 +876,10 @@ export interface IrProgramSourcePreparation {
   readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
   readonly startup: readonly IrModuleInitPlan[];
   readonly callables: readonly IrProgramCallableBindingRecord[];
-  readonly globals: readonly { readonly binding: ModuleBindingGlobal; readonly identity: IrModuleBindingIdentity }[];
+  readonly globals: readonly {
+    readonly binding: ModuleBindingGlobal;
+    readonly identity: IrModuleBindingIdentity | FunctionValueGlobal["identity"];
+  }[];
   readonly allocations: AllocSiteRegistry;
 }
 
@@ -960,14 +966,6 @@ export function captureTypedIrProgramInput(
 
 function unsupported(detail: string): never {
   throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
-}
-
-function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
-  const type = checker.getTypeAtLocation(node);
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
-  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
-  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
-  return undefined;
 }
 
 /** Shared logical callable conversion; this does not issue a physical carrier. */
@@ -1420,20 +1418,6 @@ function prepareSourceFunctionSignatures(
   }
 }
 
-/** Combine source-owned call/read plans; no physical provider is selected here. */
-function prepareSourceBuiltinResolvers(
-  input: IrProgramSourceInput,
-  roots: ts.FunctionDeclaration | readonly ts.Statement[],
-) {
-  return {
-    ...prepareNumberConversionResolver(input.checker, input.sourceFiles, roots),
-    ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
-    ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
-      ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
-      : {}),
-  };
-}
-
 /** Preserve exact original lifted provenance before admitting derived records. */
 function appendLiftedSourceProvenance(
   provenanceRecords: ReturnType<typeof lowerFunctionAstToIr>["liftedUnitProvenance"],
@@ -1508,42 +1492,40 @@ function finishSourceMapCatalog(
   });
 }
 
-function prepareStartupDirectCalls(
-  checker: ts.TypeChecker,
+/** Each script's top-level variable bindings: their storage, by binding id and by declaration. */
+function prepareSourceGlobals(
   sourceFiles: readonly ts.SourceFile[],
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
-  startup: readonly IrModuleInitPlan[],
-  signatures: ReadonlyMap<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
-  directCalls: Map<ts.CallExpression, IrDirectCallLoweringPlan>,
+  moduleResolver: ReturnType<typeof makeIrIdentityModuleBindingResolver>,
+  globalById: Map<string, IrProgramSourcePreparation["globals"][number]>,
+  globalByDeclaration: Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>,
   diagnostic: SourceDiagnosticOwner,
 ): void {
-  const callableResolver = makeIrIdentityImportedFunctionResolver(checker, sourceFiles, identity);
-  for (const plan of startup) {
-    if (!plan.unitId) continue;
-    diagnostic.active = plan.unitId;
-    const ownerUnitId = plan.unitId;
-    const visit = (node: ts.Node): void => {
-      if (ts.isFunctionLike(node)) return;
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-        const target =
-          callableResolver.resolveImportedFunctionTarget(node.expression) ??
-          callableResolver.resolveTopLevelFunctionValueTarget(node.expression);
-        if (target) {
-          const signature = signatures.get(target.targetUnitId);
-          if (!signature) unsupported(`startup call ${target.targetUnitId} has no complete declared contract`);
-          directCalls.set(node, {
-            ownerUnitId,
-            target: irUnitFuncRef({ unitId: target.targetUnitId, name: target.targetName }),
-            signature,
-          });
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    for (const statement of identity.moduleInitPopulationBySourceFile.get(
-      identity.sourceFileBySourceId.get(plan.sourceId)!,
-    ) ?? [])
-      visit(statement);
+  for (const source of sourceFiles) {
+    for (const bound of source.statements.flatMap(moduleInitBindings)) {
+      const declaration = "unmapped" in bound ? bound.unmapped : bound.declaration;
+      diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
+      if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name))
+        unsupported("whole-program binding pattern requires the existing destructuring producer");
+      if (!isModuleInitGlobalDeclaration(declaration)) continue; // (#7372) a nested `var` is a global in a script
+      const inspected = moduleResolver.inspectDirectBinding(declaration.name);
+      if (inspected.kind !== "supported")
+        unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
+      const global = inspected.identity;
+      diagnostic.active = global.storageOwnerUnitId;
+      const lexical = (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+      const binding: ModuleBindingGlobal = {
+        ownerUnitId: global.ownerUnitId,
+        globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
+        tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
+        globalName: declaration.name.text,
+        tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
+        type: storageType(global),
+      };
+      const entry = globalById.get(global.globalBindingId) ?? { binding, identity: global };
+      globalById.set(global.globalBindingId, entry);
+      globalByDeclaration.set(declaration, entry);
+    }
   }
 }
 
@@ -1572,7 +1554,7 @@ export function prepareIrProgramSources(
   const allocations = new AllocSiteRegistry();
   const functions: IrFunction[] = [];
   const derivedUnits: ProgramAbiDerivedUnitRecord[] = [];
-  const globals: IrProgramSourcePreparation["globals"][number][] = [];
+  const globalById = new Map<string, IrProgramSourcePreparation["globals"][number]>();
   const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
@@ -1591,7 +1573,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles);
+    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {
@@ -1613,6 +1595,7 @@ export function prepareIrProgramSources(
           identityContext: identity,
           target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
           deferTopLevelInit: input.deferTopLevelInit,
+          functionValues: dynamicContracts.functionDeclarationValues,
         }),
       );
     }
@@ -1656,152 +1639,70 @@ export function prepareIrProgramSources(
       dynamicContracts,
       diagnostic,
     );
-    for (const source of sourceFiles) {
-      for (const statement of source.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
-          if (!ts.isIdentifier(declaration.name))
-            unsupported("whole-program binding pattern requires the existing destructuring producer");
-          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
-          if (inspected.kind !== "supported")
-            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
-          const global = inspected.identity;
-          diagnostic.active = global.storageOwnerUnitId;
-          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-          const binding: ModuleBindingGlobal = {
-            ownerUnitId: global.ownerUnitId,
-            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
-            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
-            globalName: declaration.name.text,
-            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
-          };
-          const entry = { binding, identity: global };
-          globals.push(entry);
-          globalByDeclaration.set(declaration, entry);
-        }
-      }
+    prepareSourceGlobals(sourceFiles, identity, moduleResolver, globalById, globalByDeclaration, diagnostic);
+    const functionValues = functionDeclarationValues(
+      input.checker,
+      dynamicContracts.functionDeclarationValues,
+      startup,
+      identity,
+      signatures,
+      diagnostic,
+    );
+    for (const value of functionValues) {
+      globalById.set(value.home.globalRef.binding.bindingId, value.global);
+      globalByDeclaration.set(value.declaration, value.global);
     }
+    const globals = [...globalById.values()];
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
     );
-    const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
-    for (const use of callGraph.uses) {
-      diagnostic.active = use.ownerUnitId;
-      const signature = signatures.get(use.targetUnitId);
-      const target = identity.terminalByUnitId.get(use.targetUnitId);
-      if (!signature || !target) unsupported(`direct call ${use.bindingId} has no complete target contract`);
-      directCalls.set(use.node, {
-        ownerUnitId: use.ownerUnitId,
-        target: irUnitFuncRef({ unitId: use.targetUnitId, name: target.displayName }),
-        signature,
-      });
-    }
-    prepareStartupDirectCalls(input.checker, sourceFiles, identity, startup, signatures, directCalls, diagnostic);
-    for (const unit of inventory.terminalUnits) {
-      diagnostic.active = unit.id;
-      if (functions.some((fn) => fn.unitId === unit.id)) continue;
-      const family = nativeFamily?.functions.get(unit.id);
-      if (family) nativeFamily!.assertCurrent(unit.id);
-      const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
-        let symbol = input.checker.getSymbolAtLocation(node);
-        if (!symbol) return undefined;
-        const imported = (symbol.flags & ts.SymbolFlags.Alias) !== 0;
-        if (imported) symbol = input.checker.getAliasedSymbol(symbol);
-        const declaration = symbol.valueDeclaration;
-        const global = declaration ? globalByDeclaration.get(declaration) : undefined;
-        if (!global) return undefined;
-        if (writeValue && (imported || !global.identity.mutable))
-          unsupported(`write to immutable module binding ${node.text}`);
-        return {
-          ...global.binding,
-          ownerUnitId: unit.id,
-          ...(postStartupUnits.has(unit.id) ? { omitTdzReadCheck: true as const } : {}),
-        };
-      };
-      const resolver: IrFromAstResolver = {
-        sourceClosureInvocation: (expression) => closureInvocations.get(expression),
-        sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
-        resolveModuleBinding: resolveBinding,
-        preparedAsyncAwaitSite: (awaitExpression) => {
-          const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
-          const resultType =
-            (host ? checkerAny(input.checker, awaitExpression) : undefined) ??
-            checkerScalar(input.checker, awaitExpression);
-          const operandType = (host ? checkerAny(input.checker, awaitExpression.expression) : undefined) ??
-            checkerScalar(input.checker, awaitExpression.expression) ?? {
-              kind: "val" as const,
-              val: { kind: "externref" as const },
-            };
-          return resultType ? { resultType, operandType } : null;
-        },
-        ...family?.resolver,
-        ...dynamicContracts.resolver,
-      };
-      const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
-      const moduleInit = unit.kind === "module-init";
-      const population = identity.moduleInitPopulationBySourceFile.get(source) ?? [];
-      const declaration = moduleInit ? makeModuleInitSynthetic(population) : identity.declarationByUnitId.get(unit.id)!;
-      if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
-      const sourceRoots = moduleInit ? population : declaration;
-      refuseConstBindingWrite(sourceRoots);
-      Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
-      const signature = signatures.get(unit.id);
-      const lowered = lowerFunctionAstToIr(declaration, {
-        booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
-        ownerUnitId: unit.id,
-        ...(sourceMapProjector === undefined
-          ? {}
-          : {
-              sourceMap: Object.freeze<IrFunctionSourceMapContext>({
+    const directCalls = prepareSourceDirectCalls(
+      input.checker,
+      sourceFiles,
+      identity,
+      startup,
+      signatures,
+      callGraph.uses,
+      dynamicContracts.codeStrictness,
+      diagnostic,
+    );
+    const units: SourceUnitLowering = {
+      input,
+      identity,
+      allocations,
+      dynamicContracts,
+      signatures,
+      bodyResults,
+      globals,
+      globalByDeclaration,
+      postStartupUnits,
+      exportedUnits,
+      closureInvocations,
+      closureCallableParameters,
+      functionValues,
+      directCalls,
+      nativeFamily,
+      nativeStringValues,
+      nativeStringOutput,
+      promiseDelaysBySource: nativeDelay ? promiseDelaysBySource : undefined,
+      certifiedDelays,
+      sourceMap:
+        sourceMapProjector === undefined
+          ? undefined
+          : (unit) =>
+              Object.freeze<IrFunctionSourceMapContext>({
                 source: sourceMapSources!.get(unit.sourceId)!,
                 donorUnitId: unit.id,
                 project: sourceMapProjector.project,
               }),
-            }),
-        funcName: unit.displayName,
-        exported: exportedUnits.has(unit.id),
-        identityContext: identity,
-        checker: input.checker,
-        oracle: input.oracle,
-        allocRegistry: allocations,
-        directCalls,
-        resolver:
-          nativeStringOutput && !family
-            ? { ...resolver, ...prepareNativeStringOutputResolver(input.checker, declaration) }
-            : resolver,
-        ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
-        numericThrow: "number-boundary",
-        ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
-        ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
-        ...(moduleInit
-          ? {
-              moduleInitUnit: true,
-              returnTypeOverride: null,
-              moduleBindings: new Map(
-                globals
-                  .filter((global) => global.identity.sourceId === unit.sourceId)
-                  .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
-              ),
-            }
-          : { paramTypeOverrides: signature!.params, returnTypeOverride: bodyResults.get(unit.id)! }),
-        numericLocalScalarForDecl: (declaration) =>
-          checkerScalar(input.checker, declaration)?.kind === "val" &&
-          (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0
-            ? "number"
-            : undefined,
-      });
-      assertSourceBooleanAnyReturns(input.checker, declaration, lowered.main);
-      if (certifiedDelays.has(unit.id) && (lowered.lifted.length !== 0 || lowered.liftedUnitProvenance.length !== 0))
-        throw new PreparedIrProgramInvariantError(
-          "invalid-prepared-data",
-          `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
-        );
-      functions.push(
-        ...dynamicContracts.legalize(signatures.values(), globals, sourceRoots, [lowered.main, ...lowered.lifted]),
-      );
+      abortBodies: input.unlowerableBodies,
+    };
+    for (const unit of inventory.terminalUnits) {
+      diagnostic.active = unit.id;
+      if (functions.some((fn) => fn.unitId === unit.id)) continue;
+      const { lowered, functions: legalized } = lowerSourceUnit(units, unit);
+      functions.push(...legalized);
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }

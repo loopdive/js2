@@ -1,5 +1,6 @@
 import {
   capturePreparedJobRequest,
+  compileResultHasErrors,
   refusePreparedArtifactPaths,
   observePreparedExecutionJobResult,
   observePreparedFrontendJobResult,
@@ -38,11 +39,10 @@ import {
 } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
+import { asyncRowVerdict, runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
 import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
-// (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
-// behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
-// runner that was missing the tryNativeExnRender step.
-import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
+// (#3613) ONE reader of a thrown value, shared with tests/test262-runner.ts.
+import { readThrownValue, safeStringifyThrown } from "./lib/wasm-exn-render.mjs";
 import {
   startNativeEvalBoundaryObservation,
   NATIVE_EVAL_OBSERVATION_FIELD,
@@ -1273,9 +1273,12 @@ function classifyHostImportLeak(importNames) {
 function buildResultMetadata(result, reachedTest) {
   const imports = summarizeImports(result?.imports);
   const hostImportLeakClass = classifyHostImportLeak(imports);
+  // (#7354 U) Prepared lane: the functions whose body is the run-time abort, on every row of a compiled program.
+  const abortBodies = result ? compilerBundle.requiredPreparedAbortBodies(result) : undefined;
   return {
     ...(imports.length > 0 ? { imports } : {}),
     ...(hostImportLeakClass ? { hostImportLeakClass } : {}),
+    ...(abortBodies?.length ? { abortBodies } : {}),
     ...summarizeIrRoute(result?.irOutcomes),
     reachedTest,
   };
@@ -1811,159 +1814,23 @@ async function doCompile(
   });
 }
 
-/**
- * Extract a human-readable message from a Wasm runtime error.
- * Handles `WebAssembly.Exception` (extracts payload via `__exn_tag`),
- * generic `Error` (pulls `.message` + function-name annotation), and
- * anything else (falls back to `String(err)`). If `instance` is null
- * (e.g. the throw happened during `WebAssembly.instantiate` from a
- * start function), tag lookup is skipped.
- */
-/**
- * (#2870) Stringify a thrown payload WITHOUT ever letting a host TypeError
- * escape. A `--target standalone` module's thrown value is frequently a Wasm-GC
- * error struct (an `anyref` with no JS-reachable `toString`); calling `String()`
- * on it makes the HOST `ToPrimitive` throw `Cannot convert object to primitive
- * value`. Unguarded, that host throw escaped this formatter and was recorded as
- * the test's failure — masking the REAL signature behind a phantom TypeError and
- * collapsing ~2,014 heterogeneous standalone failures onto one string (#2862).
- */
-// (#3613) Behaviour-identical: this body moved verbatim into the SHARED
-// renderer so the local runner cannot drift from it again. The doc comment
-// above is retained for the #2870/#2862 history.
-// oracle-version-exempt: pure de-duplication — the worker's policy is
-// unchanged (it IS the shared policy), so no baseline row can reclassify.
-
-/**
- * (#2962) Render a natively-thrown Wasm-GC payload through the module's own
- * `__exn_render_prepare` / `__exn_render_char` exports (standalone/wasi
- * binaries emit them at finalize) — the module runs the payload through the
- * same `__any_to_string` chain its in-module `String(x)` uses, so an
- * `$Error_struct` renders "TypeError: boom" per §20.5.3.4 and a Test262Error
- * yields its real assertion message. Returns `null` when the exports are
- * absent (JS-host binaries), the payload renders empty, or anything throws —
- * the caller then falls back to the #2870 opaque label. (#3613) NO LONGER
- * "kept in sync with tests/test262-runner.ts" by discipline — both lanes now
- * import the one implementation in scripts/lib/wasm-exn-render.mjs.
- */
+// (#3613, #7354 X) A thrown value is read by the ONE reader every test262 lane uses, `readThrownValue` in
+// scripts/lib/wasm-exn-render.mjs (the #2870 guarded stringification, the #2962 native render, the #6723 linked
+// peers); this worker only supplies its row context.
 
 let currentNativeEvalBoundaryObservation = null;
 
-function extractWasmExceptionMessage(
+function extractWasmExceptionMessage(err, instance, observation) {
+  return readWorkerThrown(err, instance, observation).text;
+}
+
+/** The shared reader with this row's linked peers, abort table and boundary observation. */
+function readWorkerThrown(
   err,
   instance,
   observation = currentNativeEvalBoundaryObservation?.reader("negative-match"),
 ) {
-  observation?.("consumer-instance", Boolean(instance));
-  if (err instanceof WebAssembly.Exception) {
-    observation?.("exception-kind", "wasm");
-    let payload = null;
-    if (instance) {
-      let extractionStage = "tag-read";
-      try {
-        const exnTag = instance.exports.__exn_tag;
-        const tag = exnTag ?? instance.exports.__tag;
-        observation?.("consumer-tag", tag ? (exnTag != null ? "__exn_tag" : "__tag") : "no-tag");
-        if (tag) {
-          extractionStage = "getArg";
-          payload = err.getArg(tag, 0);
-          observation?.("extraction", "success");
-          observation?.("payload-category", payload === null ? "null" : typeof payload);
-        }
-      } catch {
-        observation?.("extraction", extractionStage === "getArg" ? "failed" : "tag-read-failed");
-      }
-    } else {
-      observation?.("consumer-tag", "no-instance");
-    }
-    if (payload instanceof Error) {
-      const text = payload.message ?? safeStringifyThrown(payload);
-      observation?.("text-route", "payload-Error");
-      observation?.("reader-text", text);
-      return text;
-    }
-    if (payload != null) {
-      // (#2962) A host-opaque GC payload renders through the module's own
-      // exports before falling back to the #2870 label; host-readable
-      // primitives keep the direct String() path.
-      const t = typeof payload;
-      if (t === "object" || t === "function") {
-        const native = tryNativeExnRender(instance, payload);
-        observation?.("consumer-native", native);
-        // (#6723 D4) The consumer renders a PROVIDER-minted `Test262Error`
-        // (a provider fnctor instance) as the generic "[object Object]": its
-        // `toString` lives on the provider's prototype. Treat that answer as
-        // "not mine" when a linked peer can do better.
-        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) {
-          observation?.("text-route", "consumer-native");
-          observation?.("reader-text", native);
-          return native;
-        }
-        // (#6723) A STANDALONE linked row: the payload may be minted by the
-        // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
-        // layout only the provider's own `__exn_render_*` exports can read.
-        let generic = native;
-        let peerOrdinal = 0;
-        for (const peer of currentLinkedPeers) {
-          const viaPeer = tryNativeExnRender({ exports: peer }, payload);
-          observation?.("linked-peer-ordinal", ++peerOrdinal);
-          observation?.("linked-peer-native", viaPeer);
-          if (viaPeer != null && viaPeer !== "[object Object]") {
-            observation?.("text-route", "linked-peer-native");
-            observation?.("reader-text", viaPeer);
-            return viaPeer;
-          }
-          generic ??= viaPeer;
-        }
-        if (generic != null) {
-          observation?.("text-route", "generic-native");
-          observation?.("reader-text", generic);
-          return generic;
-        }
-      }
-      const text = safeStringifyThrown(payload);
-      observation?.("text-route", "payload-safe-stringification");
-      observation?.("reader-text", text);
-      return text;
-    }
-    const text = instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
-    observation?.("text-route", "wasm-nullish-label");
-    observation?.("reader-text", text);
-    return text;
-  }
-  if (err instanceof Error) {
-    observation?.("exception-kind", "host-Error");
-    let info = err.message ?? String(err);
-    const stack = err.stack ?? "";
-    if (/illegal cast|null|unreachable|out of bounds/.test(info)) {
-      // (#1316 / #1317) Extract every wasm frame in trap-first order so
-      // the error chain reaches more than the leaf function — for
-      // `illegal cast` and `dereferencing a null pointer` traps the
-      // leaf is often a tiny lifted helper whose name alone is
-      // uninformative without its caller.
-      const frameRe = /at\s+(\S+)\s+\(wasm:\/\//g;
-      const frames = [];
-      let m;
-      while ((m = frameRe.exec(stack)) !== null) frames.push(m[1]);
-      if (frames.length > 0) {
-        info = `${info} [in ${frames[0]}()`;
-        if (frames.length > 1) {
-          // Cap at 3 caller frames so the line stays readable inside the
-          // 300-char `error.substring(0, 300)` truncation downstream.
-          info += ` ← ${frames.slice(1, 4).join(" ← ")}`;
-        }
-        info += "]";
-      }
-    }
-    observation?.("text-route", "host-Error");
-    observation?.("reader-text", info);
-    return info;
-  }
-  observation?.("exception-kind", "non-wasm");
-  const text = safeStringifyThrown(err);
-  observation?.("text-route", "non-wasm-fallback");
-  observation?.("reader-text", text);
-  return text;
+  return readThrownValue(err, { instance, peers: currentLinkedPeers, abortBodies: currentAbortBodies, observation });
 }
 
 /**
@@ -2046,26 +1913,14 @@ function captureNativeStdout(exp, append) {
  */
 let currentLinkedPeers = [];
 
+/** (#7354 U) The abort-body functions of the Prepared row being executed, for trap rendering. Empty elsewhere. */
+let currentAbortBodies = [];
+
 function standaloneLinkedPeers(target, result, importObj) {
   if (target !== "standalone") return [];
   return (result.linkedModules ?? [])
     .map((artifact) => importObj[artifact.namespace])
     .filter((exports) => exports && typeof exports === "object");
-}
-
-function originalHarnessExceptionMatches(err, instance, expectedErrorType) {
-  if (!expectedErrorType) return true;
-  if (err instanceof WebAssembly.Exception && instance) {
-    try {
-      const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-      const payload = tag ? err.getArg(tag, 0) : undefined;
-      const name = payload?.name ?? payload?.constructor?.name;
-      if (name === expectedErrorType) return true;
-    } catch {}
-  } else if (err?.name === expectedErrorType || err?.constructor?.name === expectedErrorType) {
-    return true;
-  }
-  return extractWasmExceptionMessage(err, instance).includes(expectedErrorType);
 }
 
 function extractWasmFuncName(err) {
@@ -2262,6 +2117,7 @@ process.on("message", async (msg) => {
         "requiredPreparedEmission",
         "requiredPreparedFinalArtifactObservation",
         "requiredPreparedFrontendFailure",
+        "requiredPreparedAbortBodies",
       ]) {
         if (typeof compilerBundle[capability] !== "function")
           throw new Error(`PREPARED_TRANSPORT_INVALID: compiler bundle lacks strict capability ${capability}`);
@@ -2284,6 +2140,12 @@ process.on("message", async (msg) => {
   currentLinkedFallback = false;
   currentLinkedFallbackReason = undefined;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
+  // (#7354 U0) On the Prepared lane a trap never counts as the expected throw.
+  // oracle-version-exempt: the rule is gated on the Prepared request, which only
+  // the TEST262_COMPILER_PATH=ir measurement lane sends; every baselined lane
+  // keeps its verdicts (20-row standalone A/B identical; #7447 extends it).
+  const prepared = preparedRequest !== undefined;
+  const throwRule = { expectedErrorType, originalHarness, prepared };
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
   // it); `harnessPrefix` is run natively in the per-test sandbox before
@@ -2384,7 +2246,7 @@ process.on("message", async (msg) => {
       preparedRequest,
     );
     preparedResult = result;
-    preparedCompilationSucceeded = result.success === true && result.errors.length === 0;
+    preparedCompilationSucceeded = !compileResultHasErrors(result);
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
   } catch (err) {
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
@@ -2447,11 +2309,12 @@ process.on("message", async (msg) => {
   const compileMs = performance.now() - compileStart;
   const compileMetadata = buildResultMetadata(result, false);
 
-  const hasErrors = !result.success || result.errors.some((e) => e.severity === "error");
+  const hasErrors = compileResultHasErrors(result);
 
   // oracle-version-exempt: explicit IR was previously unavailable and has its own result namespace;
   // the added strict refusal cannot reclassify any existing legacy verdict.
-  if (preparedRequest && (hasErrors || result.errors.length !== 0)) {
+  // A Prepared result is refused on the ordinary lane's predicate: a warning the compiler tolerates does not refuse it.
+  if (preparedRequest && hasErrors) {
     const ownedFrontendFailure = compilerBundle.requiredPreparedFrontendFailure(result);
     if (execute && isNegative && !isRuntimeNegative && ownedFrontendFailure) {
       try {
@@ -2574,7 +2437,8 @@ process.on("message", async (msg) => {
   // diagnostic is a static rejection => pass. (This warning arm is part of the
   // documented-lenient compile-SUCCEEDED fallback; strictly requiring a
   // severity-error diagnostic of the expected type is the #2912 follow-up.)
-  if (execute && isNegative && result.errors.length > 0) {
+  // The Prepared lane certifies a compile-time negative only through its owned frontend failure (above), never a warning.
+  if (!preparedRequest && execute && isNegative && result.errors.length > 0) {
     const warnCodes = result.errors.filter((e) => e.code).map((e) => e.code);
     const warnMsg = result.errors.map((e) => e.message).join("; ");
     const matched = negativeCompileErrorMatches(expectedErrorType, warnCodes, warnMsg);
@@ -2707,6 +2571,7 @@ process.on("message", async (msg) => {
     }
 
     currentLinkedPeers = [];
+    currentAbortBodies = compilerBundle.requiredPreparedAbortBodies(result) ?? [];
     try {
       // (#4162) The ONE shared instantiate seam. Standalone goes module-first
       // (import list inspectable → #2928 E6 provider attachment); the host lane
@@ -2772,7 +2637,8 @@ process.on("message", async (msg) => {
         return;
       }
 
-      if (isRuntimeNegative && (!originalHarness || originalHarnessExceptionMatches(err, null, expectedErrorType))) {
+      const thrown = readWorkerThrown(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate"));
+      if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, thrown, throwRule)) {
         sendOwnedResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
         return;
       }
@@ -2780,7 +2646,7 @@ process.on("message", async (msg) => {
       sendOwnedResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate")),
+        error: thrown.text,
         isException: true,
         instantiateError: true,
         compileMs,
@@ -2812,10 +2678,12 @@ process.on("message", async (msg) => {
         moduleInit();
       } catch (initErr) {
         const execMs = performance.now() - execStart;
-        if (
-          isRuntimeNegative &&
-          (!originalHarness || originalHarnessExceptionMatches(initErr, instance, expectedErrorType))
-        ) {
+        const thrown = readWorkerThrown(
+          initErr,
+          instance,
+          currentNativeEvalBoundaryObservation?.reader("deferred-module-init"),
+        );
+        if (isRuntimeNegative && runtimeNegativeThrowAccepted(initErr, thrown, throwRule)) {
           sendOwnedResult({
             id,
             status: "pass",
@@ -2829,11 +2697,7 @@ process.on("message", async (msg) => {
         sendOwnedResult({
           id,
           status: "fail",
-          error: extractWasmExceptionMessage(
-            initErr,
-            instance,
-            currentNativeEvalBoundaryObservation?.reader("deferred-module-init"),
-          ),
+          error: thrown.text,
           isException: true,
           compileMs,
           execMs,
@@ -2883,30 +2747,31 @@ process.on("message", async (msg) => {
           await new Promise((resolveTurn) => setTimeout(resolveTurn, 10));
         }
         const failure = findMarker("Test262:AsyncTestFailure");
-        if (failure) {
-          sendOwnedResult({
-            id,
-            status: "fail",
-            error: failure,
-            compileMs,
-            execMs: performance.now() - execStart,
-            ...buildResultMetadata(result, true),
-          });
-          return;
-        }
-        if (!findMarker("Test262:AsyncTestComplete")) {
+        const asyncVerdict = asyncRowVerdict({
+          failureMarker: failure,
+          completed: findMarker("Test262:AsyncTestComplete") !== undefined,
+          drainError: standaloneDrainError,
+          prepared,
+        });
+        if (asyncVerdict !== "pass") {
           // (#3469) If the host-free drain itself threw (an async continuation
-          // that escaped uncaught) and produced no marker, surface that error —
-          // it is the test's real async outcome — rather than the generic
-          // "not observed", so it re-buckets as an honest failure.
-          const noMarkerError =
-            standaloneDrainError != null
-              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"))}`
-              : "async completion marker not observed";
+          // that escaped uncaught), surface that error — it is the test's real
+          // async outcome — rather than the generic "not observed", so it
+          // re-buckets as an honest failure.
+          const drainText = () =>
+            extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"));
+          const error =
+            asyncVerdict === "failure-marker"
+              ? failure
+              : asyncVerdict === "threw-after-completion"
+                ? `async continuation threw after completion: ${drainText()}`
+                : standaloneDrainError != null
+                  ? `async continuation threw before completion: ${drainText()}`
+                  : "async completion marker not observed";
           sendOwnedResult({
             id,
             status: "fail",
-            error: noMarkerError,
+            error,
             compileMs,
             execMs: performance.now() - execStart,
             ...buildResultMetadata(result, true),
@@ -3003,10 +2868,9 @@ process.on("message", async (msg) => {
       }
       const execMs = performance.now() - execStart;
 
-      if (
-        isRuntimeNegative &&
-        (!originalHarness || originalHarnessExceptionMatches(execErr, instance, expectedErrorType))
-      ) {
+      // Rows that reach `test()` never run the original harness: any
+      // runtime-negative row that returns here did not throw.
+      if (isRuntimeNegative) {
         sendOwnedResult({
           id,
           status: "fail",

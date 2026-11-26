@@ -17,6 +17,9 @@ export function createObjectPropertyEntryDeclaration(): NativeDeclaredType {
   };
 }
 
+/** (#7354 O1) A `$PropEntry` field's index, by its name in {@link createObjectPropertyEntryDeclaration}. */
+export const PROP_ENTRY_FIELD = Object.freeze({ key: 0, value: 1, flags: 2, seq: 3, get: 4, set: 5 } as const);
+
 export function createObjectPropertyMapDeclaration(entryKey: string): NativeDeclaredType {
   return { kind: "array", name: "$PropMap", element: { kind: "ref_null", typeKey: entryKey }, mutable: true };
 }

@@ -88,6 +88,23 @@ export const EXTERNREF_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
   result: I32_TYPE,
 });
 
+/** (#7354 Str2) `(externref) -> string` — the native string a dynamic value that is a string carries. */
+const EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE]),
+  result: Object.freeze({ kind: "string" as const }),
+});
+
+/**
+ * (#7354 J, F1) `() -> string` — the run-time abort of a conversion the realm cannot answer yet. It never returns; its
+ * result is a string because the arm it stands in for (ToPrimitive's) takes one.
+ */
+const NULLARY_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([] as readonly IrType[]),
+  result: Object.freeze({ kind: "string" as const }),
+});
+
 /**
  * `(externref, externref) -> i32` — the exact ABI of the string relational
  * compare helper, shared by the `env.string_compare` host import and the
@@ -213,9 +230,15 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.as_string": definition("js.value.as_string", EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE),
+  "js.value.is_boolean": definition("js.value.is_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.is_function": definition("js.value.is_function", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.is_string": definition("js.value.is_string", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.to_boolean": definition("js.value.to_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.undefined": definition("js.value.undefined", NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.value.unsupported": definition("js.value.unsupported", NULLARY_TO_STRING_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),

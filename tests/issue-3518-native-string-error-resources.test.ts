@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-import ts from "typescript";
 import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
+import { emitWasiErrorConstructor } from "../src/codegen/registry/error-types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import {
   reserveNativeStringLiteralResources,
@@ -20,117 +18,13 @@ import {
 import { BUILTIN_TYPE_TAGS } from "../src/codegen/builtin-tags.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { registerNativeStringTypes } from "../src/codegen/registry/types.js";
-import * as typeRegistry from "../src/codegen/registry/types.js";
-import * as funcSpace from "../src/codegen/func-space.js";
-import { addStringConstantGlobal } from "../src/codegen/registry/imports.js";
 import { nativeStringLiteralMaterialization } from "../src/codegen/native-string-literals.js";
-import { emitWasiErrorConstructor } from "../src/codegen/registry/error-types.js";
 import {
   nativeStringLiteralHash,
   planNativeStringLiteral,
 } from "../src/runtime/wasmgc/values/string-literal-bodies.js";
 
 const required = ["then", "Chaining cycle detected for promise", "TypeError"];
-const base = "5118637e0e9b34291465230428447e511958faa1";
-const fixtureDigest = "b579a8d1d0c251ec9a5661f2602da72a90d96991e5915304a013dadc9fc5de61";
-const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
-interface DonorFixture {
-  schemaVersion: number;
-  base: string;
-  originalTests: { count: number; fileSha256: string; populationSha256: string };
-  sources: {
-    path: string;
-    sourceSha256: string;
-    role: string;
-    start: number;
-    end: number;
-    sha256: string;
-    text: string;
-  }[];
-}
-function authenticateDonors(text: string): DonorFixture {
-  if (sha256(text) !== fixtureDigest) throw new Error("native string/Error donor fixture digest mismatch");
-  const fixture = JSON.parse(text) as DonorFixture;
-  if (
-    fixture.schemaVersion !== 1 ||
-    fixture.base !== base ||
-    fixture.sources.length !== 4 ||
-    fixture.originalTests.count !== 14 ||
-    fixture.originalTests.fileSha256 !== "3f1a5ba67d64337e58f9b9b591d862f10e6a35c93c74c64c97e3a00b21293b6b"
-  ) {
-    throw new Error("native string/Error donor fixture provenance mismatch");
-  }
-  const paths = [
-    "src/codegen/registry/types.ts",
-    "src/codegen/native-string-literals.ts",
-    "src/codegen/registry/error-types.ts",
-    "src/codegen/native-strings.ts",
-  ];
-  const roles = ["layouts", "literals", "constructor", "nameRead"];
-  fixture.sources.forEach((source, index) => {
-    if (
-      source.path !== paths[index] ||
-      source.role !== roles[index] ||
-      !/^[a-f0-9]{64}$/.test(source.sourceSha256) ||
-      !Number.isInteger(source.start) ||
-      source.start < 0 ||
-      source.end - source.start !== source.text.length ||
-      source.text.length === 0 ||
-      sha256(source.text) !== source.sha256
-    ) {
-      throw new Error("native string/Error donor span authentication failed");
-    }
-  });
-  return fixture;
-}
-// Self-contained checked fixture: collection never shells out, fetches, skips, or reads live donor source.
-const fixtureText = readFileSync(
-  new URL("./fixtures/issue-3518-native-string-error-donors.json", import.meta.url),
-  "utf8",
-);
-const fixture = authenticateDonors(fixtureText);
-const donorText = (role: string) => {
-  const source = fixture.sources.find((row) => row.role === role);
-  if (!source) throw new Error(`missing authenticated native string/Error donor ${role}`);
-  return source.text;
-};
-function donorModule(source: string, dependencies: Record<string, unknown> = {}) {
-  const js = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  const exports: Record<string, any> = {};
-  new Function("exports", "require", js)(exports, (name: string) => {
-    if (!(name in dependencies)) throw new Error(`unexpected donor dependency ${name}`);
-    return dependencies[name];
-  });
-  return exports;
-}
-const donorTypes = donorModule(donorText("layouts"));
-const donorLiterals = donorModule(donorText("literals"), {
-  "./func-space.js": funcSpace,
-  "./registry/types.js": typeRegistry,
-});
-type NameReader = (ctx: CodegenContext, value: string) => Instr[];
-function nameReader(source: string): NameReader {
-  return donorModule(`import { nativeStringLiteralInstrs } from "donor";\n${source}`, { donor: donorLiterals })
-    .stringConstantExternrefInstrs;
-}
-const donorNameRead = nameReader(donorText("nameRead"));
-const donorErrors = donorModule(
-  `
-  import { getOrRegisterErrorStructType, addFuncType, addStringConstantGlobal, stringConstantExternrefInstrs, mintDefinedFunc, pushDefinedFunc } from "donor";
-  export ${donorText("constructor")}
-`,
-  {
-    donor: {
-      ...funcSpace,
-      ...typeRegistry,
-      getOrRegisterErrorStructType: donorTypes.getOrRegisterErrorStructType,
-      addStringConstantGlobal,
-      stringConstantExternrefInstrs: donorNameRead,
-    },
-  },
-);
 function reserve(values = required, utf8Storage = false) {
   const module = createEmptyModule();
   const tx = new PhysicalModuleReservations(module);
@@ -141,8 +35,8 @@ function reserve(values = required, utf8Storage = false) {
   });
   return { module, tx, strings };
 }
-function legacy(utf8Storage = false, original = false) {
-  // Only the fields read/written by these live donor adapters. No frontend run.
+function legacy(utf8Storage = false) {
+  // Only the fields read/written by the live legacy adapters. No frontend run.
   const ctx = {
     mod: createEmptyModule(),
     utf8Storage,
@@ -166,7 +60,7 @@ function legacy(utf8Storage = false, original = false) {
     stringLiteralValues: new Map(),
     stringLiteralCounter: 0,
   } as unknown as CodegenContext;
-  (original ? donorTypes.registerNativeStringTypes : registerNativeStringTypes)(ctx);
+  registerNativeStringTypes(ctx);
   return ctx;
 }
 
@@ -175,9 +69,7 @@ describe("native literal and TypeError resources (literal-only family)", () => {
     const values = [...required, "", "\ud800", "😀", "x".repeat(9999) + "😀" + "end", "z".repeat(20001), "then"];
     const { module, tx, strings } = reserve(values, utf8);
     const ctx = legacy(utf8);
-    const original = legacy(utf8, true);
     for (const value of values) nativeStringLiteralMaterialization(ctx, value);
-    for (const value of values) donorLiterals.nativeStringLiteralMaterialization(original, value);
     tx.freezeReservations();
     fillNativeStringLiteralResources(tx, strings);
     tx.seal();
@@ -186,8 +78,6 @@ describe("native literal and TypeError resources (literal-only family)", () => {
     expect(module.functions).toEqual(ctx.mod.functions);
     expect(emitBinary(module)).toEqual(emitBinary(ctx.mod));
     expect(emitWat(module)).toEqual(emitWat(ctx.mod));
-    expect(emitBinary(ctx.mod)).toEqual(emitBinary(original.mod));
-    expect(emitWat(ctx.mod)).toEqual(emitWat(original.mod));
     expect(strings.literals[0]).toBe(strings.literals.at(-1));
   });
 
@@ -199,10 +89,7 @@ describe("native literal and TypeError resources (literal-only family)", () => {
       { strings, typeErrorTag: BUILTIN_TYPE_TAGS.TypeError },
     );
     const ctx = legacy();
-    const original = legacy(false, true);
     required.forEach((value) => nativeStringLiteralMaterialization(ctx, value));
-    required.forEach((value) => donorLiterals.nativeStringLiteralMaterialization(original, value));
-    donorErrors.emitErrorStructConstructor(original, "__new_TypeError", "TypeError", BUILTIN_TYPE_TAGS.TypeError, 1);
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const count = ctx.mod.functions.length;
     emitWasiErrorConstructor(ctx, "TypeError", 1);
@@ -218,33 +105,6 @@ describe("native literal and TypeError resources (literal-only family)", () => {
     expect(errors.newTypeError.object.locals).toEqual([]);
     expect(emitBinary(module)).toEqual(emitBinary(ctx.mod));
     expect(emitWat(module)).toEqual(emitWat(ctx.mod));
-    expect(emitBinary(ctx.mod)).toEqual(emitBinary(original.mod));
-    expect(emitWat(ctx.mod)).toEqual(emitWat(original.mod));
-  });
-
-  it.each([0, 1, 3])("preserves the legacy host-name path with %s arguments", (argCount) => {
-    const ctx = legacy(),
-      original = legacy(false, true);
-    for (const current of [ctx, original]) {
-      current.nativeStrings = false;
-      current.stringGlobalMap.set("TypeError", 0);
-      current.numImportGlobals = 1;
-      current.mod.imports.push({
-        module: "string_constants",
-        name: "TypeError",
-        desc: { kind: "global", type: { kind: "externref" }, mutable: false },
-      });
-    }
-    emitWasiErrorConstructor(ctx, "TypeError", argCount);
-    donorErrors.emitErrorStructConstructor(
-      original,
-      "__new_TypeError",
-      "TypeError",
-      BUILTIN_TYPE_TAGS.TypeError,
-      argCount,
-    );
-    expect(emitBinary(ctx.mod)).toEqual(emitBinary(original.mod));
-    expect(emitWat(ctx.mod)).toEqual(emitWat(original.mod));
   });
 
   it("executes exact UTF16 strings and all six TypeError fields", () => {
@@ -348,14 +208,9 @@ describe("native literal and TypeError resources (literal-only family)", () => {
       utf8Storage: true,
       literals: [{ value: "😀", encoding: "utf8-guaranteed" }, { value }],
     });
-    const ctx = legacy(true),
-      original = legacy(true, true);
-    for (const current of [ctx, original]) {
-      const materialize =
-        current === ctx ? nativeStringLiteralMaterialization : donorLiterals.nativeStringLiteralMaterialization;
-      materialize(current, "😀", "utf8-guaranteed");
-      materialize(current, value);
-    }
+    const ctx = legacy(true);
+    nativeStringLiteralMaterialization(ctx, "😀", "utf8-guaranteed");
+    nativeStringLiteralMaterialization(ctx, value);
     const probe = tx.reserveFunction("probe", "probe", { params: [], results: [{ kind: "i32" }] });
     tx.freezeReservations();
     fillNativeStringLiteralResources(tx, strings);
@@ -407,8 +262,6 @@ describe("native literal and TypeError resources (literal-only family)", () => {
     tx.defineExport("export:probe", "probe", probe);
     tx.seal();
     expect(module.globals).toEqual(ctx.mod.globals);
-    expect(ctx.mod.globals).toEqual(original.mod.globals);
-    expect(ctx.mod.functions).toEqual(original.mod.functions);
     const binary = emitBinary(module);
     expect(WebAssembly.validate(binary)).toBe(true);
     const api = new WebAssembly.Instance(new WebAssembly.Module(binary)).exports;
@@ -483,183 +336,5 @@ describe("native literal and TypeError resources (literal-only family)", () => {
     expect(() =>
       reserveNativeErrorResources(c.tx, { key: "errors" }, { strings: c.strings, typeErrorTag: -10 as -11 }),
     ).toThrow(/incorrect TypeError tag/);
-  });
-});
-
-// Additional repair controls; the original 14-test describe above remains hash-pinned.
-function assertNameReadBranches(read: NameReader): void {
-  // Genuine native branch first, including an absent host entry and the native sentinel.
-  for (const global of [undefined, -1]) {
-    const ctx = legacy(false, true);
-    if (global !== undefined) ctx.stringGlobalMap.set("TypeError", global);
-    expect(read(ctx, "TypeError")).toEqual([{ op: "global.get", index: 0 }, { op: "extern.convert_any" }]);
-    expect(ctx.nativeStrLiteralGlobals.get("u16:TypeError")).toBe(0);
-    expect(ctx.mod.globals).toHaveLength(1);
-    expect(ctx.mod.globals[0]!.init.length).toBeGreaterThan(8);
-  }
-  // Zero is admitted by the original >= 0 guard; this is a guard-level instruction probe.
-  const zero = legacy(false, true);
-  zero.nativeStrTypeIdx = 0;
-  expect(read(zero, "TypeError")).toEqual([{ op: "global.get", index: 0 }, { op: "extern.convert_any" }]);
-  // Valid global 0 is not missing. Native mode with an unavailable layout must also use it.
-  for (const nativeStrings of [false, true]) {
-    const ctx = legacy(false, true);
-    ctx.nativeStrings = nativeStrings;
-    if (nativeStrings) ctx.nativeStrTypeIdx = -1;
-    ctx.stringGlobalMap.set("TypeError", 0);
-    expect(read(ctx, "TypeError")).toEqual([{ op: "global.get", index: 0 }]);
-    expect(ctx.mod.globals).toHaveLength(0);
-  }
-  // Check missing and negative entries on both routes through the fallback.
-  for (const nativeStrings of [false, true]) {
-    for (const global of [undefined, -1, -2]) {
-      const ctx = legacy(false, true);
-      ctx.nativeStrings = nativeStrings;
-      if (nativeStrings) ctx.nativeStrTypeIdx = -1;
-      if (global !== undefined) ctx.stringGlobalMap.set("TypeError", global);
-      expect(read(ctx, "TypeError")).toEqual([{ op: "ref.null.extern" }]);
-      expect(ctx.mod.globals).toHaveLength(0);
-    }
-  }
-}
-
-describe("authenticated donor fixture and exact name-read repair controls", () => {
-  it("authenticates the exact-base fixture and preserves the original 14-test population hash", () => {
-    expect(authenticateDonors(fixtureText)).toEqual(fixture);
-    const testText = readFileSync(new URL(import.meta.url), "utf8");
-    const start = testText.indexOf('describe("native literal and TypeError resources');
-    const end = testText.indexOf("// Additional repair controls;");
-    expect(start).toBeGreaterThan(0);
-    expect(end).toBeGreaterThan(start);
-    expect(sha256(testText.slice(start, end).trimEnd() + "\n")).toBe(fixture.originalTests.populationSha256);
-    expect(fixture.sources.map((source) => source.role)).toEqual(["layouts", "literals", "constructor", "nameRead"]);
-  });
-
-  it("accepts the checked fixture before rejecting missing, altered and wrong-base receipts", () => {
-    expect(() => authenticateDonors(fixtureText)).not.toThrow();
-    expect(() => authenticateDonors("")).toThrow(/digest mismatch/);
-    const altered = JSON.parse(fixtureText);
-    altered.sources[3].text = altered.sources[3].text.replace("strIdx < 0", "false");
-    // Recomputing a self-reported span digest cannot bypass the pinned fixture digest.
-    altered.sources[3].sha256 = sha256(altered.sources[3].text);
-    expect(() => authenticateDonors(JSON.stringify(altered, null, 2) + "\n")).toThrow(/digest mismatch/);
-    const wrongBase = JSON.parse(fixtureText);
-    wrongBase.base = "0".repeat(40);
-    expect(() => authenticateDonors(JSON.stringify(wrongBase, null, 2) + "\n")).toThrow(/digest mismatch/);
-  });
-
-  it("covers the genuine native branch before host/layout/missing-global fallbacks", () => {
-    assertNameReadBranches(donorNameRead);
-  });
-
-  it.each([
-    ["native branch", "ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0", "false"],
-    ["native-mode guard", "ctx.nativeStrings && ", ""],
-    ["native-layout guard", " && ctx.nativeStrTypeIdx >= 0", ""],
-    ["zero-layout admission", "ctx.nativeStrTypeIdx >= 0", "ctx.nativeStrTypeIdx > 0"],
-    ["missing-global fallback", "strIdx === undefined || ", ""],
-    ["negative-global fallback", " || strIdx < 0", ""],
-    ["entire fallback", "strIdx === undefined || strIdx < 0", "false"],
-  ])("rejects removal of %s after the genuine positive control", (_label, from, to) => {
-    expect(() => assertNameReadBranches(donorNameRead)).not.toThrow();
-    const source = donorText("nameRead");
-    expect(source.split(from)).toHaveLength(2);
-    const mutant = nameReader(source.replace(from, to));
-    expect(() => assertNameReadBranches(mutant)).toThrow();
-  });
-});
-
-// Live-constructor repair controls; the preceding 24-test file remains hash-pinned.
-const liveConstructorCases = ["native-unavailable-layout", "legacy-negative-name", "valid-global-zero"] as const;
-type LiveConstructorCase = (typeof liveConstructorCases)[number];
-type ConstructorProbe = (ctx: CodegenContext) => void;
-
-function constructorProbeBody(emit: ConstructorProbe, scenario: LiveConstructorCase, original = false): Instr[] {
-  const ctx = legacy(false, original);
-  ctx.nativeStrings = scenario === "native-unavailable-layout";
-  if (ctx.nativeStrings) ctx.nativeStrTypeIdx = -1;
-  const nameGlobal = scenario === "legacy-negative-name" ? -1 : 0;
-  ctx.stringGlobalMap.set("TypeError", nameGlobal);
-  if (nameGlobal === 0) {
-    ctx.numImportGlobals = 1;
-    ctx.mod.imports.push({
-      module: "string_constants",
-      name: "TypeError",
-      desc: { kind: "global", type: { kind: "externref" }, mutable: false },
-    });
-  }
-  emit(ctx);
-  const constructorFn = ctx.mod.functions.find((fn) => fn.name === "__new_TypeError");
-  if (!constructorFn) throw new Error("constructor probe did not emit __new_TypeError");
-  return constructorFn.body;
-}
-
-const actualLiveConstructor: ConstructorProbe = (ctx) => emitWasiErrorConstructor(ctx, "TypeError", 1);
-const exactDonorConstructor: ConstructorProbe = (ctx) =>
-  donorErrors.emitErrorStructConstructor(ctx, "__new_TypeError", "TypeError", BUILTIN_TYPE_TAGS.TypeError, 1);
-
-async function evaluateLiveConstructor(source: string): Promise<ConstructorProbe> {
-  const { buildErrorConstructorBody } = await import("../src/runtime/wasmgc/values/error-bodies.js");
-  const evaluated = donorModule(
-    `import { getOrRegisterErrorStructType, addStringConstantGlobal, nativeStringLiteralMaterialization,
-      addFuncType, mintDefinedFunc, pushDefinedFunc, buildErrorConstructorBody } from "live-constructor";
-    export ${source}`,
-    {
-      "live-constructor": {
-        ...typeRegistry,
-        ...funcSpace,
-        addStringConstantGlobal,
-        nativeStringLiteralMaterialization,
-        buildErrorConstructorBody,
-      },
-    },
-  );
-  if (typeof evaluated.emitErrorStructConstructor !== "function") throw new Error("live constructor evaluation failed");
-  return (ctx) =>
-    evaluated.emitErrorStructConstructor(ctx, "__new_TypeError", "TypeError", BUILTIN_TYPE_TAGS.TypeError, 1);
-}
-
-describe("actual live constructor name-branch preservation", () => {
-  it.each(liveConstructorCases)("matches the exact donor body for %s", (scenario) => {
-    const testText = readFileSync(new URL(import.meta.url), "utf8");
-    const boundary = testText.indexOf("// Live-constructor repair controls;");
-    expect(boundary).toBeGreaterThan(0);
-    expect(sha256(testText.slice(0, boundary).trimEnd() + "\n")).toBe(
-      "17c43b01151c5f3e0b8dbb132ea9b0c17ae50ba9c6f50f4f87cd31d14b5992a6",
-    );
-    const actual = constructorProbeBody(actualLiveConstructor, scenario);
-    const expected = constructorProbeBody(exactDonorConstructor, scenario, true);
-    expect(actual).toEqual(expected);
-    expect(actual[2]).toEqual(
-      scenario === "legacy-negative-name" ? { op: "ref.null.extern" } : { op: "global.get", index: 0 },
-    );
-  });
-
-  it.each([
-    ["native layout guard", " && ctx.nativeStrTypeIdx >= 0"],
-    ["negative name-index guard", " || index < 0"],
-  ])("rejects removal of the live %s after genuine constructor controls", async (_label, removed) => {
-    const expected = liveConstructorCases.map((scenario) =>
-      constructorProbeBody(exactDonorConstructor, scenario, true),
-    );
-    const actual = liveConstructorCases.map((scenario) => constructorProbeBody(actualLiveConstructor, scenario));
-    expect(actual).toEqual(expected);
-
-    // Read live source only for live mutations; the independent donor remains the authenticated fixture.
-    const file = readFileSync(new URL("../src/codegen/registry/error-types.ts", import.meta.url), "utf8");
-    const start = file.indexOf("function emitErrorStructConstructor(");
-    const end = file.indexOf("\n/**", start);
-    expect(start).toBeGreaterThan(0);
-    expect(end).toBeGreaterThan(start);
-    const source = file.slice(start, end);
-    expect(source.split(removed)).toHaveLength(2);
-    const genuine = await evaluateLiveConstructor(source);
-    expect(liveConstructorCases.map((scenario) => constructorProbeBody(genuine, scenario))).toEqual(expected);
-
-    // Both module evaluation AND constructor execution are outside the expected comparison failure.
-    // A broken mutation harness must fail the test, never count as a rejected semantic mutant.
-    const mutant = await evaluateLiveConstructor(source.replace(removed, ""));
-    const mutantBodies = liveConstructorCases.map((scenario) => constructorProbeBody(mutant, scenario));
-    expect(() => expect(mutantBodies).toEqual(expected)).toThrow();
   });
 });

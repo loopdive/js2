@@ -25,8 +25,8 @@ import {
   type PatternPlan,
   type PatternStep,
 } from "./binding-pattern-plan.js";
-import { phase1PropertyName } from "./property-key-fold.js";
-import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
+import { phase1PropertyName } from "../shared/property-key-fold.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./program/builtin-prototype-keys.js";
 
 /** A position in the literal source. */
 type SourceNode =

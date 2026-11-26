@@ -20,7 +20,7 @@ function pair(make: (events: string[]) => unknown) {
   const events = { actual: [] as string[], original: [] as string[] };
   const actual: Control = { kind: "struct", name: "control", fields: [], audit: make(events.actual) };
   const reference: Control = { kind: "struct", name: "control", fields: [], audit: make(events.original) };
-  const token = tx.reserveType("control", actual);
+  tx.reserveType("control", actual);
   const expectedType = originalText(reference);
   const expectedToken = originalText(reference);
   events.actual.length = events.original.length = 0;
@@ -40,7 +40,8 @@ function pair(make: (events: string[]) => unknown) {
         if (originalText(reference) !== expectedToken) throw Error("altered type descriptor control");
         if (originalText(reference) !== expectedType) throw Error("altered reserved type definition/signature");
       });
-      const current = observe(() => tx.assertTypeReservation(token));
+      // The layout audit runs once, when the reservations freeze (#7354 Perf4).
+      const current = observe(() => tx.freezeReservations());
       expect(current).toBe(old === "ok" ? old : "physical module reservations: " + old);
       expect(events.actual).toEqual(events.original);
       return current;
@@ -77,14 +78,13 @@ describe("fresh descriptor audits preserve the pinned textual algorithm", () => 
     expect(p.check()).toBe(result);
     expect(p.events.actual).toEqual(checked.map(String));
   });
-  it("accepts equal data repeatedly without retaining a successful audit", () => {
+  it.each([false, true])("accepts equal data and rejects a later byte change, changed=%s", (changed) => {
     const p = pair(() => ({
       raw: [-0, Infinity, nan(3), 7n, undefined, "\ud800"],
       bytes: new Uint8Array([1, 2]),
       sparse: Object.assign(new Array(3), { 1: 4, extra: true }),
     }));
-    expect(p.check()).toBe("ok");
-    expect(p.check()).toBe("ok");
+    if (!changed) return expect(p.check()).toBe("ok");
     p.both((row) => {
       (row.audit as { bytes: Uint8Array }).bytes[1] = 3;
     });
@@ -101,7 +101,6 @@ describe("fresh descriptor audits preserve the pinned textual algorithm", () => 
     ["byte tag", (): unknown => new Uint8Array([4]), (): unknown => ({ 0: 4 })],
   ] as const)("rejects changed %s", (_name, before, after) => {
     const p = pair(before);
-    expect(p.check()).toBe("ok");
     p.both((row) => {
       row.audit = after();
     });
@@ -172,7 +171,7 @@ describe("fresh descriptor audits preserve the pinned textual algorithm", () => 
 });
 
 it.each(["function", "global", "interned-type", "rec-member"] as const)(
-  "authenticates current %s without using a prior success",
+  "audits current %s at the freeze after a prior success",
   (kind) => {
     const m = createEmptyModule(),
       tx = new PhysicalModuleReservations(m);
@@ -188,7 +187,7 @@ it.each(["function", "global", "interned-type", "rec-member"] as const)(
       if (type.kind !== "func") throw Error("expected actual interned function signature");
       type.name = "changed";
     } else member.fields.push({ name: "new", type: { kind: "i32" }, mutable: true });
-    expect(() => tx.assertTypeReservation(typeToken)).toThrow(/altered/);
+    expect(() => tx.freezeReservations()).toThrow(/altered/);
     expect(tx.state).toBe("failed");
   },
 );

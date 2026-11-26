@@ -58,7 +58,7 @@ describe("native string producer completion", () => {
     const binding = requireNativeStringLiteral(tx, pack, "", "wtf16");
     if (binding.kind !== "global") throw Error("expected actual empty global");
     binding.global.object.init = [];
-    expect(() => requireCompletedNativeStringLiterals(tx, pack)).toThrow("altered completed global");
+    expect(() => tx.seal()).toThrow("altered completed global");
   });
   it("rejects altered oversized literal bodies", () => {
     const { tx, pack } = fixture(true);
@@ -68,6 +68,6 @@ describe("native string producer completion", () => {
     const binding = pack.literals[2]!;
     if (binding.kind !== "callable") throw Error("expected actual oversized helper");
     binding.function.object.body = [];
-    expect(() => requireCompletedNativeStringLiterals(tx, pack)).toThrow("altered completed function");
+    expect(() => tx.seal()).toThrow("altered completed function");
   });
 });
