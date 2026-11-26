@@ -2183,7 +2183,9 @@ jobs:
           # own delta. push: the parent, since this commit's own artifact is
           # the one being made.
           FROM: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'HEAD^' }}
-        run: node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline --from "$FROM" --dest ir-baseline
+        run: |
+          node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline \
+            --from "$FROM" --meta ir-measurement/scope.json --dest ir-baseline
       - name: Report the edition against that baseline (#7551)
         id: edition_report
         if: env.SCOPE == 'edition'
