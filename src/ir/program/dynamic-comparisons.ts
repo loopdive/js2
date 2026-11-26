@@ -3,8 +3,8 @@
  * (#7354 L0a) The dynamic-value legalization of the comparisons whose operands may be of different kinds: the
  * relational operators (the front end's `__ir_dyn_lt/le/gt/ge`, §13.10.1 over IsLessThan §7.2.13) and loose equality
  * (`dyn.eq` with `loose`, IsLooselyEqual §7.2.14). Both are written with the conversions `+` uses
- * (`conversionBuilders`): ToPrimitive is `primitiveOf`, ToNumber `toNumber`, ToString `stringOf`, so a comparison runs
- * the one ToPrimitive of the dynamic value (`ordinary-to-primitive.ts`).
+ * (`conversionBuilders`): ToPrimitive is `primitiveOf` and ToNumber `toNumber`, so a comparison runs the one
+ * ToPrimitive of the dynamic value (`ordinary-to-primitive.ts`).
  *
  * ToPrimitive's hint is `number` for both: IsLessThan asks for it, and IsLooselyEqual's `default` is answered as
  * `number` by every object kind this lane admits (OrdinaryToPrimitive; Date, the one exception, does not exist here).
@@ -18,8 +18,8 @@ import {
   IR_DYN_LE_FN,
   IR_DYN_LT_FN,
 } from "../../shared/contracts/dynamic-operator-helpers.js";
-import { boolean, carried, type ChainBuilders, type conversionBuilders } from "./dynamic-value-chains.js";
-import { ADD_ROLE, IS_OBJECT, type CarrierKind } from "./dynamic-value-kinds.js";
+import { boolean, type ChainBuilders, type conversionBuilders } from "./dynamic-value-chains.js";
+import { IS_OBJECT, type CarrierKind } from "./dynamic-value-kinds.js";
 
 /** How each relational operator folds a number comparison and a string compare's sign (-1/0/1). */
 interface Relational {
@@ -44,16 +44,13 @@ export const relationalOfHelper = (symbol: string): Relational | undefined => RE
 
 const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 const NULLISH: readonly CarrierKind[] = ["undefined", "null"];
-/** The primitives a ToPrimitive leaves as text: a string, and (M2) an error, whose ToPrimitive is its own text. */
-const TEXT: readonly CarrierKind[] = (Object.keys(ADD_ROLE) as CarrierKind[]).filter(
-  (kind) => ADD_ROLE[kind] === "concat",
-);
+const STRING: readonly CarrierKind[] = ["string"];
 
 type Conversions = ReturnType<typeof conversionBuilders>;
 
 export function comparisonBuilders(builders: ChainBuilders, conversions: Conversions) {
-  const { kinds, admitted, intrinsic, fresh, holds, branch } = builders;
-  const { stringOf, toNumber, primitiveOf } = conversions;
+  const { admitted, intrinsic, fresh, holds, branch } = builders;
+  const { toNumber, primitiveOf } = conversions;
   const binary = (op: IrBinop, lhs: IrValueId, rhs: IrValueId, result: IrValueId, resultType: IrType): IrInstr => ({
     kind: "binary",
     op,
@@ -97,39 +94,18 @@ export function comparisonBuilders(builders: ChainBuilders, conversions: Convers
       : test.known === false
         ? else_(result)
         : [...test.instrs, branch(test.cond, then, else_, result, resultType)];
-  /** The native string of the once-evaluated primitive `value`, which holds one of the text kinds here. */
-  const textOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
-    stringOf(
-      instr,
-      value,
-      result,
-      kinds.kindsOf(value).filter((kind) => TEXT.includes(kind)),
-    );
-  /**
-   * Two primitives compared as texts when both are (`textual`, over the carriers of their strings), else as numbers
-   * (`numeric`, over their ToNumbers).
-   */
+  /** Two primitives compared as strings when both are (`textual`), else as numbers (`numeric`, over their ToNumbers). */
   const textOrNumber = (
     instr: IrInstr,
     operands: readonly IrValueId[],
-    textual: (texts: readonly IrValueId[], r: IrValueId) => IrInstr[],
+    textual: (r: IrValueId) => IrInstr[],
     numeric: (numbers: readonly IrValueId[], r: IrValueId) => IrInstr[],
     result: IrValueId,
     resultType: IrType,
   ): IrInstr[] =>
     choose(
-      both(instr, "i32.and", operands, TEXT),
-      (r) => {
-        const texts = operands.map(() => fresh());
-        const carriers = operands.map(() => fresh());
-        return [
-          ...operands.flatMap((value, index) => [
-            ...textOf(instr, value, texts[index]!),
-            carried(texts[index]!, carriers[index]!),
-          ]),
-          ...textual(carriers, r),
-        ];
-      },
+      both(instr, "i32.and", operands, STRING),
+      textual,
       (r) => {
         const numbers = operands.map(() => fresh());
         return [...operands.flatMap((value, index) => toNumber(instr, value, numbers[index]!)), ...numeric(numbers, r)];
@@ -149,10 +125,10 @@ export function comparisonBuilders(builders: ChainBuilders, conversions: Convers
   /** `l <op> r` of two once-evaluated carrier operands into `result` (IsLessThan with the operator's fold). */
   const relational = (instr: IrInstr, operator: Relational, operands: readonly IrValueId[], result: IrValueId) => {
     const { instrs, values } = primitives(instr, operands);
-    const compare = (texts: readonly IrValueId[], r: IrValueId): IrInstr[] => {
+    const compare = (r: IrValueId): IrInstr[] => {
       const [sign, zero] = [fresh(), fresh()];
       return [
-        intrinsic(instr, "js.value.string_compare", texts, sign),
+        intrinsic(instr, "js.value.string_compare", values, sign),
         { kind: "const", value: { kind: "i32", value: 0 }, result: zero, resultType: I32 },
         binary(operator.sign, sign, zero, r, instr.resultType!),
       ];
@@ -181,9 +157,7 @@ export function comparisonBuilders(builders: ChainBuilders, conversions: Convers
     const identity = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", operands, r)];
     const converted = (r: IrValueId): IrInstr[] => {
       const { instrs, values } = primitives(instr, operands);
-      const equalTexts = (texts: readonly IrValueId[], s: IrValueId): IrInstr[] => [
-        intrinsic(instr, "js.value.strict_eq", texts, s),
-      ];
+      const equalTexts = (s: IrValueId): IrInstr[] => [intrinsic(instr, "js.value.strict_eq", values, s)];
       const equalNumbers = (numbers: readonly IrValueId[], s: IrValueId): IrInstr[] => [
         binary("f64.eq", numbers[0]!, numbers[1]!, s, type),
       ];
