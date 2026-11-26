@@ -11,7 +11,6 @@ import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { programObjects } from "../src/ir/source-plain-objects.js";
-import { pristineBuiltinGlobal } from "../src/ir/builtin-global-binding.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -149,7 +148,7 @@ describe("#7354 O2 — an ordinary object is a kind of the dynamic value", () =>
 describe("#7354 O2 — what a program's source allows its objects", () => {
   const objects = (source: string) => {
     const ast = analyzeMultiSource({ "./entry.ts": source }, "./entry.ts");
-    return programObjects(ast.sourceFiles, false, pristineBuiltinGlobal(ast.checker, ast.sourceFiles));
+    return programObjects(ast.sourceFiles, false);
   };
 
   it("answers no objects, and objects", () => {
@@ -157,27 +156,16 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: false,
       functions: false,
       namesSymbol: false,
-      namesErrors: false,
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
       namesSymbol: false,
-      namesErrors: false,
     });
   });
 
-  // (#7354 G1) An Error constructor makes objects; naming one (not as a member) admits the object kind.
-  it("answers whether the program names an Error constructor", () => {
-    expect(objects("export const e = new TypeError('m');")).toMatchObject({ present: true, namesErrors: true });
-    expect(objects("export const o = { TypeError: 1 }; export const v = o.TypeError;").namesErrors).toBe(false);
-    // A binding or a label spelled like one is not the global.
-    expect(objects("function f(RangeError: unknown) { return RangeError; } export const v = f(1);").namesErrors).toBe(
-      false,
-    );
-    expect(objects("TypeError: for (;;) { break TypeError; }").namesErrors).toBe(false);
-  });
-
+  // (#7354 G1, W2) Which realm constructors a program reads is the IR's answer (`realmConstructorsRead`), not the
+  // source's: a member name, a label or a binding spelled like one reads none (issue-7354-g1-spelled-names).
   // (#7354 F1) A function expression is the one producer of a function value the source shows here.
   it("answers whether the program creates function values", () => {
     expect(objects("export const f = function () {};").functions).toBe(true);

@@ -9,6 +9,10 @@
 // The slice that makes any of these routes compile (`Object.getPrototypeOf`, a wrapper or Object as a value, ...) must
 // reintroduce a program-wide gate on the primitive arm, or populate the realm's prototypes and read through them.
 // (#7354 G1) The Error family is a value now, and no route from it reaches one of these prototypes (the rows below).
+// (#7354 W2) `Object` and the wrapper constructors are values, so Object.prototype and the wrapper prototypes are: a
+// program that reads one of those constructors reads a primitive's members through the realm's prototype objects
+// (`obtainsPrototypes`; tests/issue-7354-w2-wrappers.test.ts writes String.prototype and reads it through a string).
+// `Object.getPrototypeOf` is a static the realm does not hold: its call is the run-time abort (below).
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { abortBodies, abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
@@ -29,13 +33,8 @@ const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not i
 
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
-    ["String.prototype", "function f(){ return String.prototype; } f();", notInScope("String")],
-    ["Number.prototype", "function f(){ return Number.prototype; } f();", notInScope("Number")],
-    ["Boolean.prototype", "function f(){ return Boolean.prototype; } f();", notInScope("Boolean")],
-    ["Object.prototype as a value", "function f(){ return Object.prototype; } f();", notInScope("Object")],
     ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
     ["Array.prototype", "function f(){ return Array.prototype; } f();", notInScope("Array")],
-    ["Object.getPrototypeOf", "function f(){ return Object.getPrototypeOf(1); } f();", notInScope("Object")],
     ["Reflect.getPrototypeOf", "function f(){ return Reflect.getPrototypeOf({}); } f();", notInScope("Reflect")],
     ["globalThis", "function f(){ return globalThis; } f();", notInScope("globalThis")],
     [
@@ -59,6 +58,10 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
 
   // `undefined` and `null` answer these reads (the TypeError), so the kinds that would reach a prototype abort.
   it.each([
+    [
+      "Object.getPrototypeOf, a static the realm does not hold",
+      "function f(){ return Object.getPrototypeOf(1); } f();",
+    ],
     ["a dynamic value's __proto__", "function f(v){ return v.__proto__; } f(1);"],
     ["a dynamic value's constructor", "function f(v){ return v.constructor; } f(1);"],
     // (#7354 P1) The routes a populated Object.prototype method opens: it is a built-in function object, and every key

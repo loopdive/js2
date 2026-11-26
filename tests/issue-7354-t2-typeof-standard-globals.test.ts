@@ -8,16 +8,13 @@
 import { describe, expect, it } from "vitest";
 import { abortBodies, agreesWithNode, refusal } from "./helpers/prepared-node-agreement.js";
 
+// (#7354 W2) `Object`, `String`, `Number` and `Boolean` are realm constructors now (issue-7354-w2-wrappers).
 const UNPROVIDED = [
   "parseInt",
   "parseFloat",
   "isNaN",
   "Math",
-  "Object",
   "Array",
-  "String",
-  "Number",
-  "Boolean",
   "RegExp",
   "Date",
   "JSON",
