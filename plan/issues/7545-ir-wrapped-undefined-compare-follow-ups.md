@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: bug
 area: ir
 goal: core-semantics
-depends_on: [7515]
+depends_on: []
 related: [7515]
 origin: "2026-11-26 fresh-context review of PR #7501 (#7515), https://github.com/loopdive/js2/pull/7501#issuecomment-7192613570"
 ---
