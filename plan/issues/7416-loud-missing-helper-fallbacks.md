@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: refactor
 area: codegen
 goal: core-semantics
-related: [7413, 7414, 7401, 7300]
+related: [7413, 7414, 7401, 7300, 7465]
 ---
 
 # #7416: make the silent missing-helper fallbacks loud
@@ -53,6 +53,11 @@ index, and throws an internal compiler error when the helper is absent. The
 
 Net −24 lines in `src/` (108 added, 132 removed, including the new helper file). No file or function grows.
 
+Four modules had their own private copy of the same lookup-or-throw
+(`generators-delegation-runtime.ts`, `generators-native-protocol.ts`,
+`generator-yield-linearize.ts`, `array/array-search-proto-value.ts`). They
+now call `requireHelper` too (review RV7347b).
+
 ## Not changed, and why
 
 - **`index.ts:8090`** (`appendResultBoxing`, `void` result → `ref.null.extern`).
@@ -65,7 +70,8 @@ Net −24 lines in `src/` (108 added, 132 removed, including the new helper file
   stand-in is harmless there only because the callback never reads
   `arguments`. A hard error would break valid programs; the right fix is to
   register the helper (`ensureLateImport` plus a flush) before the detached
-  instruction list is built. Its own follow-up.
+  instruction list is built. Filed as #7465, which measures the wrong answers
+  (a callback declared after its call site reads `arguments[1]` as null).
 - **`object-runtime.ts:11574`** (`primitiveNumberRead`). The helper reads
   are built eagerly for every length-field kind, including kinds that never
   use them, so requiring them there could fail a compile that does not need
@@ -81,15 +87,3 @@ Net −24 lines in `src/` (108 added, 132 removed, including the new helper file
   caught `array-methods.ts:6470` being reached, and that site was reverted
   (see above).
 - **All gates pass bare.**
-
-## Suspended Work
-
-Suspended 2026-11-20 at the end of the budget window.
-
-- **Branch / head:** `claude/7416-loud-missing-helpers` @ `1438637b`; PR #7347 (label `hold`). Under review by RV7347; no review verdict was posted before suspension.
-- **Blocking CI failure (not yet fixed):** `quality` fails on the compiler-boundaries gate (run 44602889635): `unclassified-target: src/codegen/helpers/required-helper.ts`. The new module is not classified in the compiler-boundaries inventory. Other gates (loc/func budget, coercion sites, oracle ratchet, dead exports, import cycles, typecheck) pass locally.
-- **Next step:**
-  1. Classify the module the way its siblings in `src/codegen/helpers/` are classified, or move `requireHelper` into an already-classified sibling module.
-  2. Re-run `quality`'s compiler-boundaries check locally in inventory mode.
-  3. Push, and send the new head to RV7347.
-- **Verified so far:** 0 of 2,400 sample outputs differ from main; the equivalence gate is clean on 4/4 shards (after reverting `array-methods.ts:6470`).

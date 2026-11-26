@@ -834,6 +834,7 @@ import * as omNativeStrings from "./native-strings.js";
 import * as omObjectRuntime from "./object-runtime.js";
 import * as omRegistryImports from "./registry/imports.js";
 import { installObjectModelPorts } from "./object-model/ports.js";
+import { requireHelper } from "./helpers/required-helper.js";
 
 const nativeLeafServices = {
   get nextModuleGlobalIdx() {
@@ -14471,5 +14472,4 @@ export {
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
 } from "./registry/types.js";
-import { requireHelper } from "./helpers/required-helper.js";
 export { compileExpression, compileStatement } from "./shared.js";

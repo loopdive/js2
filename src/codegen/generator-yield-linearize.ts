@@ -58,6 +58,7 @@ import { buildStandardTryTable } from "../ir/try-table.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { buildDestructureNullThrow } from "./destructuring-params.js";
 import {
@@ -788,9 +789,7 @@ function ensureLinearRuntime(ctx: CodegenContext, fctx: FunctionContext): void {
 }
 
 function call(ctx: CodegenContext, name: LinearRuntimeName): Instr {
-  const funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined) throw new Error(`generator-yield-linearize: runtime op ${name} is unavailable`);
-  return { op: "call", funcIdx };
+  return { op: "call", funcIdx: requireHelper(ctx, name) };
 }
 
 function local(fctx: FunctionContext, name: string): number {

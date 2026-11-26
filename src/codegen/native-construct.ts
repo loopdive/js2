@@ -342,7 +342,6 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const objectCreateIdx = ctx.funcMap.get("__object_create");
   const applyClosureIdx = ctx.funcMap.get("__apply_closure");
-  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   const runtimeCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const protoKeyInstrs = ctx.nativeConstructProtoKey.get(ARGV_DRIVER_ARITY_KEY);
@@ -443,7 +442,7 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
 
   const isObjectProbe: Instr[] = [
     { op: "local.get", index: resultLocal },
-    { op: "call", funcIdx: typeofObjectIdx ?? requireHelper(ctx, "__typeof_object") },
+    { op: "call", funcIdx: requireHelper(ctx, "__typeof_object") },
   ];
   if (typeofFunctionIdx !== undefined) {
     isObjectProbe.push(

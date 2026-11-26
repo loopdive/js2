@@ -6980,7 +6980,7 @@
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "nextBoundary": "Only a helper-name lookup on CodegenContext.funcMap; it moves with the backend's function-index resolver once helper indices are resolved there instead of through the codegen context."
     },
     {
       "path": "src/codegen/helpers/sloppy-this-global.ts",
