@@ -86,7 +86,7 @@ does not grow.
   `isModuleBinding` with `undefinedReadOf(id) === "ambient"`. It is the only IR rule. The selector reaches the oracle
   through its existing resolver (`IrModuleBindingResolver` gains `undefinedReadOf`, implemented by codegen over
   `ctx.oracle`), and the builder through `cx.oracle`. With no oracle the answer is `unknown`, so the read is refused by
-  name, and the #7380 no-checker test stays red-free and unchanged.
+  name, and the #7380 no-checker test passes unchanged.
 - **IR sites routed through the rule** (folding the duplicates):
   - `select.ts` 3541, 3697, 4219, 11980, 12815 and the `isUnshadowedUndefinedIdentifier` wrapper (18 call sites,
     unchanged callers);
