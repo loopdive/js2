@@ -565,7 +565,7 @@ run-time test and asks a static proof that already exists.
     visit)`. All three predicates use it, so no second copy of the rules exists. Parameter initializers count, as in
     `functionLikeReferencesOwnThis`. When functions are not values, `ambientThisStrict` is undefined and a plain call
     of a `this`-using function already refuses ("installs no receiver"), so the flag is false and sound. The `Object`
-    statics do not ask it yet: their hole is live today and is #7503's.
+    statics do not ask it yet: their hole (held only by the run-time trap in sloppy `dyn.current_this`) is #7503's.
 - **The call.** Pristine: `lowerCall` lowers the statement site as a direct call of the source's called init unit
   (A1's `"called"` kind). There is no identity test and no read of the global. Not pristine: the site refuses at
   select, by name: `eval literal: the global eval is not pristine (#7363 A4)`. A site in expression position (its
