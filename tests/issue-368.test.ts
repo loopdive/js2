@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
   const result = await compile(source);
@@ -8,7 +9,7 @@ async function run(source: string, fn: string = "test", args: unknown[] = []): P
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, { env: {} });
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as any)[fn](...args);
 }
 
