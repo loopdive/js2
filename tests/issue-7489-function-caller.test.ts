@@ -100,6 +100,12 @@ describe("#7489 C.5 — a function's arguments: sloppy aborts, strict throws", (
     ["a sloppy declaration's write", "function f(){} f.arguments = 1;"],
     ["a sloppy expression's read", "var f = function(){}; var a = f.arguments;"],
     ["a sloppy expression's write", "var f = function(){}; f.arguments = 1;"],
+    // A strict function the program gave an own `caller` reads as sloppy here: the conservative arm (the abort, which no
+    // `catch` sees, where node throws its TypeError), never a value.
+    [
+      "a strict function with a defined own caller's read",
+      `function s() { "use strict"; } Object.defineProperty(s, "caller", { value: 1 }); try { s.arguments; } catch (e) {}`,
+    ],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
 
   it.each([

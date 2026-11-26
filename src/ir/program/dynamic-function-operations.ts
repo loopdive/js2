@@ -11,7 +11,7 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
-import { realmCall } from "./dynamic-realm-calls.js";
+import { realmCall, textKey } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, throwingArm, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
@@ -60,8 +60,11 @@ function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly Carri
 
 /** Get(C, "prototype") of the once-evaluated function value `callee` into `prototype` (its own data property). */
 function getPrototype(b: Builders, callee: IrValueId, prototype: IrValueId): IrInstr[] {
-  const [name, key] = [b.fresh(), b.fresh()];
-  return [b.text("prototype", name), carried(name, key), realmCall("js.object.get", [callee, key, callee], prototype)];
+  const key = b.fresh();
+  return [
+    ...textKey({ ...b, carrier: CARRIER }, "prototype", key),
+    realmCall("js.object.get", [callee, key, callee], prototype),
+  ];
 }
 
 /**

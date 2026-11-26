@@ -196,6 +196,12 @@ const functionMethods: readonly Method[] = [
   ["call", 1, ["IsCallable", "Call"]],
   ["toString", 0, ["HostHasSourceTextAvailable", "SourceText", "InitialName", "IsCallable"]],
 ];
+/**
+ * (#7489) The own key that marks a sloppy plain function: `js.object.init-function` writes it on exactly the functions
+ * slice A's rule names (`emitFunctionObjectInit`), and the Prepared path reads it to tell such a function apart at run
+ * time (`dynamic-member-access.ts`, a function's `arguments`).
+ */
+export const SLOPPY_FUNCTION_OWN_CALLER_KEY = "caller";
 /** The catalog id of the member `name` of the intrinsic `parent` (`%Object.prototype.hasOwnProperty%`). */
 export const realmMethodId = (parent: string, name: string) => `%${parent}.${name}%`;
 function members(parent: string, rows: readonly Method[], legacy = false): NativeRealmIntrinsic[] {
