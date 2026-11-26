@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: bugfix
 area: ir
 goal: ir-full-coverage
-related: []
+related: [7435]
 ---
 
 # #7522: post-mono verifier failure on a monomorphised array parameter
@@ -45,6 +45,13 @@ not a refusal.
 `tests/lodash-compile.test.ts` "lodash-compile: sum and mean" (2 tests) hits it. On main the whole file is hidden behind
 a harness LinkError (class M, `plan/log/root-test-triage-2026-11-26.md`). With the harness fixed (patch below), the
 file passes 36 of 38 and these 2 fail. Lead decision (2026-11-26): the harness fix lands with this bug's fix.
+
+## Fix
+
+Fixed by #7435 (S1, head `2a6a74f919`): it replaces a private copy of `collectUses` in `monomorphize.ts` with the
+shared one, which also descends into loop bodies. S1 confirmed on that head that `sum` gives 15 and `mean` gives 5 on
+both targets, where main fails with the post-mono error. This issue closes when #7435 lands. The harness patch below
+then goes into lane S25's harness PR.
 
 ## Acceptance criteria
 
