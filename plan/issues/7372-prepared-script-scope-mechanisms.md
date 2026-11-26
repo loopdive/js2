@@ -362,6 +362,25 @@ Still refused by name in 2a:
 - a block function whose closure the dynamic-closure planner refuses (its own reason);
 - a script with `with` or direct `eval` (H2).
 
+#### 2a-1 CaseBlock shape list (fixed before the move, main `c3b7be66`, 2026-11-26)
+
+Reviewer check (a): the list is fixed before any code moves.
+- Method: an AST scan of every test262 file containing `switch` (444 files). The old rule is legacy's
+  `hasInterveningLexicalBinder` / `annexBReadIsUnbound` as on main. The new rule treats a CaseBlock as one lexical
+  scope across all its clauses. A file is listed when the two disagree for a function declaration or a read.
+- Result: **24 files, all function declarations, no reads**. Every one is a negative syntax test:
+  `language/statements/switch/syntax/redeclaration/{async-function,async-generator,class,const,function,generator,
+  let}-name-redeclaration-attempt-with-*.js`, the 24 that pair a lexical name with a function form in sibling
+  clauses. They expect an early SyntaxError.
+- No annexB file changes.
+- Legacy bytes must be identical everywhere else. For the 24, the verdicts are compared base vs head.
+
+Reviewer check (b), for 2a-2: a `switch` evaluates its discriminant first, then runs BlockDeclarationInstantiation
+for the CaseBlock, then dispatches to a clause. `instantiateBlockFunctions` runs between the discriminant and the
+dispatch.
+
+`blockFunctionBindings` lands in 2a-2 with its first caller, so 2a-1 exports nothing unused (dead-exports gate).
+
 #### Order (small PRs, each with pin tests that fail on main)
 
 1. **2a-1. Lift [B1].**
