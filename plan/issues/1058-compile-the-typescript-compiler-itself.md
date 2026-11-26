@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in-progress
 created: 2026-04-11
-updated: 2026-09-24
+updated: 2026-11-26
 priority: high
 feasibility: hard
 model: fable
@@ -1955,3 +1955,9 @@ Fifth in the real-world stress-test set:
 ## Stewardship angle
 
 "js2wasm compiles 60% of test262" is a percentage. "js2wasm compiles the TypeScript compiler itself" is a story. Landing even Tier 3 is the single strongest artifact for conversations with potential maintainers or funders — it demonstrates the compiler has enough depth to handle production TypeScript, not just hand-picked benchmark inputs. The gap between "a toy subset compiles" and "the real compiler compiles" is exactly what separates a proof-of-concept from a usable tool.
+
+## Root-test status (2026-11-26, lane S24)
+
+Measured on main 1a726b3e with the test routed through the shared `instantiateWithRuntime` harness (branch `s24-classb-parked`); the harness change did not move this failure, so it is not a stale-harness (class B) issue.
+
+`tests/issue-1058-closure-rest-host-dispatch.test.ts` fails 1/2: `__call_fn_method_0` returns `null` for a closure with rest parameters dispatched through the host. This issue only names `__call_fn_method_2` illegal casts, so it is a weak match; the failure may deserve its own issue.
