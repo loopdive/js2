@@ -552,17 +552,20 @@ run-time test and asks a static proof that already exists.
     shim's two, sta.js's `Test262Error` and its `toString`), so "any use" refuses all 12 files. The global object
     leaves a function only where `this` is a value. A use does not escape when `this` is (a) the object of a static
     property access whose name is not a global alias (`this.globalThis` yields the object; the alias set is
-    `GLOBAL_ALIASES` of `builtin-global-binding.ts`, exported, not copied), or (b) the left operand of
-    `instanceof`. Every other use escapes, `this["eval"]` included, and so does a direct `eval` call in the body
-    (its text may read `this`, as `bodyReferencesOwnThis` already assumes). A write `this.eval = …` is already
-    one of `targetNames`'s writes. The harness uses are `this.message` ×3 and `this instanceof` ×1, so none escapes.
+    `GLOBAL_ALIASES` of `builtin-global-binding.ts`, exported, not copied) and that access is a value read or an
+    assignment target, never a callee: not the callee of a call, `new` or tagged template, and not the object of a
+    `.call`/`.apply` (PRV-A4 B1'': `this.valueOf()` returns ToObject(`this`), the global object, and `this.m()` hands
+    it to any method), or (b) the left operand of `instanceof`. Every other use escapes, `this["eval"]` included, and
+    so does a direct `eval` call in the body (its text may read `this`, as `bodyReferencesOwnThis` already assumes). A
+    write `this.eval = …` is already one of `targetNames`'s writes. The harness uses are `this.message` ×3 and `this
+    instanceof` ×1, so none escapes.
   - The predicate `ownThisEscapes(declaration)` lives in `src/shared/body-references-own-this.ts`. Its traversal is
     that module's own: the scope rules `findOwnThisReference` and `bodyReferencesOwnThis` already share (do not
-    descend into a non-arrow function-like or class; do descend into arrows) become one internal
-    `forEachOwnThis(node, visit)`. All three predicates use it, so no second copy of the rules exists. Parameter
-    initializers count, as in `functionLikeReferencesOwnThis`. When functions are not values, `ambientThisStrict` is undefined and a
-    plain call of a `this`-using function already refuses ("installs no receiver"), so the flag is false and sound.
-    The `Object` statics do not ask it yet: their hole is live today and is #7503's.
+    descend into a non-arrow function-like or class; do descend into arrows) become one internal `forEachOwnThis(node,
+    visit)`. All three predicates use it, so no second copy of the rules exists. Parameter initializers count, as in
+    `functionLikeReferencesOwnThis`. When functions are not values, `ambientThisStrict` is undefined and a plain call
+    of a `this`-using function already refuses ("installs no receiver"), so the flag is false and sound. The `Object`
+    statics do not ask it yet: their hole is live today and is #7503's.
 - **The call.** Pristine: `lowerCall` lowers the statement site as a direct call of the source's called init unit
   (A1's `"called"` kind). There is no identity test and no read of the global. Not pristine: the site refuses at
   select, by name: `eval literal: the global eval is not pristine (#7363 A4)`. A site in expression position (its
@@ -601,13 +604,14 @@ run-time test and asks a static proof that already exists.
     program leave the output byte-identical to main's.
   - `delete eval` refuses the site; the PRV-A4 B1 program (a bare `return this`) refuses the site by the A4 name.
   - A harness-like `function E(m){ if (!(this instanceof E)) return new E(m); this.message = m; }` plus a site
-    still lowers; `this.globalThis`, `this["eval"]`, `var t = this` and an `eval` call in a sloppy function each
-    refuse.
+    still lowers; `this.globalThis`, `this["eval"]`, `var t = this`, `this.valueOf()`, `new this.C()` and an `eval`
+    call in a sloppy function each refuse.
   - Acceptance: the 12 files re-measured with the real harness on the built head, not the stand-in.
   - Measured at plan time on `05388431` with the flag instrumented (local copy, reverted), `--harness real`: in
     all 12 programs `functionObjects` is true and no sloppy ambient-`this` function lets `this` escape (the
     harness's `this.message` and `this instanceof` stay allowed). The B1 program, `this.globalThis` and `this["eval"]`
-    each set the flag; the harness-like `E` with its `toString` does not.
+    each set the flag; the harness-like `E` with its `toString` does not. Re-measured with the B1'' callee rule: the
+    same 12 × no escape; `this.valueOf()` and `new this.C()` set the flag.
   - Run: the A3 program runs and agrees with node; a site in a loop runs its text each time.
 - **Yield, measured on `caaef907` (real harness).**
   - 16 files stop at the A4 label (18 with the stand-in harness).
