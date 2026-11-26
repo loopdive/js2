@@ -42,4 +42,4 @@ The open question was the owner: these programs have no unit, so a refusal could
 
 Covered by the generic rule from [#7500](7500-prepared-path-export-class-crash.md): an unresolved local export
 specifier is refused at select as `export-target-unsupported`, located at the specifier through a source-level owner
-(`PreparedIrProgramFailure.unitId` is nullable). The six programs above are pinned in #7500's tests.
+(`PreparedIrProgramFailure.unitId` is nullable). The six programs above are pinned in `tests/issue-7500-prepared-export-refusals.test.ts`.
