@@ -50,15 +50,22 @@ formal count". The callee therefore saw one argument.
 
 `zeroArgCallInstrs` in `src/codegen/zero-arg-method-pad.ts` is the module for
 synthesized zero-argument method calls (#4644). It wraps the dispatcher's
-`call`: when the callee is in `funcUsesArguments`, it sets `__argc` to 0
-before the call and resets it after, using the same reset the other call
-sites use (`buildArgcResetNoLazyExtras`). Methods that do not read
-`arguments` get exactly the call they had before.
+`call`. When the callee is in `funcUsesArguments`, it sets `__argc` to 0
+before the call. Methods that do not read `arguments` get exactly the call they
+had before.
+
+Nothing follows the call. The callee's prologue consumes `__argc` and resets
+it (`cacheParamDefaultArgc`, the same contract the IIFE call site relies on).
+The dispatcher boxes the call's result right after the call, so an `__argc`
+reset placed there made the module invalid whenever the method returns
+`externref`. Review RV7465 found this, and it is the fifth pin.
 
 ## Acceptance
 
 - `tests/issue-7423-iterator-call-arguments-length.test.ts` pins node's
   answer (1) on gc, standalone and wasi for the four calls above. All four
   fail on main `6694a8b8`.
+- A fifth pin covers a `next()` that reads `arguments` and returns
+  `externref` (node 9000).
 - Destructuring is covered by #7424, which routes array destructuring of a
   user iterator through the same `__call_next` / `__call_return` dispatchers.

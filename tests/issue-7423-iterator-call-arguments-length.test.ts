@@ -54,3 +54,27 @@ describe("#7423 arguments.length in protocol calls to a class iterator", () => {
     for (const target of TARGETS) expect(await run(source, target), target).toBe(expected);
   });
 });
+
+// Review RV7465: a `next()` that reads `arguments` and returns externref. The dispatcher boxes the call's result right
+// after the call, so nothing may follow the call (an `__argc` reset there made the module invalid on all targets).
+const EXTERNREF_NEXT = `
+var log = [];
+class S {
+  constructor() { this.i = 0; }
+  [Symbol.iterator]() { return this; }
+  next(x) {
+    log.push(arguments.length);
+    this.i++;
+    return this.i > 2 ? JSON.parse('{"done":true}') : JSON.parse('{"value":1,"done":false}');
+  }
+}
+export function main() { for (const v of new S()) {} return Number("9" + log.join("")); }
+`;
+
+describe("#7423 a protocol method returning externref", () => {
+  it("for-of over next() that reads arguments", async () => {
+    const expected = node(EXTERNREF_NEXT);
+    expect(expected).toBe(9000);
+    for (const target of TARGETS) expect(await run(EXTERNREF_NEXT, target), target).toBe(expected);
+  });
+});

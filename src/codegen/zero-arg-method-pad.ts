@@ -24,7 +24,6 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
 import { pushDefaultValue } from "./type-coercion.js";
-import { buildArgcResetNoLazyExtras } from "./expressions/argc-extras.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import type { Instr, ValType } from "../ir/types.js";
 
@@ -80,15 +79,12 @@ export function zeroArgCallPadInstrs(ctx: CodegenContext, funcIdx: number): Inst
 /**
  * (#7423) The `call` of a synthesized zero-argument call to `fullName`, for after its padding. The padding fills the
  * declared formals, so a callee that reads `arguments` needs the real count, 0, published in `__argc` for the call.
+ * The callee's prologue consumes `__argc` and resets it, so the call stays the last instruction: the dispatcher boxes
+ * the call's result after it.
  */
 export function zeroArgCallInstrs(ctx: CodegenContext, fullName: string, call: Instr): Instr[] {
   if (!ctx.funcUsesArguments.has(fullName)) return [call];
-  return [
-    { op: "i32.const", value: 0 },
-    { op: "global.set", index: ensureArgcGlobal(ctx) },
-    call,
-    ...buildArgcResetNoLazyExtras(ctx),
-  ];
+  return [{ op: "i32.const", value: 0 }, { op: "global.set", index: ensureArgcGlobal(ctx) }, call];
 }
 
 /**
