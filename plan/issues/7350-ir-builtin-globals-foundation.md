@@ -1476,3 +1476,27 @@ All three are measured on the branch.
   (`--base HEAD^1` and `--base origin/main`).
 - With `LOC_GATE_BASE=origin/main`, the loc and func gates fail, but only on files this branch does not touch:
   `src/codegen/*` and `src/ir/from-ast.ts` (+2). Main has moved past the base.
+
+### B3b-1 first steps, from review RV7504 (2026-11-26)
+
+RV7504 approved B3b-0 at `8d15581000`. Two items move into B3b-1. The first must be done before
+`%String.prototype%` is held.
+
+1. **`String.prototype[@@iterator]` is missing** (§22.1.3.36: length 0, name `"[Symbol.iterator]"`).
+   `NativeRealmPropertyKey` admits only `Symbol.hasInstance`, so the row cannot be written today.
+   - B3b-0's "50 / 6 / 2 per node 22" counted `getOwnPropertyNames` only; node's
+     `Object.getOwnPropertySymbols(String.prototype)` is `[Symbol(Symbol.iterator)]`.
+   - Once the prototype is held, a symbol-keyed miss on it must not answer "absent".
+   - Fix:
+     - widen the key union to the well-known symbol keys (spelled as `WELL_KNOWN_SYMBOL_IDS`, #7427), and add the row.
+     - If the method itself is not lowered in B3b-1, the row is `unavailable`: its read traps, it never answers
+       absent.
+   - Test: `tests/issue-7350-b3b0-wrapper-catalog.test.ts` also pins `getOwnPropertySymbols` of each prototype
+     against node, so a missing symbol key is a red row.
+2. **Nit:** the `requires` lists of `toExponential`, `toFixed`, `toPrecision` and `toString` name `"RangeError"`,
+   which is an intrinsic, not an abstract operation as in every other row. Name the operations, or drop the
+   entry. The `%RangeError%` holding for a radix (condition 2) is decided from the call site, not from
+   `requires`.
+
+Also noted by RV7504, accepted as is: `Number.parseFloat` / `Number.parseInt` wait for the global function rows,
+and `String.prototype.length` comes from StringCreate in B3b-1.
