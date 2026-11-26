@@ -50,235 +50,310 @@ instead of guessing.
 
 ## Implementation Plan
 
-### Mechanism (chosen: a site id stored in an exported global)
+### Mechanism (chosen: a program-wide site id in an exported global, diagnostic builds only)
 
-The helper takes an i32 site id, stores it in a mutable global and then
-traps. The global is exported, and after the trap the census reads it from
-the instance. The id is the site's ordinal **within its calling function**,
-and the trap's second stack frame names that function. So the row key is
-(caller name, ordinal).
+- **Site ids.** Each kind-abort site gets a program-wide id (0, 1, 2, …),
+  minted when the site is built. The `AbortBodies` record keeps the ids, and
+  its retry truncates them exactly as it truncates `allocations`.
+- **Diagnostic build only.** Only where that record exists (the test262
+  Prepared entry, which the census uses), the site calls a second intrinsic,
+  `js.value.unsupported_at(i32)`. Its helper stores the id in an exported
+  mutable global `__js_value_unsupported_site` and traps.
+- **Every other build is unchanged**: the nullary `js.value.unsupported`, no
+  param, no global, no export.
+- **The census keys on the global** (`!= -1`), never on frame names. A copy of
+  a site made by the middle end (`inlineSmall`, a `monomorphize` clone) or by
+  Binaryen `-O` carries the same id, and so the same reason.
 
 Options compared:
 
 | option | cost | verdict |
 |---|---|---|
-| (a) i32 id + `global.set` + `unreachable`, exported global | One param on the one helper, one global, one export. Each piece already has a sibling: a resource global (`native-promises.ts`, `space: "global"`) and a resource export (`native-string-output.ts` `publishNativeStringOutput`). | **chosen** |
-| (b) one named abort function per site or per reason | The manifest binds an intrinsic to one canonical provider resource (`nativeIntrinsicAbiBindings`, `native-primitive-boundary-abi.ts`), and `ROWS` is a fixed table. Per-use binding would be a new mechanism with one user. It also adds a function to the module per reason. | rejected |
-| (c1) no run-time change, attribute by the caller frame only | Ambiguous: module-init holds many sites with different reasons (every dynamic member read has its own). | rejected |
-| (c2) i32 id with no global; the census decodes the `i32.const` before the `call` at the caller frame's byte offset | The census would parse Wasm bytes, and any change to where operands are placed would break it. | rejected |
-| (a') program-wide ids instead of per-function ordinals | Needs a registry threaded through the producer, and a truncate step in `AbortBodies.lower`'s retry beside `allocations.truncate`. The ids would also depend on whether the abort policy is on. A per-function counter is a pure function of the IR being legalized. | rejected |
+| (a) i32 id + `global.set` + `unreachable`, exported global, program-wide id, gated by the intrinsic the legalization picks | One vocabulary row and one resource row beside their siblings. The global copies `native-promises.ts`; the export copies `publishNativeStringOutput`. No backend option. | **chosen** |
+| (a1) per-function ordinals, keyed by the caller frame (round 0) | Breaks after legalization: see Review round 1, point 1. | rejected |
+| (a2) gate by a new `PreparedIrBackendOptions` flag | The flag has to travel through `compiler.ts` (2,198 lines), `program-physical-plan.ts` (1,510) and `program-consumer.ts`, all over the 1,500 ceiling, plus the consumer's option validation. The IR intrinsic gates with no plumbing: the backend selects resources by demand, as it does for every other intrinsic. | rejected |
+| (b) one named abort function per site or per reason | Needs per-use binding of one intrinsic to N resources (`nativeIntrinsicAbiBindings`), a new mechanism with one user. | rejected |
+| (c1) caller frame only | Ambiguous: module-init holds many sites. | rejected |
+| (c2) decode the `i32.const` from the binary at the frame's offset | The census would parse Wasm bytes. | rejected |
 
-### Wasm shape after the change
+### Wasm shape
+
+Plain build, every compile but the test262 Prepared entry: byte-identical
+to today.
 
 ```wat
-(global $__js_value_unsupported_site (export "__js_value_unsupported_site") (mut i32) (i32.const -1))
-(func $__js_value_unsupported (param i32) (result (ref $AnyString))
-  local.get 0
-  global.set $__js_value_unsupported_site
-  unreachable)
-;; a site in $g, today: call $__js_value_unsupported
-i32.const 0            ;; the site's ordinal in $g
+(func $__js_value_unsupported (result (ref $AnyString)) unreachable)
 call $__js_value_unsupported
 ```
 
-The global, the export and the param exist only when
-`selection.unsupported` holds (`selectNativeDynamicValues`). So a Prepared
-program with no kind abort is byte-identical to today's output.
+Diagnostic build (the test262 Prepared entry, `unlowerableBodies: "abort"`):
+
+```wat
+(global $__js_value_unsupported_site (export "__js_value_unsupported_site") (mut i32) (i32.const -1))
+(func $__js_value_unsupported_at (param i32) (result (ref $AnyString))
+  local.get 0
+  global.set $__js_value_unsupported_site
+  unreachable)
+i32.const 17           ;; the site's program-wide id
+call $__js_value_unsupported_at
+```
+
+The nullary helper is not demanded in a diagnostic build, so it is not
+declared there.
 
 ### Target structure: what changes, where, and what it reuses
 
 No new module. Every change sits beside the sibling it mirrors.
 
-1. **`src/ir/core/intrinsics.ts`**: rename `NULLARY_TO_STRING_INTRINSIC_SIGNATURE`
-   (its only user is `js.value.unsupported`) to
-   `I32_TO_STRING_INTRINSIC_SIGNATURE` and change it in place
-   (`params: [I32_TYPE]`).
-   - Unchanged: the id in `intrinsic-vocabulary.ts`,
-     `runtime/contracts/intrinsics.ts`, `manifest.ts` and
-     `dynamic-value-callables.ts` (`SYMBOLS`). The provider reads its
-     signature from `INTRINSIC_DEFINITIONS`, and `canonicalRow` binds by
-     feature.
-2. **`src/backend/wasmgc/resources/native-dynamic-values.ts`**:
-   - `ROWS` `unsupported`: `params: [I32]`.
-   - `declareNativeDynamicValueResources`: under `selection.unsupported`,
-     add one global row (`role: ["values", "unsupported-site"]`,
-     `space: "global"`, i32, mutable), in the shape of
-     `native-promises.ts:114`.
-   - `NativeDynamicValueReservations.unsupportedSite`.
-   - `fillNativeDynamicValueResources`: give the global its `-1` init, and
-     fill the helper with the body above.
-   - New `publishNativeDynamicValues(tx, pack)`: calls
-     `tx.defineExport(..., UNSUPPORTED_SITE_EXPORT, pack.unsupportedSite)`,
-     in the shape of `publishNativeStringOutput`.
-3. **`src/backend/wasmgc/program/native-string-values.ts`**:
-   - `publishNativeStringValues` calls `publishNativeDynamicValues` next to
-     `publishNativeStringOutput`.
-   - New `nativePublishedExportNames(plan)`: returns the stdout pair plus the
-     site export when `plan.dynamicValues?.unsupported`.
-4. **`src/ir/program-physical-plan.ts:1386`**: the inline
-   `["__stdout_prepare", "__stdout_char"]` literal becomes
-   `nativePublishedExportNames(native.plan)`, in place. A source export with
-   the same name then stays a planning gap, not an emission crash. Net 0
-   lines: the file is at 1,510, over the 1,500 ceiling, so it must not grow.
-5. **`src/ir/program/dynamic-value-chains.ts` `chainBuilders`**:
-   - Add a `sites: string[]` counter beside `valueCount`.
-   - `abortText(instr, reason, r)`: `i32.const <sites.push(reason) - 1>`,
-     then the intrinsic into the string `r`.
-   - `abort(instr, reason, r)`: `abortText` into a fresh value, then
-     `carried`.
+1. **The intrinsic, beside `js.value.unsupported`.** One row in each
+   exhaustive table:
+   - `core/intrinsic-vocabulary.ts`: the id.
+   - `core/intrinsics.ts`:
+     - the definition, with a new `I32_TO_STRING_INTRINSIC_SIGNATURE` next to
+       the nullary one;
+     - `RUN_TIME_ABORT_INTRINSICS`, the set of both ids.
+   - `runtime/contracts/intrinsics.ts`: `DYNAMIC_VALUE_RUNTIME_FEATURES`.
+   - `runtime/contracts/manifest.ts`: `DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS`.
+   - `runtime/dynamic-value-callables.ts`: `SYMBOLS`,
+     `__js_value_unsupported_at`.
+   - `backend/wasmgc/program/native-primitive-boundary-abi.ts`: one
+     `canonicalRow`.
+   - **`analysis/effects.ts:536`**: the keep rule reads
+     `RUN_TIME_ABORT_INTRINSICS` in place. One predicate, and it keeps
+     operands live: see Hazards.
+2. **`backend/wasmgc/resources/native-dynamic-values.ts`**:
+   - `selectNativeDynamicValues`: `unsupportedAt`.
+   - `ROWS`: `["unsupportedAt", "unsupported-at", "__js_value_unsupported_at", { params: [I32], results: ["any-string"] }]`.
+   - `declareNativeDynamicValueResources`: under `unsupportedAt`, one global
+     row (`role: ["values", "unsupported-site"]`, i32, mutable), in the shape
+     of `native-promises.ts:114`.
+   - The fill step: init the global to `-1`, and fill the helper with the
+     body above.
+   - New `publishNativeDynamicValues(tx, pack)`: `tx.defineExport` of the
+     global, in the shape of `publishNativeStringOutput`.
+3. **`backend/wasmgc/program/native-string-values.ts`**:
+   - `publishNativeStringValueOutput` calls `publishNativeDynamicValues` next
+     to `publishNativeStringOutput`.
+   - New `nativePublishedExportNames(plan)`: the stdout pair, plus the site
+     export when `plan.dynamicValues?.unsupportedAt`.
+4. **`ir/program-physical-plan.ts:1386`**:
+   - The inline stdout literal becomes `nativePublishedExportNames(native.plan)`
+     in place, net 0 lines.
+   - In a diagnostic build, a source export of that name is a planning gap,
+     not an emission crash. No test262 file exports it.
+5. **`ir/program/dynamic-value-chains.ts` `chainBuilders(fn, …, site)`**:
+   - `abortText(instr, reason, r)` asks `site(reason)`:
+     - `undefined` (no record): the nullary intrinsic into `r`, as today;
+     - an id: `i32(id, k)` and then `js.value.unsupported_at` with `[k]`.
+   - `abort(instr, reason, r)`: `abortText` into a fresh value, then `carried`.
    - `i32(value, r)`: the const that `selectorCall` already spells inline;
      `selectorCall` uses it too.
-   - Expose `abortSites: () => sites`.
-   - **Removes a duplicate**: `conversionBuilders`' local `unsupported` (a
-     second spelling of the intrinsic) is deleted. `toStringArm` uses
-     `abortText`, and `primitiveOf` uses `abort`.
-6. **The sites pass reasons.** Each call below gains its reason text. The
-   wording follows the refusal wording beside each site; the implementer
-   pins the exact text from a run.
+   - **Duplicate removed**: `conversionBuilders`' local `unsupported` is
+     deleted.
+6. **The sites pass reasons.** Same table as round 0. The wording follows
+   the refusal wording beside each site; the implementer pins the exact text
+   from a run.
 
 | site (file: function) | reason |
 |---|---|
-| dynamic-member-access.ts: `memberAccess`, refused-kind arm | `${operation} of ${article(kind)} needs ${missing(kind)}`, e.g. "member read 'trim' of a string needs String.prototype's properties". One formatter, shared with the compile-time `gap` beside it (today built inline). |
+| dynamic-member-access.ts: `memberAccess`, refused-kind arm | `${operation} of ${article(kind)} needs ${missing(kind)}`, one formatter shared with the compile-time `gap` beside it |
 | dynamic-member-access.ts: `dynamicMemberRead` `object` arm (`js.object.has` miss) | "member read '${name}' of an object without it: only Object.prototype's own, which the realm lacks, answers" |
 | dynamic-value-chains.ts: `conversionBuilders` `builtinOnly` | "ToPrimitive of an object whose method is a built-in, in a program that creates no function value" |
 | dynamic-value-chains.ts: `toStringArm` / `primitiveOf`, `source === undefined` | "ToString of a function: its source text, which the closure does not carry" (for `+`: "`+` of a function: …") |
 | dynamic-function-operations.ts: `dynamicCurrentThis` | "sloppy `this` that is not an object: needs the global object or a wrapper" |
 | dynamic-function-operations.ts: `dynamicConstruct` `builtin` / `link` | "`new` on a built-in function the realm holds" / "`new` whose callee's 'prototype' is ${article(kind)}, not an ordinary object" |
 | dynamic-object-statics.ts: `defineAll`, `getOwnPropertyDescriptor`, `create` | "Object.${name} of a string: needs the String object's own properties" / "Object.create with ${article(kind)} prototype" |
-| dynamic-error-constructors.ts: `functionChainAnswer` | "a function's [[Prototype]] walk for %Error%" (wording from the doc comment there) |
+| dynamic-error-constructors.ts: `functionChainAnswer` | "a function's [[Prototype]] walk for %Error%" |
 | dynamic-prototype-methods.ts: `ownProperty` | "Object.prototype.${method} on a string: needs its own length and index properties" |
 
-   - `MemberAccessBuilders.abort` and the `Abort` type take the reason, so
-     the `object` arm passes its own.
-
-7. **`src/ir/program/dynamic-value-legalization.ts` `legalizeDynamicValues`**:
-   - Returns `{ fn, abortSites }`. An unchanged function has `[]`.
-   - The 7 test call sites read `.fn`: x-dynamic-throw ×5, t-truthiness-null,
-     d1-dynamic-carrier.
-8. **`src/ir/source-dynamic-contracts.ts`**:
+7. **`ir/program/dynamic-value-legalization.ts`**:
+   - `legalizeDynamicValues(fn, allocations, program, site = NO_SITE)` passes
+     `(reason) => site(fn, reason)` to `chainBuilders`.
+   - Test callers omit the new parameter and keep the plain form, so their
+     return type and call sites are unchanged.
+8. **`ir/source-dynamic-contracts.ts`**:
    - `RefusalOwners` (already the abort-bodies seam) gains
-     `abortSites(fn, reasons)`.
-   - `legalizeSourceDynamicValues` calls it per legalized function with
-     sites.
-9. **`src/ir/program-source-units.ts` `lowerUnitOnce`**: the owners object
-   gets `abortSites: (fn, reasons) => abortBodies?.recordSites(fn, reasons)`,
-   beside `aborted`.
-10. **`src/ir/abort-bodies.ts`** (the one record of what a trap stands for):
-    - `AbortBodyRow` becomes
-      `AbortRow = { kind: "body", unit, name, line, column, code, detail } | { kind: "site", unit, name, site, detail }`.
-    - `recordSites` keeps the reasons in a private `WeakMap<IrFunction, …>`
-      keyed by the legalized function object.
-    - `report(functions, …)` adds the site rows of the accepted functions in
-      lowering order, module-init included. It runs only on the accepted
-      lowering, so a refused attempt of `lower` leaves no row.
-    - `rows()` returns body rows in source order, then site rows.
-11. **`src/test262/test262-prepared-entry.ts`**:
-    - Rename `ResultRecord.abortBodies` to `aborts`, and
-      `requiredPreparedAbortBodies` to `requiredPreparedAborts`: one
-      accessor, the same road.
-    - Its 10 readers in `tests/` and the census are renamed. The
-      `abortBodies` test helper (`tests/helpers/prepared-node-agreement.ts`)
-      filters `kind === "body"`.
-12. **Census** (`scripts/ir-census/prepared-census.mts` `trapOf`, which lands
-    with PR #7436, branch `claude/census-trap-frames`; this step stacks on
-    it):
-    - `measureFile` hoists `instance` so `trapOf` can read it.
-    - For a frame of `__js_value_unsupported`, read
-      `instance.exports.__js_value_unsupported_site.value` and the second
-      frame, then find the `site` row with that name and site.
-    - Emit `abort: { code: "js.value.unsupported", detail }` exactly as for a
-      body, so `prepared-analyze.mjs` clusters both without change.
+     `abortSite(fn, reason): number | undefined`.
+   - `legalizeSourceDynamicValues` passes it.
+9. **`ir/program-source-units.ts` `lowerUnitOnce`**: the owners object gets
+   `abortSite: (fn, reason) => abortBodies?.site(fn, reason)`, beside
+   `aborted`.
+10. **`ir/abort-bodies.ts`**:
+    - `AbortBodies` gains `#sites: AbortSiteRow[]`, where
+      `AbortSiteRow = { unit, name, site, detail }`.
+      - `name` is the function the site was legalized in.
+      - `name` and `detail` have the same shape as `AbortBodyRow`, so the
+        census renderer reads either.
+    - `site(fn, reason)` returns `#sites.length` and pushes the row.
+    - `lower` marks `#sites.length` beside `allocations.size` and truncates
+      both on retry. Ids stay dense and deterministic: inventory order, then
+      legalization order.
+    - `sites()` returns the rows by id.
+11. **`test262/test262-prepared-entry.ts`**:
+    - `ResultRecord.abortSites`, filled from the same `AbortBodies` as
+      `abortBodies`.
+    - A sibling accessor `requiredPreparedAbortSites`.
+    - `requiredPreparedAbortBodies` and its ~25 references are untouched.
+12. **Census** (stacks on PR #7436, branch `claude/census-trap-frames`, head
+    `00c971be`):
+    - `scripts/lib/wasm-exn-render.mjs`: new `abortSiteOf(instance, rows)`
+      reads `instance?.exports.__js_value_unsupported_site?.value` and
+      returns the row with that id when it is `>= 0`.
+    - `wasmErrorSite(err, abortBodies, abortSite)` returns it as `aborted`,
+      ahead of the frame-name match. `renderHostError` takes the same third
+      argument, so there is one lookup.
+    - `prepared-census.mts`:
+      - `measureFile` hoists `instance`;
+      - `trapOf` passes `abortSiteOf(instance, requiredPreparedAbortSites(result))`;
+      - the row gains `siteFrame` (the first frame that is not the helper),
+        for the contradiction check below.
 
-### Why JS-environment (gc) output stays byte-identical
+### Why JS-environment (gc) output and plain Prepared output stay byte-identical
 
-From code, three facts:
-
-1. Only the builders in `src/ir/program/dynamic-value-chains.ts` emit
-   `js.value.unsupported`. They are reached only from
-   `legalizeDynamicValues`, whose only production caller is
-   `legalizeSourceDynamicValues` (`source-dynamic-contracts.ts`), part of the
-   Prepared producer (`prepareIrProgramSources`). The ordinary pipeline
-   (legacy and the selector IR) never builds it.
-2. `legalizeSourceDynamicValues` returns early unless `nativeDynamicLane(policy)`
-   holds. `dynamicLane` returns `"native"` only for
-   `backend === "wasmgc" && target === "standalone"`.
-3. The provider (`dynamic-value-callables.ts`) declares
-   `supportedTargets: ["standalone"]`.
-
-So the gc and ordinary-standalone outputs cannot change. Among Prepared
-standalone outputs, only programs with a site change.
+1. Only the builders in `ir/program/dynamic-value-chains.ts` emit either
+   intrinsic. They are reached only from `legalizeDynamicValues`, whose only
+   production caller is `legalizeSourceDynamicValues`
+   (`source-dynamic-contracts.ts`), part of the Prepared producer
+   (`prepareIrProgramSources`). The ordinary pipeline never builds them.
+2. `legalizeSourceDynamicValues` returns early unless
+   `nativeDynamicLane(policy)` holds. `dynamicLane` returns `"native"` only
+   for `backend === "wasmgc" && target === "standalone"`.
+3. Both providers declare `supportedTargets: ["standalone"]`
+   (`dynamic-value-callables.ts`).
+4. Without an `AbortBodies` record, `site` answers `undefined` and the
+   builder emits today's nullary intrinsic. So every Prepared compile other
+   than the test262 Prepared entry is unchanged, including the public
+   `prepared-program-required` front door.
 
 ### Tests
 
-1. **Smallest program, through the strict Prepared entry** (`compile` from
-   `test262-prepared-entry.ts`, `preparedOptions()`):
+1. **Smallest program, through the strict Prepared entry**:
    `function g(v){ return v.trim(); } g({ trim: function(){ return 1; } }); g(" a ");`
-   - The program compiles: the object arm answers, so there is no
-     compile-time refusal.
-   - It traps in `__js_value_unsupported`.
-   - The exported global reads `0`, and the second frame is `g`.
-   - `requiredPreparedAborts` holds
-     `{ kind: "site", name: "g", site: 0, detail: "member read 'trim' of a string needs String.prototype's properties" }`.
-   - Extend `abortsAtRunTime` to take an optional expected reason and assert
-     it through the same lookup the census uses.
-2. **Two sites in one function**, the second taken: the global reads `1`. The
-   DCE hazard: the module validates and the id survives.
-3. **Retry**: a unit where one function gets an abort body and another holds
-   a site. The site row is reported once, with ordinal 0.
-4. **Byte identity**:
+   - It traps.
+   - The exported global reads the id of the string arm's site.
+   - `requiredPreparedAbortSites(result)[id]` is
+     `{ name: "g", detail: "member read 'trim' of a string needs String.prototype's properties" }`.
+   - `abortsAtRunTime` gains an optional expected reason, asserted through
+     `abortSiteOf`, the census's own lookup.
+2. **An inlined copy.**
+   - A ≤10-instruction single-block callee with a straight-line abort
+     (`dynamicConstruct`'s `builtin` arm, dynamic-function-operations.ts:126)
+     is called from module-init.
+   - The trap's frame is the caller, but the global still names the callee's
+     site and reason. This pins the round-1 blocker.
+   - Also a `monomorphize` clone: the same id reaches its row.
+3. **Retry.** A unit where one function gets an abort body and another holds
+   a site: ids are dense from 0, and no row is left over from the refused
+   attempt.
+4. **Byte identity.**
    - `node scripts/equivalence-gate.mjs` (gc).
-   - A test that compiles a program with a dynamic member read for gc and for
-     ordinary standalone, and compares the bytes against a base build. Take
-     the base copy at the first edit, per CLAUDE.md's `.tmp/base.ts` rule.
-   - A Prepared standalone program with no site is byte-identical before and
-     after.
-5. **Update the pinned row**:
-   `tests/issue-3526-string-boundary-const.test.ts` lists
-   `native.js.value.unsupported` among the empty-param providers; it now has
-   one param.
+   - gc and ordinary standalone bytes of a program with a dynamic member read
+     against a base build. Take the base copy at the first edit (CLAUDE.md
+     `.tmp/base.ts`).
+   - A Prepared compile without the record (the public front door) of a
+     program WITH a site is byte-identical to today.
+5. **DCE.** Two sites, the second taken: the module validates and the global
+   reads the second id.
 
 ### Acceptance criteria
 
-- Every one of the 61 census rows with `trapFrame: "__js_value_unsupported"`
-  carries an `abort.detail` from a site row. Re-run on main + this change.
+- **The gated build** is `scripts/ir-census/prepared-census.mts --harness real`
+  through `src/test262/test262-prepared-entry.ts` with its default
+  `unlowerableBodies: "abort"`. That is the only build with the export.
+  Re-run on main + this change.
+- All 61 rows with a trap in the kind-abort helper carry `abort.detail` from
+  a site row (global `!= -1`).
 - `prepared-analyze.mjs` clusters them by reason, and the census log's row 5
   is replaced by those clusters.
-- No test262 verdict changes: a trap stays a trap.
-- JS-environment (gc) and ordinary standalone output are byte-identical.
-  Prepared output changes only in programs with a kind abort.
+- **Frame contradictions: 0.** A contradiction is a site row whose
+  `siteFrame` is neither the recorded function nor a copy of it made by the
+  middle end (`inlineSmall` into a caller, a `monomorphize` clone). The run
+  lists every copy case with the WAT line that shows the inlined call or the
+  clone.
+- No test262 verdict changes.
+- gc output and plain Prepared output are byte-identical.
 - **Code quality**:
-  - One abort builder: the `unsupported` duplicate is gone.
-  - One record type and one accessor for body and site aborts.
+  - One abort builder (`abortText` / `abort`); the `unsupported` duplicate is
+    gone.
+  - The diagnostic form is a parameter of that builder, not a second arm.
+  - The keep rule reads one set.
   - Member-access refusal text is formatted once, for the gap and the abort.
   - `selectorCall` and the abort share the i32 const.
-  - The resource global and the export follow their existing siblings' shape.
+  - The global, the export, the intrinsic row and the resource row follow
+    their siblings' shape.
+  - One record (`AbortBodies`) with a sibling accessor.
   - No new module, no `loc-budget-allow` or `func-budget-allow`.
-  - An adversarial review (CLAUDE.md) finds no duplicate or misplaced arm.
+  - An adversarial review finds no duplicate or misplaced arm.
 
 ### Hazards
 
-1. **Dead-code elimination of a pure intrinsic.** `abort`'s comment says the
-   intrinsic is pure, so an unused result would be dropped. It survives
-   because `isSideEffecting` (`src/ir/analysis/effects.ts` ~533) keeps
-   `js.value.unsupported`. Being in that list also keeps its operands live
-   (see the `super_init` and `dyn.member_set` notes there), so the new i32
-   const survives. Test 2 proves it.
-2. **Effects ordering.** The effect facet stays pure, so a scheduler may
-   reorder two aborts on one straight-line path, and the global would then
-   name the other one. No builder emits two on one path: each sits in its own
-   `if` arm. Test 2 asserts the id of the arm taken.
-3. **Retry in `AbortBodies.lower`.** Sites are keyed by the legalized
-   function object and reported only from the accepted lowering. Test 3.
-4. **Units without the policy.** Native async families and certified Promise
-   delays bypass `AbortBodies` (`lowerSourceUnit`), so they record no sites.
-   Their traps stay unattributed. The acceptance run counts any such row.
-5. **The dispatcher's built-in arm** (`closure-method-body.ts`) is a raw
-   `unreachable`. Its trap frame is the dispatcher, not the helper, so it is
-   not among the 61 and is out of scope.
-6. **Budgets.**
-   - `program-physical-plan.ts` is over the ceiling, so step 4 must be net 0
-     lines.
-   - `dynamic-value-chains.ts` (476 lines) has to absorb the deleted duplicate.
-   - `memberAccess` and `conversionBuilders` grow by a few lines, far below
-     300.
+1. **Dead-code elimination of a pure intrinsic.** Both ids stay in
+   `isSideEffecting` (`effects.ts:536`, now through
+   `RUN_TIME_ABORT_INTRINSICS`). That list keeps the instruction and its
+   operands live (see the `super_init` and `dyn.member_set` notes there), so
+   the i32 const survives. Test 5 proves it.
+2. **GVN and constant folding.** Distinct ids are distinct operands, so two
+   sites are never merged. Identical copies (after inlining) share an id and
+   a reason, so a merge is harmless.
+3. **Effects ordering.** The facet stays pure. Two aborts on one
+   straight-line path could swap which one fires; no builder emits two on
+   one path. Test 5 asserts the id of the arm taken.
+4. **Retry.** `AbortBodies.lower` truncates `#sites` with `allocations`.
+   Test 3.
+5. **Units outside the record.** Native async families and certified
+   Promise delays bypass `AbortBodies` (`lowerSourceUnit`), so they keep the
+   nullary form, and a trap there stays unattributed. The acceptance run
+   counts any such row.
+6. **Out of scope.** The dispatcher's built-in arm (`closure-method-body.ts`)
+   is a raw `unreachable` in the dispatcher's own frame, so it is not among
+   the 61.
+7. **Budgets.**
+   - `program-physical-plan.ts` (1,510) only replaces a line in place.
+   - No other touched file is near the 1,500 ceiling:
+     - `effects.ts` 663;
+     - `manifest.ts` 723;
+     - `native-string-values.ts` 881;
+     - `dynamic-value-chains.ts` 476, which absorbs the deleted duplicate.
    - Run the gates with `LOC_GATE_BASE` set to the upstream tip.
+
+### Review round 1
+
+1. **BLOCKER: the (caller frame, ordinal) key breaks after legalization.**
+   Verified:
+   - `optimizePreparedIrProgramIr` (`program-middleend-ir.ts`) runs
+     `inlineSmall`, then `monomorphize`, after legalization and after
+     `AbortBodies.report`.
+   - `inlineSmall` takes single-block callees of ≤10 top-level instructions
+     (`MAX_CALLEE_INSTRS`), so a straight-line abort can move.
+   - `monomorphize` renames clones (`plan.cloneName`).
+
+   Answer: program-wide ids, truncated on retry beside `allocations` (step
+   10). The census keys on the global (`!= -1`), not on frames (step 12), so
+   a copy made by the middle end or by Binaryen carries its id and its
+   reason. Tests 2 and 3 pin it.
+2. **BLOCKER: the exported global is user-visible ABI.** Answer: the param,
+   the global and the export exist only in the diagnostic build.
+   - **The switch is the `AbortBodies` record**, which only the test262
+     Prepared entry creates, and which the census uses. It needs no new
+     option: the legalization picks `js.value.unsupported_at` only when the
+     record mints an id, and the backend declares resources by demand.
+   - **The compile-time site rows are not gated separately.** They are
+     recorded whenever the record exists, which is the only place anything
+     can read them.
+   - **Why not a backend flag (a2):** it would grow three files that are over
+     the ceiling.
+   - Every other build is byte-identical, including the public front door.
+     Test 4.
+3. **The publish function's name.** Fixed: `publishNativeStringValueOutput`.
+4. **The rename touches ~25 references.** Fixed: a sibling accessor,
+   `requiredPreparedAbortSites`; `requiredPreparedAbortBodies` is untouched.
+5. **Extend #7436's `wasmErrorSite`.** Fixed: `abortSiteOf` and a third
+   argument on `wasmErrorSite` and `renderHostError` in
+   `scripts/lib/wasm-exn-render.mjs`. No second lookup.
+6. **Acceptance.** Added: 0 frame contradictions, and the gated build named
+   (test262 Prepared entry, default `unlowerableBodies: "abort"`).
+7. **Kept, not regressed:**
+   - gc byte identity, now extended to every build without the record;
+   - the duplicate removal;
+   - the shared refusal formatter and the shared i32 const;
+   - the DCE note on `effects.ts:536`.
