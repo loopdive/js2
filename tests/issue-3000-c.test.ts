@@ -35,6 +35,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { compileToWasm } from "./equivalence/helpers.js";
+import { expectHostStringsRemoved } from "./helpers/removed-host-strings.js";
 
 // Mirrors website/playground/examples/js/classes.ts's flat `Animal`: a string
 // private field (`#name`) + a numeric one (`#age`), both set in the ctor body.
@@ -60,10 +61,14 @@ const ANIMAL = `
 
 describe("#3000-C — IR constructor emission (flat classes) — genuine emission", () => {
   // The host (externref) string lane (`nativeStrings: false`) was removed by
-  // #6979 S7; both remaining lanes carry `(ref $AnyString)`: the JS target and
-  // the no-host `target: "standalone"` build.
+  // #6979 S7 and is now a compile error; the no-host `target: "standalone"`
+  // build is checked next to the native lane.
+  it("host (externref) — removed by #6979", async () => {
+    await expectHostStringsRemoved(ANIMAL, { fileName: "test.ts", experimentalIR: true });
+  });
+
   for (const standalone of [false, true]) {
-    const lane = standalone ? "standalone ($AnyString)" : "js ($AnyString)";
+    const lane = standalone ? "standalone target ($AnyString)" : "native/standalone ($AnyString)";
 
     it(`emits ${"Animal_new"} via IR (not byte-inert) — ${lane}`, async () => {
       const r = await compile(ANIMAL, {
