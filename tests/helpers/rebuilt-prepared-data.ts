@@ -9,6 +9,7 @@
  *
  * Prepared data is acyclic (outside IR class shapes, which these callers do not hold) and contains only arrays,
  * null-prototype records and frozen maps/sets.
+ * Every rebuilt property is enumerable; prepared data holds no non-enumerable properties.
  */
 export function rebuiltPreparedData<T>(value: T): T {
   return rebuild(value) as T;
