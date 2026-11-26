@@ -13,11 +13,12 @@
 // nominally distinct.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(src: string): Promise<Record<string, any>> {
   const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as any);
   expect(r.success, `Compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(true);
-  const { instance } = await WebAssembly.instantiate(r.binary, (r as any).importObject);
+  const instance = await instantiateWithRuntime(r);
   ((r as any).importObject as any).__setExports?.(instance.exports);
   return instance.exports as any;
 }
