@@ -63,6 +63,7 @@ import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
+import { refuseImmutableWrite } from "./const-binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -13285,15 +13286,8 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
   return functionObjects.storedCarrierValue(value, rhs, functionObjectLoweringHost(cx));
 }
 
-/**
- * A write to a binding the mutation pre-pass gave no slot. (#7354 T) A named function expression's own name is such a
- * binding by design: immutable (§9.1.1.1.5), so a sloppy write is ignored and a strict one throws; it refuses by name.
- * Anything else is the pre-pass's broken promise.
- */
+/** A write to a binding the mutation pre-pass gave no slot: the pre-pass's broken promise. */
 function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): never {
-  const declaration = cx.checker?.getSymbolAtLocation(id)?.valueDeclaration;
-  if (declaration && ts.isFunctionExpression(declaration))
-    demoteToLegacy("property-write-unsupported", `ir/from-ast: write to the function expression name "${id.text}"`);
   // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
   throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
 }
@@ -13303,6 +13297,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
   }
+  refuseImmutableWrite(id, "assignment to", cx);
   const target = identifierWriteTarget(id, rhs, cx) ?? refuseUndeclaredWrite(id, cx);
   return storeIdentifierWrite(id, target, { source: rhs, lower: (type) => lowerExpr(rhs, cx, type) }, cx);
 }
@@ -13473,6 +13468,7 @@ function lowerCompoundAssignment(
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
   }
+  refuseImmutableWrite(id, "compound assignment to", cx);
   const binding = cx.scope.get(id.text);
   if (!binding) {
     demoteToLegacy(
@@ -13647,6 +13643,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
     return;
   }
+  refuseImmutableWrite(id, "increment/decrement of", cx);
   const binding = cx.scope.get(id.text);
   if (!binding) {
     demoteToLegacy(
