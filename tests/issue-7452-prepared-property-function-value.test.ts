@@ -5,8 +5,9 @@
 // (`unlowerableBodies: "abort"`) the refusal becomes that function's abort body (#7354 U); under `refuse` the compile
 // fails by the same diagnostic.
 //
-// Before 3408858181 (#7354 G1) the function test of the dynamic value needed a source closure's wrapper root. When the
-// program's only function value sat in an abort body, a `typeof` on a dynamic value elsewhere made `compile()` throw
+// Before the #7354 G1 fixes (3408858181 and the later fd529937ec, each sufficient on its own) the function test of the
+// dynamic value needed a source closure's wrapper root. When the program's only function value sat in an abort body, a
+// `typeof` on a dynamic value elsewhere made `compile()` throw
 // `PreparedIrProgramInvariantError … the function test needs the source closures' wrapper root`.
 import { describe, expect, it } from "vitest";
 import type { CompileResult } from "../src/index.js";

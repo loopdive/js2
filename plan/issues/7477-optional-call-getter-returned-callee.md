@@ -46,5 +46,7 @@ o?.g?.(); // node: true (getter runs once, the result is called with this === o)
 - A getter returning `undefined` (which should short-circuit `o?.g?.()` to
   `undefined`) is a TypeScript compile error in a `.js` input, so pin it in a
   `.ts` input only.
-- The fix reads the callee through the existing accessor read and then reuses
-  `compileOptionalPropertyValueCall`. It adds no new call path.
+- The fix lives in the shared accessor-callee path, so the plain `o.g()` and
+  the optional `o?.g?.()` are fixed together: the callee is read through the
+  existing accessor read and called with `this === o`. The optional form then
+  reuses `compileOptionalPropertyValueCall`. No new call path is added.
