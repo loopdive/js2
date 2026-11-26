@@ -77,7 +77,7 @@ name). Re-run of the 777 files on the same tree:
   (`js.value.unsupported`, #7354 C2): an operation on a dynamic value whose
   kind turns out at run time to be one the realm cannot answer (42 of them
   in `built-ins/String/prototype`, e.g. `str.trim()`). This abort carries no
-  reason; see the proposal below.
+  reason on main; see row 5 by reason below.
 
 | # | cause | files | Session B | example (trap frame) |
 |---|---|---:|:---:|---|
@@ -85,7 +85,7 @@ name). Re-run of the 777 files on the same tree:
 | 2 | name not in scope: `f` 83 (Annex B block-level function hoisting), others 12 | 95 | no | `annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-switch.js` |
 | 3 | built-in global as a value: `JSON` 23, `Object` 21, `Function` 15, `Array` 11, `String` 4 | 78 | partly (`Array`, `Object`, `Math`) | `built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A13.js` |
 | 4 | member read or write on a function: `caller` 38, `apply` 12, `call` 10, `bind` 10 | 70 | no | `built-ins/Function/15.3.5.4_2-84gs.js` |
-| 5 | run-time kind abort `js.value.unsupported` (no reason recorded) | 61 | no | `built-ins/String/prototype/trim/15.5.4.20-2-44.js` (`__js_value_unsupported`) |
+| 5 | run-time kind abort `js.value.unsupported`: a member read the realm cannot answer (see below) | 61 | no | `built-ins/String/prototype/trim/15.5.4.20-2-44.js` (`__js_value_unsupported_at`) |
 | 6 | `arguments` not in scope | 54 | yes | `language/arguments-object/10.6-13-a-3.js` (`test2`) |
 | 7 | nested function without annotations | 39 | no | `language/identifier-resolution/S10.2.2_A1_T8.js` (`f1`) |
 | 8 | function declaration in a block | 37 | no | `annexB/language/function-code/switch-case-func-skip-param.js` |
@@ -99,16 +99,23 @@ one-to-six-file causes (`arguments.length` 4, `delete` 3, `with` 2, …).
 Session B's share: row 6 (54), part of row 3 (`Array` 11, `Object` 21 and
 `Math`), `arguments.length` 4, `with` 2.
 
-**Proposal for row 5:** the kind abort ends the program in the shared
-helper `__js_value_unsupported`, so the trap frame names only the helper,
-and its caller (the second frame) only the function. The smallest change
-that names the reason is the one abort bodies already use: record each
-abort site at compile time (calling function, reason text, e.g. "member
-read 'trim' of a value that may be a function") in the entry's result,
-next to `abortBodies`, and give each site a distinct call target or an
-i32 site id passed to the helper so the trap can be matched to its row.
-A per-reason named wrapper is simpler still, but grows the module by one
-function per distinct reason.
+**Row 5 by reason.** [#7486](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7486-prepared-kind-abort-site-ids)
+(PR #7468) gives each kind-abort site an id and records its reason next to
+the abort bodies. Re-run of the 61 files: every trap carries its site, with 0
+frame contradictions, and all 61 still fail.
+
+| reason | files | keys |
+|---|---:|---|
+| member read of a string needs String.prototype's properties | 42 | `trim` 11; `replace`, `search`, `lastIndexOf`, `indexOf`, `substring`, `slice` 3 each; `charCodeAt`, `charAt`, `concat` 2 each; 7 others 1 each |
+| member read of a function needs Function.prototype's properties | 11 | `bind` 5, `call` 2, `caller` 2, `constructor` 1, `apply` 1 |
+| `new` with a `prototype` that is a function, not an ordinary object | 3 | |
+| member read `length` of a string needs its own length and index properties | 3 | |
+| `Object.defineProperties` of a string needs the String object's own properties | 1 | |
+| member read `toString` of an object without it (Object.prototype's own) | 1 | |
+
+So 56 of the 61 come down to one lever: String.prototype and Function.prototype
+methods read off a dynamic value. The 11 function-member rows use the same
+mechanism as row 4 (70 files).
 
 ## Reproduce
 
