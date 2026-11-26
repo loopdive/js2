@@ -122,6 +122,20 @@ describe("#7469 `o?.f?.()` where `f` is neither nullish nor callable", () => {
     expect(node(source)).toBe(1);
     for (const target of TARGETS) expect(await run(source, target), target).toBe(1);
   });
+
+  // §13.3.6.1 EvaluateCall evaluates the arguments before §7.3.14 Call tests IsCallable: both side effects happen,
+  // then the TypeError (node: 201).
+  it.each([
+    ["`o?.f?.(b(), b())`", "const o: any = { f: 5 }; o?.f?.(b(), b());"],
+    ["`(Math as any)?.PI?.(b(), b())`", "(Math as any)?.PI?.(b(), b());"],
+  ])("%s evaluates its arguments before the TypeError", async (_, call) => {
+    const source =
+      "let n = 0; function b(): number { n++; return 1; } " +
+      `export function main(): number { try { ${call} return -1; } ` +
+      "catch (e) { return n * 100 + (e instanceof TypeError ? 1 : 2); } }";
+    expect(node(source)).toBe(201);
+    for (const target of TARGETS) expect(await run(source, target), target).toBe(201);
+  });
 });
 
 describe("#7469 `?.` calls on a global built-in namespace keep the native static call", () => {

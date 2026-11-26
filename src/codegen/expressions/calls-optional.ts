@@ -26,7 +26,7 @@ import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileBuiltinStaticCall } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./callee-callable-guard.js";
-import { isGlobalBuiltinIdentifier } from "./calls.js";
+import { isGlobalBuiltinIdentifier } from "./global-builtin-identifier.js";
 import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";
 import { isBuiltinTypeName } from "../builtin-tags.js";
@@ -41,12 +41,15 @@ export function compileOptionalCallExpression(
 ): InnerResult {
   const propAccess = expr.expression as ts.PropertyAccessExpression;
   // (#7469) A global built-in namespace or constructor is never nullish, and neither is its own static method, so no
-  // `?.` of `JSON?.parse?.(s)` can short-circuit: it is the native static call. Any other member (`Math?.PI?.()`) is a
-  // value read, called below.
-  if (globalBuiltinName(ctx, fctx, propAccess.expression) !== undefined) {
-    const staticCall =
-      compileBuiltinStaticCall(ctx, fctx, expr, propAccess) ?? compileNamespaceStaticCall(ctx, fctx, expr, propAccess);
-    if (staticCall !== undefined) return staticCall;
+  // `?.` of `JSON?.parse?.(s)` can short-circuit: it is the native static call. Any other member is a value read, called
+  // below; a namespace constant (`Math?.PI?.()`) supplies that value itself.
+  const builtinName = globalBuiltinName(ctx, fctx, propAccess.expression);
+  if (builtinName !== undefined) {
+    const builtinCall =
+      compileBuiltinStaticCall(ctx, fctx, expr, propAccess) ??
+      compileNamespaceStaticCall(ctx, fctx, expr, propAccess) ??
+      compileBuiltinConstantValueCall(ctx, fctx, expr, propAccess, builtinName);
+    if (builtinCall !== undefined) return builtinCall;
   }
   // `obj.method?.(args)` short-circuits on the METHOD VALUE, not on `obj`.
   // It is a distinct AST shape from `obj?.method(args)`: the question-dot is
@@ -278,11 +281,35 @@ function optionalUndefinedInstrs(ctx: CodegenContext, type: ValType): Instr[] {
   return undef;
 }
 
+/**
+ * (#7469) `Math?.PI?.(args)`: the `?.()` value call reads its callee from the namespace carrier, which holds only
+ * methods, so a constant comes from the native table instead. A number is neither nullish nor callable, so the call
+ * evaluates its arguments and throws a TypeError.
+ */
+function compileBuiltinConstantValueCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  namespace: string,
+): InnerResult | undefined {
+  const constant = builtinNamespaceConstantValue(namespace, propAccess.name.text);
+  if (constant === undefined || expr.questionDotToken === undefined) return undefined;
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  return compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess, () => {
+    fctx.body.push({ op: "f64.const", value: constant });
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+  });
+}
+
+/** `recv.m?.(args)`; `readCallee` pushes the callee in place of the default `[[Get]](recv, "m")`. */
 function compileOptionalPropertyValueCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
+  readCallee?: () => void,
 ): InnerResult {
   const externref: ValType = { kind: "externref" };
   const receiverType = compileExpression(ctx, fctx, propAccess.expression);
@@ -303,10 +330,6 @@ function compileOptionalPropertyValueCall(
   const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
   registerCalleeCallableGuard(ctx);
-  // (#7469) The namespace carrier holds only methods, so a constant (`Math.PI`) is read from the native table instead.
-  const receiverName = globalBuiltinName(ctx, fctx, propAccess.expression);
-  const constant = receiverName === undefined ? undefined : builtinNamespaceConstantValue(receiverName, methodName);
-  if (constant !== undefined) ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [externref]);
   const applyIdx = reserveApplyClosure(ctx);
   const vecBuilders = ensureObjVecBuilders(ctx);
   const arrayNewIdx = vecBuilders?.newIdx;
@@ -328,13 +351,12 @@ function compileOptionalPropertyValueCall(
     return externref;
   }
 
-  if (constant === undefined) {
+  if (readCallee !== undefined) {
+    readCallee();
+  } else {
     fctx.body.push({ op: "local.get", index: receiverLocal });
     fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
     fctx.body.push({ op: "call", funcIdx: resolvedGetIdx });
-  } else {
-    fctx.body.push({ op: "f64.const", value: constant });
-    coerceType(ctx, fctx, { kind: "f64" }, externref);
   }
   const calleeLocal = allocLocal(fctx, `__optprop_fn_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.tee", index: calleeLocal });

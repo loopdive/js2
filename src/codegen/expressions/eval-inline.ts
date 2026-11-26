@@ -1634,7 +1634,7 @@ function containsThisKeyword(root: ts.Node): boolean {
 /**
  * (#2924) Resolve whether an identifier named `Function` refers to the global
  * `Function` intrinsic (declared only in `.d.ts`) rather than a local shadow.
- * Mirrors `isGlobalEvalIdentifier` (eval-tiering.ts / calls.ts).
+ * Mirrors `isGlobalEvalIdentifier` (eval-tiering.ts / global-builtin-identifier.ts).
  */
 export function isGlobalFunctionIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): boolean {
   if (ident.text !== "Function") return false;

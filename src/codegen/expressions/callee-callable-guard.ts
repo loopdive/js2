@@ -9,10 +9,10 @@ import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureBoundaryCallableKind } from "../object-runtime.js";
 import { ensureLateImport } from "./late-imports.js";
 
-/** Register `__is_callable` before any funcIdx is captured; `undefined` when the module cannot provide it. */
-export function registerCalleeCallableGuard(ctx: CodegenContext): number | undefined {
+/** Register `__is_callable` before any funcIdx is captured; it is a native union helper, so every module has it. */
+export function registerCalleeCallableGuard(ctx: CodegenContext): void {
   ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
-  return ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
 }
 
 /** Throw a TypeError unless the externref in `calleeLocal` is callable; `__is_callable` also rejects a class value. */

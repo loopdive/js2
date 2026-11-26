@@ -75,11 +75,11 @@ export function tryEmitPatchedBuiltinStaticCall(
   // (#6957 review) IsCallable on the resolved callee: the carrier holds
   // whatever the program wrote (`Math.custom = 1` / `= null`), and the apply
   // bridge's null-sentinel fallback must never silently accept a non-callable.
-  const isCallableIdx = registerCalleeCallableGuard(ctx);
+  registerCalleeCallableGuard(ctx);
   reserveApplyClosure(ctx);
   ensureObjVecBuilders(ctx);
   flushLateImportShifts(ctx, fctx);
-  if (getIdx === undefined || isCallableIdx === undefined) return undefined;
+  if (getIdx === undefined) return undefined;
 
   const objLocal = allocLocal(fctx, `__patched_${ns}_obj_${fctx.locals.length}`, { kind: "externref" });
   if (emitBuiltinNamespaceObject(ctx, fctx, ns) === null) return undefined;

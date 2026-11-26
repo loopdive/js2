@@ -54,7 +54,7 @@ import { buildBigIntCarrierEqualityDefinition } from "../runtime/wasmgc/values/b
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isGlobalBuiltinIdentifier } from "./expressions/calls.js";
+import { isGlobalBuiltinIdentifier } from "./expressions/global-builtin-identifier.js";
 import { compileExpression } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitNativeBigIntFormat } from "./bigint-format-native.js";
