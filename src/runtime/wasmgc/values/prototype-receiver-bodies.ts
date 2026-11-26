@@ -47,7 +47,8 @@ export type PrototypeBrandRecipe = Generator<
   PrototypeBrandResponse
 >;
 const ENTRY_VALUE = 1;
-const I31_HEAP_TYPE = -20;
+/** The abstract `i31` heap type's immediate. */
+export const I31_HEAP_TYPE = -20;
 const OBJ_OFF = builtinBrandOffsetOf("Object")!;
 const ARR_OFF = builtinBrandOffsetOf("Array")!;
 const FUN_OFF = builtinBrandOffsetOf("Function")!;

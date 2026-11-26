@@ -59,7 +59,7 @@ import { reconcileParamWriteBack, writableGeneratorParamIndices } from "./genera
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
 import { addUnionImports, ensureI32Condition, resolveWasmType } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis, findOwnThisReference } from "../shared/body-references-own-this.js";
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { collectParamScopeEvalVarNames, readPossiblyBoxedLocal } from "./direct-eval-environment.js";

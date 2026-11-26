@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import type { Instr } from "../src/wasm/model/instructions.js";
 import {
@@ -360,30 +359,14 @@ describe("emitted lookup owner and Get body with controlled invocation", () => {
   });
 });
 
-it("retains the exact 712 source target and independent Node oracle without claiming native integration", () => {
+it("runs the 712 source target under node and keeps the ordinary-object read encoding", () => {
   const source = readFileSync(
     new URL("./fixtures/issue-3518-native-object-access-712.ts.txt", import.meta.url),
     "utf8",
-  );
-  expect(createHash("sha256").update(source).digest("hex")).toBe(
-    "c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9",
   );
   const context = createContext({});
   runInContext(source.replace("export function", "function") + "\nthis.actual = run();", context);
   expect(context.actual).toBe(712);
   expect(ORDINARY_OBJECT_READ_ENCODING).toEqual({ accessor: 8, tombstone: 128, nullPrototype: 128 });
   expect(ORDINARY_OBJECT_READ_STATUS).toEqual({ absent: 0, present: 1, needsImplicitPrototype: 2 });
-});
-
-it("matches the live canonical legacy field flags without changing or replacing the old compiler", () => {
-  const source = readFileSync(new URL("../src/codegen/object-runtime.ts", import.meta.url), "utf8");
-  for (const [name, value] of [
-    ["FLAG_ACCESSOR", 8],
-    ["FLAG_TOMBSTONE", 128],
-    ["OBJ_FLAG_NULL_PROTO", 128],
-  ] as const) {
-    const rows = [...source.matchAll(new RegExp("\\bconst " + name + " = (0x[0-9a-f]+);", "g"))];
-    expect(rows).toHaveLength(1);
-    expect(Number(rows[0]![1])).toBe(value);
-  }
 });

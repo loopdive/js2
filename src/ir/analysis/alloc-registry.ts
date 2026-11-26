@@ -24,6 +24,7 @@
 
 import { asAllocSiteId, type AllocKind, type AllocSiteId, type IrSiteId } from "../core/nodes.js";
 import { IR_CLASS_SHAPE_CELL, type IrType } from "../core/types.js";
+import { preparedValidationEnabled } from "../../shared/contracts/prepared-validation.js";
 import type {
   AllocSite,
   AllocRegistryProvenanceSnapshot,
@@ -36,6 +37,36 @@ export type {
   AllocRegistryMetadataSnapshot,
   AllocRegistrySnapshot,
 } from "./contracts/allocations.js";
+
+// With the Prepared self-checks off (#7380) the prototype chain answers. The thrown probes below also find the slot
+// when the prototype was replaced or erased, which only a forged input does.
+
+function hasDateSlot(value: object): boolean {
+  if (!preparedValidationEnabled()) return value instanceof Date;
+  // The intrinsic tests the Date slot without coercion or toStringTag access. NaN still proves an invalid Date.
+  try {
+    Reflect.apply(Date.prototype.getTime, value, []);
+    return true;
+  } catch (error) {
+    // Only the intrinsic's incompatible-receiver error means "not a Date".
+    if (!(error instanceof TypeError)) throw error;
+    return false;
+  }
+}
+
+function hasCollectionSlot(value: object): boolean {
+  if (!preparedValidationEnabled())
+    return value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet;
+  for (const has of [Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]) {
+    try {
+      Reflect.apply(has, value, [value]);
+      return true;
+    } catch {
+      /* Not this native collection. */
+    }
+  }
+  return false;
+}
 
 /**
  * Descriptor-based, graph-preserving capture within the internal preparation-data
@@ -50,17 +81,7 @@ export function copyIrPreparationData<T>(value: T): T {
     if (typeof value === "function" || typeof value === "symbol") invalid("executable/symbol value");
     if (value === null || typeof value !== "object") return value;
     if (copies.has(value)) return copies.get(value);
-    // The intrinsic tests the Date slot without coercion or toStringTag access,
-    // even when its prototype was erased. NaN still proves an invalid Date.
-    let date = false;
-    try {
-      Reflect.apply(Date.prototype.getTime, value, []);
-      date = true;
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      // Only the intrinsic's incompatible-receiver error means "not a Date".
-    }
-    if (date) invalid("unsupported Date instance");
+    if (hasDateSlot(value)) invalid("unsupported Date instance");
     const prototype = Object.getPrototypeOf(value);
     if (prototype === Map.prototype || prototype === Set.prototype) {
       if (Reflect.ownKeys(value).length) invalid("collection has extra properties");
@@ -77,17 +98,7 @@ export function copyIrPreparationData<T>(value: T): T {
       if (!Object.isExtensible(value)) Object.preventExtensions(copy);
       return copy;
     }
-    // Authenticate native collection slots even if somebody erased a prototype.
-    for (const has of [Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]) {
-      let native = false;
-      try {
-        Reflect.apply(has, value, [value]);
-        native = true;
-      } catch {
-        /* Not this native collection. */
-      }
-      if (native) invalid("unsupported collection prototype");
-    }
+    if (hasCollectionSlot(value)) invalid("unsupported collection prototype");
     const array = Array.isArray(value);
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)
       invalid("unsupported object instance");
@@ -286,6 +297,18 @@ export class AllocSiteRegistry {
     return id;
   }
 
+  /**
+   * (#7354 Fa) Re-type a live closure site whose `closure.new` a whole-function rewrite re-typed (the Prepared
+   * dynamic-value legalization's carrier form). The caller states the instruction's new closure type; a site of
+   * any other kind keeps the type it was allocated with.
+   */
+  retypeClosure(id: AllocSiteId, type: Extract<IrType, { kind: "closure" }>): void {
+    const entry = this.sites[id as number];
+    if (entry?.state !== "live" || entry.site.kind !== "closure")
+      throw new Error(`alloc registry: closure retype of site ${id}, which is not a live closure site`);
+    entry.site = { ...entry.site, type };
+  }
+
   /** True iff `id` indexes a known site (any state). */
   isKnown(id: AllocSiteId): boolean {
     const idx = id as number;
@@ -393,6 +416,15 @@ export class AllocSiteRegistry {
   /** Number of sites ever minted (including aliased/retired). For diagnostics. */
   get size(): number {
     return this.sites.length;
+  }
+
+  /**
+   * (#7354 U) Forget every site minted after the first `size`: a lowering the producer discards and repeats
+   * (`abort-bodies.ts`) leaves no site behind.
+   */
+  truncate(size: number): void {
+    this.sites.length = size;
+    this.meta.length = Math.min(this.meta.length, size);
   }
 
   /** Snapshot of live sites — for debugging / tooling, not hot paths. */

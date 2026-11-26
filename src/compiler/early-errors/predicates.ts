@@ -5,6 +5,7 @@
 // is individually unit-testable. None of these mutate shared state — they are
 // pure functions of the AST.
 import { ts, forEachChild } from "../../ts-api.js";
+import { skipTransparentExpressions } from "../../shared/transparent-expressions.js";
 
 export function findInnermostNodeAtPosition(node: ts.Node, position: number): ts.Node {
   let best: ts.Node = node;
@@ -233,17 +234,10 @@ export function isInvalidAssignmentTarget(node: ts.Expression, allowDestructurin
     if (ts.isObjectLiteralExpression(node)) return false;
     if (ts.isArrayLiteralExpression(node)) return false;
   }
-  let expr: ts.Node = node;
-  // (#4417) `!` is a TYPE-LEVEL assertion that erases at emit, so `o.n! = 1`
-  // and `arr[i]!++` are ordinary property/element assignments and must be
-  // accepted. Unwrapping only parens rejected both — 62 sites across the
-  // compiler's own source, including 16 `fctx.breakStack[i]!++` in
-  // codegen/statements/control-flow.ts.
-  //
-  // Deliberately unwrapped HERE, after the destructuring test above and not
-  // before it: that test must see the un-unwrapped node so `({}) = 1` stays
-  // the SyntaxError it is.
-  while (ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr)) expr = expr.expression;
+  // (#4417, #7394) The type-erased wrappers (`!`, `as`, `satisfies`, `<T>`) emit nothing, so `o.n! = 1`,
+  // `arr[i]!++` and `(x as number) += 1` are ordinary assignments. Unwrapped HERE, after the destructuring test
+  // above: that test must see the un-unwrapped node so `({}) = 1` stays the SyntaxError it is.
+  const expr = skipTransparentExpressions(node);
   // Valid: identifiers, property access, element access (parens are
   // transparent for these — `(x) = 1` / `(o.p) = 1` are valid).
   if (ts.isIdentifier(expr)) return false;
@@ -258,8 +252,7 @@ export function isInvalidAssignmentTarget(node: ts.Expression, allowDestructurin
  * CallExpression assignment targets are SyntaxErrors in strict mode per ES spec.
  */
 export function isCallExpressionTarget(node: ts.Node): boolean {
-  let expr: ts.Node = node;
-  while (ts.isParenthesizedExpression(expr)) expr = (expr as ts.ParenthesizedExpression).expression;
+  const expr = ts.isExpression(node) ? skipTransparentExpressions(node) : node;
   return (
     ts.isCallExpression(expr) &&
     expr.expression.kind !== ts.SyntaxKind.ImportKeyword &&
@@ -269,8 +262,8 @@ export function isCallExpressionTarget(node: ts.Node): boolean {
 
 /** Check if an expression involves optional chaining (?.) */
 export function hasOptionalChain(node: ts.Expression): boolean {
-  let expr: ts.Node = node;
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  // (#7394) `(o?.a as number) = 5` and `(o?.a!) = 5` are still optional-chain targets: the wrapper emits nothing.
+  const expr = skipTransparentExpressions(node);
   // TS models optional chains with questionDotToken
   if (
     (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr) || ts.isCallExpression(expr)) &&

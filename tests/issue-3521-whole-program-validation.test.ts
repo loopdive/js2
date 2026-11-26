@@ -100,7 +100,7 @@ describe("complete program validation", () => {
         ),
       },
     } as PreparedIrProgram;
-    expect(() => preparedIrProgramAbiLookup(contradictory)).toThrow("semantic contract kind");
+    expect(() => assertPreparedIrProgram(contradictory)).toThrow("semantic contract kind");
     expect(() => assertPreparedIrProgram({ ...program, ir: { functions: program.ir.functions.slice(1) } })).toThrow(
       "missing body",
     );

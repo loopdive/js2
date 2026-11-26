@@ -19,6 +19,7 @@ import {
 } from "../src/test262/test262-prepared-entry.js";
 import type { IrSourceId, IrUnitId } from "../src/shared/contracts/ir-identity.js";
 import { irModuleGlobalBindingId, irSourceGlobalRef } from "../src/ir/abi-bindings.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (fileName = "test.js", target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -51,6 +52,7 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, options(fileName));
   expect(
     messages(result).filter((message) => !/^Variable '\w+' is used before being assigned\.$/.test(message)),
@@ -66,8 +68,12 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string, fileName = "test.js", target: "standalone" | "gc" = "standalone") {
-  const result = await compile(source, options(fileName, target));
+  const result = await compile(source, options(fileName, target), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -108,6 +114,13 @@ describe("#7354 H — the dynamic home of a script var", () => {
         "a",
       ],
       ["written in a function and read at top level", "var x; function w() { x = 2; } w();", "x !== 2", "x !== 3"],
+      // (#7354 O3) A member write is no second declaration: the binding keeps its home, and the write lands.
+      [
+        "given a property by a member write",
+        "var o; o = { a: 1 }; function p() { o.a = 2; } p();",
+        "o.a !== 2",
+        "o.a !== 1",
+      ],
       [
         "written at top level and read in a function",
         "var x; function r() { return x; } x = true;",
@@ -149,14 +162,17 @@ describe("#7354 H — the dynamic home of a script var", () => {
         "y !== 2",
       ],
     ].map(([name, program, holds, fails]) => [name, program.replace("%s", HOISTED_X), holds, fails]),
-  )("runs a script var %s", async (_, program, holds, fails) => {
-    expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
-    expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
-  });
+  )(
+    "runs a script var %s",
+    async (_, program, holds, fails) => {
+      expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+      expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+    },
+    // (#7354 M1) a member write selects the realm: ~20 s per compile on this base
+    180_000,
+  );
 
   it.each([
-    // The startup plan gives every declarator its own binding id: a second declaration has no single global.
-    ["declared twice", "var x = 1; var x = 2;", NO_HOME],
     // Each script's module-init stores `undefined` into its own globals; a script that runs first would read null.
     ["declared in one of two scripts", ["var u; u = 1;", "var v; v = 2;"], NO_HOME],
     ["on the gc target (no dynamic carrier)", "var x; x = 1;", NO_HOME],
@@ -181,41 +197,18 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "var e = f(); var x = 1; function f() { return x; } function h(n: number) { return n; } h(x);",
       "a dynamic value flows into number without a conversion (CallExpression)",
     ],
-    // An operation on the dynamic value the legalization has no intrinsic for (slices Str and T).
-    ["added to", `${HOISTED_X}var y = 1; y = x + 1;`, "dynamic operation __ir_dyn_add has no Prepared intrinsic"],
+    // (#7354 Str2-c) `x + 1` on the dynamic home runs now (below).
     // (#7354 T) `x || 0` runs now (below).
-    // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
-    [
-      "given a property by a member write (slice O)",
-      "var o; o = 1; function p() { o.q = 2; }",
-      "property assignment on dynamic is not in slice 4",
-    ],
-    // `Object.defineProperty(o, …)` still counts as a declaration: the Prepared path admits no `Object` static yet,
-    // so the binding has no home and refuses by name instead of reaching from-ast's drift invariant.
-    [
-      "given a property by Object.defineProperty (slice O)",
-      'var obj = {}; Object.defineProperty(obj, "foo", { value: 1 });',
-      NO_HOME,
-    ],
-    ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
-    // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
-    [
-      "holding an object literal (slice O)",
-      "var o = { a: 1 };",
-      "proven dynamic binding 'o' initializer has no supported carrier",
-    ],
-    ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
-    [
-      "holding a function expression (slice Fa)",
-      "var f = function () {};",
-      "module-level closure binding 'f' not in module-init Slice 2 scope",
-    ],
+    // (#7354 O3) A member write on the binding runs now (below).
+    // (#7354 S, O1) `Object.defineProperty(o, …)` is no second declaration: the binding keeps its home, and the call
+    // runs (tests/issue-7354-s-script-var-define-target.test.ts).
+    // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it. Each binding is
+    // read, so the #3418 dead-binding elision (#7354 F0) keeps it.
+    // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
+    ["holding an array literal", "var arr = [1]; var r = arr;", "resolver cannot register vec for array literal"],
+    // (#7354 Fa) A function expression is stored now (tests/issue-7354-fa-function-values.test.ts).
+    // (#7354 F1b) A function declaration read as a value is stored now (tests/issue-7354-f1b-declaration-values.test.ts).
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],
-    [
-      "holding a function declaration (slice Fa)",
-      "function id(v) { return v; } var g = id;",
-      'identifier "id" is not in scope',
-    ],
     // An exported var is a host boundary (slice G), not a script var.
     ["exported", "export var x; x = 1;", "top-level global storage needs a numeric source classification"],
   ] as const)("refuses a script var %s", async (name, program, message) => {
@@ -270,10 +263,21 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "r !== null",
       "r === null",
     ],
-  ])("runs %s holding a dynamic home's value", async (_, program, holds, fails) => {
-    expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
-    expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
-  });
+    // (#7354 M1) The object kind (O2): this refused ("concrete return needs a dynamic box") before the port.
+    [
+      "an object literal returned from an unannotated function",
+      "function k() { return { a: 1 }; } var r = k();",
+      "r.a !== 1",
+      "r.a !== 2",
+    ],
+  ])(
+    "runs %s holding a dynamic home's value",
+    async (_, program, holds, fails) => {
+      expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+      expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+    },
+    180_000,
+  );
 
   // Review round 1: every binding and expression kind the provenance does not model answers "may be dynamic", so
   // its value meets a named refusal, never a typed slot it does not fit.
@@ -288,10 +292,17 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "function k() { var [a] = [x]; return a; } var r = k(); var x = 1;",
       "a dynamic value flows into [any] without a conversion",
     ],
-    ["a regular expression", "function k() { return /a/; } k();", "concrete return needs a dynamic box"],
-    ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
+    // (#7364) the Prepared path has no RegExp provider, so the literal itself refuses first
+    ["a regular expression", "function k() { return /a/; } k();", "RegExp literal has no provider"],
+    // (#7354 F1b) A function read as a value is a value now (tests/issue-7354-f1b-declaration-values.test.ts).
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
+  });
+
+  // (#7354 Str2-c) The dynamic home added to a number: the legalization's dynamic `+`.
+  it("runs the dynamic home added to a number", async () => {
+    expect(await run(`${HOISTED_X}var y = 1; y = x + 1;\nif (y !== 2 || e !== undefined) throw 1;`)).toBe("returned");
+    expect(await run(`${HOISTED_X}var y = 1; y = x + 1;\nif (y !== 3) throw 1;`)).toBe("threw");
   });
 
   // `void 0` is not modelled: the result is dynamic and still compares like JavaScript.

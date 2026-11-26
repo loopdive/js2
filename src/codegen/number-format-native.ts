@@ -56,6 +56,7 @@ import {
   buildNumberFormatToPrecisionBody,
   buildNumberFormatNativeAdapterBody,
   numberFormatSignatures,
+  numberToStringIntegerBeforeScratch,
 } from "../runtime/wasmgc/values/number-format-bodies.js";
 import type { NumberFormatStringTypes } from "../runtime/wasmgc/values/number-format-radix-bodies.js";
 
@@ -347,7 +348,7 @@ function emitToString(
     finalize: finalizeIdx,
     radix: radixIdx,
     ryuToBuffer: ryuToBufIdx,
-    integerBeforeScratch: process.env.JS2WASM_NUMBER_TO_STRING_INTEGER_FASTPATH !== "0",
+    integerBeforeScratch: numberToStringIntegerBeforeScratch(),
   });
   const typeIdx = addFuncType(ctx, signature.params, signature.results);
   const funcIdx = nextFuncIdx(ctx);

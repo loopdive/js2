@@ -1,7 +1,8 @@
 ---
 id: 7332
 title: "IR: a literal `null` in an f64 context (`-null`, `{ a: null }`) is claimed, then withdrawn"
-status: ready
+status: done
+completed: 2026-11-19
 sprint: Backlog
 created: 2026-11-07
 updated: 2026-11-07
@@ -13,6 +14,12 @@ task_type: bugfix
 area: ir
 goal: ir-full-coverage
 related: [7287, 7328, 7330, 7331]
+loc-budget-allow:
+  # 2026-11-19 (S8) — from-ast.ts +5: the null operand of a prefix operator
+  #   (lowerPrefixUnary); select.ts +4: the null-field refusal in the object
+  #   literal arm. Both sit in the arm they change.
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
 ---
 
 # #7332: `-null` and `{ a: null }` withdraw a claimed unit
@@ -61,3 +68,48 @@ from-ast's rule (`nullValueAdmissible` of the consumer's family), or lower
 ToNumber (`-null` is `-0`). An object-literal field needs a field
 representation that can hold `null`. Pin a bare compile of the four repros
 with `irPostClaimErrors` empty.
+
+## Implementation Plan
+
+Reproduced on main `ee3fcdd6` (2026-11-19), all three lanes, all four repros.
+
+Two producers, two answers:
+
+1. **Prefix operators — a real lowering (`lowerPrefixUnary`,
+   `src/ir/from-ast.ts`).** The operand is lowered under an f64 hint, which
+   `null` has no value for. `-`, `+` and `~` read ToNumber(null), +0, and `!`
+   reads a falsy value either way, so a `null` operand (through parentheses,
+   `skipOuterExpressions`) lowers as the f64 constant 0. `-null` is then
+   `f64.neg 0` = -0, as in JS. `~null` stays refused by its own selector arm
+   (`expr-tilde-nonnumeric`).
+2. **Object literal fields — an honest refusal (`src/ir/select.ts`).**
+   `lowerObjectLiteral` lowers every field value under an f64 hint and the IR
+   field types have no null-holding representation, so the selector refuses a
+   field any of whose yielded values (`everyYieldedValue`: conditional arms,
+   comma, `=`) is `null`: `objectlit-null-field`. A field representation that
+   holds `null` is a new mechanism (the object-literal open-object work), not
+   this fix.
+
+**Quality acceptance.** No new predicate: the field check reuses
+`everyYieldedValue`; the operand check reuses `skipOuterExpressions`.
+
+**Found on the way (not this issue).** With the `null` refusal removed,
+`var o; function h() { o = { a: 1 }; } h();` withdraws on main as well
+(`assignment to module binding "o" (dynamic) got object{a:f64}`): an object
+literal stored into a dynamic script var. Reported to the lead.
+
+**Tests.** `tests/issue-7332-null-into-number.test.ts`: `-null`, `-(null)`,
+`+null`, `!null` and the call-argument repro are IR, the `{ a: null }` repros
+and a conditional field are refused at selection, all with no post-claim
+error on standalone, wasi and gc; `-null` is -0, `+null` 0, `!null` true
+through the runner (standalone, gc).
+
+## Result
+
+700-file seeded ES5 sample (seed 7106, census population; standalone,
+original harness, compiled and run), base main `ee3fcdd6` vs this branch,
+2026-11-19: IR-only and passing 130 → 130, legacy units 1,261 → 1,261,
+post-claim errors 41 → 41, no verdict flip, no unit's refusal changed. The
+one `null` post-claim error in the sample, `language/types/null/S8.2_A3.js`,
+is `typeof(null)` in a condition, a different consumer, and stays. Bytes:
+100 files × standalone and gc identical to base.
