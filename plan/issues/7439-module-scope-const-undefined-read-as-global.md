@@ -40,57 +40,90 @@ lowering: const undefined = 42; …" and "retains the unsupported undefined read
 2. Without a resolver, a read of `undefined` that the checker does not prove global is refused.
 3. The two red tests pass unchanged.
 
-## Implementation Plan (2026-11-26, revised after the lead's decision: legacy fix in the same PR, one predicate)
+## Implementation Plan (2026-11-26, v3: answers the PRV-7439 blockers on d05f111c)
 
-**Reproduced** on `origin/main` c3b7be66 and 1a726b3e: `const undefined = 42; export function f(): number { return
-(undefined as any) + 1; }` returns NaN on gc and standalone, in the default and the legacy (`experimentalIR: false`)
-pipeline. In the default pipeline the IR claims only `<module-init>` (`irCompiledFuncs`), so `f` is legacy there too.
+**Reproduced** on `origin/main` c3b7be66 and 1a726b3e. Every shadowing form returns NaN today, in both pipelines, on gc
+and standalone; node returns the bound value. PRV-7439's matrix covers module `const` / `let` / `var`, a parameter, a
+local `var` / `let`, a catch parameter, module and local destructuring, and a closure capture. The IR also **claims**
+and answers wrong for two forms:
+
+- `var undefined: any = "x"; export function f() { return undefined }` returns undefined.
+- `function undefined() {}` with `typeof undefined === "function"` gives 0.
+
+The selector's rule `isGlobalUndefinedIdentifier` (`src/ir/analysis/operand-admissibility.ts:92`) trusts
+`isDirectModuleBinding`, which is false for a non-number `var` and for function and class declarations.
 
 **Causes.**
 
-1. Legacy: `compileExpressionInner` (`src/codegen/expressions.ts:1133`) emits the undefined value for every identifier
-   spelled `undefined`, shadowed or not. This is the wrong value in both pipelines today.
-2. IR: `classifyIdentifierRead` (`src/ir/identifier-read.ts`) answers `global-undefined` for an `undefined` with no
-   scope binding and no module binding, but "no module binding" proves nothing (no resolver, or a resolver that does
-   not track this name). `isUnshadowedGlobalExpression(…, "undefined")` (`from-ast.ts`) makes the same inference.
-   Only the discard arm (`from-ast.ts:2717`) proves it, with its own inline raw-checker query.
+1. Legacy `compileExpressionInner` (`src/codegen/expressions.ts:1133`) emits the undefined value for every identifier
+   spelled `undefined`.
+2. The IR has one rule, `isGlobalUndefinedIdentifier`, "the one rule the selector and the builder ask". Its "not a
+   direct module binding" test misses bindings, and several sites bypass the rule and test only the spelling and the
+   local name set: `select.ts` 3541, 3697, 4219, 11980, 12815, and `from-ast.ts` 2717 (with its own inline checker
+   proof), 8175 (`isUnshadowedGlobalExpression`) and 15948, plus `identifier-read.ts`'s `global-undefined` arm.
 
-**One predicate, over the oracle.** `isAmbientUndefinedRead(oracle, id)` in `src/checker/oracle.ts`, beside the
-other derived oracle helpers (`identifierWriteFact`): `id` reads the ambient global `undefined` exactly when it
-resolves (`!oracle.isUnresolvableIdentifier(id)`) and has no declaration (`oracle.declarationsOf(id).length === 0`).
-The ambient `undefined` is the one binding with a symbol and no declaration. Any `const` / `let` / `var` / parameter /
-function / import named `undefined` has one. No new `TypeOracle` method is needed, and both backends answer it: the
-checker oracle through the symbol, and the in-house oracle through its binder plus `GLOBAL_VALUE_NAMES`.
+**One three-valued answer, from the oracle.** New `TypeOracle` method
+`undefinedReadOf(id: ts.Identifier): "ambient" | "shadowed" | "unknown"`.
 
-**Callers.**
+- **Checker backend.**
+  - `ambient`: the symbol at `id` is the checker's ambient `undefined` (`resolveName("undefined", undefined, Value,
+    false)`) and its type is `undefined`. Because the symbol is the same one, a top-level script `var undefined` (no
+    effect per spec) stays `ambient`.
+  - `shadowed`: the symbol is a different binding declared in a non-declaration source file.
+  - `unknown`: anything else. That covers no symbol (inside `with` and on synthesized nodes, where
+    `getSymbolAtLocation` is undefined, as PRV measured), and `declare global { var undefined: number }`.
+- **In-house backend.** It disagrees with the checker (script `var`, `with`), so it answers only what its binder proves:
+  `shadowed` for a binding that is a function-scoped local, a parameter, or a declaration in a module file. Everything
+  else is `unknown`, never `ambient`.
 
-- Legacy, `expressions.ts:1133`: the arm applies only when `isAmbientUndefinedRead(ctx.oracle, expr)`. A shadowed read
-  falls through to the ordinary identifier path, which reads the binding like any other name.
-- IR, `identifier-read.ts`: `global-undefined` only when `cx.oracle` proves it; without an oracle, or when the proof
-  fails and no module binding resolved, the read is `unresolved`, the existing named refusal
-  (`identifier "undefined" is not in scope`).
-- IR, `from-ast.ts`: the discard arm (2717) and `isUnshadowedGlobalExpression`'s `undefined` case call the same
-  predicate. The inline `resolveName` / `getSymbolAtLocation` proof is deleted.
+The answer is one oracle method, not a composition of `declarationsOf` / `isUnresolvableIdentifier`, because only
+symbol identity tells the script-`var` case apart. Raw checker access stays inside the oracle, so the oracle ratchet
+does not grow.
 
-**Reuses / removes.** One proof instead of an inline raw-checker copy, a missing check in two IR places, and a missing
-check in legacy. No new oracle surface.
+**Callers. Each consumer uses the answer only in its safe direction.**
 
-**Not in scope.** `src/codegen` has 88 other syntactic `text === "undefined"` tests (counted on main 1a726b3e) (omitted-argument and
-default-parameter detection, `JSON.stringify` replacer, `parseInt` radix, and others). They decide how an argument is
-treated, not what value a read yields. Their callers can adopt the predicate later; I will list them in the PR.
+- **The rule.** `isGlobalUndefinedIdentifier(id, locals, undefinedReadOf)` keeps the local-name test and replaces
+  `isModuleBinding` with `undefinedReadOf(id) === "ambient"`. It is the only IR rule. The selector reaches the oracle
+  through its existing resolver (`IrModuleBindingResolver` gains `undefinedReadOf`, implemented by codegen over
+  `ctx.oracle`), and the builder through `cx.oracle`. With no oracle the answer is `unknown`, so the read is refused by
+  name, and the #7380 no-checker test stays red-free and unchanged.
+- **IR sites routed through the rule** (folding the duplicates):
+  - `select.ts` 3541, 3697, 4219, 11980, 12815 and the `isUnshadowedUndefinedIdentifier` wrapper (18 call sites,
+    unchanged callers);
+  - `from-ast.ts` 2717 (its inline `resolveName` / `getSymbolAtLocation` proof is deleted), `isUnshadowedGlobalExpression`'s
+    `undefined` case, and 15948;
+  - `identifier-read.ts`'s `global-undefined` arm.
 
-**Selection.** No selector change: the selector does not claim `f` today, and the IR refusal is the existing
-build-time one. If a shadowed read in an otherwise-claimed function now reaches it, the plan reviewer should say
-whether `select.ts`'s `dynNames.has("undefined")` checks need the predicate too (refuse at select, not after claim).
-I will measure claims on the sample to answer this.
+  The selector therefore refuses PRV's two claimed cases at select, before claiming.
+- **Legacy.** `expressions.ts:1133` keeps emitting the undefined value unless `ctx.oracle.undefinedReadOf(expr) ===
+  "shadowed"`; only then does it fall through to the ordinary identifier read. On `unknown` (`with` bodies, synthesized
+  nodes, the in-house backend) the bytes are today's.
+- **`shared/ambient-intrinsics.ts`.** `isUnshadowedUndefined` / `isUnshadowedGlobalConstant` stay. They are a checker-free,
+  file-wide syntactic under-approximation of `ambient` (nothing in the file declares the name), used by object-statics,
+  descriptor and buffer-operand admissibility over `undefined` / `NaN` / `Infinity`. They are sound as they are, and this
+  plan does not change them. Their doc gains one line pointing at the oracle answer as the precise form.
+
+**Not in scope (follow-ups, ids requested from the lead).**
+
+- Legacy sites that decide argument treatment from the spelling give wrong answers under shadowing too, as PRV
+  measured: `x === undefined` with a module `const undefined = 42` gives 0 (node: 43), and `g(undefined)` takes the
+  default parameter (8 instead of 43). There are 88 such syntactic tests in `src/codegen`.
+- An unrelated IR bug: `(void 0 as any) === (void 0)` is false on the default IR lane, while legacy gives true.
 
 **Acceptance.**
 
-- The program above returns 43 on gc and standalone, default and legacy. A function-local `let undefined = 1` read,
-  and a parameter named `undefined`, also return their values.
-- An unshadowed `undefined` is unchanged. Bytes are identical on a 100-file test262 sample × {default, standalone}
-  and the same × legacy, except files that declare a binding named `undefined`. List those files, with the reason.
-- Without a checker or oracle, an IR read of `undefined` is refused by name. The two #7380 tests in
-  `tests/issue-3518-native-family-source-identity.test.ts` pass unchanged.
-- Quality: one predicate used by every caller above; no inline checker query left at `from-ast.ts:2717`; no
-  oracle-ratchet growth.
+- PRV's shadow matrix returns node's value on gc and standalone, default and legacy. The two claimed cases are refused
+  at select (`irCompiledFuncs` excludes them), and their legacy answers match node.
+- A top-level script `var undefined = 5` still reads undefined.
+- Unshadowed `undefined` is unchanged. Bytes are identical on:
+  - a 100-file test262 sample × {default, standalone} and the same × legacy;
+  - every test262 file with a `with` statement that reads `undefined`;
+  - every file that declares a binding named `undefined`.
+
+  The exception is files with a `shadowed` read; each is listed with its reason.
+- The two #7380 tests in `tests/issue-3518-native-family-source-identity.test.ts` pass unchanged.
+- Quality:
+  - one oracle method and one IR rule;
+  - every listed spelling-only IR site goes through the rule;
+  - no inline checker query at `from-ast.ts:2717`;
+  - no oracle-ratchet growth.
