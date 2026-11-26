@@ -23,6 +23,7 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";
 import { isBuiltinTypeName } from "../builtin-tags.js";
 import { emitIsUndefF64, f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
@@ -320,17 +321,21 @@ function compileOptionalPropertyValueCall(
   fctx.body.push({ op: "call", funcIdx: resolvedNewIdx });
   const argsLocal = allocLocal(fctx, `__optprop_args_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.set", index: argsLocal });
-  for (const argument of expr.arguments) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, ts.isSpreadElement(argument) ? argument.expression : argument);
-    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
-    fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
+  // (#7430) A spread contributes its runtime element count, so it goes through the shared expander.
+  if (!tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, argsLocal, "__objvec_push", resolvedPushIdx)) {
+    for (const argument of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const argType = compileExpression(ctx, fctx, argument);
+      if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
+      fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
+    }
   }
   fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "local.get", index: receiverLocal });
   fctx.body.push({ op: "local.get", index: argsLocal });
-  fctx.body.push({ op: "call", funcIdx: resolvedCallIdx });
+  // Expanding a spread can register late imports, which shift a defined function's index: re-resolve it by name.
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? resolvedCallIdx });
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
 
