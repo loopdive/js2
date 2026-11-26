@@ -65,14 +65,16 @@ export function test262HarnessProviderCacheDir({ root, env = process.env, script
  *
  * It must match the body's option set (`compileHarnessLinkedBody`), or the pair
  * disagrees about the ABI it shares. (#6723 D4) Both sides carry the harness's
- * `hostBridge: "always"`. (#6979) Both compile under the native regime, the
- * only semantic implementation, so no policy option is spelled.
+ * `hostBridge: "always"`, and (#7453) its `exceptionKindExport`, so a payload
+ * the provider minted reads its kind there. (#6979) Both compile under the
+ * native regime, the only semantic implementation, so no policy option is spelled.
  *
  * @param {string | undefined} target
  */
 export function harnessProviderCompileOptions(target) {
   return {
     hostBridge: "always",
+    exceptionKindExport: true,
     allowJs: true,
     emitWat: false,
     skipSemanticDiagnostics: true,

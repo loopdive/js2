@@ -4389,6 +4389,8 @@ export function originalHarnessCompileOptions(meta: Test262Meta, target?: "stand
     // collapse onto opaque labels. This is the harness opt-in the flag was
     // designed around; do not drop it to "shrink the test binaries".
     hostBridge: "always",
+    // (#7453) The runtime-negative verdict reads a thrown payload's kind through `__exn_render_kind`.
+    exceptionKindExport: true,
   } as const;
 }
 
@@ -4669,7 +4671,6 @@ async function runOriginalHarnessVariant(
           meta.negative?.phase === "runtime" &&
           runtimeNegativeThrowAccepted(error, thrown, {
             expectedErrorType: meta.negative.type,
-            originalHarness: true,
             prepared: false,
           }),
         phase: "runtime",

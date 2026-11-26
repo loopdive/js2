@@ -56,7 +56,8 @@ export function test(): number {
 `;
 
 async function instantiateStandalone() {
-  const r = await compile(THROWING_MODULE, { target: "standalone" });
+  // (#7453) The test262 lanes compile with the kind export the runtime-negative verdict reads.
+  const r = await compile(THROWING_MODULE, { target: "standalone", exceptionKindExport: true });
   expect(r.success, r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   return instance;

@@ -1,14 +1,15 @@
 ---
 id: 7459
 title: "test262 worker: two remaining places score any throw of a runtime negative as a pass"
-status: ready
+status: done
 created: 2026-11-23
-updated: 2026-11-23
+updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 goal: ci-hardening
 sprint: Backlog
-related: [7354]
+related: [7354, 7453]
 ---
 
 # #7459 — test262 worker: two remaining places score any throw of a runtime negative as a pass

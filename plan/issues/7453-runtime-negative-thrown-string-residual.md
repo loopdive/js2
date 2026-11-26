@@ -1,14 +1,24 @@
 ---
 id: 7453
 title: "test262 runner: a thrown string \"TypeError: x\" still passes a runtime negative expecting TypeError"
-status: ready
+status: done
 created: 2026-11-22
-updated: 2026-11-22
+updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 goal: ci-hardening
 sprint: Backlog
-related: [7354]
+related: [7354, 7459]
+# 2026-11-26: the `exceptionKindExport` harness opt-in is one CompileOptions field, its
+# CodegenOptions/context fields and one pass-through line; keeping it an opt-in is what
+# keeps every production binary (JS environment and standalone) byte-identical.
+loc-budget-allow:
+  - src/index.ts
+  - src/codegen/context/types.ts
+  - src/compiler.ts
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #7453 — test262 runner: a thrown string "TypeError: x" still passes a runtime negative expecting TypeError
