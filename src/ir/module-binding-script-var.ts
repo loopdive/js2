@@ -31,7 +31,8 @@ import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var
 
 /**
  * Every write of the script var `declaration` anywhere in its source (its own initializer included), or `undefined`
- * when its name is a pattern or a `with` / direct `eval` could write it outside checker identity.
+ * when its name is a pattern, has no checker symbol, or a `with` / direct `eval` could write it outside checker
+ * identity.
  */
 export function scriptVarWrites(
   checker: ts.TypeChecker,
@@ -47,13 +48,17 @@ export function scriptVarWrites(
  * function declaration's name), on the Prepared path (module doc).
  */
 export function preparedBindingRewritten(checker: ts.TypeChecker, name: ts.Identifier): boolean {
-  return identifierWrites(checker, name).some((write) => write.target !== name);
+  const writes = identifierWrites(checker, name);
+  return writes === undefined || writes.some((write) => write.target !== name);
 }
 
-/** The identifier writes of the binding `name` declares, in its own file (`binding-write-index.ts`). */
-function identifierWrites(checker: ts.TypeChecker, name: ts.Identifier): readonly IdentifierWrite[] {
+/**
+ * The identifier writes of the binding `name` declares, in its own file (`binding-write-index.ts`), or `undefined`
+ * when the checker binds no symbol to the name (inside `with`): its writes are then unknown.
+ */
+function identifierWrites(checker: ts.TypeChecker, name: ts.Identifier): readonly IdentifierWrite[] | undefined {
   const binding = checker.getSymbolAtLocation(name);
-  return binding ? bindingWrites(checker, [name.getSourceFile()], binding) : [];
+  return binding && bindingWrites(checker, [name.getSourceFile()], binding);
 }
 
 /**
