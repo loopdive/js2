@@ -40,7 +40,8 @@
 // nothing about that row.
 //
 // Cache: `--cache <dir>` stores each run's output under a hash of this script,
-// the compiler tree's src/, the corpus and every input file, and replays it on
+// the compiler tree's src/, the corpus, every input file and the compiler's
+// environment switches (JS2WASM_*, IR_*, NODE_ENV), and replays it on
 // a hit, so a head-only change recompiles only the head tree. It caches whole
 // runs, not rows, because a row's bytes can depend on its chunk (#7410); a run
 // with a crash row is not cached, so a rerun retries it. A change outside src/
@@ -235,11 +236,12 @@ async function runChunk(compilerRoot: string, jobs: Job[], chunkPath: string, ou
   }
 }
 
-/** Keys a run for `--cache`: this script, the compiler tree's src/, the corpus and every input. */
+/** Keys a run for `--cache`: this script, the compiler tree's src/, the corpus, every input and the env switches. */
 function runKey(compilerRoot: string, corpus: string, jobs: Job[]): string {
+  const switches = Object.entries(process.env).filter(([name]) => /^(JS2WASM_|IR_|NODE_ENV$)/.test(name));
   const hash = createHash("sha256")
     .update(readFileSync(fileURLToPath(import.meta.url)))
-    .update(`\0${corpus}`);
+    .update(`\0${corpus}\0${JSON.stringify(switches.sort(([a], [b]) => (a < b ? -1 : 1)))}`);
   const src = join(compilerRoot, "src");
   for (const name of readdirSync(src, { recursive: true, encoding: "utf-8" }).sort())
     if (lstatSync(join(src, name)).isFile()) hash.update(`\0${name}\0`).update(readFileSync(join(src, name)));
