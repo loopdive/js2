@@ -17,8 +17,12 @@ related: [7354, 7106]
 # 2026-11-19 (review RV7321b, must-fix 1): src/ir/program-source.ts +1, the producer's filter by the shared
 # module-init global rule (`isModuleInitGlobalDeclaration`): an ES module's nested `var` / `for` head is a
 # module-init local, not a global. The rule itself lives in src/ir/module-init-vars.ts.
+# 2026-11-26 (slice 2a-1): src/codegen/expressions/identifiers.ts +4, formatting only. Its import of the Annex B
+# analysis now names the lifted module (src/ir/analysis/annexb-block-functions.ts); the longer path makes prettier
+# wrap the one-line import over five lines. No code added.
 loc-budget-allow:
   - src/ir/program-source.ts
+  - src/codegen/expressions/identifiers.ts
 ---
 
 # #7372 — Prepared IR path: script-scope mechanisms

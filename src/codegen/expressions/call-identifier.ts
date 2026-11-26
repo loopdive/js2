@@ -94,7 +94,7 @@ import {
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
 import { ensureHostFreeCallableResultHelper, hostFreeCallableResultBridge } from "./callable-result-unbox.js"; // (#7080)
-import { annexBDeclaringRange } from "../annexb-cancel.js";
+import { annexBDeclaringRange } from "../../ir/analysis/annexb-block-functions.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";

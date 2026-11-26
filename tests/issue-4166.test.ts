@@ -25,7 +25,7 @@
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { compile } from "../src/index.js";
-import { collectAnnexBCancelSites } from "../src/codegen/annexb-cancel.js";
+import { collectAnnexBCancelSites } from "../src/ir/analysis/annexb-block-functions.js";
 
 /**
  * Compile `body` at global scope surrounded by probes and return a bitmask:

@@ -63,7 +63,11 @@ import { reportError } from "../context/errors.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { moduleGlobalIsForeignToFunctionRead } from "./foreign-module-global-shadow.js";
-import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
+import {
+  annexBReadEscapesFunctionScope,
+  annexBReadIsUnbound,
+  collectAnnexBCancelSites,
+} from "../../ir/analysis/annexb-block-functions.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
   identifierIsWrittenTo,

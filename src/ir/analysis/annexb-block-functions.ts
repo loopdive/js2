@@ -1,4 +1,8 @@
 /**
+ * (#7372 slice 2) Lifted from `src/codegen/annexb-cancel.ts`, below the IR, so the legacy pipeline and the IR ask one
+ * Annex B analysis (as `ast-scope.ts` was lifted, #4601). Pure AST: a `ts.Node` in, an answer out. The one behaviour
+ * change of the lift is the CaseBlock rule below (`blockScopeStatements`).
+ *
  * (#3980) Annex B B.3.3 — "the web-compat extension is NOT observed when
  * creating the var binding would produce an Early Error".
  *
@@ -37,8 +41,8 @@
  * create a *new* binding and the existing one is still readable
  * (`*-skip-param`, `*-skip-early-err` without a suffix).
  */
-import ts from "typescript";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../../codegen/helpers/is-strict-function.js";
+import { ts } from "../../ts-api.js";
 
 export interface AnnexBCancelSite {
   /** The cancelled function-declaration name. */
@@ -96,6 +100,17 @@ function listBindsLexically(stmts: readonly ts.Statement[], name: string): boole
     if (ts.isClassDeclaration(s) && s.name?.text === name) return true;
   }
   return false;
+}
+
+/**
+ * (#7372) The statements whose declarations a block-like scope binds: a Block's own, or every clause of a `switch`'s
+ * CaseBlock, whose LexicallyDeclaredNames span all its clauses (a `let F` in a sibling clause binds `F` for the whole
+ * CaseBlock). `undefined` for any other node.
+ */
+function blockScopeStatements(node: ts.Node): readonly ts.Statement[] | undefined {
+  if (ts.isBlock(node)) return node.statements;
+  if (ts.isCaseBlock(node)) return node.clauses.flatMap((clause) => clause.statements);
+  return undefined;
 }
 
 /** Does a `for`/`for-in`/`for-of` head lexically bind `name`? */
@@ -249,8 +264,8 @@ export function hasInterveningLexicalBinder(from: ts.Node, name: string, scope: 
   let node: ts.Node | undefined = from;
   let child: ts.Node | undefined;
   while (node && node !== scope) {
-    if (ts.isBlock(node) && listBindsLexically(node.statements, name)) return true;
-    if ((ts.isCaseClause(node) || ts.isDefaultClause(node)) && listBindsLexically(node.statements, name)) return true;
+    const statements = blockScopeStatements(node);
+    if (statements && listBindsLexically(statements, name)) return true;
     // A loop head only binds inside the loop BODY, not in its own initializer.
     if (child && (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node))) {
       if ((node as ts.IterationStatement).statement === child && loopHeadBindsLexically(node, name)) return true;
@@ -314,11 +329,11 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
   if (listBindsLexically(block.statements, name)) return block;
 
   // Walk up from the holding block to the enclosing fn/global, checking each
-  // intervening Block / case clause for a lexical binding.
+  // intervening Block / CaseBlock for a lexical binding.
   let node: ts.Node = block.parent;
   while (node && !isVarScopeBoundary(node)) {
-    if (ts.isBlock(node) && listBindsLexically(node.statements, name)) return block;
-    if ((ts.isCaseClause(node) || ts.isDefaultClause(node)) && listBindsLexically(node.statements, name)) return block;
+    const statements = blockScopeStatements(node);
+    if (statements && listBindsLexically(statements, name)) return block;
     node = node.parent;
   }
   return null;
@@ -505,11 +520,7 @@ function boundByInterveningScope(id: ts.Identifier, name: string, scopeStart: nu
     // by a SAME-NAMED Annex B site in a DIFFERENT sibling function (react's
     // repeated ParentComponent/ComponentRendering* test components), throwing
     // "X is not defined" for a perfectly bound read.
-    const blockStatements = ts.isBlock(node)
-      ? node.statements
-      : ts.isCaseClause(node) || ts.isDefaultClause(node)
-        ? node.statements
-        : undefined;
+    const blockStatements = blockScopeStatements(node);
     if (blockStatements !== undefined) {
       if (listBindsLexically(blockStatements, name)) return true;
       for (const stmt of blockStatements) {

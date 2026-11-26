@@ -129,7 +129,7 @@ import {
   annexBUpdatesExistingVarBinding,
   enclosingVarScope,
   hasInterveningLexicalBinder,
-} from "../annexb-cancel.js";
+} from "../../ir/analysis/annexb-block-functions.js";
 import { emitArgumentsVecTail, emitRestArgs, prepareRestArgs } from "../arguments-vector-tail.js";
 import {
   beginNestedFunctionNameScope,

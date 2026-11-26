@@ -41,7 +41,11 @@
 
 import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { annexBDeclaringRange, enclosingVarScope, hasInterveningLexicalBinder } from "./annexb-cancel.js";
+import {
+  annexBDeclaringRange,
+  enclosingVarScope,
+  hasInterveningLexicalBinder,
+} from "../ir/analysis/annexb-block-functions.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
