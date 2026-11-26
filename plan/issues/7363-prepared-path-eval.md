@@ -599,4 +599,5 @@ run-time test and asks a static proof that already exists.
   - The static SyntaxError throw adds 3. Total: 15.
   - The earlier "A4 alone 18" was an estimate made another way; this measurement replaces it.
 - **Size (estimate).** `lowerCall` arm about 15 lines, the capability about 5, the admission fallback about 15, the
-  call of the called unit about 25. One test file for the pins.
+  call of the called unit about 25, the sloppy-`this` predicate about 20, `DeleteExpression` 3. One test file for
+  the pins.
