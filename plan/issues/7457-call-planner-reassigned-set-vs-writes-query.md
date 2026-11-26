@@ -21,3 +21,10 @@ Two analyses answer "is this function binding reassigned": the call planner's `r
 
 - One analysis, used by the planner and by the Prepared queries.
 - Ordinary-pipeline output byte-identical.
+
+## Implementation Plan
+
+Planned together with #7455: one binding-write index per source file. See
+`## Implementation Plan` in `plan/issues/7455-open-object-home-name-based-whole-program-scan.md`. This issue is
+slice 2 there: the planner's private write scanner in `src/ir/imported-functions.ts` is replaced by the shared
+index, after a committed differential test lists and classifies every disagreement.
