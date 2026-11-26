@@ -66,6 +66,8 @@ describe("semantic native realm catalog and real selected demands", () => {
     ).toEqual([
       "%Function.prototype%",
       "%ThrowTypeError%",
+      // (#7354 W2) Object as a value
+      "%Object%",
       // (#7354 O1) the Object statics whose call form the Prepared path lowers
       "%Object.create%",
       "%Object.defineProperties%",
@@ -84,6 +86,16 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%SyntaxError%",
       "%TypeError%",
       "%URIError%",
+      // (#7354 W2) the wrapper constructors and their valueOf / toString
+      "%String%",
+      "%String.prototype.toString%",
+      "%String.prototype.valueOf%",
+      "%Number%",
+      "%Number.prototype.toString%",
+      "%Number.prototype.valueOf%",
+      "%Boolean%",
+      "%Boolean.prototype.toString%",
+      "%Boolean.prototype.valueOf%",
     ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);

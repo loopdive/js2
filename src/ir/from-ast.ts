@@ -7691,7 +7691,7 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
   if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
     return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
   // (#7354 T, W2) The Prepared lane binds no `js.number.from-value`; its carrier's ToNumber is the legalized one.
-  if (functionObjects.createsFunctionObjects(cx.resolver))
+  if (functionObjects.createsFunctionObjects(cx.resolver) && (type.kind === "dynamic" || type.kind === "string"))
     return cx.builder.emitDynToNumber(
       functionObjects.dynamicStoreOperand(first, expr.arguments[0]!, functionObjectLoweringHost(cx), "Number argument"),
     );

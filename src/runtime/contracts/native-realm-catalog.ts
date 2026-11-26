@@ -385,9 +385,9 @@ const WRAPPER_FAMILIES: Readonly<Record<NativeWrapperConstructor, Family>> = {
     name: "Number",
     requires: ["ToNumeric", "OrdinaryCreateFromConstructor"],
     statics: [
-      ["isFinite", 1, []],
+      ["isFinite", 1, ["IsFiniteNumber"]],
       ["isInteger", 1, ["IsIntegralNumber"]],
-      ["isNaN", 1, []],
+      ["isNaN", 1, ["IsNaN"]],
       ["isSafeInteger", 1, ["IsIntegralNumber"]],
       ["parseFloat", 1, ["ToString", "TrimString"]],
       ["parseInt", 2, ["ToString", "TrimString", "ToInt32"]],

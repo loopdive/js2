@@ -167,9 +167,10 @@ describe("#7354 M1 — refusals that stay", () => {
     // (#7354 O1) Object.defineProperty and its three siblings run (tests/issue-7354-o1-*); a static the catalog does
     // not mark native stays refused.
     [
+      // (#7354 W2) `Object` is a value; its static the realm lacks is a call through a value, which needs a dispatcher.
       "G45: an Object static that is not native",
       "var o = {}; Object.freeze(o);",
-      'ir/from-ast: identifier "Object" is not in scope in <module-init>',
+      gapText("js.closure.call:1 in a program that creates no function value"),
     ],
     [
       "F41: a switch over a member",
