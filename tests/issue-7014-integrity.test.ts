@@ -122,6 +122,19 @@ describe("#7014 detector integrity beyond assertion verdicts", () => {
     expect(rows[1]).toEqual({ event: "run-end", reason: "failed", errors: ["unhandled rejection"] });
   });
 
+  it("the pinned reporter names the file and test vitest tagged an unhandled error with (#7501)", () => {
+    const rows: any[] = [];
+    const reporter = new KnownFailuresReporter();
+    reporter.write = (row: any) => rows.push(row);
+    const tagged = Object.assign(new Error('[vitest-worker]: Timeout calling "onTaskUpdate"'), {
+      VITEST_TEST_PATH: file,
+      VITEST_TEST_NAME: "slow compile",
+    });
+    reporter.onTestRunEnd([], [tagged, { message: "untagged" }], "failed");
+    expect(rows[0].errors[0].startsWith(`[${file} > slow compile] Error: [vitest-worker]`)).toBe(true);
+    expect(rows[0].errors[1]).toBe("untagged");
+  });
+
   it("real Vitest file hooks and unhandled errors survive the crash-safe runner", async () => {
     const root = scratch();
     symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "dir");

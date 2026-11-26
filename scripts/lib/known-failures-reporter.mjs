@@ -73,6 +73,17 @@ function toEntry(file) {
   };
 }
 
+/**
+ * (#7501) An unhandled error stays unattributed, and the gate still refuses it. vitest tags the errors a worker
+ * catches (an unhandled rejection, a worker RPC timeout) with the file and test that worker was running; the record
+ * keeps that tag so the refusal names the file to fix.
+ */
+function describeUnhandledError(error) {
+  const text = error?.stack || error?.message || String(error);
+  const where = [error?.VITEST_TEST_PATH, error?.VITEST_TEST_NAME].filter(Boolean).join(" > ");
+  return where ? `[${where}] ${text}` : text;
+}
+
 export default class KnownFailuresReporter {
   constructor() {
     this.out = process.env.KNOWN_FAILURES_PROGRESS || "";
@@ -105,7 +116,7 @@ export default class KnownFailuresReporter {
     this.write({
       event: "run-end",
       reason,
-      errors: unhandledErrors.map((error) => error.stack || error.message || String(error)),
+      errors: unhandledErrors.map(describeUnhandledError),
     });
   }
 
