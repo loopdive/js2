@@ -36,8 +36,8 @@ const EQUALITY: ReadonlySet<ts.SyntaxKind> = new Set([
 
 /**
  * (#7354 L0a) On the Prepared lane, whether a comparison takes the carrier: every pair except two dynamic values (the
- * front end's dynamic arm already has them) and the typed fast paths, which are two scalars of one kind (two numbers)
- * and two strings under an equality operator. A string relational, a string against a non-string, two scalars of
+ * front end's dynamic arm already has them) and the typed fast paths, which are two numeric scalars of one kind (two
+ * numbers) and two strings under an equality operator; an `externref` scalar is an object value, not a number. A string relational, a string against a non-string, two scalars of
  * different kinds (a Boolean against a number) and an object or function operand are JavaScript's coercions, which the
  * carrier's legalization implements.
  */
@@ -51,7 +51,7 @@ export function comparisonTakesCarrier(
   if (lt.kind === "dynamic" && rt.kind === "dynamic") return false;
   if (lt.kind === "string" && rt.kind === "string") return RELATIONAL.has(op);
   const [lv, rv] = [asVal(lt), asVal(rt)];
-  return lv === null || rv === null || lv.kind !== rv.kind;
+  return lv === null || rv === null || lv.kind !== rv.kind || lv.kind === "externref";
 }
 
 /**
