@@ -46,7 +46,6 @@ function constructorUnit(inventory: IrUnitInventory, classId: IrClassId | undefi
   );
 }
 
-/** Why a top-level class cannot be compiled on this path, or undefined. */
 function classRefusal(
   statement: ts.ClassDeclaration,
 ): { readonly code: IrUnsupportedCode; readonly detail: string } | undefined {

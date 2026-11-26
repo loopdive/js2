@@ -52,7 +52,6 @@ export function locatedFailure(
 /** The owner of a failure: a unit, or (`unitId: null`) source text no unit owns. */
 type FailureOwner = Omit<PreparedIrProgramOwner, "unitId"> & { readonly unitId: IrUnitId | null };
 
-/** `node` of source `sourceId` as the owner of a refusal of source text that no unit owns. */
 export function sourceOwner(
   inventory: IrUnitInventory,
   sourceId: IrSourceId | undefined,

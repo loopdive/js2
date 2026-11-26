@@ -48,6 +48,9 @@ describe("#7500 — Prepared path refuses class and unresolved exports by name",
     ["class C {} export { C }; export { C as D };"],
     ["class C {} { let C = 1; } export { C };"],
     ["class C { static m() {} } export { C };"],
+    // Precedence: a name bound by a top-level destructuring pattern has no target either, and is refused here first.
+    ["var [a] = [1]; export { a };"],
+    ["let { b } = { b: 1 }; export { b };"],
     // #7508: no unit at all in these files; the refusal is located at the specifier.
     ["import { a } from './m'; export { a };"],
     ["import * as m from './m'; export { m };"],
