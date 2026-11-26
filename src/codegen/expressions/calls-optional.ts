@@ -208,11 +208,19 @@ export function compileOptionalCallExpression(
   // closure field, push self + args, `call_ref` — and already normalizes a
   // nullable receiver via a guarded cast. The receiver is the one already held
   // for the nullish test, so a live property chain is not evaluated twice.
+  // (#7430) `o?.f?.(args)` also short-circuits on the field VALUE, which the
+  // typed call cannot do (an undefined field traps it): past the receiver test
+  // it is the `o.f?.(args)` call on the held receiver, whose `undefined` result
+  // the receiver's short-circuit must match.
+  let calleeValueCall = false;
   if (!methodResolved && isSupportedOptionalCallableReceiverShape(propAccess.expression)) {
     const structName = resolveStructName(ctx, tsReceiverType);
     if (structName) {
+      calleeValueCall = expr.questionDotToken !== undefined;
       const delegated = withPreEvaluatedExpression(fctx, propAccess.expression, tmp, () =>
-        compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName),
+        calleeValueCall
+          ? compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess)
+          : compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName),
       );
       if (delegated !== undefined) {
         resultType = settleDelegatedResult(fctx, delegated, resultType);
@@ -232,7 +240,7 @@ export function compileOptionalCallExpression(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultType },
-    then: ladderReceiver ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
+    then: ladderReceiver || calleeValueCall ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
     else: elseInstrs,
   });
 
