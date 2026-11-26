@@ -59,6 +59,12 @@ jobs:
       # preserves its pre-#4242 outcomes. The dedicated QuickJS workflow tests
       # the default; selector tests delete this env when asserting that default.
       JS2WASM_EVAL_ENGINE: interpreter
+      # (#7501) Every run since #7014 refused at the gate's integrity step, chiefly on unattributed
+      # `[vitest-worker]: Timeout calling "onTaskUpdate"` errors (9 of 13 in run 45760154331).
+      # Hypothesis: CPU contention from 3 forks per 150-file invocation on a 4-vCPU runner. Fewer forks
+      # and smaller batches are measured against that run. The gate still refuses unattributed errors.
+      KNOWN_FAILURES_MAX_FORKS: "2"
+      KNOWN_FAILURES_BATCH: "50"
     strategy:
       fail-fast: false
       # max-parallel keeps runners free for PR-critical jobs (test262 shards,
