@@ -377,14 +377,19 @@ function adapterRefusal(entryFile: string, code: string, detail: string, message
     { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
   ]);
 }
+/** Compile a source graph with its analysis; `added` of its scripts are the entry's literal dynamic-code texts. */
+type GraphCompile = (graph: Record<string, string>, ast: MultiTypedAST, added: number) => CompileResult;
 /**
- * (#7363, #7487) `files` plus one script per qualifying literal dynamic-code site of the entry (`<eval:N>.js`,
- * `<function:N>.js`), with its analysis, when the scripts add nothing that fails the compile and change no other
- * source's diagnostics; otherwise `files` and `without`, its analysis, and every site keeps its refusal at select. A
- * script fails the compile exactly as a JavaScript entry does, through the compile's own gates: a syntax error outside
- * the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a read of an
- * undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member store in
- * it declares a JS expando property of a caller binding; such a change names no text, so then none joins.
+ * (#7363, #7487) The compile of `files` plus one script per qualifying literal dynamic-code site of the entry
+ * (`<eval:N>.js`, `<function:N>.js`), when the scripts add nothing that fails the compile's gates and change no other
+ * source's diagnostics, and that compile succeeds; otherwise the compile of `files` with `without`, its analysis,
+ * where every site keeps its refusal at select. A script fails the gates exactly as a JavaScript entry does: a syntax
+ * error outside the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a
+ * read of an undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member
+ * store in it declares a JS expando property of a caller binding; such a change names no text, so then none joins.
+ * (A4) A failure with the texts does not name its cause either: a text the IR cannot lower fails the program even
+ * where its site never runs, so the program is then the one without them. When that fails too, the failure with the
+ * texts is the answer: it names the site's own refusal.
  */
 function withLiteralDynamicCodeSources(
   files: Record<string, string>,
@@ -392,8 +397,9 @@ function withLiteralDynamicCodeSources(
   texts: readonly LiteralDynamicCodeText[],
   analyze: (graph: Record<string, string>) => MultiTypedAST,
   options: Test262CompileOptions,
-): { readonly graph: Record<string, string>; readonly ast: MultiTypedAST } {
-  if (texts.length === 0) return { graph: files, ast: without };
+  compileGraph: GraphCompile,
+): CompileResult {
+  if (texts.length === 0) return compileGraph(files, without, 0);
   const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
   const codeNames = new Set(texts.map(({ name }) => normalizeMultiFileName(name)));
   const graph: Record<string, string> = Object.create(null);
@@ -426,7 +432,11 @@ function withLiteralDynamicCodeSources(
   const quiet =
     !ast.sourceFiles.some((source) => isCodeSource(source) && failsCompile(source)) &&
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
-  return quiet ? { graph, ast } : { graph: files, ast: without };
+  if (!quiet) return compileGraph(files, without, 0);
+  const joined = compileGraph(graph, ast, texts.length);
+  if (joined.success) return joined;
+  const alone = compileGraph(files, without, 0);
+  return alone.success ? alone : joined;
 }
 function present(
   files: Record<string, string>,
@@ -485,7 +495,27 @@ function present(
       "prepared-reserved-dynamic-function-prefix",
       "identifier uses the reserved dynamic-function prefix",
     );
-  const { graph, ast } = withLiteralDynamicCodeSources(analyzedFiles, analyzedAst, codeTexts, analyze, options);
+  const request: PresentRequest = { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies };
+  return withLiteralDynamicCodeSources(analyzedFiles, analyzedAst, codeTexts, analyze, options, (graph, ast, added) =>
+    presentAnalyzed(request, graph, ast, added),
+  );
+}
+/** What `present` was asked, for each graph it compiles. */
+interface PresentRequest {
+  readonly exactFiles: Record<string, string>;
+  readonly entryFile: string;
+  readonly options: Test262CompileOptions;
+  readonly singleSource: boolean;
+  readonly profile: ReturnType<typeof resolveCompileTargetProfile>;
+  readonly unlowerableBodies: UnlowerableBodies;
+}
+/** `present`'s compile of one analyzed graph, whose last `added` scripts are the entry's literal dynamic-code texts. */
+function presentAnalyzed(
+  { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies }: PresentRequest,
+  graph: Record<string, string>,
+  ast: MultiTypedAST,
+  added: number,
+): CompileResult {
   if (!completeAnalyzedGraph(graph, entryFile, ast))
     return adapterRefusal(
       entryFile,
@@ -493,7 +523,7 @@ function present(
       "frontend did not retain the complete supplied name/text graph",
     );
   const literalDynamicCodeSources =
-    graph === analyzedFiles ? [] : pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, codeTexts.length);
+    added === 0 ? [] : pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, added);
   // (#7363) A dynamic-code source's supplied text is its own; the entry's is the unelided one.
   const supplied = new Map(
     [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [

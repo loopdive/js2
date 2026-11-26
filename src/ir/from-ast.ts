@@ -63,6 +63,7 @@ import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
+import { refuseImmutableWrite } from "./const-binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -596,8 +597,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
   /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
-  /** (#7363 A2) This direct eval's literal text is a called script of the program (`literal-dynamic-code.ts`). */
-  literalEvalHasCalledSource?(call: ts.CallExpression): boolean;
+  /**
+   * (#7363 A2) The module-init of the called script that holds this direct eval's literal text
+   * (`literal-dynamic-code.ts`): `null` when the text runs nothing; undefined when the call has no such script.
+   */
+  literalEvalCalledInit?(call: ts.CallExpression): IrFuncRef | null | undefined;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -1021,6 +1025,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
+  /** (#7363 A4) Some sloppy function lets its ambient `this`, the global object on a plain call, escape. */
+  ambientThisMayBeGlobal?(): boolean;
   /** (#7354 U) The function's body is the run-time abort (`abort-bodies.ts`); its statements are not lowered. */
   abortedBody?(fn: ts.FunctionLikeDeclaration): boolean;
   /**
@@ -7745,6 +7751,30 @@ function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null 
   return null;
 }
 
+/**
+ * (#7363 A4) A literal direct eval runs its text, a called script of the program (`init`: its module-init, `null` when
+ * the text runs nothing), while the global `eval` is the realm's %eval%. That holds at every site when no source
+ * rebinds `eval` (`isPristineBuiltinGlobal`) and no sloppy function lets the global object escape through its `this`
+ * (`ambientThisMayBeGlobal`), which would write it unseen. The site's completion value is A5's.
+ */
+function lowerLiteralEvalCall(
+  expr: ts.CallExpression,
+  init: IrFuncRef | null,
+  statementPosition: boolean,
+  cx: LowerCtx,
+): null {
+  const gap = !statementPosition
+    ? "its completion value needs #7363 A5"
+    : cx.resolver?.isPristineBuiltinGlobal?.(expr.expression as ts.Identifier) !== true ||
+        cx.resolver?.ambientThisMayBeGlobal?.() !== false
+      ? "the global eval is not pristine (#7363 A4)"
+      : undefined;
+  if (gap !== undefined)
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval literal: ${gap} in ${cx.funcName}`);
+  if (init !== null) cx.builder.emitCall(init, [], null);
+  return null;
+}
+
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7814,12 +7844,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // call; the backend emits the mandated Wasm `drop` for its externref result.
     return result;
   }
-  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier)) {
-    const gap = cx.resolver?.literalEvalHasCalledSource?.(expr)
-      ? "eval literal has a called source; its call needs the %eval% identity test (#7363 A4)"
-      : "eval statement has no eval provider";
-    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: ${gap} in ${cx.funcName}`);
-  }
+  const literalEvalInit = cx.resolver?.literalEvalCalledInit?.(expr);
+  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(expr, literalEvalInit, statementPosition, cx);
+  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier))
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
     expression: expr,
     statementPosition,
@@ -13202,15 +13230,8 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
   return functionObjects.storedCarrierValue(value, rhs, functionObjectLoweringHost(cx));
 }
 
-/**
- * A write to a binding the mutation pre-pass gave no slot. (#7354 T) A named function expression's own name is such a
- * binding by design: immutable (§9.1.1.1.5), so a sloppy write is ignored and a strict one throws; it refuses by name.
- * Anything else is the pre-pass's broken promise.
- */
+/** A write to a binding the mutation pre-pass gave no slot: the pre-pass's broken promise. */
 function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): never {
-  const declaration = cx.checker?.getSymbolAtLocation(id)?.valueDeclaration;
-  if (declaration && ts.isFunctionExpression(declaration))
-    demoteToLegacy("property-write-unsupported", `ir/from-ast: write to the function expression name "${id.text}"`);
   // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
   throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
 }
@@ -13220,6 +13241,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
   }
+  refuseImmutableWrite(id, "assignment to", cx);
   const binding = cx.scope.get(id.text);
   if (!binding) {
     const readable = cx.resolver?.resolveModuleBinding?.(id);
@@ -13346,6 +13368,7 @@ function lowerCompoundAssignment(
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
   }
+  refuseImmutableWrite(id, "compound assignment to", cx);
   const binding = cx.scope.get(id.text);
   if (!binding) {
     demoteToLegacy(
@@ -13520,6 +13543,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
     return;
   }
+  refuseImmutableWrite(id, "increment/decrement of", cx);
   const binding = cx.scope.get(id.text);
   if (!binding) {
     demoteToLegacy(

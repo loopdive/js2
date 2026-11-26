@@ -44,10 +44,12 @@ const gaps = async (source: string) =>
     .map((error) => error.message);
 
 describe("#7363 slice 1 — an eval statement on the Prepared path refuses by name", () => {
-  // A top-level literal that declares nothing is a called source since #7363 A2: still refused, with its own label.
-  it("refuses a literal at top level as a site with a called source", async () => {
-    expect(await gaps('eval("1");')).toEqual([
-      "ir/from-ast: eval literal has a called source; its call needs the %eval% identity test (#7363 A4) in <module-init>",
+  // A top-level literal that declares nothing is a called source since #7363 A2, and A4 lowers it while the global
+  // `eval` is pristine; a rebound `eval` refuses it with A4's own label.
+  it("lowers a literal at top level as a site with a called source", async () => {
+    expect(await gaps('eval("1");')).toEqual([]);
+    expect(await gaps('eval("1");\neval = 0;')).toEqual([
+      "ir/from-ast: eval literal: the global eval is not pristine (#7363 A4) in <module-init>",
     ]);
   });
 

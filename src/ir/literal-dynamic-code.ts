@@ -87,24 +87,24 @@ export function pairLiteralDynamicCodeSources(
 
 /**
  * The receipt: each row's site is a qualifying site of its kind in the entry, its source is a script of the program
- * whose text is the site's, and no site or source occurs twice. Returns the related eval calls, every related source
- * and the called ones among them (an eval's: its call site runs it), and each source's dependency on the entry, which
- * holds its site: the inventory orders a source after its dependencies, so the entry is planned and lowered before the
- * texts it runs, whatever the names sort to.
+ * whose text is the site's, and no site or source occurs twice. Returns each related eval call's source, every
+ * related source and the called ones among them (an eval's: its call site runs it), and each source's dependency on
+ * the entry, which holds its site: the inventory orders a source after its dependencies, so the entry is planned and
+ * lowered before the texts it runs, whatever the names sort to.
  */
 export function verifyLiteralDynamicCodeSources(
   rows: readonly LiteralDynamicCodeSource[] | undefined,
   sourceFiles: readonly ts.SourceFile[],
   entry: ts.SourceFile,
 ): {
-  readonly evalCalls: ReadonlySet<ts.CallExpression>;
+  readonly evalCalls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
   readonly sources: ReadonlySet<ts.SourceFile>;
   readonly calledSources: ReadonlySet<ts.SourceFile>;
   readonly dependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>;
 } {
   const qualifying = new Map(qualifyingSites(entry).map((row) => [row.site, row]));
   const sites = new Set<ts.Node>();
-  const evalCalls = new Set<ts.CallExpression>();
+  const evalCalls = new Map<ts.CallExpression, ts.SourceFile>();
   const sources = new Set<ts.SourceFile>();
   const calledSources = new Set<ts.SourceFile>();
   for (const { site, kind, source } of rows ?? []) {
@@ -124,7 +124,7 @@ export function verifyLiteralDynamicCodeSources(
     if (expected?.kind !== kind) refused(`the site is not a qualifying ${kind} site`);
     if (expected!.text !== source.text) refused("the source text is not the site's text");
     if (kind === "eval") {
-      evalCalls.add(site as ts.CallExpression);
+      evalCalls.set(site as ts.CallExpression, source);
       calledSources.add(source);
     }
   }

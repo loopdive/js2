@@ -42,7 +42,7 @@ import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import { realmBuiltinOperand } from "./realm-static-call.js";
-import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
+import { GLOBAL_ALIASES, pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -61,7 +61,11 @@ import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { CodeStrictness } from "./from-ast.js";
-import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
+import {
+  isReceiverBindingFunction,
+  ownThisEscapes,
+  readsAmbientThisGlobal,
+} from "../shared/body-references-own-this.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -314,6 +318,12 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
      */
     readonly closuresBindReceivers?: () => boolean;
+    /**
+     * (#7363 A4) Some sloppy function binds ambient `this`, which a plain call makes the global object, and lets it
+     * escape (`ownThisEscapes`): a global-object value may then write any global, which `pristineBuiltinGlobal` does not
+     * see.
+     */
+    readonly ambientThisMayBeGlobal?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
   };
@@ -382,10 +392,7 @@ export function programDynamicContracts(
       ? { functionCodeStrict, ambientThisStrict: functionCodeStrict }
       : { functionCodeStrict };
   };
-  const bindsReceiver = (node: ts.Node): boolean =>
-    (ts.isFunctionExpression(node) && codeStrictness(node).ambientThisStrict !== undefined) ||
-    ts.forEachChild(node, bindsReceiver) === true;
-  const closuresBindReceivers = functionObjects && sourceFiles.some(bindsReceiver);
+  const receivers = receiverBindings(functionObjects ? sourceFiles : [], codeStrictness);
   const provenance = sourceDynamicProvenance(
     checker,
     startupSources,
@@ -405,8 +412,9 @@ export function programDynamicContracts(
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
-            !closuresBindReceivers && staticFunctionValue(checker, policy, startupSources, declaration),
-          closuresBindReceivers: () => closuresBindReceivers,
+            !receivers.closuresBindReceivers && staticFunctionValue(checker, policy, startupSources, declaration),
+          closuresBindReceivers: () => receivers.closuresBindReceivers,
+          ambientThisMayBeGlobal: () => receivers.ambientThisMayBeGlobal,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
@@ -452,6 +460,29 @@ export function programDynamicContracts(
  * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the
  * checker as the lib declarations alone, hence the file check.
  */
+/**
+ * One pass over every non-arrow function-like that binds its own `this` from the dispatcher's receiver
+ * (`ambientThisStrict`, defined only where functions are values). (#7354 C2) `closuresBindReceivers`: some function
+ * expression does. (#7363 A4) `ambientThisMayBeGlobal`: some sloppy one does and lets it escape.
+ */
+function receiverBindings(
+  sourceFiles: readonly ts.SourceFile[],
+  codeStrictness: CodeStrictness,
+): { readonly closuresBindReceivers: boolean; readonly ambientThisMayBeGlobal: boolean } {
+  let closuresBindReceivers = false;
+  let ambientThisMayBeGlobal = false;
+  const visit = (node: ts.Node): void => {
+    if (isReceiverBindingFunction(node)) {
+      const { ambientThisStrict } = codeStrictness(node);
+      closuresBindReceivers ||= ts.isFunctionExpression(node) && ambientThisStrict !== undefined;
+      ambientThisMayBeGlobal ||= ambientThisStrict === false && ownThisEscapes(node, GLOBAL_ALIASES);
+    }
+    ts.forEachChild(node, visit);
+  };
+  sourceFiles.forEach(visit);
+  return { closuresBindReceivers, ambientThisMayBeGlobal };
+}
+
 function absentGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
   return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
 }

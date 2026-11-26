@@ -7,7 +7,8 @@
 //   the entry first, although `<eval:N>.js` sorts before it. The entry's gaps come first.
 // - Startup: the zero-demand branch of the presentation's startup join is reached by a program with no executable
 //   init, never by a called one: the entry holds the site's statement, so it always runs at startup.
-// A site after `break` is never lowered (it refuses by name until A4), so its program compiles.
+// A site after `break` is never lowered, so its program compiles. Since A4 a site lowers while the global `eval` is
+// pristine; the rows that show the site's gap first write `eval` after it, so the site refuses by A4's name.
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import {
@@ -40,7 +41,9 @@ const options = {
   allowJs: true,
 } as Test262CompileOptions;
 
-const CALLED = "ir/from-ast: eval literal has a called source; its call needs the %eval% identity test (#7363 A4)";
+const NOT_PRISTINE = "ir/from-ast: eval literal: the global eval is not pristine (#7363 A4)";
+/** A write of the global `eval` after the site: the site refuses by A4's name. */
+const REBIND = "\neval = 0;";
 const NO_HOME = (name: string) => `module binding ${name} has no exact typed storage: not-direct`;
 /** A qualifying site of `text` that is never lowered. */
 const deadSite = (text: string) => `do { break; eval(${JSON.stringify(text)}); } while (false);`;
@@ -85,8 +88,8 @@ function prepare(entry: string, extra: Record<string, string> = {}, edges: reado
 
 describe("#7363 A3 — a script var keeps its home beside called eval sources", () => {
   it("stops at the eval site, not at the var, whichever comes first", async () => {
-    expect(await gaps('var x = 1;\neval("x + 1");')).toEqual([`${CALLED} in <module-init>`]);
-    expect(await gaps('eval("x + 1");\nvar x = 1;')).toEqual([`${CALLED} in <module-init>`]);
+    expect(await gaps(`var x = 1;\neval("x + 1");${REBIND}`)).toEqual([`${NOT_PRISTINE} in <module-init>`]);
+    expect(await gaps(`eval("x + 1");\nvar x = 1;${REBIND}`)).toEqual([`${NOT_PRISTINE} in <module-init>`]);
   });
 
   // (RV7432 B2) A text that writes `x` is no site: the reads proof would not see the write.
@@ -113,8 +116,8 @@ describe("#7363 A3 — function values keep their homes beside called eval sourc
   };
 
   it("stops at the eval site, not at a declaration read as a value or constructed", async () => {
-    expect(await gaps('function f() {}\nf.x = 1;\neval("1");')).toEqual([`${CALLED} in <module-init>`]);
-    expect(await gaps('function E() {}\nnew E();\neval("1");')).toEqual([`${CALLED} in <module-init>`]);
+    expect(await gaps(`function f() {}\nf.x = 1;\neval("1");${REBIND}`)).toEqual([`${NOT_PRISTINE} in <module-init>`]);
+    expect(await gaps(`function E() {}\nnew E();\neval("1");${REBIND}`)).toEqual([`${NOT_PRISTINE} in <module-init>`]);
   });
 
   it("runs a declaration's value beside an eval text that writes its property", async () => {
@@ -148,8 +151,8 @@ describe("#7363 A3 — an eval source follows its caller", () => {
 
   it("lowers the entry first: a gap of the eval text does not come before the site's", async () => {
     // The array literal's dynamic element has no IR lowering yet: lowered first, the eval text would stop at it.
-    const [error] = errorsOf(await compile('var x = 1;\neval("[x];");', options));
-    expect([error!.message, error!.file]).toEqual([`${CALLED} in <module-init>`, "test.js"]);
+    const [error] = errorsOf(await compile(`var x = 1;\neval("[x];");${REBIND}`, options));
+    expect([error!.message, error!.file]).toEqual([`${NOT_PRISTINE} in <module-init>`, "test.js"]);
   });
 
   it("keeps a caller's resolved dependency edges", () => {

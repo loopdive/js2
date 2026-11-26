@@ -198,7 +198,7 @@ describe("#7487 — the receipt", () => {
     const related = verify(rows, ast)();
     expect([...related.sources]).toEqual(rows.map((row) => row.source));
     expect([...related.calledSources]).toEqual([rows[1]!.source]);
-    expect([...related.evalCalls]).toEqual([rows[1]!.site]);
+    expect([...related.evalCalls]).toEqual([[rows[1]!.site, rows[1]!.source]]);
   });
 
   it("refuses a row whose kind is not the site's", () => {

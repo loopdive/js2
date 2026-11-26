@@ -30,6 +30,9 @@ related: [7354, 7106, 7345, 3630]
 # so its program's source list names its called eval sources (+2). program-source.ts +20, not +17: a script's
 # module-init plan takes only its own function values (#7354 F1b), so a called eval source holds none (+3). The
 # capability now rides on SourceUnitLowering in program-source-units.ts (+5, under its ceiling).
+# 2026-11-26 (A4 narrowed): from-ast +27: `lowerLiteralEvalCall` (the site's call of its called init or its named
+# refusal, 22 lines with its doc) and the resolver's `literalEvalCalledInit` / `ambientThisMayBeGlobal`; lowerCall
+# is 306 lines, +1 over main (the A2 label's branch becomes the arm). The other A4 files stay under their ceilings.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts
@@ -631,3 +634,86 @@ run-time test and asks a static proof that already exists.
 - **Size (estimate).** `lowerCall` arm about 15 lines, the capability about 5, the admission fallback about 15, the
   call of the called unit about 25, the widened receiver walk about 15, `ownThisEscapes` and the shared traversal
   about 25, `DeleteExpression` 3. One test file for the pins.
+
+### A4 result (2026-11-26, head `23ff7ea4`, base `origin/main` `1a726b3e`)
+
+Built as planned, with three deviations, each stated here.
+
+- **The call.** `lowerCall` asks the resolver's `literalEvalCalledInit` (it replaces A2's `literalEvalHasCalledSource`):
+  the called source's module-init as a unit reference, `null` when the text runs nothing (a comment-only text has no
+  init unit), undefined for no site. `lowerLiteralEvalCall` (`from-ast.ts`) emits the call, or refuses at select by
+  name. `verifyLiteralEvalSources` returns each call's source (a map, was a set).
+  - Deviation 1: "statement position" is from-ast's `statementPosition`, which is "the value is discarded". So
+    `void eval("1")` and a comma operand also lower. Their completion value is unused, which is A5's line.
+- **The proof.** `pristineBuiltinGlobal` sees `delete` (`boundOrWrittenNames`); `GLOBAL_ALIASES` is exported.
+  `receiverBindings` (`source-dynamic-contracts.ts`) is the widened walk: one pass over every non-arrow function-like
+  (`isReceiverBindingFunction`, exported from `body-references-own-this.ts`) answers `closuresBindReceivers`
+  (function expressions only, unchanged) and `ambientThisMayBeGlobal`. The resolver carries it beside
+  `isPristineBuiltinGlobal`; the `Object` statics do not ask it (#7503).
+  - Deviation 2: `ownThisEscapes(declaration, globalAliases)` takes the alias set as a parameter. Importing it from
+    `src/ir/` into `src/shared/` would add a shared→ir edge under a module that codegen imports. The caller passes
+    `GLOBAL_ALIASES`, so the set is still defined once.
+  - `forEachOwnThis` visits each `this` and each direct `eval` call of the own-`this` scope; the three predicates
+    differ only in their visitor. `findOwnThisReference` keeps its DFS order, so the node it returns is unchanged.
+- **The fallback.** `withLiteralEvalSources` takes the graph compile as a callback (`presentAnalyzed`, split out of
+  `present`) and returns the compile with the texts only when it succeeds; otherwise the compile without them.
+  - Deviation 3: when that fails too, the failure with the texts is returned. Without this, every A4/A5 refusal would
+    read as main's slice-1 label, and the census could not see the site's own refusal. No program changes: both
+    compiles failed.
+- **Tests.** `tests/issue-7363-eval-a4.test.ts` (33), all through the Prepared entry's `compile` with the census's
+  options:
+  - eight write shapes, each refusing by the A4 name. `var eval` and `function eval(){}` sit inside a function: at
+    the top level they bind the call's `eval`, so there is no site (slice 1's rows);
+  - the B1 program, and eight sloppy-`this` escapes (the plan's six, a tagged template, a `.call` member, and a
+    parameter initializer), each refusing by the A4 name; `var h = f` makes `f` a value, without which no plain call
+    gives it the global object;
+  - controls that lower and run: a member read, a member write, `instanceof`, strict code, and the harness's
+    `Test262Error` shape;
+  - an A5 row (`var v = eval("1")`), and the two boundary labels;
+  - the two fallback programs. Each is byte-identical to the compile without a site (the two-argument spelling),
+    and that equals main's bytes (checked against a `1a726b3e` tree);
+  - the A3 program agrees with node, also when it ends in a text that throws; a site in a loop runs its text each
+    time.
+- **Updated tests.** A pristine site lowers where the A2 label stood:
+  - `prepared-eval-refusal`: the top-level literal lowers, and `eval = 0` after it refuses by the A4 name.
+  - `literal-eval-source`: the statement site and `void eval("1")` lower; `var v = eval("1")` refuses by the A5 name.
+    Non-sites assert no `eval literal:` label. The receipt test reads the call→source map.
+  - `eval-source-home-order`: the three site-first rows write `eval` after the site, so they keep their intent with
+    the A4 name.
+  - `eval-source-admission`: `eval("undeclaredX")` joins and the site lowers; the program now stops in the text
+    (`identifier "undeclaredX" is not in scope`).
+- **Mutation.** 17 mutations, each reverted alone; each turns at least one A4 test red:
+  - the two conditions and the A5 position check;
+  - `delete`;
+  - the five escape rules (`instanceof`, static member, call/`new` callee, tagged template, `.call`/`.apply`), the
+    alias rule, the eval escape and parameter initializers;
+  - the widened walk, `=== false`, and `ownThisEscapes` in the flag;
+  - the fallback and the emitted call.
+- **Census**, 118 A0 files. Main is the tree at `1a726b3e`, head is `23ff7ea4`; files compared by `compare.mjs` (A3's
+  rule). Command:
+  `npx tsx scripts/ir-census/prepared-census.mts --files .tmp/q118.txt --out <fresh> --harness <h> --jobs 3`
+  (`--tree <main tree>` for main).
+
+  | harness | pass | fail | compile error | earlier | same | same position, other label | later |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | main, both | 0 | 0 | 118 | | | | |
+  | real | 12 | 1 | 105 | 0 | 43 | 62 | 13 |
+  | stand-in | 12 | 1 | 105 | 0 | 41 | 64 | 13 |
+
+  - Same position, other label: 59 expression sites now read `eval literal: its completion value needs #7363 A5`
+    (was `direct call to "eval" has no exact AST-site plan`).
+  - Real harness: 2 sites lowered, and the program now stops at script-level `this` on the same init line (`.call` /
+    `.apply` on a closure); stand-in: 4.
+  - `cptn-thrw-prim`: the site lowered, and the program now stops at a dynamic `+`.
+  - Later: the 12 pass, and `15.3.5.4_2-12gs` compiles but fails at run time ("unreachable"). Its text calls
+    `gNonStrict`, whose `.caller` read is an abort body. The plan predicted this.
+- **Acceptance.** The 12 files pass with the real harness on `23ff7ea4`: `prepared-census.mts --files twelve.txt --out
+  <fresh> --harness real --jobs 3`, 12 × `pass`. That is the expected yield of 12; the static-SyntaxError arm (+3) is
+  not built here.
+- **Bytes.** Ordinary pipeline, 100-file sample × default and standalone: identical to main. The `delete` change
+  moves no `Object`-statics claim on the sample.
+- **Fail sets.** No failures on either side: `issue-7363-*` and `test262-prepared-entry*` (274 tests here, 136 on
+  main, which lacks four of the 7363 files), and the `issue-7354-{c2,o1,f1,fa}*` files (165 each side).
+- **Gates.** loc, func (also with `LOC_GATE_BASE` = `1a726b3e`), coercion, oracle, dead exports, typecheck, biome
+  lint, prettier, import cycles, IR layering, and the compiler-boundary inventory against `origin/main` all pass.
+  Grant: from-ast +27 (above).

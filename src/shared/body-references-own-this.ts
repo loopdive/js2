@@ -7,43 +7,56 @@ import { ts } from "../ts-api.js";
  */
 const cache = new WeakMap<ts.Node, boolean>();
 
+/** A non-arrow function-like: it binds its own `this`, where an arrow inherits the enclosing one. */
+export function isReceiverBindingFunction(node: ts.Node): node is ts.FunctionLikeDeclaration {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
+function isDirectEvalCall(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node)) return false;
+  let callee: ts.Expression = node.expression;
+  while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+  return ts.isIdentifier(callee) && callee.text === "eval";
+}
+
 /**
- * Return one `this` node belonging to the scanned lexical function body.
- * Nested arrows inherit `this`, while ordinary function-like/class nodes
- * rebind it and therefore are not traversed.  The node is used when codegen
- * must materialize a lexical receiver so source-sensitive sloppy-IIFE rules
- * see the original AST position rather than a detached synthetic node.
+ * The first truthy `visit` result over the uses of `node`'s own `this`: each `this` keyword of its scope, and each
+ * direct `eval` call, whose text may read `this` in source the outer AST does not hold (a runtime-built string
+ * included). Iterative DFS, so deep ASTs stay within the CI cgroup's stack (as `bodyUsesArguments`).
  */
-export function findOwnThisReference(node: ts.Node): ts.Expression | undefined {
+function forEachOwnThis<T>(node: ts.Node, visit: (use: ts.Expression) => T | undefined): T | undefined {
   const stack: ts.Node[] = [node];
   while (stack.length > 0) {
     const current = stack.pop()!;
-    if (current.kind === ts.SyntaxKind.ThisKeyword) return current as ts.Expression;
-    if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isMethodDeclaration(current) ||
-      ts.isGetAccessorDeclaration(current) ||
-      ts.isSetAccessorDeclaration(current) ||
-      ts.isConstructorDeclaration(current) ||
-      ts.isClassDeclaration(current) ||
-      ts.isClassExpression(current)
-    ) {
-      continue;
+    if (current.kind === ts.SyntaxKind.ThisKeyword || isDirectEvalCall(current)) {
+      const result = visit(current as ts.Expression);
+      if (result) return result;
     }
-    current.forEachChild((child) => stack.push(child));
+    if (!isReceiverBindingFunction(current) && !ts.isClassLike(current))
+      current.forEachChild((child) => void stack.push(child));
   }
   return undefined;
 }
 
 /**
- * #2152 — Check whether a node tree references `this` in its OWN function scope.
- *
- * A non-arrow `function` / method / accessor / constructor / class rebinds
- * `this`, so a `this` inside such a nested scope is unrelated to the function
- * whose body we are scanning — we do NOT descend into those. Arrow functions
- * are lexically `this`-bound, so a `this` inside a nested arrow DOES refer to
- * the enclosing function's `this` and counts — we traverse into arrows.
+ * Return one `this` node belonging to the scanned lexical function body. The node is used when codegen must
+ * materialize a lexical receiver so source-sensitive sloppy-IIFE rules see the original AST position rather than a
+ * detached synthetic node.
+ */
+export function findOwnThisReference(node: ts.Node): ts.Expression | undefined {
+  return forEachOwnThis(node, (use) => (use.kind === ts.SyntaxKind.ThisKeyword ? use : undefined));
+}
+
+/**
+ * #2152 — Check whether a node tree references `this` in its OWN function scope; a direct eval counts, so callable
+ * dispatch preserves an explicit receiver (the eval bridge separately performs sloppy null/undefined substitution).
  *
  * Used to decide whether a (nested or top-level) function declaration body
  * should read the `__current_this` module global for `this` (#1636-S1 / #1702):
@@ -53,52 +66,50 @@ export function findOwnThisReference(node: ts.Node): ts.Expression | undefined {
  * global is null and the null-guarded read falls back to `undefined`, so
  * enabling the read is behavior-preserving for ordinary calls.
  *
- * Iterative DFS to avoid stack overflow on deep ASTs (CI cgroup limits,
- * mirrors `bodyUsesArguments`), memoized so overlapping subtrees stay O(N).
+ * Memoized so overlapping subtrees stay O(N).
  */
 export function bodyReferencesOwnThis(node: ts.Node): boolean {
   const cached = cache.get(node);
   if (cached !== undefined) return cached;
+  const found = forEachOwnThis(node, () => true) === true;
+  cache.set(node, found);
+  return found;
+}
 
-  const stack: ts.Node[] = [node];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (current.kind === ts.SyntaxKind.ThisKeyword) {
-      cache.set(node, true);
-      return true;
-    }
-    // A direct eval may reference `this` in source that is unavailable to the
-    // outer TypeScript AST (including a runtime-built string). Treat the call
-    // as an own-this use so callable dispatch preserves an explicit receiver;
-    // the eval bridge separately performs sloppy null/undefined substitution.
-    if (ts.isCallExpression(current)) {
-      let callee: ts.Expression = current.expression;
-      while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
-      if (ts.isIdentifier(callee) && callee.text === "eval") {
-        cache.set(node, true);
-        return true;
-      }
-    }
-    // Non-arrow function-like / class scopes rebind `this` — don't descend.
-    if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isMethodDeclaration(current) ||
-      ts.isGetAccessorDeclaration(current) ||
-      ts.isSetAccessorDeclaration(current) ||
-      ts.isConstructorDeclaration(current) ||
-      ts.isClassDeclaration(current) ||
-      ts.isClassExpression(current)
-    ) {
-      continue;
-    }
-    // Arrow functions inherit the enclosing `this` — traverse into them.
-    current.forEachChild((child) => {
-      stack.push(child);
-    });
-  }
-  cache.set(node, false);
-  return false;
+/**
+ * (#7363 A4) The declaration's own `this`, in a parameter initializer or the body, can leave it as a value. A use
+ * stays inside only as the left operand of `instanceof`, or as the object of a static property access whose name is
+ * not in `globalAliases` (`this.globalThis` is the object again) that is read or written, never invoked: not the
+ * callee of a call, `new` or tagged template (`this.valueOf()` returns the receiver; `this.m()` hands it to `m`), nor
+ * the object of a `.call` / `.apply`. A direct `eval` escapes: its text may do anything with `this`.
+ */
+export function ownThisEscapes(declaration: ts.FunctionLikeDeclaration, globalAliases: ReadonlySet<string>): boolean {
+  const escapes = (use: ts.Expression): boolean =>
+    use.kind !== ts.SyntaxKind.ThisKeyword || !(isInstanceOfOperand(use) || isStaticMemberObject(use, globalAliases));
+  return [...declaration.parameters.map((parameter) => parameter.initializer), declaration.body].some(
+    (node) => node !== undefined && forEachOwnThis(node, escapes) === true,
+  );
+}
+
+function isInstanceOfOperand(use: ts.Expression): boolean {
+  const parent = use.parent;
+  return (
+    ts.isBinaryExpression(parent) &&
+    parent.left === use &&
+    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+  );
+}
+
+function isStaticMemberObject(use: ts.Expression, globalAliases: ReadonlySet<string>): boolean {
+  const access = use.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== use || globalAliases.has(access.name.text))
+    return false;
+  const user = access.parent;
+  return !(
+    ((ts.isCallExpression(user) || ts.isNewExpression(user)) && user.expression === access) ||
+    (ts.isTaggedTemplateExpression(user) && user.tag === access) ||
+    (ts.isPropertyAccessExpression(user) && (user.name.text === "call" || user.name.text === "apply"))
+  );
 }
 
 /** Whether any call-time parameter initializer reads this function's receiver. */
