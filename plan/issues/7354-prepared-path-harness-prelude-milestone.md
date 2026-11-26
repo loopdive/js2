@@ -6989,3 +6989,35 @@ leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7
 - Node 25 (not installed).
 - The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
   h-script-var-dynamic-home and 3518-native-invocation-substrate suites.
+
+## Slice O2 r1 fix (2026-11-26, branch `claude/7354-o2-fix` from `main` c3b7be667a; PR 7415 merged without it)
+
+- **Blocker fixed: `new` on an accessor function** constructed an object (node: TypeError). IsConstructor is now the
+  function object's own answer where the source creates a function value without [[Construct]]
+  (`ProgramObjects.nonConstructors`: an accessor): `dynamicConstruct` asks the new realm row `js.object.is-constructor`
+  after the function-kind test (the arguments are already evaluated, §13.3.5.1.1), and `init-function` marks such a
+  function in its bag's flags (bit 0x40, free on the realm `$Object`) only in a program that asks. Elsewhere `new`
+  and `init-function` keep their bytes. The premise checks: `F.prototype` is created only for constructors (init),
+  `instanceof g` and `Object.create(g.prototype)` read `g.prototype` (undefined → their TypeErrors; tested).
+- **One built-in call sequence** (`buildBuiltinVectorCall`): the kernel's `method0..3`, the getter and the setter.
+  Getter and setter take the same arms with or without `accessorCalls`: a built-in half is called, a source half is
+  the dispatcher's call or, without `accessorCalls` (no source half can exist), the trap. **Cost, measured:** the
+  kernel read and the set adapter of every realm program change bytes (`check:prepared-bytes` vs main c3b7be667a: 14
+  of 804 rows — 46 47 48 53 74 149 180 204 239 244 445 532 533 581 — each run on main and head with the same outcome;
+  prelude + `assert(true);` 031c67f3… → 76b0dffa…). Kept for one sequence and the symmetry; the alternative (the old
+  two shapes) restores those bytes.
+- `isFunctionObject` asks `sourceDynamicClosureSignature` which accessors are function objects (no second copy).
+- Already done by a3ee87c5d9 / cd503a9d41 (another session, merged with PR 7415): the dispatch partition, the
+  kernel-dependency spread, the undefined-key refusal, `SourceObjectSetOperands` (kept, extended by
+  `AccessorCallOperands`), and the resource-join callable row as an expected-limit pin (#7463; the file is 15/15).
+- Known limit kept: `realmAccessors` fires for `Object.create(c)` without a property map (the legalization keeps the
+  `descriptors-define` arm when the argument's kinds are not folded); one unused dispatcher function at most.
+
+Proof: the reviewer's five batches (196 programs) main vs head: identical verdicts except the three blocker programs,
+WRONG → node's `T`; `issue-7354-o2-accessors` 49 / 49 (run in describe-sized parts), new `new`-on-accessor tests
+with wrong twins (getter, setter, the body never runs, arguments first, declarations still construct, `prototype` /
+`instanceof` / `Object.create`); `issue-7354-o2-object-values` 14 / 14; resource-join 15 / 15, getter-invocation 37,
+runtime-providers 299, o1-create-and-define-properties 14, c2-constructors 19, p1-method-values 19, r-provider-census
+117, native-realm-requirements 25; `issue-3518-native-getter-results` 19 / 21 — the same 2 fail on main (not modified
+here). Gates: typecheck, LOC / function budgets (also `LOC_GATE_BASE` = main), coercion-sites, oracle-ratchet,
+dead-exports, import-cycles, compiler-boundaries inventory: exit 0; from-ast net 0.
