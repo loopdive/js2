@@ -23,6 +23,7 @@
 // alone) and which never started (queue them again).
 
 import { appendFileSync } from "node:fs";
+import { relative } from "node:path";
 
 const STATUS = {
   fail: "failed",
@@ -74,13 +75,16 @@ function toEntry(file) {
 }
 
 /**
- * (#7501) An unhandled error stays unattributed, and the gate still refuses it. vitest tags the errors a worker
- * catches (an unhandled rejection, a worker RPC timeout) with the file and test that worker was running; the record
- * keeps that tag so the refusal names the file to fix.
+ * (#7501) An unhandled error stays unattributed, and the gate still refuses it. When a worker's own
+ * uncaughtException / unhandledRejection handler catches it, vitest tags it with the file and test that worker was
+ * running; the record keeps that tag (repo-relative) so the refusal names the file to fix. A worker RPC timeout
+ * (`Timeout calling "onTaskUpdate"`) is not caught there: it rejects the runner's RPC promise and reaches the main
+ * process with no file, so it stays unnamed.
  */
 function describeUnhandledError(error) {
   const text = error?.stack || error?.message || String(error);
-  const where = [error?.VITEST_TEST_PATH, error?.VITEST_TEST_NAME].filter(Boolean).join(" > ");
+  const file = error?.VITEST_TEST_PATH ? relative(process.cwd(), error.VITEST_TEST_PATH) : undefined;
+  const where = [file, error?.VITEST_TEST_NAME].filter(Boolean).join(" > ");
   return where ? `[${where}] ${text}` : text;
 }
 

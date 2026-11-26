@@ -122,19 +122,6 @@ describe("#7014 detector integrity beyond assertion verdicts", () => {
     expect(rows[1]).toEqual({ event: "run-end", reason: "failed", errors: ["unhandled rejection"] });
   });
 
-  it("the pinned reporter names the file and test vitest tagged an unhandled error with (#7501)", () => {
-    const rows: any[] = [];
-    const reporter = new KnownFailuresReporter();
-    reporter.write = (row: any) => rows.push(row);
-    const tagged = Object.assign(new Error('[vitest-worker]: Timeout calling "onTaskUpdate"'), {
-      VITEST_TEST_PATH: file,
-      VITEST_TEST_NAME: "slow compile",
-    });
-    reporter.onTestRunEnd([], [tagged, { message: "untagged" }], "failed");
-    expect(rows[0].errors[0].startsWith(`[${file} > slow compile] Error: [vitest-worker]`)).toBe(true);
-    expect(rows[0].errors[1]).toBe("untagged");
-  });
-
   it("real Vitest file hooks and unhandled errors survive the crash-safe runner", async () => {
     const root = scratch();
     symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "dir");
@@ -173,7 +160,10 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
     expect(ids.failing.has("hook.test.js :: <file>")).toBe(true);
     expect(ids.messages["both.test.js :: <file>"]).toMatch(/real nested afterAll failed/);
     expect([...ids.failing].some((id: string) => id.includes("failed assertion"))).toBe(true);
-    expect(errors.join("\n")).toMatch(/real unhandled error/);
+    // (#7501) The worker's uncaughtException handler tags the error; the record names the file and test.
+    expect(errors.join("\n")).toContain(
+      "[unhandled.test.js > passing with unhandled error] Error: real unhandled error",
+    );
   });
 
   for (const mode of ["gate", "update", "bootstrap", "ratchet"]) {
