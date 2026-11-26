@@ -24,7 +24,7 @@ On the Prepared whole-program path (`TEST262_COMPILER_PATH=ir`) a member read of
 function holding it becomes an abort body and the test traps.
 
 Lane S9's census (2026-11-26) counts 70 files; re-measured on main `c3b7be66`
-with `.tmp/pcensus.mts` (the census plus each trap's abort row):
+with the committed census (see Measurement):
 
 | abort reason (read on a function) | files |
 |---|---:|
@@ -86,121 +86,202 @@ confirm; if the reviewer rejects it, slice A shrinks to the strict half
 `claim-issue.mjs 7489 ttraenkler/c-lead --branch claude/s20-fn-members`: OK on
 `origin/issue-assignments`.
 
+## Plan review r1 (PRV-7489 on c10afb88) and how this plan answers it
+
+| finding | answer |
+|---|---|
+| Q1 null `caller` | accepted; full slice A kept |
+| B1 strictness | `ProgramDynamicContracts.codeStrictness` via the resolver's `closureCodeStrictness`; codegen's `irFunctionCodeStrictness` untouched (A.1) |
+| B2 generators / async | excluded from the own `caller` by name, pinned (A.1, A.4) |
+| B3 census | abort rows are in `scripts/ir-census/prepared-census.mts`; file lists committed under `plan/log/7489-census/`; exact commands below |
+| R1 accessors | lead's decision: the realm's Function.prototype holds the `caller` / `arguments` accessor pair, get = set = %ThrowTypeError% (A.2) |
+| R2 primitives | the primitive arm stays Object.prototype-only; `(5).call` is `undefined`, pinned (B.4) |
+| R3 raw `thisArg` | safe by `dynamicCurrentThis` C2-D3; sloppy `f.call(undefined)` / `f.call(1)` reading `this` abort, pinned (B.3, B.4) |
+| R4 `apply` order | IsCallable first: a non-callable receiver throws its TypeError before `argArray` is looked at (B.3) |
+| R5 partial population | `o.bind` on an object with a function on its chain still traps after call/apply are seeded, pinned (B.4) |
+| nit FLAGS | the new operand is a Boolean (i32), not the f64 FLAGS type (A.1) |
+| nit "duplicate" | the unpopulated-keys change is a parameterisation; the duplicate removed is the positional `METHOD_IDS` slice (B.2) |
+
 ## Implementation Plan
 
-Three slices, one PR each, in this order. Each keeps JS-environment and
-ordinary-pipeline bytes identical: every change is on the Prepared native
-dynamic lane (`createsFunctionObjects`) or in Prepared-only legalization.
+Two slices, one PR each, A then B; `bind` (C) gets its own plan once A and B
+have landed. Each keeps JS-environment and ordinary-pipeline bytes identical:
+every change is on the Prepared native dynamic lane (`createsFunctionObjects`),
+in the Prepared realm, or in Prepared-only legalization.
 
-### Slice A: `caller` reads and writes (yield ceiling 38 + 2)
+### Slice A: `caller` reads and writes (estimate 38 + 2 files)
 
-1. **Own `caller` on a sloppy plain function** — `js.object.init-function`.
-   - `src/ir/function-object-lowering.ts` `emitFunctionObjectInit`: the fourth
-     operand becomes a flags word: bit 0 constructor (today's Boolean), bit 1
-     "sloppy plain function" (a declaration or expression whose code is not
-     strict).
-   - Strictness comes from the existing `irFunctionCodeStrictness`
-     (`src/codegen/ir-dynamic-construct.ts`), widened from
-     `FunctionDeclaration | SourceFile` to the function-like nodes, through
-     the resolver seam the IR already calls. No second strictness predicate.
-   - `src/runtime/wasmgc/values/source-function-object-bodies.ts`: with bit 1,
-     define `caller` = `null` with descriptor word 0 (non-writable,
-     non-enumerable, non-configurable), next to the `prototype` define, using
-     the same `define` helper.
-   - `src/ir/runtime/ordinary-object-callables.ts`: the declaration's fourth
-     parameter type, BOOLEAN → FLAGS.
-2. **The function arm of a read or write of an accessor key of
-   Function.prototype** — `src/ir/program/dynamic-member-access.ts`.
-   - The read's `missing` stops naming `caller` (it no longer needs anything
-     the realm lacks). `arguments` stays refused by name: its V8 value is the
-     live arguments object (Session B), and no own property is installed for it.
-   - The `function` arm of both accesses, for a key in
-     `FUNCTION_PROTOTYPE_ACCESSOR_KEYS`: `js.object.has` → the own property
-     (get, or the write's existing `putValue`), else the %ThrowTypeError%
-     TypeError. This is the object arm's has-then-branch shape with the
-     accessor's known answer in place of the abort: one helper,
-     `accessorOrOwn(key)`, used by both `Access` records.
-   - `builtin-prototype-keys.ts`: `FUNCTION_REACHABLE_KEYS` drops `caller`;
-     the write's `missing` drops the Function.prototype accessor branch for
-     `caller` (G1's refusal stays for `arguments`).
-3. **Tests** (`tests/issue-7489-function-caller.test.ts`), each failing on
-   main: a sloppy function's `caller` is `null` and own, non-writable,
-   non-enumerable, non-configurable; a strict function's read and write throw
-   TypeError (sloppy and strict writer); an arrow's and a method's read throw;
-   `hasOwnProperty("caller")` agrees with the read; `f.arguments` still
-   refuses by name; a JS-environment and an ordinary-pipeline compile of the
-   same source are byte-identical to main.
+1. **A sloppy plain function's own `caller`** — `js.object.init-function`.
+   - `src/ir/function-object-lowering.ts` `emitFunctionObjectInit` gains a
+     fifth operand, a Boolean `ownCaller`: true for a function declaration or
+     expression that is neither a generator nor async (§17.1 names exactly
+     these as the functions an implementation may extend) and whose code is
+     not strict.
+   - Strictness: the caller passes
+     `resolver.closureCodeStrictness(fn).functionCodeStrict`, i.e.
+     `ProgramDynamicContracts.codeStrictness` (`source-dynamic-contracts.ts`,
+     fed by `src/compiler/prepared-code-strictness.ts`, which takes any
+     `FunctionLikeDeclaration`). Both callers (`from-ast.ts` closure literal,
+     `function-declaration-values.ts`) already hold the resolver. On the lane
+     that creates function objects the resolver always answers; no answer is
+     not a case on that lane.
+   - `isConstructor` (bit for MakeConstructor) also counts `function*` and
+     `async function` today, a pre-existing hole; both still refuse before
+     they reach this site. The new operand excludes them by name regardless,
+     and a pin holds the refusal (A.4).
+   - `src/runtime/wasmgc/values/source-function-object-bodies.ts`: with
+     `ownCaller`, define `caller` = `null` with descriptor word 0
+     (non-writable, non-enumerable, non-configurable, V8's shape) through the
+     body's existing `define` helper, after `name` and before `prototype`.
+   - `src/ir/runtime/ordinary-object-callables.ts`: the declaration gains the
+     BOOLEAN parameter.
+2. **The realm's Function.prototype holds the accessor pair** (lead's decision
+   on R1).
+   - `src/runtime/wasmgc/values/builtin-function-bodies.ts`, the realm seed:
+     after the bootstrap pair exists, define `caller` and `arguments` on
+     %Function.prototype% as accessors whose getter and setter are the
+     %ThrowTypeError% singleton, `{ enumerable: false, configurable: true }`
+     (§10.2.4 AddRestrictedFunctionProperties), through the kernel's accessor
+     define (the `defineAccessor` operand `builtin-function-property-bodies.ts`
+     already takes). The catalog already
+     lists both rows (`accessor("caller", throwTypeError, throwTypeError)`).
+   - The kernel's [[Get]] / [[Set]] then answer every function value: a sloppy
+     plain function's own `caller` (A.1), and for every other function the
+     accessor, whose call of %ThrowTypeError% is the built-in call body's
+     existing TypeError (`builtinTypeError` via `builtinFailure(d, 2)`); the
+     implementation confirms the call reaches it through [[Get]]'s accessor
+     path, else the slice stops and reports. The getter's identity is the
+     realm's one %ThrowTypeError% (§10.2.4.1).
+3. **The IR stops refusing `caller`** — `builtin-prototype-keys.ts`,
+   `dynamic-member-access.ts`.
+   - The function arm of a read and of a write becomes the realm's plain
+     [[Get]] / [[Set]] for `caller` (the write's existing `putValue`: a sloppy
+     write to the non-writable own `caller` is ignored, a strict one throws;
+     the accessor's setter throws in both). No has-then-branch, no new helper.
+   - `arguments` keeps a by-name refusal for reads and writes: a sloppy
+     function's V8 `arguments` is the live arguments object (Session B), and
+     no own property is installed for it, so the accessor's TypeError would be
+     the wrong answer for a sloppy function. The refusal text names the reason
+     ("a function's own `arguments` needs arguments objects").
+   - `FUNCTION_PROTOTYPE_ACCESSOR_KEYS` stays the catalog's; the read's and the
+     write's `missing` name only `arguments` from it.
+4. **Pins** (`tests/issue-7489-function-caller.test.ts`), each failing on main:
+   - a sloppy function's `caller` reads `null`, while it runs and after;
+   - a sloppy write `g.caller = 1` is ignored, a strict one throws TypeError;
+   - a strict function's `caller` read and write throw TypeError, from sloppy
+     and from strict code; an arrow's and a method's read throw;
+   - the thrown error is a TypeError the program can catch;
+   - `f.arguments` read and write still refuse by name;
+   - `function*` and `async function` values still refuse before reaching the
+     own-`caller` site (pins the B2 exclusion);
+   - JS-environment and ordinary-pipeline output of the same sources is
+     byte-identical to main.
 
-### Slice B: `Function.prototype.call` and `apply` (yield ceiling +10, +12)
+### Slice B: `Function.prototype.call` and `apply` (estimate +10 and +12 files)
 
-The P1 shape (`dynamic-prototype-methods.ts`), extended rather than copied.
+P1's shape (`dynamic-prototype-methods.ts`), extended in place.
 
-1. **Catalog** — `src/runtime/contracts/native-realm-catalog.ts`:
-   `NATIVE_MEMBERS["Function.prototype"] = ["apply", "call"]`, and the two
-   ids join `NATIVE_VALUE_INTRINSICS`, so the realm's Function.prototype holds
-   them as built-in function objects (the seeding P1 uses for
-   Object.prototype).
-2. **One "populated prototype" rule** — `builtin-prototype-keys.ts`:
-   `UNPOPULATED_OBJECT_PROTOTYPE_KEYS` and `FUNCTION_REACHABLE_KEYS` become
-   one `unpopulated(parent)` helper over the catalog's native members.
-   `native-realm-requirements.ts`: `METHOD_IDS` / `readsPrototypeMethod`
-   cover both prototypes from the same table instead of the
-   `NATIVE_OBJECT_PROTOTYPE_METHODS` slice.
+1. **Catalog** — `native-realm-catalog.ts`:
+   `NATIVE_MEMBERS["Function.prototype"] = ["apply", "call"]`; both ids join
+   `NATIVE_VALUE_INTRINSICS`. The realm seeds them on %Function.prototype% as
+   P1 seeds its methods on %Object.prototype% (`builtin-function-bodies.ts`:
+   the same define with the parent as an operand, not a second branch).
+2. **One table of populated prototype methods** —
+   - `native-realm-requirements.ts`: `METHOD_IDS` (today the positional slice
+     `NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length)`)
+     and `readsPrototypeMethod` read one catalog table of native prototype
+     methods by parent. This removes the positional coupling, the duplicate.
+   - `builtin-prototype-keys.ts`: the unpopulated-key sets of Object.prototype
+     and Function.prototype take one parameterised helper over that table
+     (a parameterisation, not a duplicate removal).
 3. **The call** — `dynamic-prototype-methods.ts`: `RealmMethod` gains
-   `Function.prototype.call` / `.apply`; `prototypeMethodOfCall` recognises
-   them from the same table. The algorithm, when the value read is the
-   realm's built-in (the existing `strict_eq` branch):
-   - `call`: the dispatcher call `js.closure.call:<n>` with
-     `[thisArg ?? undefined, receiver, …rest]` — the call
-     `dynamicConstruct` already writes. IsCallable is the dispatcher's own
-     TypeError for a non-closure; a built-in receiver
-     (`hasOwnProperty.call(o, k)`) is the dispatcher's run-time abort, as
-     today for any built-in called through a value.
-   - `apply`: no `argArray` → the 0-argument call. Otherwise a kind chain on
-     `argArray`: `undefined` / `null` → the 0-argument call; a primitive →
-     TypeError "CreateListFromArrayLike called on non-object"; an object or
-     function → the run-time abort (array-likes belong to Session B's arrays).
-4. **Tests**: `f.call(o)` / `f.apply(o)` bind `this`; `f.call(o, 1, 2)` passes
-   arguments; `f.apply(o, 1)` throws TypeError; `f.apply(o, [1])` aborts
-   (pinned as the expected limit); an own `call` property and a user
-   `Function.prototype.call` read are not the built-in and take the
-   dispatcher; detached `var c = f.call; c()` aborts, never a wrong value.
-
-### Slice C: `bind` (yield ceiling +10)
-
-Plan written after A and B land, with a measured run: a bound function is a
-function value the dispatcher must call (its target, `this` and leading
-arguments), so it needs a value representation, not a call-site shape. The
-cluster's sites are all `f.bind(t)()`, but writing that shape alone would be a
-per-site special case, which this plan does not take.
+   `Function.prototype.call` / `.apply`; `prototypeMethodOfCall` recognises them
+   from the same table. When the value read is the realm's built-in (the
+   existing `strict_eq` branch):
+   - **`call`**: the dispatcher call `js.closure.call:<n>` with
+     `[thisArg ?? undefined, receiver, …rest]`, the call `dynamicConstruct`
+     already writes. IsCallable is the dispatcher's TypeError for a value that
+     is no source closure; a built-in receiver (`hasOwnProperty.call(o, k)`) is
+     the dispatcher's run-time abort, as for any built-in called through a
+     value. A raw `thisArg` is safe because the callee binds `this` through
+     `dynamicCurrentThis` (C2-D3): strict code takes it as is, sloppy code
+     takes an object as is and aborts on `undefined`, `null` or a primitive
+     (no global object or wrapper on the realm).
+   - **`apply`**: first IsCallable of the receiver, a kind test (`holds` over
+     `function`): not a function → TypeError ("Function.prototype.apply was
+     called on …, which is not a function") whatever `argArray` is (R4). Then
+     `argArray`: absent → the 0-argument call; otherwise a kind chain:
+     `undefined` / `null` → the 0-argument call; a primitive → TypeError
+     ("CreateListFromArrayLike called on non-object"); an object or a function
+     → the run-time abort (array-likes are Session B's arrays). A function
+     receiver that is a built-in is again the dispatcher's abort.
+4. **Pins** (`tests/issue-7489-function-call-apply.test.ts`), each failing on
+   main unless marked:
+   - `f.call(o)`, `f.apply(o)`, `f.apply(o, null)` bind `this`;
+     `f.call(o, 1, 2)` passes arguments; a strict `f.call()` sees `undefined`;
+   - sloppy `f.call(undefined)` and `f.call(1)` where `f` reads `this` abort
+     (R3);
+   - `f.apply(o, 1)` throws TypeError; `f.apply(o, [1])` aborts (expected
+     limit);
+   - `o.apply = f.apply; o.apply(t, {})` with a non-callable `o` throws
+     TypeError, not the abort (R4);
+   - an own `call` property and a function whose `call` was overwritten take
+     the dispatcher; a detached `var c = f.call; c()` aborts;
+   - `(5).call` and `"s".apply` read `undefined` (R2; passes on main, pins
+     that seeding Function.prototype does not leak to primitives);
+   - an object whose chain holds a function (`F.prototype = g; new F().bind`)
+     still traps after Function.prototype is seeded with call/apply (R5): the
+     realm's Function.prototype stays marked incompletely populated;
+   - JS-environment and ordinary-pipeline bytes unchanged.
 
 ### Reuse and duplicates removed
 
-- Reuses: `js.object.init-function` and its `define` helper; the object arm's
-  has-then-branch; `typeErrorThen`; P1's built-in identity branch; the
-  dispatcher call `dynamicConstruct` writes; `irFunctionCodeStrictness`.
-- Removes: the two parallel "unpopulated keys" sets in
-  `builtin-prototype-keys.ts` (one helper over the catalog), and the
-  Object.prototype-only `METHOD_IDS` slice in `native-realm-requirements.ts`.
+- Reuses: `js.object.init-function` and its `define` helper; the realm seed and
+  the %ThrowTypeError% singleton; the kernel's accessor define;
+  `codeStrictness`; P1's built-in identity branch; `dynamicConstruct`'s
+  dispatcher call; `holds`; `typeErrorThen`.
+- Removes: the positional `METHOD_IDS` slice (B.2), and G1's special-cased
+  `caller` refusal in the write's `missing` (the realm answers it now).
 
 ### Acceptance
 
-- Correctness: each slice's pin tests fail on main and pass; the Prepared
-  census of the 72 files passes at least the measured count, reported with the
-  main sha; no file in the 552-file candidate set (`.caller|.apply|.call|.bind`
-  in ES5) moves from pass to fail.
+- Correctness: each slice's pins fail on main (but the R2 pin) and pass; the
+  committed census of `plan/log/7489-census/candidates.txt` moves no file from
+  pass to fail, and the pass count of `cluster.txt` is reported with the main
+  sha (estimate above, measured in the PR).
 - Bytes: JS-environment and ordinary-pipeline output byte-identical to main on
-  the equivalence corpus sample the earlier #7354 slices used.
-- Quality: no new module; each arm sits beside its siblings in the same
-  shape; no function over its budget without a grant the review accepts; the
-  two duplicates above are gone; adversarial review verdict in the PR body.
+  the equivalence corpus.
+- Quality: no new module; each arm beside its siblings in the same shape; no
+  function past its budget without a grant the review accepts; adversarial
+  review verdict in the PR body.
 
 ## Measurement
 
-`c3b7be66`, `.tmp/pcensus.mts` (scripts/ir-census/prepared-census.mts plus the
-trap's abort row and every abort row of the program), 552 ES5 files that use
-`.caller|.apply|.call|.bind`: 1 pass, 142 fail, 409 compile error. Of the 72
-cluster files, those whose only non-harness aborts are this cluster's (an
-estimate of the ceiling, not a measured pass count): `caller` only 38,
-`call`+`caller` 8, `call` 2, `apply`+`caller` 8, `apply` 4, `bind`+`caller` 8,
-`bind` 2, write `caller` 2.
+Main `c3b7be66`. Commands (from the repository root, test262 submodule
+checked out):
+
+```bash
+npx tsx scripts/ir-census/prepared-census.mts --files plan/log/7489-census/candidates.txt \
+  --out .tmp/7489.jsonl --harness real --jobs 4
+node -e '
+const rows = require("fs").readFileSync(".tmp/7489.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+const re = /member (read|write) .(caller|apply|call|bind). of a function/;
+const hit = rows.filter((r) => r.status === "fail" && re.test(r.abort ?? ""));
+const by = {};
+for (const r of hit) { const [, op, key] = r.abort.match(re); by[op + " " + key] = (by[op + " " + key] ?? 0) + 1; }
+console.log(hit.length, by);'
+```
+
+- `candidates.txt`: the 552 ES5 files (`scripts/ir-census/es5-files.mts`)
+  whose source contains `.caller`, `.apply`, `.call` or `.bind`.
+- Result: 1 pass, 142 fail, 409 compile error. 72 fails trap in an abort body
+  with this issue's refusal (`cluster.txt`): read `caller` 38, `apply` 12,
+  `call` 10, `bind` 10, write `caller` 2.
+- Estimate of the ceiling (not a pass count): of the 72, those whose other
+  abort bodies are only the harness's (`formatIdentityFreeValue`, the computed
+  key in `compareArray`, `Array` in the harness closures): `caller` only 38,
+  `call`+`caller` 8, `call` 2, `apply`+`caller` 8, `apply` 4,
+  `bind`+`caller` 8, `bind` 2, write `caller` 2.
+- The reviewer's 132-file "family" set (89 fail, 41 CE, 2 pass) is a
+  different selection; the 72 are the fails of `candidates.txt` whose trap
+  frame is this refusal.
