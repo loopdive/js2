@@ -36,12 +36,7 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { bigIntToStringIdx } from "./bigint-string-context.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { liteExnRenderPrepareBody, usesLiteExnRender } from "./exn-render-lite.js"; // (#6666)
-import {
-  errorRenderArms,
-  errorStructNameInstrs,
-  exnRenderKindBody,
-  pushExnRenderKindExport,
-} from "./exn-render-kind.js";
+import { errorStructNameInstrs, exnRenderKindBody, pushExnRenderKindExport } from "./exn-render-kind.js";
 import { pendingStringConstantGlobalGet } from "./registry/imports.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
@@ -1764,20 +1759,61 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
   const dataTypeIdx = ctx.nativeStrDataTypeIdx;
   if (anyToStrIdx === undefined || flattenIdx === undefined || flatTypeIdx < 0 || dataTypeIdx < 0) return;
 
-  // (#4394, #4097) Arms for the error structs `__any_to_string` does not render
-  // as `Name: message` (`errorRenderArms`). Each mirrors the harness's own
-  // prototype toString: `"Name: " + message`, with the message field rendered
-  // through the same `__any_to_string` chain the in-module `String(x)` coercion
-  // uses (an undefined message renders "Name: undefined", exactly what the
-  // harness's `+` produces). Every helper index and literal global is resolved
-  // HERE, before either body is built — the index-shift-safety contract of this
-  // emitter (see doc above); literal instrs are interned global reads, so
-  // building them early adds no funcs and no imports.
-  const errorArms = errorRenderArms(ctx);
-  const fnctorArms = errorArms.map((arm) => ({
-    ...arm,
-    prefixInstrs: nativeStringLiteralInstrs(ctx, `${arm.name}: `),
-  }));
+  // (#4394) Arms for DECLINED harness error fnctors (new-builtin-globals.ts):
+  // `new Test262Error(msg)` in a module that DECLARES `function Test262Error`
+  // now constructs an ordinary user-fnctor instance for correct identity, so a
+  // thrown one matches no `$Error_struct` arm in `__any_to_string` and rendered
+  // "[object Object]" — the merged standalone report lost every
+  // "Test262Error: …" signature (213 unclassified rows, the #4484 park). Each
+  // arm mirrors the harness's own prototype toString: `"Name: " + message`,
+  // with the message field rendered through the same `__any_to_string` chain
+  // the in-module `String(x)` coercion uses (an undefined message renders
+  // "Name: undefined", exactly what the harness's `+` produces). Every helper
+  // index and literal global is resolved HERE, before either body is built —
+  // the index-shift-safety contract of this emitter (see doc above); literal
+  // instrs are interned global reads, so building them early adds no funcs and
+  // no imports.
+  const fnctorArms: { typeIdx: number; fieldIdx: number; fieldIsExtern: boolean; prefixInstrs: Instr[] }[] = [];
+  for (const name of ctx.exnRenderFnctorErrorNames ?? []) {
+    const structTypeIdx = ctx.fnctorReservedTypeIdx.get(name);
+    const fields = ctx.structFields.get(`__fnctor_${name}`);
+    const fieldIdx = fields === undefined ? -1 : fields.findIndex((f) => f.name === "message");
+    if (structTypeIdx === undefined || fields === undefined || fieldIdx < 0) continue;
+    const ft = fields[fieldIdx].type;
+    if (ft.kind !== "externref" && ft.kind !== "anyref" && ft.kind !== "ref" && ft.kind !== "ref_null") continue;
+    fnctorArms.push({
+      typeIdx: structTypeIdx,
+      fieldIdx,
+      fieldIsExtern: ft.kind === "externref",
+      prefixInstrs: nativeStringLiteralInstrs(ctx, `${name}: `),
+    });
+  }
+  // (#4097) Same arm shape for a thrown USER-CLASS error instance. Legacy
+  // throws such a struct only for a class the builtin-error interception does
+  // NOT claim; the IR throws it for `class Test262Error` too (measured: both
+  // paths register the IDENTICAL struct — same typeIdx, name and fields — so
+  // the divergence is which VALUE the `new` site allocates, not struct
+  // identity, and #4035 declined the throw over the resulting
+  // "[object Object]"). Arms key on the struct's own registered name and are
+  // PATH-INDEPENDENT, so IR and legacy render alike. Gated on `ctx.classSet`
+  // (local class declarations only) plus a `message` field, so a plain data
+  // class keeps the canonical "[object Object]"; `$Error_struct` is skipped —
+  // `__any_to_string` already routes it through §20.5.3.4.
+  for (const [structTypeIdx, structName] of ctx.typeIdxToStructName) {
+    if (structTypeIdx === ctx.errorStructTypeIdx) continue;
+    if (!ctx.classSet.has(structName)) continue;
+    const fields = ctx.structFields.get(structName);
+    const fieldIdx = fields === undefined ? -1 : fields.findIndex((f) => f.name === "message");
+    if (fields === undefined || fieldIdx < 0) continue;
+    const ft = fields[fieldIdx].type;
+    if (ft.kind !== "externref" && ft.kind !== "anyref" && ft.kind !== "ref" && ft.kind !== "ref_null") continue;
+    fnctorArms.push({
+      typeIdx: structTypeIdx,
+      fieldIdx,
+      fieldIsExtern: ft.kind === "externref",
+      prefixInstrs: nativeStringLiteralInstrs(ctx, `${structName}: `),
+    });
+  }
   const fnctorConcatIdx = fnctorArms.length === 0 ? undefined : ctx.nativeStrHelpers.get("__str_concat");
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
 
@@ -1792,9 +1828,7 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
     init: [{ op: "ref.null", typeIdx: flatTypeIdx }],
   });
   // (#7453) Harness opt-in; its literals are interned here, before any export is minted.
-  const kindBody = ctx.exceptionKindExport
-    ? exnRenderKindBody(ctx, errorArms, bufGlobalIdx, flattenIdx, flatTypeIdx)
-    : undefined;
+  const kindBody = ctx.exceptionKindExport ? exnRenderKindBody(ctx, bufGlobalIdx, flattenIdx, flatTypeIdx) : undefined;
 
   // __exn_render_prepare(payload: externref) -> i32
   {

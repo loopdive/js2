@@ -16,6 +16,7 @@ const HARNESS = { hostBridge: "always", exceptionKindExport: true } as const;
 const THROWS: Record<string, { body: string; kinds: string[] }> = {
   "a string that reads like a TypeError": { body: `throw "TypeError: x";`, kinds: [] },
   "an object whose toString reads like a TypeError": {
+    // A closed object-literal struct: no constructor the module can name.
     body: `throw { toString: function () { return "TypeError: x"; } };`,
     kinds: [],
   },
@@ -26,7 +27,12 @@ const THROWS: Record<string, { body: string; kinds: string[] }> = {
     kinds: ["TypeError"],
   },
   "an Error whose message names a TypeError": { body: `throw new Error("TypeError: x");`, kinds: ["Error"] },
-  "the harness's Test262Error (a declared constructor function)": {
+  "a constructor function's instance": {
+    body: `function Test262Error(message) { this.message = message || ""; }
+throw new Test262Error("TypeError");`,
+    kinds: ["Test262Error"],
+  },
+  "the harness's Test262Error (its prototype carries toString)": {
     body: `function Test262Error(message) { this.message = message || ""; }
 Test262Error.prototype.toString = function () { return "Test262Error: " + this.message; };
 throw new Test262Error("TypeError");`,
