@@ -24,6 +24,7 @@ import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
   type IrDerivedUnitProvenance,
+  type IrBindingId,
   type IrSourceId,
   type IrUnitId,
 } from "./identity.js";
@@ -154,32 +155,42 @@ export function functionDeclarationValues(
     const binding = plan.bindings.find((row) => row.names[0] === name && row.start === start)!;
     // A script without top-level code has no module-init to make the value: nothing of it runs.
     const moduleInit = plan.unitId ?? refuse(name, "is in a script that runs no top-level code");
-    const home: ModuleBindingGlobal = {
-      ownerUnitId: moduleInit,
-      globalRef: irSourceGlobalRef(binding.globalBindingId!, name),
-      tdzGlobalRef: null,
-      globalName: name,
-      tdzGlobalName: null,
+    const global = moduleInitDynamicHome(moduleInit, plan.sourceId, binding.globalBindingId!, name, {
       type: irDynamic(rewritten ? undefined : JS_TAG_IDS.Function),
-    };
+      mutable: rewritten,
+    });
     return {
       declaration,
       unitId,
       unitName: identity.terminalByUnitId.get(unitId)!.displayName,
       params,
       returnType,
-      home,
-      global: {
-        binding: home,
-        identity: {
-          ownerUnitId: moduleInit,
-          storageOwnerUnitId: moduleInit,
-          sourceId: plan.sourceId,
-          mutable: rewritten,
-        },
-      },
+      home: global.binding,
+      global,
     };
   });
+}
+
+/**
+ * A home in the dynamic carrier: a module-init global named `adapterName` (the key its storage is found by), owned
+ * and stored by the module-init. (#7372 2a) An Annex B block function's homes are built the same way.
+ */
+export function moduleInitDynamicHome(
+  moduleInit: IrUnitId,
+  sourceId: IrSourceId,
+  bindingId: IrBindingId,
+  adapterName: string,
+  { type, mutable }: { readonly type: IrType; readonly mutable: boolean },
+): FunctionValueGlobal {
+  const binding: ModuleBindingGlobal = {
+    ownerUnitId: moduleInit,
+    globalRef: irSourceGlobalRef(bindingId, adapterName),
+    tdzGlobalRef: null,
+    globalName: adapterName,
+    tdzGlobalName: null,
+    type,
+  };
+  return { binding, identity: { ownerUnitId: moduleInit, storageOwnerUnitId: moduleInit, sourceId, mutable } };
 }
 
 function refuse(name: string, why: string): never {

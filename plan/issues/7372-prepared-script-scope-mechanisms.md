@@ -20,7 +20,8 @@ related: [7354, 7106]
 # 2026-11-26 (slice 2a-1): src/codegen/expressions/identifiers.ts +4, formatting only. Its import of the Annex B
 # analysis now names the lifted module (src/shared/annexb-block-functions.ts); the longer path makes prettier
 # wrap the one-line import over five lines. No code added.
-# 2026-11-26 (slice 2a-2): src/ir/from-ast.ts +16, the dispatch the Annex B lowering needs and nothing else. The
+# 2026-11-26 (slice 2a-2, review RV7466): src/ir/from-ast.ts +19, the dispatch the Annex B lowering needs and nothing
+# else (+3 for RV7466 B1: a block's name unbinds an outer local, and an `if` clause lowers in a scope of its own). The
 # two steps live in src/ir/annexb-block-function-lowering.ts; from-ast keeps the three call sites (Block entry,
 # CaseBlock entry after the discriminant, the FunctionDeclaration arm), the resolver member, the closure-literal
 # union member with its invariant, and `annexBHost`, which binds the steps to from-ast's private closure lowering and
@@ -487,6 +488,42 @@ Prepared suites (`issue-7354-*`, `issue-7372-*`, `issue-7188-*`, prepared entry 
 
 Found, not fixed: `checkSwitchLexicalLeak` (`src/compiler/early-errors/duplicates.ts`) warns that an Annex B function
 declared in a `case` "does not leak" when it is read after the switch. Sloppy code's var binding does leak.
+
+#### 2a-3 result (2026-11-26, branch `claude/annexb-prepared-block-fn-2a3`, stacked on 2a-2)
+
+**What it builds.** Where the script already declares the name, the Annex B evaluation writes that declaration's
+home (§B.3.2.2):
+- **a `var`:** its script-var home, which becomes dynamic;
+- **a top-level function:** F1b's function value home. Every call of the name then reads that home.
+
+**One shared predicate.** `annexBWritesScriptBinding` (`src/shared/annexb-block-functions.ts`) feeds every Prepared
+write proof:
+- `preparedBindingRewritten`, with the H2 header updated (the Annex B route is now a modelled write);
+- the provenance's dynamic-store test (`storesCarry`);
+- F1b's value set (`functionDeclarationsReadAsValues`);
+- the direct-call planner: `prepareSourceDirectCalls` plans no direct call of a rewritten target.
+
+**Other changes.**
+- F1b no longer counts an Annex B declaration that the checker binds to the file (an `if` clause) as a second
+  declaration.
+- Legacy's `scriptVarWrites` is untouched, so legacy bytes stay identical.
+- A refusal remains for a script binding of the name with no dynamic home (a TypeScript-annotated `var`). It is
+  pinned.
+
+**Measured** (578 ES5 files, real harness, against 2a-2 at 78):
+- **Census:** **102** passes, +24, 0 lost.
+- **New passes:** `existing-var-update` 6, `existing-var-no-init` 6, `existing-fn-update` 6, `existing-fn-no-init` 6.
+- **Still failing:** the `if-decl-else-stmt` and `if-stmt-else-decl` forms of these variants stop at
+  `unsupported body statement EmptyStatement` (`if (x) function f(){} else ;`). That is an ordinary-statement gap,
+  left out because claiming it would change what the IR claims outside the Prepared path.
+- **Legacy bytes:** 956 files x {gc, standalone} identical.
+
+**Tests:**
+- 7 programs with node agreement and wrong twins, and a typed-home refusal.
+- The H2 routes test admits the Annex B route with node agreement (the route test's own rule).
+- The Fa pin moves "redeclared by a block-level function" to the "no static closure" list.
+- Prepared suites: 2,171/2,173 before these test updates. The 2 failures were that Fa pin and the
+  `issue-7354-o-objects` case that also fails on main.
 
 ### Slice 3 — sloppy write to an undeclared name (planned)
 
