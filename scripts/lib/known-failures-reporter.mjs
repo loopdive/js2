@@ -76,16 +76,15 @@ function toEntry(file) {
 
 /**
  * (#7501) An unhandled error stays unattributed, and the gate still refuses it. When a worker's own
- * uncaughtException / unhandledRejection handler catches it, vitest tags it with the file and test that worker was
- * running; the record keeps that tag (repo-relative) so the refusal names the file to fix. A worker RPC timeout
- * (`Timeout calling "onTaskUpdate"`) is not caught there: it rejects the runner's RPC promise and reaches the main
- * process with no file, so it stays unnamed.
+ * uncaughtException / unhandledRejection handler catches it, vitest tags it with the file that worker was running.
+ * The record keeps that file (repo-relative). It is the file of the running test, not necessarily the cause: an error
+ * from an earlier file's leaked timer lands on whichever file runs next in that worker. vitest's test name is dropped
+ * for the same reason. A worker RPC timeout is not caught there and arrives untagged (see runFiles' batch bisection).
  */
 function describeUnhandledError(error) {
   const text = error?.stack || error?.message || String(error);
-  const file = error?.VITEST_TEST_PATH ? relative(process.cwd(), error.VITEST_TEST_PATH) : undefined;
-  const where = [file, error?.VITEST_TEST_NAME].filter(Boolean).join(" > ");
-  return where ? `[${where}] ${text}` : text;
+  if (!error?.VITEST_TEST_PATH) return text;
+  return `[file of the running test, not necessarily the cause: ${relative(process.cwd(), error.VITEST_TEST_PATH)}] ${text}`;
 }
 
 export default class KnownFailuresReporter {

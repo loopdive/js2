@@ -431,6 +431,25 @@ export function unaccountedRunErrors(run, files) {
   return errors;
 }
 
+/**
+ * (#7501) Halve `files` until each part that still raises an unattributed run error is one file, and return those
+ * files. vitest attaches no file to some run errors: a worker RPC timeout (`Timeout calling "onTaskUpdate"`) rejects
+ * inside the runner and reaches the main process bare. A file that blocks its worker past the RPC timeout raises it
+ * again when it runs on its own, so bisection finds it. An error that needs the whole batch's load to appear
+ * reproduces in neither half, and the caller says so. The errors stay refused either way; this only names files.
+ */
+async function locateUnattributedErrors(root, toRel, files, options) {
+  if (files.length === 1) return files;
+  const half = Math.ceil(files.length / 2);
+  const located = [];
+  for (const part of [files.slice(0, half), files.slice(half)]) {
+    const r = await vitestOnce(root, toRel, part, options);
+    if (unaccountedRunErrors(r, part).length)
+      located.push(...(await locateUnattributedErrors(root, toRel, part, options)));
+  }
+  return located;
+}
+
 export async function runFiles(root, toRel, files, { label, serial = false, onRunIntegrity }) {
   const batch = envInt("KNOWN_FAILURES_BATCH", 150);
   const heap = envInt("KNOWN_FAILURES_FORK_HEAP_MB", 2048);
@@ -439,6 +458,11 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
   const want = new Set(files);
   const suspects = serial ? [...files] : [];
 
+  const batchOptions = {
+    serial: false,
+    heapMb: heap,
+    timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
+  };
   let pending = serial ? [] : [...files];
   let pass = 0;
   while (pending.length) {
@@ -446,12 +470,15 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
     pending = pending.slice(batch);
     pass++;
     const t0 = Date.now();
-    const r = await vitestOnce(root, toRel, chunk, {
-      serial: false,
-      heapMb: heap,
-      timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
-    });
-    if (onRunIntegrity) for (const error of unaccountedRunErrors(r, chunk)) onRunIntegrity(error);
+    const r = await vitestOnce(root, toRel, chunk, batchOptions);
+    const runErrors = onRunIntegrity ? unaccountedRunErrors(r, chunk) : [];
+    if (runErrors.length) {
+      const located = await locateUnattributedErrors(root, toRel, chunk, batchOptions);
+      const where = located.length
+        ? `reproduces with only this file in the run: ${located.join(", ")}`
+        : "reproduces in neither half of its batch";
+      for (const error of runErrors) onRunIntegrity(`${error}\n    (#7501 batch bisection: ${where})`);
+    }
     for (const [rel, entry] of r.ended) if (want.has(rel)) results.set(rel, { entry });
     const inflight = chunk.filter((f) => !results.has(f) && r.started.has(f));
     const unstarted = chunk.filter((f) => !results.has(f) && !r.started.has(f));
