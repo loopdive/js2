@@ -334,7 +334,7 @@ CaseClause/DefaultClause, or the sole statement of an `if` clause (§B.3.3, its 
   - **Var-binding test [C1, C2]** (§B.3.2.3 step 1.b, bindingExists):
     - *F* must not be bound by **any** declarative environment between the eval and its var environment (HasBinding):
       `let`/`const`/`class`, a lexical `for` head, an outer block function's block binding
-      (`{ function f(){} eval('{ function f(){} }') }` creates no var), or a function's own name scope. Only a
+      (`{ function f(){} eval('{ function f(){} }') }` creates no var), or a class's inner name binding. Only a
       catch-clause parameter is exempt (§B.3.4).
     - The set is "every name bound in the intervening scopes, minus catch parameters". It comes from the lifted
       analysis's existing scope walk (B1), extended to count block functions and class names; there is no new walk.
