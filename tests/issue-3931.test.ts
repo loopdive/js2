@@ -52,6 +52,7 @@ function refHash(s: string): number {
 
 /** Every configuration the issue's acceptance criteria name. */
 const CONFIGURATIONS: Array<{ tag: string; opts: Record<string, unknown> }> = [
+  { tag: "default (no options; native since #6708 S6)", opts: {} },
   { tag: "fast+nativeStrings", opts: { fast: true, nativeStrings: true } },
   { tag: "nativeStrings", opts: { nativeStrings: true } },
   { tag: "standalone", opts: { target: "standalone" } },

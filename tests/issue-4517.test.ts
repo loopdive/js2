@@ -20,10 +20,10 @@
 //       float compare it had);
 //   (b) results stay byte-faithful, including the receivers where the compare
 //       boundary matters (empty string, single char, long string);
-//   (c) the default lane hashes byte-faithfully. It used to assert that
-//       host-string mode kept the generic condition; since #6708 S6
+//   (c) the default lane (no options) gets the same shape. It used to assert
+//       that host-string mode kept the generic condition; since #6708 S6
 //       (612cea9864) the default JS environment runs on native strings, so
-//       that lane no longer exists and the default lane takes the native fix.
+//       the default lane takes the native fix and is one of the shape lanes.
 
 import { describe, expect, it } from "vitest";
 
@@ -75,6 +75,7 @@ async function watOf(source: string, fnName: string, opts: Record<string, unknow
 }
 
 const NATIVE_CONFIGURATIONS: Array<{ tag: string; opts: Record<string, unknown> }> = [
+  { tag: "default (no options; native since #6708 S6)", opts: {} },
   { tag: "fast+nativeStrings", opts: { fast: true, nativeStrings: true } },
   { tag: "nativeStrings", opts: { nativeStrings: true } },
   { tag: "standalone", opts: { target: "standalone" } },
@@ -98,20 +99,6 @@ describe("#4517 the recognised char-read loop tests its bound in i32", () => {
       expect(wat).not.toContain("f64.lt");
     });
   }
-
-  // Was "host mode keeps the generic condition": with no options the default
-  // JS environment now runs on native strings (#6708 S6, 612cea9864), so its
-  // shape is the nativeStrings lane above. What it adds is the default lane's
-  // runtime result across the compare boundary.
-  it("the default lane (no options) hashes byte-faithfully across the compare boundary", async () => {
-    const r = await compile(HASH_SRC, { testRuntime: true, fileName: "issue-4517-default.ts" });
-    expect(r.success).toBe(true);
-    const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-    const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-    built.setExports?.(instance.exports as Record<string, Function>);
-    const hashStr = jsFacingExports(r, instance).hashStr as (s: string) => number;
-    for (const s of ["", "a", "ab", "z".repeat(300)]) expect(hashStr(s)).toBe(refHash(s));
-  });
 
   it("hash results stay byte-faithful across the compare boundary", async () => {
     const subjects = [
