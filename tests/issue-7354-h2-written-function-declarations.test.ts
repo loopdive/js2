@@ -119,10 +119,20 @@ describe("#7354 H2 — a written function declaration", () => {
     expect(await refusal(source)).toContain(message);
   });
 
+  // (#7462) A compound assignment and an update write the home through the module-binding write path.
+  it.each([
+    ["compound assignment", "function f(){ return 1; } f -= 1; var out = String(f);"],
+    ["increment", "function f(){ return 1; } f++; var out = String(f);"],
+  ])("a %s of the name writes the home", (_label, body) => agreesWithNode(body), SLOW);
+
+  it(
+    "`f += ''` ends at the abort where `f + ''` does (a function's ToPrimitive)",
+    () => abortsAtRunTime("function f(){ return 1; } f += '';"),
+    SLOW,
+  );
+
   // Write forms the module-binding write path does not lower refuse at the write.
   it.each([
-    ["compound assignment", "function f(){ return 1; } f += '';", 'compound assign to undeclared identifier "f"'],
-    ["increment", "function f(){ return 1; } f++;", 'increment/decrement of undeclared "f"'],
     ["logical assignment", "function f(){ return 1; } f ||= 0;", "unsupported body ExpressionStatement shape"],
     ["destructuring", "function f(){ return 1; } [f] = [3];", "unsupported body ExpressionStatement shape"],
   ])("refuses a %s of the name at the write", async (_label, source, message) => {

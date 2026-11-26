@@ -1,7 +1,8 @@
 ---
 id: 7462
 title: "Prepared path: a closure that writes a script var aborts; `new X` as a direct `+` operand refuses"
-status: in-progress
+status: done
+completed: 2026-11-26
 created: 2026-11-23
 updated: 2026-11-26
 priority: medium
@@ -251,6 +252,40 @@ with node's answer, which must return, and with a wrong one, which must throw. `
 - `src/ir/from-ast.ts` is at its LOC ceiling (17,340), so it must be net ≤ 0 lines; the folded prologues and arms pay
   for the change. `lowerTail` is not touched. No budget grants.
 
+### The `readonly` kind: measured, then dropped (2026-11-26)
+
+The lead's rule: an arm that no caller can reach must not exist. Which paths call `classifyIdentifierWrite`, measured
+with a logging copy of the head (`.tmp/instr`, not committed) over the gate-4 corpus (3,816 inputs, gc + standalone,
+7,632 compiles) and over probes:
+
+- **Ordinary pipeline.** The classifier is reached, by `=` only: 144 non-scope answers, all `module-binding` (a
+  function writing a module binding, e.g. `a = b = 1` in `g`). No `readonly`, no `undeclared`, and no call from the
+  compound or update writer (the selector refuses `module-update` / `tail-module-compound` in a function; in
+  module-init a compound target must be in scope).
+- **Why `readonly` never arrives.** Every selector arm that claims a module-binding `=` asks the same resolver with
+  the value first (`moduleBindingWrite`, `moduleBindingTakes`). Probes that would produce it (a `const` written in a
+  function; `let x: number` written with a string) are not claimed: `g` is absent from `irCompiledFuncs`.
+- **Prepared path.** `resolveBinding` ignores the value except to refuse an immutable binding itself, so it can never
+  answer "readable but not writable".
+
+So this is neither case the lead's note anticipated: the ordinary pipeline does call the classifier, but no caller
+receives `readonly`. The kind is dropped: the classifier answers `scope`, `module-binding` or `undeclared`, and the
+`=` writer's old `readonly or representation-incompatible` demote (main's resolver arm) goes with it. No Prepared test
+expects it (PRV-7462 note b).
+
+### Deviations from the plan, measured
+
+- **Pins of `function Map(){}` / `Promise` / `Number` / `RegExp`.** Inside `"" + new Name()` the refusal is the `+`
+  one (`'+' operands not provably … (string/unprovable)`), on main and on the head: `constructsDynamic` is false for
+  them, so the `+` check refuses before `lowerNewExpression` runs. `unknown class "Name"` is the refusal through a
+  variable (`var v = new Name(); "" + v`). The test pins both.
+- **#7354 H2 rows.** `function f(){ return 1; } f++;` and `f += '';` refused at the write on main (`undeclared`), as
+  module-init has no scope binding for a function declaration. The update and compound writers now ask the resolver,
+  as `=` does: `f++` and `f -= 1` give node's `NaN`, and `f += ''` ends at the run-time abort where `f + ''` already
+  does (a function's ToPrimitive). The H2 test states these three instead of the two refusals.
+- **The `const` pin.** The checker's `Cannot assign to 'n' because it is a constant.` is an error diagnostic, so the
+  row compiles with it and asserts both, not through `abortBodies` (which expects no diagnostics).
+
 ### Code-quality acceptance criterion
 
 - One write classifier, `identifier-write.ts`, in `identifier-read.ts`'s shape. One storage prologue for all three
@@ -259,3 +294,38 @@ with node's answer, which must return, and with a wrong one, which must throw. `
 - One `constructsDynamic`, used by the lowering and the leaf. One `construct` leaf. No `+` special case.
 - No new demote label and no defensive branch. `from-ast.ts` net ≤ 0 lines. A fresh-context adversarial review of the
   diff and this plan, with its verdict in the PR body.
+
+## Result
+
+Base `6694a8b8391`, head = this branch, measured 2026-11-26.
+
+- **Both programs give node's answer**, each with a wrong twin that throws
+  (`tests/issue-7462-prepared-script-var-writes.test.ts`, 29 tests): a closure or function updating a script `var`
+  (`++`/`--` both forms, `+=`, `-=`, in a loop, of a string `var`), a discarded update (void tail, comma, conditional
+  arm), and `new` as a `+` operand (`TypeError`, `Error`, a function `C`). The refusals left out are pinned by name.
+- **Gate 1, 411-row Prepared sample:** pass 83 → 83 (+0). No row's first gap moved (per-row compare of status and first
+  error). Yield 0, as estimated.
+- **Gate 2, `check:prepared-bytes`:** 804 rows (745 `bytes`, 58 `refused`, 1 `threw`), output identical to base
+  (sha256 `6c9504fe8787…` both).
+- **Gate 3, prelude + `assert(true);`:** 81,397 B, sha256 `031c67f357f6…`, identical to base.
+- **Gate 4, ordinary pipeline:** 3,816 inputs (the equivalence corpus's compile inputs captured from its own run, the
+  13 playground examples, 21 gap programs as `.js` and `.ts`), each gc and standalone: 7,632 compiles, all identical
+  in status, binary sha256 and claim set (`irCompiledFuncs`, 6,379 claimed functions over 3,677 compiles). No unit's
+  claim set changed. The gap programs keep main's claims (`a = b = 1` → `["g"]`; `new C()` → `["C"]`).
+- **Mutated twins** (each run against the new test file): dropping the module-binding answer (15 fail), passing no write
+  value (the `const` pin fails), dropping `lowerDiscardedUpdate` from the discard authority (6 fail), dropping the
+  `construct` leaf (4 fail), `constructsDynamic` false (4 fail). Two survive, both unobservable on every lane today:
+  moving the TDZ guard after the read (the Prepared path refuses any TDZ guard, as `__new_ReferenceError` has no
+  runtime function there; the ordinary selector never sends an update to a module binding), and caching resolver
+  storage in scope (a `var` has no TDZ global, so a cached read is the same `global.get`).
+- **Suites:** the 73 files of `tests/issue-7462-*`, `tests/issue-7354-*`, `tests/test262-prepared-*` and
+  `tests/issue-7338*` (one vitest invocation each): 2,251 pass, 2 fail before the fix below. `issue-7354-m-refusals`
+  G45 `v.a++` now refuses at the member compound write (`compound property write on dynamic not in IR scope (f)`, the
+  refusal `v.a++; return;` already gives) instead of `unsupported expression kind PostfixUnaryExpression`; its pin is
+  updated (43/43). `issue-7354-o-objects` fails the same test on base (pre-existing). Related ordinary suites
+  (`issue-5163`, `issue-2856`, `issue-2089`, `es5-*compound*`, `compound-assignment-*`, `ir-const-update-refusal`,
+  `issue-7143-legacy-reach`, `issue-2980`, `ir-frontend-widening`): failures in `issue-2089` (2), `issue-2856` (14) and
+  `issue-5163` (2) are the same tests on base. Equivalence suite: 20 failures, all in `scripts/equivalence-baseline.json`.
+  The new file passes under Node 24 with `--no-experimental-wasm-legacy-eh`.
+- **Size:** `src/ir/from-ast.ts` 17,340 → 17,317 lines; no budget grant.
+

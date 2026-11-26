@@ -152,10 +152,11 @@ describe("#7354 M1 — refusals that stay", () => {
     ],
     // (#7354 M1) This threw out of compile() ("internal capability violation"): the Prepared path has no selector.
     ["G45: v.a += 1", "function f(v){ v.a += 1; } f({a:1});", "binary operator '+=' is capability-deferred in f"],
+    // (#7462) A discarded update reaches the member compound write, as a statement's does.
     [
       "G45: v.a++",
       "function f(v){ v.a++; } f({a:1});",
-      "ir/from-ast: unsupported expression kind PostfixUnaryExpression in f",
+      "ir/from-ast: compound property write on dynamic not in IR scope (f)",
     ],
     ["G45: delete", "function f(v){ return delete v.a; } f({a:1});", "ir/from-ast: delete has no IR lowering in f"],
     ["G45: in", "function f(v){ return 'a' in v; } f({a:1});", gapText("__extern_has")],

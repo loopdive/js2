@@ -448,6 +448,7 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
+import { classifyIdentifierWrite } from "./identifier-write.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -2722,6 +2723,7 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     )
       return;
   }
+  if (lowerDiscardedUpdate(expr, cx)) return;
   void lowerExpr(expr, cx, irVal({ kind: "externref" }));
 }
 
@@ -8416,6 +8418,18 @@ function lowerNestedFuncCall(
  * `{ kind: "class", shape }` so subsequent property accesses / method
  * calls dispatch correctly.
  */
+/**
+ * (#7106 S3a, S3c, #7354 C2) `new <a value>(args)` that lowers to `dyn.construct`: a dynamic local or module home
+ * (`bindingHoldsDynamic`), or a self-guarded constructor's function-object plan. (#7462) Its value is the carrier.
+ */
+function constructsDynamic(expr: ts.NewExpression, cx: LowerCtx): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee)) return false;
+  const functionValueCallee =
+    cx.scope.get(callee.text) === undefined && cx.topLevelFunctionValues?.get(callee) !== undefined;
+  return bindingHoldsDynamic(callee, cx) || functionValueCallee;
+}
+
 function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerNewExpression(expr, cx));
@@ -8442,12 +8456,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     );
   }
   const className = expr.expression.text;
-  // (#7106 S3a, S3c, #7354 C2) `new <a value>(args)` → `dyn.construct`: a dynamic local or module home
-  // (`bindingHoldsDynamic`), or a self-guarded constructor's function-object plan.
-  const functionValueCallee =
-    cx.scope.get(className) === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
-  if (bindingHoldsDynamic(expr.expression, cx) || functionValueCallee)
-    return functionObjects.lowerDynamicConstruct(expr, functionObjectLoweringHost(cx));
+  if (constructsDynamic(expr, cx)) return functionObjects.lowerDynamicConstruct(expr, functionObjectLoweringHost(cx));
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
     demoteToLegacy(
       "unknown-class-construction",
@@ -10918,9 +10927,14 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
     }
     return false;
   }
-  // S0/S1/S2 — `x++;` / `--x;` / `o.x++;` / `a[i]--;`. The result is discarded,
-  // so prefix and postfix lower identically; a member target routes to the same
-  // compound helper with a synthetic `1`.
+  return lowerDiscardedUpdate(expr, cx);
+}
+
+/**
+ * S0/S1/S2 — `x++;` / `--x;` / `o.x++;` / `a[i]--;`. The result is discarded, so prefix and postfix lower identically;
+ * a member target routes to the same compound helper with a synthetic `1`. Returns `true` when `expr` is an update.
+ */
+function lowerDiscardedUpdate(expr: ts.Expression, cx: LowerCtx): boolean {
   if (!ts.isPostfixUnaryExpression(expr) && !ts.isPrefixUnaryExpression(expr)) return false;
   if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return false;
   const stepOp = expr.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
@@ -12235,13 +12249,7 @@ function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
     lowerForUpdateExpr(expr.right, cx);
     return;
   }
-  if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) {
-    const op = expr.operator;
-    if ((op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(expr.operand)) {
-      lowerIncrementDecrement(expr.operand, op, cx);
-      return;
-    }
-  }
+  if (lowerDiscardedUpdate(expr, cx)) return;
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     if (op === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
@@ -13210,43 +13218,77 @@ function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): neve
   throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
 }
 
+/**
+ * (#7462) The binding a write to `id` targets. A module binding only the resolver answers (a function writing a script
+ * `var`) is its global with `resolved` set, and is never cached in scope: every later access keeps the resolver's TDZ
+ * and owner checks.
+ */
+function identifierWriteTarget(
+  id: ts.Identifier,
+  writeValue: ts.Expression,
+  label: "property-write-unsupported" | "compound-assign-unsupported",
+  undeclared: string,
+  cx: LowerCtx,
+): { readonly binding: ScopeBinding; readonly resolved?: ModuleBindingGlobal } {
+  const answer = classifyIdentifierWrite(id, writeValue, cx);
+  if (answer.kind === "scope") return { binding: answer.binding };
+  if (answer.kind === "module-binding") {
+    const { globalRef, type } = answer.binding;
+    return { binding: { kind: "moduleGlobal", globalRef, type }, resolved: answer.binding };
+  }
+  demoteToLegacy(label, `ir/from-ast: ${undeclared} "${id.text}" in ${cx.funcName}`);
+}
+
+/**
+ * The storage a compound assignment or an update reads and writes back: a slot, a module global or a captured cell.
+ * (#7462) A resolved module binding's TDZ guard comes first: GetValue precedes the read of the old value.
+ */
+function readModifyWriteStorage(
+  id: ts.Identifier,
+  undeclared: string,
+  nonSlot: string,
+  cx: LowerCtx,
+): {
+  storage: ReadModifyWriteStorage;
+  capturedCellType?: Extract<IrType, { kind: "boxed" }>;
+  resolved?: ModuleBindingGlobal;
+} {
+  const target = identifierWriteTarget(id, id.parent as ts.Expression, "compound-assign-unsupported", undeclared, cx);
+  const storage = target.binding;
+  const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
+  if (!(storage.kind === "slot" || storage.kind === "moduleGlobal" || (storage.kind === "local" && capturedCellType)))
+    refuseNonSlotWrite(id, nonSlot, cx);
+  if (target.resolved) lowerResolvedModuleBindingTdzCheck(id.text, target.resolved, cx);
+  return { storage, capturedCellType, resolved: target.resolved };
+}
+
+type ReadModifyWriteStorage = Extract<ScopeBinding, { kind: "slot" | "moduleGlobal" | "local" }>;
+
+function readStorage(storage: ReadModifyWriteStorage, type: IrType, cx: LowerCtx): IrValueId {
+  if (storage.kind === "moduleGlobal") return cx.builder.emitGlobalGet(storage.globalRef, type);
+  if (storage.kind === "slot") return cx.builder.emitSlotReadAs(storage.slotIndex, type);
+  return cx.builder.emitRefCellGet(storage.value, type);
+}
+
+function writeStorage(storage: ReadModifyWriteStorage, value: IrValueId, cx: LowerCtx): void {
+  if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, value);
+  else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, value);
+  else cx.builder.emitRefCellSet(storage.value, value);
+}
+
 /** Write a mutable identifier and return the RHS before any storage boxing. */
 function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
   }
-  const binding = cx.scope.get(id.text);
-  if (!binding) {
-    const readable = cx.resolver?.resolveModuleBinding?.(id);
-    if (readable) {
-      requireMatchingModuleBindingOwner(readable, cx.ownerUnitId, cx.funcName);
-      const writable = cx.resolver?.resolveModuleBinding?.(id, rhs);
-      if (!writable) {
-        demoteToLegacy(
-          "property-write-unsupported",
-          `ir/from-ast: assignment to readonly or representation-incompatible module binding "${id.text}" in ${cx.funcName}`,
-        );
-      }
-      requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
-      const result = lowerExpr(rhs, cx, writable.type);
-      const newValue = boxForDynamicModuleStorage(result, writable.type, rhs, cx);
-      const newType = cx.builder.typeOf(newValue);
-      if (!moduleStorageCompatible(newType, writable.type)) {
-        demoteToLegacy(
-          "property-write-unsupported",
-          `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
-        );
-      }
-      lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
-      cx.builder.emitGlobalSet(writable.globalRef, newValue);
-      return result;
-    }
-    demoteToLegacy(
-      "property-write-unsupported",
-      `ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`,
-    );
-  }
-  // (#3142 Slice 2) Module-scope binding — write the legacy global.
+  const { binding, resolved } = identifierWriteTarget(
+    id,
+    rhs,
+    "property-write-unsupported",
+    "assignment to undeclared identifier",
+    cx,
+  );
+  // (#3142 Slice 2) Module-scope binding — write the legacy global; a resolved one after the RHS, then its TDZ guard.
   if (binding.kind === "moduleGlobal") {
     const result = lowerExpr(rhs, cx, binding.type);
     const newValue = boxForDynamicModuleStorage(result, binding.type, rhs, cx);
@@ -13257,8 +13299,9 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
         `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(binding.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
       );
     }
+    if (resolved) lowerResolvedModuleBindingTdzCheck(id.text, resolved, cx);
     cx.builder.emitGlobalSet(binding.globalRef, newValue);
-    cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
+    if (!resolved) cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
     return result;
   }
   if (binding.kind === "local" && binding.type.kind === "boxed") {
@@ -13341,19 +13384,12 @@ function lowerCompoundAssignment(
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
   }
-  const binding = cx.scope.get(id.text);
-  if (!binding) {
-    demoteToLegacy(
-      "compound-assign-unsupported",
-      `ir/from-ast: compound assign to undeclared identifier "${id.text}" in ${cx.funcName}`,
-    );
-  }
-  const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
-  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    refuseNonSlotWrite(id, "compound assign to non-slot binding", cx);
-  }
-  const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
-  const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
+  const { storage, capturedCellType, resolved } = readModifyWriteStorage(
+    id,
+    "compound assign to undeclared identifier",
+    "compound assign to non-slot binding",
+    cx,
+  );
   // (#3741) Promotion admits bitwise compounds and exact literal counter steps.
   // Unsupported shapes remain refusals in the shared i32 producer.
   if (storage.kind === "slot" && storage.i32Storage) {
@@ -13367,23 +13403,12 @@ function lowerCompoundAssignment(
   // `compoundWriteAdmissible`; the arms below are its producers.
   const slotFamily = irOperandFamily(logicalType, id);
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "string") {
-    const lhs =
-      storage.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
-        : storage.kind === "slot"
-          ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
-          : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
+    const lhs = readStorage(storage, logicalType, cx);
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsString = checkerOperandFamily(rhs, cx) === "string";
     const store = (result: IrValueId, stringEncoding: Encoding) => {
-      if (storage.kind === "moduleGlobal") {
-        cx.builder.emitGlobalSet(storage.globalRef, result);
-      } else if (storage.kind === "slot") {
-        cx.builder.emitSlotWrite(storage.slotIndex, result);
-      } else {
-        cx.builder.emitRefCellSet(storage.value, result);
-      }
-      cx.scope.set(id.text, { ...storage, stringEncoding });
+      writeStorage(storage, result, cx);
+      if (!resolved) cx.scope.set(id.text, { ...storage, stringEncoding });
     };
     if (rhsString && cx.builder.typeOf(rhsValue).kind === "dynamic") {
       // (#7287 review B2, S3) A checker-string RHS can lower to the dynamic
@@ -13434,10 +13459,7 @@ function lowerCompoundAssignment(
         `ir/from-ast: dynamic "${id.text} +=" into a captured binding not in slice 6 (${cx.funcName})`,
       );
     }
-    const lhs =
-      storage.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
-        : cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
+    const lhs = readStorage(storage, logicalType, cx);
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
     if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
@@ -13450,8 +13472,7 @@ function lowerCompoundAssignment(
     // invariant (producer-promise): `compoundWriteAdmissible` admits only boxable operands — #7144.
     if (dynamicRhs === null) throw new Error(`ir/from-ast: admitted dynamic "+=" operand did not box (${cx.funcName})`);
     const added = emitDynamicAdd(lhs, dynamicRhs, cx);
-    if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, added);
-    else cx.builder.emitSlotWrite(storage.slotIndex, added);
+    writeStorage(storage, added, cx);
     return added;
   }
   // Dynamic captured cells need a separately proven storage contract.
@@ -13464,12 +13485,7 @@ function lowerCompoundAssignment(
 
   // Desugar: read the slot (or, #3142, the module-binding global), lower the
   // RHS, apply the binop, write back.
-  const lhs =
-    storage.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet(storage.globalRef, storage.type)
-      : storage.kind === "slot"
-        ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
-        : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
+  const lhs = readStorage(storage, logicalType, cx);
   const rhsValue = lowerExpr(rhs, cx, logicalType);
   const rhsType = cx.builder.typeOf(rhsValue);
   if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
@@ -13495,9 +13511,7 @@ function lowerCompoundAssignment(
   const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
   const result =
     slotFamily === "dynamic" ? cx.builder.emitBox(numericResult, irDynamic(JS_TAG_IDS.NumberF64)) : numericResult;
-  if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
-  else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
-  else cx.builder.emitRefCellSet(storage.value, result);
+  writeStorage(storage, result, cx);
   return numericResult;
 }
 
@@ -13515,19 +13529,12 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
     return;
   }
-  const binding = cx.scope.get(id.text);
-  if (!binding) {
-    demoteToLegacy(
-      "compound-assign-unsupported",
-      `ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`,
-    );
-  }
-  const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
-  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    refuseNonSlotWrite(id, "increment/decrement of non-slot", cx);
-  }
-  const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
-  const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
+  const { storage, capturedCellType } = readModifyWriteStorage(
+    id,
+    "increment/decrement of undeclared",
+    "increment/decrement of non-slot",
+    cx,
+  );
   // (#3741) i32-promoted slot — `i32.add`/`i32.sub` of 1, exactly what legacy
   // has emitted for a promoted counter since #1120.
   if (storage.kind === "slot" && storage.i32Storage) {
@@ -13549,51 +13556,20 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
       `ir/from-ast: increment/decrement of non-f64 slot "${id.text}" (${describeIrType(logicalType)}) not in slice 12 (${cx.funcName})`,
     );
   }
-  if (slotFamily === "dynamic") {
-    const current =
-      storage.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
-        : storage.kind === "slot"
-          ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
-          : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
-    const numeric = cx.builder.emitDynToNumber(current);
-    const one = cx.builder.emitConst({ kind: "f64", value: 1 }, irVal({ kind: "f64" }));
-    const updated = cx.builder.emitBinary(
-      op === ts.SyntaxKind.PlusPlusToken ? "f64.add" : "f64.sub",
-      numeric,
-      one,
-      irVal({ kind: "f64" }),
-    );
-    const boxed = cx.builder.emitBox(updated, irDynamic(JS_TAG_IDS.NumberF64));
-    if (storage.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet(storage.globalRef, boxed);
-    } else if (storage.kind === "slot") {
-      cx.builder.emitSlotWrite(storage.slotIndex, boxed);
-    } else {
-      cx.builder.emitRefCellSet(storage.value, boxed);
-    }
-    return;
-  }
-  const lhs =
-    storage.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet(storage.globalRef, storage.type)
-      : storage.kind === "slot"
-        ? cx.builder.emitSlotRead(storage.slotIndex)
-        : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
-  const isAdd = op === ts.SyntaxKind.PlusPlusToken;
-  const oneIr: IrType = irVal({ kind: "f64" });
-  const one = cx.builder.emitConst({ kind: "f64", value: 1 }, oneIr);
-  const binop: IrBinop = isAdd ? "f64.add" : "f64.sub";
-  const result = cx.builder.emitBinary(binop, lhs, one, oneIr);
-  if (storage.kind === "moduleGlobal") {
-    cx.builder.emitGlobalSet(storage.globalRef, result);
-    return;
-  }
-  if (storage.kind === "slot") {
-    cx.builder.emitSlotWrite(storage.slotIndex, result);
-    return;
-  }
-  cx.builder.emitRefCellSet(storage.value, result);
+  const current = readStorage(storage, logicalType, cx);
+  const numeric = slotFamily === "dynamic" ? cx.builder.emitDynToNumber(current) : current;
+  const one = cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64);
+  const updated = cx.builder.emitBinary(
+    op === ts.SyntaxKind.PlusPlusToken ? "f64.add" : "f64.sub",
+    numeric,
+    one,
+    IR_F64,
+  );
+  writeStorage(
+    storage,
+    slotFamily === "dynamic" ? cx.builder.emitBox(updated, irDynamic(JS_TAG_IDS.NumberF64)) : updated,
+    cx,
+  );
 }
 
 interface ExactMixedPrimitiveWrapperProof {
@@ -14887,6 +14863,7 @@ function dynamicLeaves(cx: LowerCtx): CarrierLeaves {
     },
     // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
     conditional: (conditional) => mixedPrimitiveConditionalClaim(conditional, cx) !== null,
+    construct: (construction) => constructsDynamic(construction, cx),
     addsAsCarrier: (operand) => primitiveWrapperConstruction(operand, cx) !== undefined,
   };
 }
