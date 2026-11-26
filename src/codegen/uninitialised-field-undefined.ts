@@ -80,9 +80,11 @@ export function fieldStartsUndefined(
   declaration: FieldDeclaration | undefined,
   fieldType: ValType,
 ): boolean {
-  if (declaration?.initializer !== undefined) return false;
-  const slotType = fieldSlotType(ctx, declaration, fieldType);
-  return slotType.kind === "f64" && slotType.undefSentinel === true;
+  return slotStartsUndefined(declaration, fieldSlotType(ctx, declaration, fieldType));
+}
+
+function slotStartsUndefined(declaration: FieldDeclaration | undefined, slotType: ValType): boolean {
+  return declaration?.initializer === undefined && slotType.kind === "f64" && slotType.undefSentinel === true;
 }
 
 /** The mutable instance field `name` that `declaration` declares with Wasm type `fieldType`. */
@@ -93,8 +95,12 @@ export function declaredField(
   fieldType: ValType,
 ): FieldDef {
   const type = fieldSlotType(ctx, declaration, fieldType);
-  const undefinedDefault = fieldStartsUndefined(ctx, declaration, fieldType);
-  return { name, type, mutable: true, ...(undefinedDefault ? { undefinedDefault: true as const } : {}) };
+  return {
+    name,
+    type,
+    mutable: true,
+    ...(slotStartsUndefined(declaration, type) ? { undefinedDefault: true as const } : {}),
+  };
 }
 
 /** The struct slot behind a declared-but-never-initialised class field. */

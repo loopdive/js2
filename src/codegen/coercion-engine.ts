@@ -564,10 +564,10 @@ export function compileAndEmitToString(
  *   externref            → __unbox_number (js-host) | coerceType(f64,"number") (standalone)
  *   ref/ref_null         → coerceType(f64,"number")  (object @@toPrimitive("number")/valueOf)
  *   i32 (number/bool)    → f64.convert_i32_s
- *   f64                  → no-op
+ *   f64                  → no-op, except a branded f64 (`undefSentinel`)
  *
  * Returns the ValType left on the stack (`{kind:"f64"}` for every coercing arm;
- * the original `valType` for the already-f64 no-op).
+ * the original `valType` for an unbranded f64).
  *
  * NOTE — what stays in the caller (NOT folded here, because each is a *source*
  * special-case that must run BEFORE the operand is on the stack as a plain
@@ -618,7 +618,17 @@ export function emitToNumber(ctx: CodegenContext, fctx: FunctionContext, valType
     return { kind: "f64" };
   }
 
-  // Already f64 — no-op.
+  // (#7464) A branded f64's sentinel is ToNumber(undefined), a plain NaN: map it, so the result carries no brand for
+  // a later reader (`String`, `typeof`) to take for `undefined`. An unbranded f64 is already a number.
+  if (valType.kind === "f64" && valType.undefSentinel === true) {
+    const value = allocTempLocal(fctx, { kind: "f64" });
+    fctx.body.push({ op: "local.set", index: value }, { op: "f64.const", value: Number.NaN });
+    fctx.body.push({ op: "local.get", index: value }, { op: "local.get", index: value });
+    emitIsUndefF64(fctx.body);
+    fctx.body.push({ op: "select" });
+    releaseTempLocal(fctx, value);
+    return { kind: "f64" };
+  }
   return valType;
 }
 

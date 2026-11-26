@@ -14,6 +14,10 @@ task_type: bugfix
 area: codegen
 goal: core-semantics
 related: [7366, 7360, 7406, 7470]
+# 2026-11-26 (review): a module binding's slot type calls `undefinedCapableSlotType` directly instead of through a
+# one-line pass-through in module-var-undefined-seed.ts, which costs declarations.ts one import line (+1).
+loc-budget-allow:
+  - src/codegen/declarations.ts
 ---
 
 # #7464 — what the f64 `undefined` sentinel still gets wrong
@@ -85,7 +89,7 @@ gc and standalone answer the same on every row.
 | 2 | `for (var g: number \| undefined, i = 0; …)` and the single-binding head | 2 | invalid Wasm | 2 |
 | 3 | module `let`: `String(g)`, `"" + g`, `g + ""` | "undefined" | "NaN" | "undefined" |
 | 3 | field / static: `String`, `typeof` | "undefined" | "NaN" / "number" | "undefined" |
-| 3 | `String(+g)` (unary `+` drops the brand) | "NaN" | "NaN" | "NaN" |
+| 3 | `String(+g)`, `String(Number(g))` (ToNumber drops the brand) | "NaN" | "NaN" | "NaN" |
 
 Case 3 brands an f64 slot that can hold `undefined` once, at its declaration (`undefinedCapableSlotType` in
 `value-tags.ts`, applied to fields, statics and module bindings). The existing `emitNumberToStringSentinelAware`
@@ -105,3 +109,5 @@ Checks: 240 test262 files × gc/standalone byte-identical to origin/main; pin te
 - **Omitted f64 constructor arguments** are padded with `0`, not the sentinel (`new-super.ts` ~L7051), and
   `function-arity-mismatch` pins that 0.
 - `` `${g}` `` is still a compile error.
+- **Closure capture:** a closure that reads a captured, never-assigned `number | undefined` `var` or `let` sees NaN,
+  not `undefined`, on main too (pinned with `it.fails` in the #7464 test).
