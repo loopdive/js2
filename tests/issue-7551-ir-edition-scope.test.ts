@@ -3,7 +3,7 @@
 // frontmatter shapes, classified by the edition ratchet's own classifier) and
 // through its CLI, including the exit codes the workflow gates on.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +13,9 @@ import {
   buildReport,
   compareEditionRuns,
   editionPaths,
+  MISSING_STATUS,
   nearestBaseline,
+  REGRESSION_EXIT_CODE,
   readCurrentEdition,
   renderSummary,
   type ScopeMeta,
@@ -83,6 +85,7 @@ describe("#7551 per-test comparison", () => {
       statuses({ [ES5_A]: "compile_error", [ES5_B]: "pass", [ES5_C]: "compile_timeout", [ES2015]: "fail" }),
       statuses({ [ES5_A]: "pass", [ES5_B]: "fail", [ES5_C]: "pass", [ES2015]: "pass" }),
       paths,
+      true,
     );
     expect(diff.regressions).toEqual([{ file: ES5_A, now: "compile_error" }]);
     expect(diff.improvements).toEqual([ES5_B]);
@@ -92,8 +95,26 @@ describe("#7551 per-test comparison", () => {
   });
 
   it("counts edition tests the baseline never ran instead of calling them regressions", () => {
-    const diff = compareEditionRuns(statuses({ [ES5_A]: "fail" }), statuses({}), paths);
+    const diff = compareEditionRuns(statuses({ [ES5_A]: "fail" }), statuses({}), paths, true);
     expect(diff).toMatchObject({ regressions: [], unbaselined: 1 });
+  });
+
+  it("gates a baseline-passing test the run dropped, unless the test262 revision changed", () => {
+    const run = statuses({ [ES5_A]: "pass" });
+    const baseline = statuses({ [ES5_A]: "pass", [ES5_B]: "pass", [ES5_C]: "fail" });
+    expect(compareEditionRuns(run, baseline, paths, true)).toMatchObject({
+      regressions: [{ file: ES5_B, now: MISSING_STATUS }],
+      notComparable: [],
+    });
+    expect(compareEditionRuns(run, baseline, paths, false)).toMatchObject({ regressions: [], notComparable: [ES5_B] });
+    const changed = buildReport({
+      run,
+      meta: meta(),
+      paths,
+      baseline: { statuses: baseline, meta: meta({ sourceSha: "base", test262Sha: "older" }) },
+    });
+    expect(changed.baseline?.test262Changed).toEqual({ from: "older", to: "t262" });
+    expect(renderSummary(changed)).toContain("Not comparable (test262 revision changed)");
   });
 
   it("never reports 'no regressions' without a comparable baseline", () => {
@@ -195,6 +216,18 @@ describe("#7551 gh calls survive one transient GitHub error", () => {
     expect(() => ghWithRetry(["api", "x"], { exec: down.exec, sleep: () => {}, log: () => {} })).toThrow();
     expect(down.calls).toHaveLength(GH_RETRY_DELAYS_SECONDS.length + 1);
   });
+
+  it("retries a failed artifact download and clears its half-written --dir first", () => {
+    const blob = failure('error downloading x: Get "https://blob/x.zip": unexpected EOF');
+    const { calls, exec } = scripted([blob, "done"]);
+    const cleaned: string[] = [];
+    const args = ["run", "download", "42", "--name", "a", "--dir", "dest"];
+    expect(ghWithRetry(args, { exec, sleep: () => {}, log: () => {}, clean: (d: string) => cleaned.push(d) })).toBe(
+      "done",
+    );
+    expect(calls).toHaveLength(2);
+    expect(cleaned).toEqual(["dest"]);
+  });
 });
 
 describe("#7551 report CLI exit codes", () => {
@@ -224,8 +257,9 @@ describe("#7551 report CLI exit codes", () => {
     write(same, { [ES5_A]: "pass", [ES5_B]: "pass" }, meta());
 
     const regressed = report(run, base);
-    expect(regressed.status).toBe(1);
+    expect(regressed.status).toBe(REGRESSION_EXIT_CODE);
     expect(readFileSync(join(run, "s.md"), "utf-8")).toContain(ES5_A);
+    expect(existsSync(join(run, "r.json"))).toBe(true);
 
     expect(report(same, base).status).toBe(0);
     expect(readFileSync(join(same, "s.md"), "utf-8")).toContain("Improvements (not pass → pass): 1");
@@ -233,5 +267,16 @@ describe("#7551 report CLI exit codes", () => {
     const missing = report(run, join(root, "absent"));
     expect(missing.status).toBe(0);
     expect(readFileSync(join(run, "s.md"), "utf-8")).toContain("No baseline — not compared");
+  });
+
+  it("a crash (truncated baseline JSONL) exits neither 0 nor the regression code, and writes no report", () => {
+    const base = join(root, "cli-truncated");
+    const run = join(root, "cli-crash");
+    write(base, { [ES5_A]: "pass" }, meta({ sourceSha: "base" }));
+    writeFileSync(join(base, "results.jsonl"), '{"file":"test/a.js","status":"pa');
+    write(run, { [ES5_A]: "fail" }, meta());
+    const crashed = report(run, base);
+    expect([0, REGRESSION_EXIT_CODE]).not.toContain(crashed.status);
+    expect(existsSync(join(run, "r.json"))).toBe(false);
   });
 });

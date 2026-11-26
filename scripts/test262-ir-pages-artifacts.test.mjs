@@ -512,7 +512,25 @@ test("IR merge keeps the site-facing reports to the full scope and gates the edi
   const upload = merge.indexOf("      - uses: actions/upload-artifact@v6");
   const fail = merge.indexOf("      - name: Fail on an edition regression (#7551)");
   assert.ok(upload > 0 && fail > upload);
-  assert.match(step("Fail on an edition regression (#7551)"), /steps\.edition_report\.outputs\.exit != '0'/);
+  // Only exit 3 WITH a written report is a regression; any other non-zero exit
+  // is a crash, failed under an "[infra]" step so auto-park does not park it.
+  assert.match(
+    step("Fail on an edition regression (#7551)"),
+    /steps\.edition_report\.outputs\.verdict == 'regression'/,
+  );
+  assert.match(
+    report,
+    /if \[ "\$code" = 3 \] && \[ -s ir-measurement\/edition-report\.json \]; then verdict=regression/,
+  );
+  assert.match(
+    step("Edition report did not complete (#7551) [infra]"),
+    /steps\.edition_report\.outputs\.verdict == 'crashed'/,
+  );
+  // A narrowed discovery cannot shrink an edition run unnoticed.
+  assert.match(
+    step("Validate every planned shard before reporting any verdict"),
+    /--expected-paths-file "\$RUNNER_TEMP\/edition-paths\.txt"/,
+  );
 });
 test("IR shards take their partition from the plan and filter to the edition only in edition scope", () => {
   const shard = workflow.slice(

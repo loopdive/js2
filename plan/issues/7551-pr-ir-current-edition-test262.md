@@ -270,3 +270,40 @@ PR stacked on this one (`claude/ci-legacy-daily`), after owner sign-off.
     measurement is a pre-#7551 full artifact without `scope.json`, so that
     run cannot compare. From the second merge on, it compares against the
     previous edition run.
+
+## Review fixes, Part A (2026-11-26)
+
+- **A1 (crash vs. regression).** `report` now exits **3** for "regression
+  found", and only after writing the JSON report. Exit 2 is usage; anything
+  else is a crash (1 = uncaught throw).
+  - The workflow records `verdict = regression` only for exit 3 *with* a
+    non-empty report. Any other non-zero exit is `crashed`, and fails in the
+    step "Edition report did not complete (#7551) [infra]".
+  - Auto-park's infra patterns now match a trailing `[infra]` (self-check
+    cases: crash → no park, regression → park).
+  - Test: a truncated baseline JSONL exits neither 0 nor 3 and writes no
+    report.
+- **A2 (dropped rows).**
+  - On the same test262 revision, a baseline-passing test with no row in the
+    run is a regression with status `missing`.
+  - When the revision changed, such a test is listed as "Not comparable
+    (test262 revision changed)".
+  - The merge step validates edition runs with
+    `--expected-paths-file <edition list>`.
+  - The list is exactly what the runner registers: discovery
+    (`TEST_CATEGORIES` and the file rule) moved, unchanged, from
+    `tests/test262-runner.ts` into the dependency-free
+    `tests/test262-categories.ts`, which the runner and the scope script both
+    use.
+  - ES5 now lists **9,029** files, equal to the ratchet's ES5 total. The
+    earlier 9,174 included 145 `intl402` files the runner never walks.
+- **Nits.**
+  - The CLAUDE.md typo is fixed.
+  - `listArtifacts` paginates.
+  - The baseline revision is `test262Changed: {from, to}`, present only on a
+    change, instead of an `"unknown"`/`""` sentinel.
+  - The retry helper also recognises server and network failures from the
+    artifact blob store, and clears a half-written `gh run download --dir`
+    before retrying (tested).
+  - The measurement upload has `overwrite: true`, so a re-run of failed jobs
+    re-uploads.

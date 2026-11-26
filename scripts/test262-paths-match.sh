@@ -146,6 +146,7 @@ classify_test262_path() {
     scripts/test262-worker.mjs) echo both ;;
     tests/test262-chunk*.test.ts) echo both ;;
     tests/test262-runner.ts) echo both ;;
+    tests/test262-categories.ts) echo both ;;
     tests/test262-scope-classification.test.ts) echo both ;;
     tests/test262-shared.ts) echo both ;;
     # Any FUTURE weight-map variant we have not classified above stays `both`

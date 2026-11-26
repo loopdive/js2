@@ -203,6 +203,7 @@ const EXACT_TEST262_PATHS = new Set([
   "scripts/generate-editions.ts",
   "scripts/test262-worker.mjs",
   "tests/test262-runner.ts",
+  "tests/test262-categories.ts",
   "tests/test262-scope-classification.test.ts",
   "tests/test262-shared.ts",
   "scripts/test262-paths-match.sh",

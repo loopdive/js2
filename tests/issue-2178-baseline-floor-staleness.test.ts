@@ -65,6 +65,7 @@ describe("#2178 — pathsTouchTest262 mirrors the test262-paths allowlist", () =
       "src/a/b.ts",
       "tests/test262-chunk1.test.ts",
       "tests/test262-runner.ts",
+      "tests/test262-categories.ts",
       "scripts/diff-test262.ts",
       "scripts/build-quickjs-eval-provider.mjs",
       "scripts/quickjs-eval-provider.mjs",

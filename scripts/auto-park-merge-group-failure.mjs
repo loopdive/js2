@@ -156,6 +156,9 @@ export const INFRA_STEP_PATTERNS = [
   // the noun FIRST, which an artifact-then-download-only pattern missed (caught
   // by the real-step-name cases in tests/issue-3597-auto-park-step-aware.test.ts).
   /\bartifacts?\b[^\n]*\b(download|upload)\b/i,
+  // (#7551) A step that exists only to fail a job whose tool CRASHED (no
+  // verdict was reached) marks itself with a trailing "[infra]".
+  /\[infra\]$/i,
 ];
 
 // Is this step name a setup/infra step (as opposed to a verdict step)?
@@ -801,6 +804,44 @@ function selfCheck() {
     renderFailureLines([{ job: "quality", url: null, failedSteps: [] }]),
     "- quality — failing step: unknown",
     "render: unknown step, no url",
+  );
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "merge complete IR standalone measurement",
+          conclusion: "failure",
+          steps: [{ name: "Edition report did not complete (#7551) [infra]", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["merge complete IR standalone measurement"],
+      infraOnly: true,
+      unclassifiable: false,
+      shouldPark: false,
+    },
+    "#7551: a crashed edition report is infra (no verdict) -> do not park",
+  );
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "merge complete IR standalone measurement",
+          conclusion: "failure",
+          steps: [{ name: "Fail on an edition regression (#7551)", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["merge complete IR standalone measurement"],
+      infraOnly: false,
+      unclassifiable: false,
+      shouldPark: true,
+    },
+    "#7551: an edition regression is a verdict -> park",
   );
 
   if (failures) {
