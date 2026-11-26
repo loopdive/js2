@@ -24,165 +24,226 @@ Two shapes found during #7354 G1, both present on main: (1) a closure that write
 
 ## Implementation Plan
 
-Measured 2026-11-26 on main `6694a8b8391`, strict Prepared entry (`prepared-program-required`, `standalone`,
-`wasmgc`), each program run against `node`. Probes: `.tmp/probe-7462*.mts` (not committed).
+Revision 2 (2026-11-26), after the plan review of `95213f48894`. Measured 2026-11-26 on main `6694a8b8391` through the
+strict Prepared entry (`prepared-program-required`, `standalone`, `wasmgc`), each program against `node`. Probes:
+`.tmp/probe-7462*.mts`, `.tmp/prelude-sha.mts` (not committed).
 
 ### Gap 1 — a write to a script var from inside a function
 
-**Reproduction.** Both gaps reproduce. Gap 1 does not show the message the issue names: "nondefaultable reference
-widening" did not appear. The program compiles and validates; the closure body becomes an abort body (#7354 U), and
-`__module_init` traps `RuntimeError: unreachable`. node returns in every row.
+**Reproduction.** The issue's "nondefaultable reference widening" does not appear; that text is a compile-time
+presentation gap (`src/compiler/ir-program-presentation.ts:710`). On main each program compiles and validates; the
+function's body becomes an abort body (#7354 U: the body is replaced by a trap), and `__module_init` traps
+`RuntimeError: unreachable`. node returns in every row.
 
-| Program (each then `if (n !== 1) throw 1;`)                         | Result on main                                                                           |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `var n = 0; var f = function(){ n++; }; f();`                       | abort body `ir/from-ast: increment/decrement of undeclared "n" in <module-init>__closure_0` |
-| `var n = 0; var f = function(){ n += 1; }; f();`                    | abort body `ir/from-ast: compound assign to undeclared identifier "n" in <module-init>__closure_0` |
-| `… for (var i = 0; i < 3; i++) n++; …` in the closure                | same `increment/decrement of undeclared "n"`                                              |
-| `var n = 0; function g(){ n++; return; } g();`                      | abort body `increment/decrement of undeclared "n" in g`                                   |
-| `var n = 0; function g(){ n += 1; } g();`                           | abort body `compound assign to undeclared identifier "n" in g`                            |
-| `var n = 0; function g(){ n++; } g();`                              | abort body `ir/from-ast: unsupported expression kind PostfixUnaryExpression in g` (gap 1b) |
-| `function g(){ var i = 0; i++; } g();` (a local, no script var)     | same `unsupported expression kind PostfixUnaryExpression in g` (gap 1b)                   |
-| `n = n + 1`, `n = 1` in the closure; `n = n + 1` in `g`; a closure reading `n` | **pass**                                                                       |
-| `var n = "5"; n++;` and `var n = 0; n += 2;` at top level            | **pass** (module-init has `n` in scope as `moduleGlobal`)                                 |
+| Program (then `if (n !== 1) throw 1;`)                          | Abort body on main                                                                 |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `var n = 0; var f = function(){ n++; }; f();` (also in a `for`)  | `ir/from-ast: increment/decrement of undeclared "n" in <module-init>__closure_0`   |
+| `var n = 0; var f = function(){ n += 1; }; f();`                 | `ir/from-ast: compound assign to undeclared identifier "n" in <module-init>__closure_0` |
+| `var n = 0; function g(){ n++; return; } g();` / `{ n += 1; }`   | the same two messages, `in g`                                                       |
+| **1b:** `var n = 0; function g(){ n++; } g();`; `function g(){ var i = 0; i++; }` | `ir/from-ast: unsupported expression kind PostfixUnaryExpression in g` |
 
-**Root cause (1a).** A function nested in module-init or declared at top level does not have the script's `var` in
-`cx.scope`. A read falls back to the resolver: `classifyIdentifierRead` → `resolveModuleBinding`
-(`src/ir/identifier-read.ts:58`). A plain write falls back as well: `lowerIdentifierAssignment` resolves the binding
-readable, then writable, checks the owner, then checks TDZ (`src/ir/from-ast.ts:13218-13243`). The two update writers
-look only at the scope and stop on a miss:
+`n = n + 1` and `n = 1` in the closure, `n = n + 1` in `g`, a closure reading `n`, and top-level `n++` / `n += 2` all
+pass.
 
-- `lowerCompoundAssignment`, `src/ir/from-ast.ts:13343-13349`;
-- `lowerIncrementDecrement`, `src/ir/from-ast.ts:13519-13525`.
+**Root cause (1a).** A function nested in module-init, or declared at top level, does not have the script `var` in
+`cx.scope`. A read falls back to the resolver (`src/ir/identifier-read.ts:58`), and so does plain `=`
+(`lowerIdentifierAssignment`, `src/ir/from-ast.ts:13218-13243`). `lowerCompoundAssignment` (`13343-13349`) and
+`lowerIncrementDecrement` (`13519-13525`) look only at the scope. Their `binding → capturedCell → storage` prologue
+is a verbatim copy (`13343-13353` and `13519-13530`). Their `moduleGlobal` read and write code already exists.
 
-Both already lower `moduleGlobal` storage: global get, number or dynamic arm, global set. The missing piece is
-resolving that storage, nothing else. These two functions also share a scope / captured-cell / `storage` prologue
-that is copied word for word (`13343-13353` and `13519-13530`).
+**Root cause (1b).** A discarded `x++` that is not a statement of a statement walker reaches `lowerDiscardedExpression`
+(`2651`). Three places get there: the void-tail arm (`2826-2870`), a comma, and a ternary arm. It falls through to
+`lowerExpr`, which refuses updates:
+- postfix: `unsupported expression kind`, `5389`;
+- prefix: `value-position prefix update`, `14203`.
 
-**Root cause (1b).** In a void function, a trailing `x++;` takes `lowerTail`'s void expression-statement arm
-(`src/ir/from-ast.ts:2826-2870`). That arm has its own branches for a call, `id =`, `o.p =` and `a[i] =`, then calls
-`lowerDiscardedExpression` → `lowerExpr`, which has no update-expression arm
-(`unsupported expression kind`, `src/ir/from-ast.ts:5389`). The mid-body walkers call
-`lowerAdoptedMutatingStatement` (`2467`, `12696`); the void tail does not. The dynamic-return tail already reuses
-the mid-body path (`2815-2820`). The closure in 1a has a dynamic result, which is why only function declarations hit 1b.
+The statement walkers call `lowerAdoptedMutatingStatement` first (`2467`, `12696`), so they are unaffected.
 
 **Change.**
 
-1. New `src/ir/identifier-write.ts`, the write twin of `identifier-read.ts`: one pure function
-   `classifyIdentifierWrite(id, writeValue, cx)` returning one of:
-   - `{ kind: "scope", binding }`;
-   - `{ kind: "module-binding", binding }`: resolved readable, then writable with `writeValue`, with
-     `requireMatchingModuleBindingOwner` (`src/ir/ast-lowering-plans.ts:467`) applied;
-   - `{ kind: "unresolved" }`.
+1. **`src/ir/identifier-write.ts`** (new). It is the write twin of `identifier-read.ts` and has the same shape.
+   `classifyIdentifierWrite(id, writeValue, cx)` answers:
+   - `{ kind: "scope", binding }`: `cx.scope` has `id`.
+   - `{ kind: "module-binding", binding }`: `resolveModuleBinding(id, writeValue)` answers.
+   - `{ kind: "readonly", binding }`: readable (`resolveModuleBinding(id)`) but not writable (`(id, writeValue)`
+     undefined). This is the ordinary resolver's const or representation-mismatch answer.
+   - `{ kind: "undeclared" }`: nothing resolves it.
 
-   It emits nothing.
-2. `src/ir/from-ast.ts`. All three identifier writers ask `classifyIdentifierWrite`:
-   - `lowerIdentifierAssignment` replaces its inline readable/writable/owner sequence and passes `rhs`, as today.
-   - `lowerCompoundAssignment` and `lowerIncrementDecrement` share one storage prologue in place of the duplicated
-     one. A `module-binding` answer becomes `{ kind: "moduleGlobal", globalRef, type }` storage. The TDZ check
-     (`lowerResolvedModuleBindingTdzCheck`, `4889`) is emitted before the old value is read (GetValue comes first;
-     the assignment keeps its check after the RHS). The write value is the update expression itself (`id.parent`).
-     Its checker type is the stored value's type, so the Prepared resolver's mutability check
-     (`src/ir/program-source-units.ts:107`) and the ordinary resolver's representation proof both get the right
-     question. With no write value, `const n` would be accepted.
-3. `lowerTail`'s void expression-statement arm: call `lowerAdoptedMutatingStatement(stmt.expression, cx)`
-   immediately before its final `lowerDiscardedExpression`, then terminate. Put the call **after** the three `=`
-   arms: the ordinary pipeline claims the chain tail `a = b = 1` (measured: `ir=["g"]`), and moving the chain into the
-   adopted arm's `lowerBinary` would change its bytes. The ordinary pipeline does not claim the shapes the new arm
-   reaches, a void-tail `i++` and `o.x += 1` (measured: `ir=[]`).
+   It emits no IR. It is not throw-free: the Prepared `resolveBinding` refuses a write to an immutable binding itself
+   (`src/ir/program-source-units.ts:107`, `write to immutable module binding n`), and that refusal propagates
+   unchanged. This is the same contract as `classifyIdentifierRead`, which also calls the resolver and may throw. It
+   performs no owner check.
+2. **`src/ir/from-ast.ts`.** The callers demote exactly as today, so neither message is lost:
+   - `readonly` keeps `assignment to readonly or representation-incompatible module binding`, label
+     `property-write-unsupported`, for `=`. For updates it takes the same text with the update's own prefix and its
+     existing label `compound-assign-unsupported`.
+   - `undeclared` keeps the three existing messages.
+   - One local `refuseIdentifierWrite(answer, id, what, label, cx): never` replaces the five inline `demoteToLegacy`
+     calls.
+3. **One storage prologue, `identifierWriteStorage(id, writeValue, cx)`.** It returns `slot | moduleGlobal |
+   captured cell` and records `resolved?: ModuleBindingGlobal` when the answer came from the resolver. All three
+   writers use it:
+   - the compound writer passes `id.parent`;
+   - the update writer passes `id.parent`;
+   - `=` passes `rhs`, as today.
 
-**Leave it better.** The moduleGlobal / slot / cell read-and-write triplet appears about eight times in these two
-functions. Fold it into `readStorage` / `writeStorage` next to the prologue if gc bytes stay identical. Otherwise file
-the cleanup as a follow-up and link it.
+   With it, `lowerIdentifierAssignment`'s two near-identical module arms (the resolver arm `13219-13240` and the scope
+   `moduleGlobal` arm `13249-13261`) become one arm. That arm:
+   - lowers the RHS;
+   - applies `boxForDynamicModuleStorage`;
+   - checks `moduleStorageCompatible`;
+   - calls `lowerResolvedModuleBindingTdzCheck`, only when `resolved` is set;
+   - emits `global.set`.
+
+   No fourth copy of the store sequence. The owner check runs once, inside `lowerResolvedModuleBindingTdzCheck`
+   (`4889-4890`). The two separate `requireMatchingModuleBindingOwner` calls (`13222`, `13230`) go. They are
+   invariant throws, so moving them does not change the bytes of any compile that succeeds.
+4. **TDZ order.** An update emits the TDZ check before it reads the old value (GetValue comes first). `=` keeps it
+   after the RHS. A `var` has no TDZ global, so nothing is emitted for it.
+5. **No scope leak.** The string `+=` arm's `store` (`13378-13386`) and the `=` arm write `cx.scope.set(id.text, …)`
+   only when the storage came from the scope. Resolver-derived storage is never cached, so every later read still goes
+   through the resolver, with its TDZ and owner checks.
+6. **1b, in `lowerDiscardedExpression` (the discard authority).** Split the unary half of
+   `lowerAdoptedMutatingStatement` (`10921-10939`) into `lowerDiscardedUpdate(expr, cx): boolean`.
+   `lowerAdoptedMutatingStatement` calls it, and `lowerDiscardedExpression` calls it before its final
+   `lowerExpr`. This is byte-safe: `lowerExpr` refuses every `++`/`--`, so no compiled unit today contains a
+   discarded update at that point. It covers:
+   - the void tail;
+   - `(n++, x);`;
+   - `c ? n++ : 0;`.
+
+   There is no `lowerTail` patch.
+7. **Leave it better.** `lowerForUpdateExpr`'s identifier `++`/`--` arm (`12238-12243`) is replaced by a call to
+   `lowerDiscardedUpdate`. This is byte-safe: the selector admits only identifier operands there
+   (`isPhase1ForUpdateExpr`), and those go to the same `lowerIncrementDecrement`. Its `=` and compound-identifier
+   arms stay. `lowerAdoptedMutatingStatement`'s compound arm also takes member and element targets, which the
+   for-update selector sends to `isPhase1Expr` → `lowerExpr`; folding them would move claimed bytes. The
+   moduleGlobal / slot / cell read-write triplet (about 8 copies) is folded only if the byte gates below stay
+   identical. Otherwise it is filed as its own issue and linked here.
 
 ### Gap 2 — `new X(…)` directly as a `+` operand
 
-**Reproduction.** These refuse at compile (`success=false`) with
-`ir/from-ast: '+' operands not provably both-number or string-concatenable (string/unprovable) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in <module-init>`:
-
+**Reproduction.** These programs refuse at compile:
 - `"" + new TypeError("m")`;
-- `new TypeError("m") + ""` (the message reads `unprovable/string`);
+- `new TypeError("m") + ""` (`unprovable/string`);
 - `"" + new Error("m")`;
 - `function C(){} "" + new C()`.
 
-Through a variable they pass: `var e = new TypeError("m"); "" + e` and `var c = new C(); "" + c`.
+The message is `ir/from-ast: '+' operands not provably both-number or string-concatenable (string/unprovable) — the
+unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in
+<module-init>`. Through a variable, both pass: `var e = new TypeError("m")` and `var c = new C()`.
 
-**Root cause.** `provenAdditiveOperands` (`src/ir/from-ast.ts:14395-14409`) asks `additiveOperandProof` (`14427`) →
-`addsAsCarrier` → `expressionProducesDynamic` → `producesCarrier(expr, dynamicLeaves(cx))` (`14862-14891`). The
-leaves in `yieldsCarrier` (`src/ir/analysis/carrier-expression.ts:52-70`) cover identifiers, member reads, calls and
-`+`. They have no case for `new`, so the operand falls to the checker. The checker types it as an object, which is
-`unprovable`. The lowering itself already produces the carrier. `lowerNewExpression` sends a callee that is a dynamic
-binding, or a realm intrinsic such as `TypeError` (`bindingHoldsDynamic` → `readsDynamicGlobal`,
-`src/ir/function-object-lowering.ts:363-368`), or a top-level function value such as `C`, to `lowerDynamicConstruct`.
-That emits `dyn.construct`, whose result is dynamic (`src/ir/from-ast.ts:8445-8450`). The variable form works because
-the variable's home is the carrier. The predicate and the lowering disagree about `new`. Gap 2 and gap 1 do not share
-a cause.
+**Root cause.** The carrier is the boxed dynamic value of this lane. `yieldsCarrier`
+(`src/ir/analysis/carrier-expression.ts:52-70`) has no leaf for `new`, so `addsAsCarrier` →
+`expressionProducesDynamic` (`from-ast.ts:14862-14891`) answers false. The checker then says `unprovable`, and
+`provenAdditiveOperands` throws (`14395-14409`). The lowering already produces the carrier. `lowerNewExpression`
+(`8445-8450`) sends `TypeError` (`bindingHoldsDynamic` → `readsDynamicGlobal`,
+`function-object-lowering.ts:363-368`) and a top-level function value (`C`) to `dyn.construct`. This is a different
+cause from gap 1.
 
 **Change.**
 
-1. `src/ir/from-ast.ts`: lift the condition at `8447-8449` into one predicate, `constructsDynamic(expr, cx)`:
-   `ts.isIdentifier(expr.expression)` and (`bindingHoldsDynamic` or a top-level function value with no scope
-   binding). `lowerNewExpression` uses it in place of the inline condition. `dynamicLeaves` answers the new leaf with
-   it.
-2. `src/ir/analysis/carrier-expression.ts`: add one optional `construct?: (expression: ts.NewExpression) => boolean`
-   to `CarrierLeaves`, next to `call`. `leaf()` answers `ts.isNewExpression(e) && leaves.construct?.(e) === true`.
-   The selector's leaves (`select.ts:6494`, `select-object-statics.ts`) leave it unset, so selection does not change.
-
-Earlier arms in `lowerNewExpression` win over `dyn.construct`: Promise delay, open carrier, primitive wrapper, Map,
-static RegExp. Each keys on an ambient name that `bindingHoldsDynamic` does not answer for. A primitive wrapper is
-already `addsAsCarrier`.
+1. Lift `8447-8449` into one predicate, `constructsDynamic(expr, cx)`, in `from-ast.ts`. `lowerNewExpression` uses it
+   at that arm, and `dynamicLeaves` answers a new leaf with it.
+2. In `carrier-expression.ts`, add `construct?: (expression: ts.NewExpression) => boolean` to `CarrierLeaves`, next to
+   `call`. `leaf()` answers `ts.isNewExpression(e) && leaves.construct?.(e) === true`. The selector's leaves leave it
+   unset.
+3. **The earlier arms never coincide with it.** The earlier arms of `lowerNewExpression` are Promise delay, open
+   carrier, wrapper, `Map` and `RegExp`. Today a user-declared constructor with one of their names does not reach any
+   arm. Each refuses at compile with `ir/from-ast: unknown class "<Name>" in <module-init>`, even through a variable
+   (`function Map(){} var m = new Map(); "" + m`, and likewise `Promise`, `Number`, `RegExp`; measured).
+   `constructsDynamic` is false for them. The test pins these four refusals by name inside `"" + new Name()`, so a
+   later slice that admits one of them must decide where it goes. No mirror of the earlier arms is added to the
+   predicate, since that would duplicate the dispatch.
 
 ### Tests — `tests/issue-7462-prepared-script-var-writes.test.ts`
 
-Reuse `runPrepared` / `abortBodies` / `yieldToRpc` from `tests/helpers/prepared-node-agreement.ts`; do not copy a
-`run()`. Each program runs twice: once with node's answer, which must return, and once with a wrong answer, which
-must throw. Also check `node(right) === "returned"`.
+Reuse `runPrepared`, `abortBodies` and `yieldToRpc` (`tests/helpers/prepared-node-agreement.ts`). Each program runs
+with node's answer, which must return, and with a wrong one, which must throw. `new Function(right)()` must return.
 
-- Gap 1a, in a closure:
+- **1a, in a closure:**
   - `n++`, `n--`, `++n`, `n += 1`, `n -= 2`;
   - `n++` in a `for` loop (3);
-  - `var n = "5"` then `n++` (6: ToNumber of the carrier);
-  - `var s = "a"` then `s += "b"` (the dynamic `+=` arm).
-- Gap 1a, in `function g`: `n++; return;` and `n += 1`.
-- Gap 1b: `function g(){ n++; }` and `function g(){ n -= 1; }` with a script `n`; `function g(o){ o.k++; }` if the
-  member arm is admitted on this lane, otherwise leave it out.
-- Gap 2:
-  - `"" + new TypeError("m")` = `"TypeError: m"`, and the same with `new` on the left;
+  - `var n = "5"` then `n++` (6);
+  - `var s = "a"` then `s += "b"`.
+- **1a, in `g`:** `n++; return;` and `n += 1`.
+- **1b:**
+  - `function g(){ n++; }`;
+  - `function g(){ n -= 1; }`;
+  - `(n++, 0);`;
+  - `true ? n++ : 0;`.
+- **2:** each program with node's string and a wrong twin:
+  - `"" + new TypeError("m")`;
+  - `new TypeError("m") + ""`;
   - `"" + new Error("m")`;
-  - `function C(){}` then `"" + new C()` = `"[object Object]"`;
-  - the wrong twin of each.
-- Still not handled, each pinned by its name so the slice that admits it updates the list:
-  - `var f = function(){ var r = n++; return r; }`: abort body `unsupported expression kind PostfixUnaryExpression`
-    (an update used as a value is a separate gap);
-  - `var f = function(){ function h(){ n++; } h(); }`: abort body `nested func must have a return type annotation`;
-  - `let n = 0; var f = function(){ n++; }`: refuses with `runtime callable __new_ReferenceError needs runtime function
-    materialization` (the TDZ guard, the same refusal `n = n + 1` already gets on main);
-  - `const n = 0; var f = function(){ n++; }`: abort body `write to immutable module binding n`, next to the checker's
-    `Cannot assign to 'n'` diagnostic. This proves the update passes a write value.
-- Rerun `tests/issue-7354-*.test.ts`, `tests/test262-prepared-*.test.ts` and `tests/issue-7338*.test.ts` (the carrier
-  predicate).
+  - `function C(){} "" + new C()`.
+- **Pinned by name.** Each name is updated by the slice that admits it:
+
+  | Program | Expected |
+  |---|---|
+  | `var f = function(){ var r = n++; return r; }` | abort `unsupported expression kind PostfixUnaryExpression` (an update used as a value) |
+  | `var f = function(){ function h(){ n++; } h(); }` | abort `nested func must have a return type annotation` |
+  | `let n = 0; var f = function(){ n++; }` | refuses `runtime callable __new_ReferenceError needs runtime function materialization` (the TDZ guard; `n = n + 1` refuses the same on main) |
+  | `const n = 0; var f = function(){ n++; }` | abort `write to immutable module binding n`, beside the checker's `Cannot assign to 'n'`; proves the update passes a write value |
+  | `function g(){ m++; } g();` (no `m` anywhere) | abort `increment/decrement of undeclared "m" in g` (on main: `unsupported expression kind PostfixUnaryExpression`); no global is created |
+  | `var n = 1n; function g(){ n++; } g();` (node: `2n`) | refuses `ir/from-ast: unsupported expression kind BigIntLiteral in <module-init>`. No BigInt value exists on this lane, so the update arm's `emitDynToNumber` never sees one. A slice admitting BigInt literals must make this row ToNumeric or refuse it |
+  | `function Map(){}` / `Promise` / `Number` / `RegExp` with `"" + new Name()` | refuses `unknown class "Name"` |
+
+- **Mutated twins.** Each mutation below must fail at least one test. Record the result in the PR.
+  - drop the `module-binding` answer in the update storage;
+  - move the TDZ check after the read (the `let` pin);
+  - cache resolver storage in scope;
+  - pass no write value (the `const` pin);
+  - drop `lowerDiscardedUpdate` from `lowerDiscardedExpression`;
+  - drop the `construct` leaf;
+  - make `constructsDynamic` return false.
+- **Rerun:** `tests/issue-7354-*.test.ts`, `tests/test262-prepared-*.test.ts`, `tests/issue-7338*.test.ts`.
+
+### Measurement gates (base `6694a8b8391`, head = the PR; yield stated even when 0)
+
+1. **The 411-row Prepared sample.** Get it from branch `origin/claude/7354-o411-sample` `155b06691f`:
+   `plan/samples/7354-o411.txt` and `plan/samples/7354-tally411.mjs`. Run it on base and on head:
+
+   `TEST262_PATH_FILTER_FILE=<abs>/7354-o411.txt TEST262_COMPILER_PATH=ir TEST262_TARGET=standalone
+   COMPILER_POOL_SIZE=3 TEST262_WORKERS=3 bash scripts/run-test262-vitest.sh`, then `node 7354-tally411.mjs <jsonl in
+   benchmarks/results/>`.
+
+   Report, base and head: the pass count, and the rows whose first gap is one of the refusals above. Also run the
+   mutated twins through it. Expected yield: **estimate, unmeasured**; the base run fills the line below.
+   - **BASE (6694a8b8391, 2026-11-26): pass = `<<FILL>>`; first-gap rows naming these refusals = `<<FILL>>`** ← filled by
+     the coordinator's base run.
+2. **`npm run check:prepared-bytes`.** This is `scripts/prepared-byte-identity.mts`, 804 rows, about 45 s. Base
+   measured 2026-11-26 on `6694a8b8391`: 804 lines, 745 `bytes`, 58 `refused`, 1 `threw`; output sha256 `6c9504fe8787…`.
+   Run it on head and `diff` the two outputs. A row may change only where it contains one of the gap shapes (a script
+   var updated inside a function, a discarded update, or `new` as a `+` operand), and every changed row is explained in
+   the PR.
+3. **Prelude + `assert(true);`.** Compile the runner shim, `harness/assert.js` and `harness/sta.js`
+   (`tests/issue-7354-u-prelude.test.ts`'s `prelude()`) plus `assert(true);\n` with the runner options
+   (`runnerOptions()` in `tests/helpers/prepared-node-agreement.ts`), then take sha256 of `result.binary`
+   (`.tmp/prelude-sha.mts`). Base 2026-11-26 on `6694a8b8391`: **81,397 B, sha256 `031c67f357f6…`**. The reviewer's
+   `e23f5dca…` is #7354's older base of 77,429 B and is stale on this main. If head differs, explain it. The prelude
+   has updates inside functions, so head may change; each changed function is named.
+4. **Ordinary pipeline:** gc and standalone binaries sha256, base vs head. Corpus:
+   - the equivalence corpus;
+   - `website/playground/examples/`;
+   - the gap programs. These have the same IR claims on main: `irCompiledFuncs` holds no `g`, no `h` and no module
+     init. The `=` chain tail `a = b = 1` is claimed (`ir=["g"]`) and must stay identical.
+
+   Every row must be identical.
 
 ### Risks
 
-- **Ordinary-pipeline bytes must stay identical.** All three changes live in `from-ast.ts`, which both pipelines
-  share. They are reached only where the ordinary selector claims nothing. It refuses `module-update` and
-  `tail-module-compound` (`src/ir/select.ts:4614`, `6598`), and it claims none of the gap programs; measured:
-  `irCompiledFuncs` holds no `g` or `h` and no module-init. The `construct` leaf does make
-  `expressionProducesDynamic` true for `new <dynamic callee>` in claimed ordinary units on a native-dynamic lane, if
-  any exist. Gate: compare sha256 of the gc and standalone binaries before and after on the equivalence corpus plus
-  `website/playground/examples/`, using `.tmp/base.ts` copies captured at the first edit. Any difference in bytes is a
-  blocker to explain or remove.
-- **Size budgets.** `src/ir/from-ast.ts` sits exactly at its LOC ceiling (17,340 lines, `scripts/loc-budget-baseline.json`).
-  The change must be net ≤ 0 lines there: moving the resolution sequence out and folding the duplicated prologue pays
-  for the new code. `lowerTail` is 274 lines against a 300 threshold. No `loc-budget-allow` or `func-budget-allow`.
-- `const`, and `let` TDZ, are pinned above, so a lost write value or TDZ check is caught.
+- The ordinary pipeline never reaches the new paths: the selector refuses `module-update` / `tail-module-compound`
+  (`select.ts:4614`, `6598`), and `lowerExpr` refuses discarded updates. The `construct` leaf could change a claimed
+  ordinary unit on a native-dynamic lane; gate 4 catches that.
+- `src/ir/from-ast.ts` is at its LOC ceiling (17,340), so it must be net ≤ 0 lines; the folded prologues and arms pay
+  for the change. `lowerTail` is not touched. No budget grants.
 
 ### Code-quality acceptance criterion
 
-- One write-resolution authority, `identifier-write.ts`, beside `identifier-read.ts` and in the same shape.
-  `lowerIdentifierAssignment`, `lowerCompoundAssignment` and `lowerIncrementDecrement` all use it. No second copy of
-  the readable → writable → owner sequence remains, and the duplicated update prologue is gone.
-- One `constructsDynamic` predicate, shared by `lowerNewExpression` and `dynamicLeaves`. One `construct` leaf, placed
-  beside `call`. No `+`-specific special case.
-- The void tail reuses `lowerAdoptedMutatingStatement`; it gets no new arm of its own.
-- No new demote label, no defensive branch, `from-ast.ts` net ≤ 0 lines. A fresh-context adversarial review on the diff
-  and this plan, with its verdict recorded in the PR body.
+- One write classifier, `identifier-write.ts`, in `identifier-read.ts`'s shape. One storage prologue for all three
+  writers. One module store arm in `=`. One owner check. No second copy of readable → writable → owner.
+- One discarded-update helper, used by the statement walker, the discard authority and the for-update clause.
+- One `constructsDynamic`, used by the lowering and the leaf. One `construct` leaf. No `+` special case.
+- No new demote label and no defensive branch. `from-ast.ts` net ≤ 0 lines. A fresh-context adversarial review of the
+  diff and this plan, with its verdict in the PR body.
