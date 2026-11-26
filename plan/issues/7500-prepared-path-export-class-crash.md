@@ -74,48 +74,63 @@ Prepared producer builds plans that binding, so the alias reaches physical plann
 the final validation, which throws. The path has no class value at all (a reference to `C` refuses "not in scope"), so
 exporting one cannot work.
 
-### Decision: refuse at select, in the #7488 class rule; non-class exports to a follow-up
+### Decision: refuse at select — one generic export rule plus the class-modifier case (lead's option (b))
 
-- **Module:** `src/ir/prepared-select-refusals.ts`. Its top-level class loop (#7488) gains a second condition next to
-  "its definition runs code": the class is **exported by name**, either with an `export` modifier (`export class C`,
-  `export default class D`, `export abstract class C`) or named as the local of a local `export { … }` clause (no
-  module specifier) in the same file. These are exactly the two places where `buildIrModuleInitPlan` creates an
-  export intent for a class. New `IrUnsupportedCode` `class-export-unsupported`, stage `select`, detail "class C is
-  exported, and the Prepared path has no class value to export". Located at the class's constructor unit, like
-  #7488's refusal.
-- **One clause walk, shared.** `buildIrModuleInitPlan` (`src/ir/module-init-plan.ts`) walks local `export { … }`
-  clauses inline. That walk moves into one exported helper next to it, `localExportSpecifiers(statement)`: for a
-  local export clause, its specifiers with their local names; otherwise `undefined`. `buildIrModuleInitPlan` and the
-  class rule both call it, so the two cannot drift. The plan's behaviour is unchanged (same specifiers, same order).
-- **Reuses:** the #7488 loop, its `declare` skip, its owner (`failureAt(unitOwner(...))`).
-- **Precedence.** The class rule runs first, so classes that were refused for another reason report the new code
-  instead: `export class C { constructor() {} }`, `class C { static m() {} } export { C }`, `export class C { x = 1 }`
-  (were `type-resolution-unsupported`, "no body producer"), and `export class C extends Object {}` keeps #7488's
-  `class-definition-evaluation` (that condition is checked first). Accepted and pinned.
-- **Not in this issue: non-class export targets.** PRV-7500 found six programs that still throw "retains unresolved
-  binding/export gaps" with this change: a local `export { x }` whose `x` is an import binding (`import { a } …`,
-  `import * as m …`, `import x = require(…)`), a type (`type T`), an ambient `declare function`, or undeclared
-  (`export { zz }`, a module early error). Their gap is the same `unresolved-export-target`, but their inventory has
-  no unit at all, so a refusal has no owner: it needs a source-level owner or a change to `PreparedIrProgramFailure`.
-  That decision is filed as its own issue with the six repros (id requested from the lead); the shared helper above is
-  what its rule will use. (The plan's earlier claim that "the other gap kinds are already refused earlier" holds only
-  for `destructuring-binding-abi`, and is corrected here.)
-- Ordinary pipeline: `buildIrModuleInitPlan` is shared, so the helper extraction must keep ordinary bytes identical
-  (checked on a sample, default and standalone).
+Two crash shapes, two conditions, one module (`src/ir/prepared-select-refusals.ts`), both refused before any body is
+lowered:
+
+1. **An unresolved local export (generic).** A local `export { … }` clause (no module specifier) whose local name has
+   no planned local target: not a top-level `var`/`let`/`const` identifier and not a function declaration with a unit.
+   This is exactly the condition under which `buildIrModuleInitPlan` records an `unresolved-export-target` gap, which
+   today reaches the final validation and throws. It covers classes (`class C {} export { C }`, `{ C as D }`,
+   `{ C as default }`, before the declaration, `class C {} { let C = 1; } export { C }`) and PRV-7500's six non-class
+   shapes: an import binding (`import { a } …`, `import * as m …`, `import x = require(…)`), a type (`type T`), an
+   ambient `declare function`, and an undeclared name (`export { zz }`). New `IrUnsupportedCode`
+   `export-target-unsupported`, stage `select`, detail "export X has no local binding the Prepared path plans".
+2. **An exported class declaration (modifier).** `export class C {}`, `export default class D {}`,
+   `export abstract class C {}`: `buildIrModuleInitPlan` records an alias to the callable binding of the class's
+   constructor unit, which no Prepared producer plans (crash in physical planning). Added to #7488's top-level class
+   loop next to "its definition runs code", with the same owner (the constructor unit). Code
+   `class-export-unsupported`.
+
+**Shared helpers, no second copy of the export logic.** Two exported functions move out of `buildIrModuleInitPlan`
+into `src/ir/module-init-plan.ts` next to it:
+- `localExportTargets(sourceFile, sourceId, identityContext)`: today's up-front `targetBindingByName` map (the "has a
+  target" rule).
+- `localExportSpecifiers(statement)`: today's inline walk of a local `export { … }` clause, its specifiers with their
+  local names; `undefined` for any other statement.
+`buildIrModuleInitPlan` calls both (same entries, same order: the plan is unchanged). Rule 1 calls both, so "unresolved"
+means exactly what the plan's gap means and the two cannot drift.
+
+**Owner of a refusal that has no unit (small contract extension).** Rule 1's programs can have no unit at all (an
+import plus an export clause). `PreparedIrProgramFailure.unitId` becomes `IrUnitId | null`, and `owner.ts` gains
+`sourceOwner(inventory, sourceFile, node)`: the source's key and the node's line/column/span, with `unitId: null`. It
+feeds the existing `failureAt`. `PreparedIrProgramOwner`, `preparedIrProgramOwner`, `locatedFailure` and their guards
+are unchanged; only the failure type widens. Measured: widening the type alone typechecks with no consumer change
+(the test262 entry reads `code`, `detail`, `sourceFile`, `location.line/column`, never `unitId`).
+
+**Precedence.** These rules run before the producer's other refusals, so exported classes that were refused for
+another reason report the new code instead: `export class C { constructor() {} }`, `export class C { x = 1 }` →
+`class-export-unsupported`; `class C { static m() {} } export { C }` → `export-target-unsupported`.
+`export class C extends Object {}` keeps #7488's `class-definition-evaluation` (checked first). Accepted and pinned.
+
+**Cost (estimate, to be confirmed in the PR):** about 45 lines net: contract 1, `owner.ts` about 15, helper extraction
+about 10 net, rules about 20. No owner guard touched.
+
+Ordinary pipeline: `buildIrModuleInitPlan` is shared, so the helper extraction must keep ordinary bytes identical
+(checked on a sample, default and standalone).
 
 ### Acceptance
 
-- Correctness: the 13 class shapes PRV-7500 probed are refused by name (`class-export-unsupported`) under both
-  `unlowerableBodies` policies, and `compile()` returns rather than throws: `export class C {}`,
-  `export default class D {}`, `export abstract class C {}` (.ts), `class C {} export { C }`, `export { C as D }`,
-  `export { C as default }`, `export { C }` before the declaration, a class exported twice,
-  `export class C {} export { C as D }`, `class C {} { let C = 1; } export { C }`, and the three precedence cases above.
-  Unchanged: `export default class {}`, `class C {} export default C;`, a function export, `export declare class C {}`
-  (.ts), `export * from`, `export { a } from`. `export class C extends Object {}` keeps `class-definition-evaluation`.
-- Pins assert a named refusal and no throw, not a specific error class (`compile()` wraps the invariant as
-  `PreparedValidatorError`).
-- Code quality: one clause walk (moved, not copied); the new condition is one predicate next to `runsCode` in the
-  same loop; `program-source.ts` unchanged.
+- Correctness: every shape above is refused by name under both `unlowerableBodies` policies, and `compile()` returns
+  rather than throws: PRV-7500's 13 class shapes and 6 non-class shapes. Pins assert a named refusal and no throw, not
+  a specific error class (`compile()` wraps the invariant as `PreparedValidatorError`).
+- Unchanged: `export default class {}`, `class C {} export default C;`, `function f() {} export { f as g }`,
+  `var v = 1; export { v }`, `export declare class C {}` (.ts), `export * from`, `export { a } from`.
+  `export class C extends Object {}` keeps `class-definition-evaluation`.
+- Code quality: the export walk and the target rule exist once (moved, not copied); both rules sit in the one
+  select-refusal module; the failure contract widens by one nullable field, no guard weakened; `program-source.ts`
+  unchanged.
 - Ordinary pipeline byte-identical on a 100-file sample × (default, standalone).
 
 ### Yield (measured)
