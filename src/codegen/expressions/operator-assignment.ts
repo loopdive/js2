@@ -95,6 +95,7 @@ import {
 import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
 import { emitElementCompoundAnyAdd } from "./element-compound-any-add.js"; // (#7084)
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
+import { requireHelper } from "../helpers/required-helper.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
@@ -1268,8 +1269,7 @@ function compileStringCompoundAssignment(
       emitBoolToString(ctx, fctx);
     } else {
       if (rhsType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
-      const toStr = ctx.funcMap.get("number_toString");
-      if (toStr !== undefined) fctx.body.push({ op: "call", funcIdx: toStr });
+      fctx.body.push({ op: "call", funcIdx: requireHelper(ctx, "number_toString") });
     }
   }
 
@@ -1493,19 +1493,10 @@ function compileNativeStringCompoundAssignment(
       emitBoolToAnyStr(ctx, fctx);
     } else {
       if (rhsType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
-      const toStr = ctx.funcMap.get("number_toString");
-      if (toStr !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: toStr });
-        // number_toString returns externref → convert to ref $AnyString
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
-      } else {
-        // No host number_toString: fall back to dropping and using empty string.
-        // (Standalone WASI mode currently lacks a wasm-native number-to-string;
-        //  this is an open gap. Drop the f64 to keep stack balanced.)
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "ref.null", typeIdx: ctx.anyStrTypeIdx });
-      }
+      // number_toString returns externref → convert to ref $AnyString
+      fctx.body.push({ op: "call", funcIdx: requireHelper(ctx, "number_toString") });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
     }
   } else if (rhsType.kind === "externref") {
     // externref → ref $AnyString. The value is usually already a native string
@@ -2149,8 +2140,7 @@ export function compileCompoundAssignment(
           // Coerce RHS to externref if needed (e.g. number → string)
           if (compoundRhsStr.kind === "f64" || compoundRhsStr.kind === "i32") {
             if (compoundRhsStr.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
-            const toStr = ctx.funcMap.get("number_toString");
-            if (toStr !== undefined) fctx.body.push({ op: "call", funcIdx: toStr });
+            fctx.body.push({ op: "call", funcIdx: requireHelper(ctx, "number_toString") });
           }
           fctx.body.push({ op: "call", funcIdx: concatIdx });
           // Write back to ref cell

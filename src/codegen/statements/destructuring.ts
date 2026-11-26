@@ -50,6 +50,7 @@ import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
 import { currentSourceModuleGlobalIndex } from "../expressions/identifier-module-storage.js";
+import { requireHelper } from "../helpers/required-helper.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -508,13 +509,9 @@ export function emitNestedBindingDefault(
       if (initType && initType.kind !== "externref") {
         if (initType.kind === "ref" || initType.kind === "ref_null") {
           fctx.body.push({ op: "extern.convert_any" });
-        } else if (initType.kind === "f64") {
-          const bIdx = ctx.funcMap.get("__box_number");
-          if (bIdx !== undefined) fctx.body.push({ op: "call", funcIdx: bIdx });
-        } else if (initType.kind === "i32") {
-          fctx.body.push({ op: "f64.convert_i32_s" });
-          const bIdx = ctx.funcMap.get("__box_number");
-          if (bIdx !== undefined) fctx.body.push({ op: "call", funcIdx: bIdx });
+        } else if (initType.kind === "f64" || initType.kind === "i32") {
+          if (initType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
+          fctx.body.push({ op: "call", funcIdx: requireHelper(ctx, "__box_number") });
         }
       }
       fctx.body.push({ op: "local.set", index: nestedLocal });
