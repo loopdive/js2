@@ -1,0 +1,17 @@
+built-ins/Function/prototype/bind/15.3.4.5-21-2.js
+built-ins/Function/prototype/bind/15.3.4.5-21-3.js
+built-ins/Function/prototype/bind/S15.3.4.5_A2.js
+language/arguments-object/S10.1.6_A1_T2.js
+language/statements/function/13.2-13-s.js
+language/statements/function/13.2-14-s.js
+language/statements/function/13.2-17-s.js
+language/statements/function/13.2-18-s.js
+language/statements/function/13.2-25-s.js
+language/statements/function/13.2-26-s.js
+language/statements/function/13.2-3-s.js
+language/statements/function/13.2-4-s.js
+language/statements/function/S13_A15_T1.js
+language/statements/function/S13_A15_T2.js
+language/statements/function/S13_A15_T3.js
+language/statements/function/S13_A15_T4.js
+language/statements/function/S13_A15_T5.js
