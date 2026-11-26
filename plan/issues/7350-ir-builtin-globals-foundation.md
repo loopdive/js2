@@ -840,3 +840,396 @@ tests on base and head.
   (`builtin-prototype-keys.ts`), which `lowerRealmConversionCall` and `dynamicWrapperConstruction` both read. The
   direct `String(v)` route (`isAmbientStringBinding`) does not join: it is the ordinary pipeline's ambient-`String`
   lowering, shared with the JS-environment and legacy paths, and moving it would change their bytes.
+
+## Implementation Plan — B3bc: wrappers and the reachable prototypes (2026-11-26, on B3a `1770ed68f3`)
+
+This extends "Slice B3bc" above. That sketch stays the behaviour specification (representation, rules, scope, not in
+scope). This section adds the measured yield, the target structure per module, the split into two PRs, PRV-B3's
+three conditions, the B2b verdict, and two to-dos from review RV7433.
+
+### Measured (2026-11-26)
+
+**Heads.** Main is `c3b7be667a`, 9 merges after the lead's census head `6694a8b8`, with the same three counts. B3a is
+`1770ed68f3` (PR #7433). The tool is `scripts/ir-census/prepared-census.mts --harness real --jobs 3`, run on
+`git archive` copies of each head. Scratch files are under `.tmp/m/` of the measuring worktree and are not committed.
+
+**Lists.**
+
+- *Carriers*: 1,977 files, every ES5 file whose source names `String`, `Number` or `Boolean`. It is the same list as
+  B3's.
+- *o411*: `plan/samples/7354-o411.txt` (commit `155b06691f`).
+- *l420*: B3's 420-row sample.
+
+**Main.** The first stops on `new X` are 281 `String` + 174 `Number` + 172 `Boolean` = 627 files, all of them
+carriers (re-derived; the lead's numbers hold). Main passes 87 carriers, 63 of o411 and 59 of l420.
+
+**B3a.** B3a passes 228 carriers, 70 of o411 and 62 of l420. On B3a, 728 carriers stop first at a wall B3bc owns:
+
+| first stop on B3a | files |
+| --- | ---: |
+| `new String` / `new Boolean` / `new Number` (a wrapper object; #7350 B3bc) | 185 / 140 / 139 |
+| `String.prototype` / `Number.prototype` / `Boolean.prototype` is not reachable (member read; 3 more in the front end) | 154 / 68 / 9 |
+| other keys a constructor's identity row lacks: `fromCharCode` 19, `hasOwnProperty` 8, `bind` 3, `EPSILON` 1 | 31 |
+| `identifier "Number" is not in scope` (a statement-form expando, to-do 2 below, and a binding write) | 2 |
+
+Of main's 627 `new X` files, B3a moves 170 to an earlier wall that is not B3bc's: arrays 54, RegExp 44, `delete` 21,
+`Object` as a value 17, and others. Main stops at `new X` before it reaches them; B3a's `new X` refusal sits later, in
+the legalization.
+
+**Method: two probe builds.** The census reports first stops only, so a stub stands in for B3bc. It is two scratch
+copies of B3a (never committed), and the stub claims exactly what B3bc claims:
+
+- `new X(v)` converts its argument as B3bc will. One build answers a fresh ordinary object (an object, like the
+  wrapper). The other answers the primitive.
+- `identityOnlyKeyRefusal` no longer refuses.
+- A primitive's read of a key its wrapper prototype owns no longer refuses. Its arm stays the run-time abort.
+- A JavaScript expando statement on the three names no longer makes them non-pristine (to-do 2).
+
+The stub keeps refusing what B3bc will refuse:
+
+- a call of a wrapper method without an algorithm in the `o.m(…)` shape (B3d);
+- a static call `X.m(…)` other than Object.prototype's methods;
+- `.call` / `.apply` / `.bind` read off a built-in wrapper method (G4).
+
+Each row records which stub hooks fired. B3a's identity mark still traps in both builds, so the run-time verdict is
+meaningful only for rows that read no prototype or constructor key.
+
+**B3bc alone** (files whose first stop on B3a is a B3bc wall):
+
+| list | B3bc walls | blocked by another wall | compile clean (upper bound) | pass with the object stand-in | pass with the primitive stand-in only | measured (lower bound) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| carriers | 728 | 244 | 484 | 117 | 178 | 295 |
+| of them, main's 627 `new X` files | 457 | 142 | 315 | 116 | 174 | 290 |
+| o411 | 35 | 18 | 17 | 6 | 5 | 11 |
+| l420 | 23 | 6 | 17 | 3 | 7 | 10 |
+
+How to read the bounds:
+
+- *Upper bound*: compile clean behind the stub, so no other compile wall.
+- *Lower bound*: the file passes with a stand-in that is less than a wrapper. A file that passes with an ordinary
+  object has no use for a wrapper's value. A file that passes with the primitive has no use for wrapper identity. The
+  lower bound holds if B3bc implements the specification. It is not a strict bound: a test could pass by accident with
+  a wrong stand-in.
+- *The gap* (189 carriers): files that read a prototype or constructor key (174), use `instanceof X` (9), the String
+  exotic (3), or other (3). The stub traps for all of them, so their verdict can only be measured on the branch.
+
+On o411, B3bc alone frees 11 to 17 files. Of the sample's 27 `new X` first stops on main, it frees 11 to 12.
+
+**By what B3bc must deliver** (carriers, 484 compile-clean files; each file in its first matching row):
+
+| needs | files | measured passes |
+| --- | ---: | ---: |
+| wrapper construction only (an object: identity, `typeof`, truthiness) | 117 | 117 |
+| + ToPrimitive through `valueOf` / `toString` | 178 | 178 |
+| + the constructor and prototype graph (`X.prototype`, its members as values, statics, `instanceof X`); 68 of these read only `X.prototype` and its `valueOf` / `toString` / `constructor`, 106 read other members or statics | 183 | 0 (trap in the stub) |
+| + the String exotic (own `length`, index keys, own descriptors of a wrapper) | 3 | 0 |
+| other (`switch` on a wrapper, a throwing `valueOf` inside `new String`) | 3 | 0 |
+
+No compile-clean file needed a primitive receiver's read of a prototype key: no "primitive read" hook fired in them.
+The primitive-receiver rules are needed for correctness once the prototypes are reachable (below), not for this
+yield.
+
+**The next walls behind B3bc** (carriers, the 244 blocked; main's 627 `new X` subset in brackets):
+
+| next wall | files |
+| --- | ---: |
+| B3d: String / Number method algorithms (`substring` 17, `slice` 14, `fromCharCode` 23, case conversion, `indexOf`, …) | 124 (80) |
+| G4 / #7349 S7: `.call` / `.bind` on a built-in method | 54 (0) |
+| loose `==` / `!=` (`dyn.eq (loose)`) | 31 (29) |
+| dynamic relational `<` `<=` `>` `>=` (`__ir_dyn_lt` …) | 28 (28) |
+| a numeric member key (`w[0]`, "computed key") | 5 (5) |
+| Math (Session B), a binding write of `Number` (G6) | 2 (0) |
+
+Of the 170 `new X` files that B3a moves to another wall, the walls are arrays 54 (Session B), RegExp 44, `delete` 21,
+`Object` as a value 17, and others.
+
+**Named rows** (B3's acceptance list). All compile behind the stub:
+
+- `division/S11.5.2_A3_T1.1.js` and `getOwnPropertyDescriptor/15.2.3.3-2-40.js` pass with the primitive stand-in.
+- `conditional/S11.12_A4_T2.js` passes with the object stand-in.
+- `Number/S15.7.5_A1_T02.js`, `15.2.3.3-4-85.js`, `S15.7.4.2_A2_T14.js` and `S15.7.4.2_A4_T01/T02/T05` read the
+  prototype and trap in the stub.
+- `S15.7.4.2_A4_T03` / `T04` stop earlier, at `Date` and `Object`.
+
+### The split into two PRs
+
+The cut is by receiver mechanism, not by member. A cut by member (prototypes with `valueOf` / `toString` first, the
+other methods later) would leave the prototype objects partly populated. A partly populated ordinary object needs
+B2b's ordinary-object miss check, and the cut by mechanism avoids that dependency.
+
+| slice | content | yield (carriers; o411; l420) |
+| --- | --- | --- |
+| **B3b** — wrapper objects and the complete constructor / prototype population | `new X(v)`; the prototypes as wrappers; every catalog member of the three constructors and prototypes as a function object or data property, held per member; ToPrimitive and `valueOf` / `toString` by identity, `toString(radix)`, thisXValue; `instanceof X`; `[object X]` tags; a primitive's [[Get]] and [[Set]] through the held prototype (§10.1.9.2 step 2.b); retiring the identity mark from the three rows; to-dos 1 and 2 | 295 to 481; 11 to 17; 10 to 17 |
+| **B3c** — the String exotic arm and the sloppy `this` | #3518's exotic find, define and own-keys wired into the live owners; a numeric constant key as a canonical string key; ToObject of a primitive `this` in sloppy code; removing B3b's two interim aborts and the dead realm-state wrapper code (finding 7) | 3 measured (≤ 3 upper on carriers); correctness of every String wrapper |
+
+B3b's interim aborts are run-time aborts, never wrong answers. B3c deletes both:
+
+- a constant array-index key (a read, `in`, `hasOwnProperty`, an own descriptor) meets a `$StringObject`, where the
+  String family is held;
+- an own-key enumeration meets a `$StringObject` (`defineProperties` / `create` reading a String wrapper's keys).
+
+A sloppy method on a primitive keeps C2-D3's abort until B3c.
+
+If B3b's diff passes the review's size bar, its catalog rows can land first as a data-only commit (B3b-0). B3b-0
+holds nothing new: rows enter a realm only through `heldWith`, so no program changes bytes.
+
+### Target structure (per module, IR layering)
+
+**Contract.**
+
+- `native-realm-catalog.ts`. `wrapperRows(name)` takes `errorRows`' shape and helpers: `callable`, `reference`,
+  `data`, `methodProperties`, `members`.
+  - Each constructor row: `prototype` {!w, !e, !c}, the statics (Number's constants as in B3a; `Number.isNaN`,
+    `isFinite`, `isInteger`, `isSafeInteger`, `EPSILON`, `MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`; `String.fromCharCode`,
+    `fromCodePoint`, `raw`). `identityOnly` is dropped.
+  - Each prototype row: `primitiveData` ("", +0, false), `constructor`, and one method row per member (50 / 6 / 2
+    per node 22, B3's count).
+  - Ids are appended to `NATIVE_VALUE_INTRINSICS`. `NATIVE_MEMBERS` gains `valueOf` / `toString` of the three
+    prototypes.
+  - `Number.parseFloat` / `parseInt` are not rows until the global functions are catalog rows. Then they reference the
+    same ids, as one object.
+- `src/ir/runtime/ordinary-object-callables.ts`: `js.object.create-wrapper(value, selector)` and
+  `js.object.wrapper-data(object, selector)`.
+
+**Runtime body.**
+
+- `primitive-wrapper-bodies.ts`: thisXValue beside the existing allocation and payload read. String creation is
+  `string-create-body.ts`.
+- `realm-family-bodies.ts`:
+  - an object row with `primitiveData` is allocated by the wrapper allocation;
+  - `realmFamilySeed` seeds only held members (the per-member pin below);
+  - `markIdentityOnly` goes (condition 3).
+- `source-object-bodies.ts` `buildSourceObjectSetDefinition`: step 2.b, behind an optional operand (condition 1).
+
+**Backend.**
+
+- `native-realm.ts`, `native-builtin-functions.ts`, and the wrapper owners `native-primitive-wrapper-layouts.ts`,
+  `native-primitive-wrapper-storage.ts` and `native-string-create.ts`. They are live only for held kinds.
+- The extensible `$Object` root is declared only where a wrapper family is held.
+- `errorCreateOperands` becomes one family-create operand builder.
+- B3c: `native-object-descriptors.ts` (`stringOwn`) and `native-object-access.ts` (the String-aware find, as
+  `native-mixed-object-access.ts` composes it).
+
+**IR keys.** `builtin-prototype-keys.ts`:
+
+- `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE` become `realmStringKeys("%Number.prototype%")` / `("%String.prototype%")`
+  (criterion 9 of B3);
+- `IDENTITY_ONLY_KEYS` and `identityOnlyKeyRefusal` go;
+- `RealmConstructor` becomes a union by family (to-do 1).
+
+**IR recogniser.** `dynamic-realm-calls.ts`: `realmConstructorOf` generalises to `realmIntrinsicOf(value)`, which also
+answers `%X.prototype%` for a constant `prototype` read off a realm constructor. It is the one recogniser for the
+construct arm, the method-by-identity expansion and the static member reads.
+
+**IR construction.** `dynamic-wrapper-constructors.ts`: `new X(v)` is `WRAPPER_CONVERSIONS`' conversion, then
+`js.object.create-wrapper`. `X(v)` is unchanged. The `gap` goes.
+
+**IR methods.**
+
+- `dynamic-prototype-methods.ts`: `RealmMethod` becomes one table (name, catalog id, algorithm). P1's
+  `name === "toString" && errors` case and the `errorToString` hook become rows of this table.
+- `ordinary-to-primitive.ts` and `dynamic-value-chains.ts`: the `errorToString` hook becomes the table's
+  "realm method by identity" test, used by the call expansion and by OrdinaryToPrimitive.
+
+**IR member access.** `dynamic-member-access.ts`: where X's family is held, the primitive arms of a read and a write
+of kind X call `js.object.get` / `js.object.set` on `%X.prototype%` with the primitive as receiver. An unheld kind keeps
+the static premise and its bytes. The static refusal of B3a goes.
+
+**IR `this`** (B3c). `dynamic-function-operations.ts`: `dynamicCurrentThis`'s sloppy arm wraps a primitive of a held
+kind.
+
+**IR holds.** `native-realm-requirements.ts` `HELD_FAMILIES`: the wrapper row gets the per-member trigger (condition
+2) and `%RangeError%` for `toString(radix)`.
+
+**Front end.**
+
+- `builtin-global-binding.ts`: the expando fix (to-do 2).
+- `realm-static-call.ts`: `identityOnlyTargetRefusal` goes. The member folds ask the written-member fact (to-do 2).
+
+**Reuses:**
+
+- G1: the catalog shape, `heldWith` and `heldCatalogRows`, the family allocation and seeding, `js.object.intrinsic`,
+  and the pristine predicate;
+- B3a: `WRAPPER_CONVERSIONS` for `new X(v)`'s conversion, `realmConstructorId` / `realmConstructorOf` (generalised,
+  not copied), and `HELD_FAMILIES`;
+- P1's identity-tested call expansion;
+- C2's `dyn.construct`, `dyn.instanceof` and `dynamicCurrentThis`;
+- the kernel's [[Get]] / [[Set]] (`js.object.get` / `set` with a receiver argument);
+- #3518's wrapper layout, allocation, String create, exotic find, define and own-keys bodies, and their owners.
+
+**Removes:**
+
+- the two hand key lists;
+- `identityOnly`, `IDENTITY_ONLY_KEYS`, `identityOnlyKeyRefusal`, `identityOnlyTargetRefusal`, and the kernel's mark
+  where no row uses it (condition 3);
+- the `errorToString` hook and P1's `toString` special case;
+- the `ctor.name as NativeWrapperConstructor` cast;
+- B3c: `REALM_WRAPPER_STATE_FIELD`, `createRealmPrimitiveWrapperDeclaration` and the `realmState` branches (finding 7),
+  and B3b's two interim aborts.
+
+**Does not add:** a second layout, a hidden-key wrapper, materialised indices, a second identity flag, a second
+kernel set entry, or a selector-side copy of a rule.
+
+### PRV-B3's three conditions
+
+**1. Step 2.b bytes.**
+
+- *How 2.b enters.* `buildSourceObjectSetDefinition` takes an optional `primitiveReceivers` operand, the same pattern as
+  its optional `accessorCalls`. With it, the body tests the receiver before it reads the receiver's own storage:
+  - if the receiver is no `$Object` and no function, the walk starts at `object` (the held `%X.prototype%`);
+  - a found accessor runs as now, with the receiver as `this`;
+  - a found data property, writable or not, answers `false`, and so does a miss. That is step 2.b: the receiver is
+    no object.
+
+  The realm passes the operand only where it holds a wrapper family, so there is one body and one kernel entry.
+- *Bytes.* A program that holds no wrapper family emits the unchanged body. Measured on the 804 `check:prepared-bytes`
+  rows: one names a wrapper (row 582, `new Number(1) == v`). It refuses on base and on head, at `dyn.eq (loose)`. Three
+  rows write a member (46, 581, 794) and hold no wrapper family. So the expected diff is 804 / 804 identical, which the
+  PR verifies.
+- *Rejected alternative.* The 2.b test in the shared body unconditionally would change every realm program that
+  declares `js.object.set`.
+
+**2. Holding: a per-member pin.**
+
+- *What is held.* A wrapper family is held as B3's "When a family is held" says. What it holds is pinned per member:
+  - the constructor, the prototype and its `constructor`;
+  - every member whose name is the constant key of any `js.object.get` / `set` / `has` / `has-own` / `own-descriptor`
+    / define use in the program, whatever the receiver (`use.constantKey`, as `readsPrototypeMethod` already reads
+    it);
+  - `valueOf` / `toString` wherever ToPrimitive can meet the family;
+  - `%RangeError%` for a `toString` with a radix argument.
+- *Why a constant key suffices.* A member that is not held is reachable only through a key the program does not name
+  as a constant. Today a computed key refuses by name. No Prepared own-key enumeration reaches non-enumerable members:
+  `defineProperties` and `create` read enumerable keys, and `getOwnPropertyNames` is not a native static.
+- *Trigger for holding the whole family.* A use of an own-key contract that includes non-enumerable keys, or a
+  computed-key access the legalization admits on a value that may be the family's object. Both are dormant today. The
+  slice that admits either adds the trigger beside it, and a unit test pins the dormancy now.
+- *The size gate from B3 still applies:* more than 4 KB or more than 10 % compile time. It is measured on the B3b
+  branch: the prelude plus one `new String("a")` row, all members held vs the pinned set, bytes and the median of 3
+  compiles.
+
+**3. The identity-only mark.**
+
+- *What changes.* B3b gives the three rows their complete population, so they stop being identity-only. The catalog
+  field `identityOnly` has no row left, so `IDENTITY_ONLY_KEYS`, `identityOnlyKeyRefusal`, both its call sites
+  (`constantKey` in `dynamic-member-access.ts`, `identityOnlyTargetRefusal` in `realm-static-call.ts`) and the field go.
+- *What happens to B3a's four aborts.* They become answers: `Object.getOwnPropertyDescriptor(String, "prototype")`
+  three times, and `str.constructor` once.
+- *Whether the kernel's mark stays* depends on the landing order:
+  - if B2b has landed, its global identity rows use the mark, so the flag and the find's test stay;
+  - otherwise B3b deletes them with `markIdentityOnly` in `realm-family-bodies.ts`, and B2b keeps its own helper and
+    `identityOnlyMiss`, as on its branch.
+
+  Either way the repository keeps one mark with real users.
+- *Why the mark is not needed after B3b.* With per-member holding and name-based pins, no constant key can reach a
+  member that is not held (condition 2).
+
+### B2b (`origin/claude/7350-b2b`, `23d952425f`): B3bc needs nothing from it
+
+Read from `git diff origin/main...origin/claude/7350-b2b`. B2b is:
+
+- the global object (`js.object.global`, `dyn.global_object` reads);
+- B2a's global table (`native-realm-globals.ts`);
+- callable identity rows for globals without catalog rows;
+- the mark's ordinary-object arm (`identityOnlyMiss` in `builtin-function-prototype-bodies.ts`, `markIdentityOnly` in
+  `builtin-function-bodies.ts`).
+
+B3bc uses none of these:
+
+- the kernel's built-in function lookup already follows [[Prototype]] after an own miss on main
+  (`buildBuiltinFunctionLookup` calls `getPrototypeOf`), which `Number.hasOwnProperty` needs. Not verified at run
+  time: the stub traps there;
+- the split by mechanism leaves no partly populated ordinary object, so the ordinary-object miss arm is not needed;
+- `this` of `undefined` / `null` in sloppy code stays C2-D3's abort and needs the global object only when Session B
+  takes it.
+
+Three ordering notes for whichever lands second:
+
+- the mark (condition 3);
+- B2a's `nativeRealmGlobalSurface` must answer "complete" for the three names once B3b lands;
+- the global object's `String` / `Number` / `Boolean` properties must read `js.object.intrinsic` (B3 risk 6).
+
+### To-dos from review RV7433
+
+1. **Drop the `ctor.name as NativeWrapperConstructor` cast** (`dynamic-wrapper-constructors.ts:44`).
+   `RealmConstructor` becomes `{ family: "error"; name: NativeErrorConstructor; … } | { family: "wrapper"; name:
+   NativeWrapperConstructor; … }`, built by one generic `constructors(family, names)`.
+   `dynamicWrapperConstruction` takes the wrapper member, so the legalization's `ctor.family` test narrows it, and
+   `WRAPPER_CONVERSIONS[ctor.name]` type-checks.
+2. **A bare `Object.defineProperty(String, …);` statement refuses with "String is not in scope".**
+   - *Root cause.* In a JavaScript file, TypeScript's binder treats a statement `Object.defineProperty(X, "k", d);` or
+     `X.k = v;` as an expando declaration of `X`. It merges the source identifier into the lib symbol's
+     declarations. The pristine predicate's lib-only test (`makeIrAmbientBindingPredicate(checker, "every")`) then
+     fails, so every read of `X` in the file is "not in scope".
+   - *Evidence.* Checked on B3a: the statement form refuses for `String`, `Number`, `Error` and `Object`. Checked with
+     the TypeScript API: `var r = Object.defineProperty(String, …)`, an expression that is not a statement, and a
+     non-literal key do not merge, and the first reaches B3a's named refusal. `String.prototype.k = v;` does not merge
+     either. The bug predates B3a.
+   - *Fix* (`builtin-global-binding.ts`, one module):
+     - `pristineBuiltinGlobal` ignores a declaration that is such an expando: the identifier is the object of a
+       property-access assignment target, or the first argument of an `Object.defineProperty` call;
+     - the member folds that a property write invalidates ask a written-member fact from the same scanner. These are
+       the static-call lowering of `Number.isNaN` / `isFinite`, #3787's `String.fromCharCode`, and any fold of a
+       writable member. The fact comes from `X.k = …`, `Object.defineProperty(X, "k", …)`, `defineProperties(X, {k:
+       …})` and `delete X.k`;
+     - Number's constants keep their fold: they are non-writable and non-configurable, so a write fails.
+   - *Yield.* 1 carrier: `S8.5_A9.js` (`Number.NaN = 1;`) passes with the stub. The only other carrier with the
+     pattern, `11.13.1-4-14-s.js`, already passes on B3a.
+   - *Scope.* The fix also corrects `Object` and the Error constructors, which share the predicate. No other rule
+     changes for them.
+
+### Session B's areas: the boundary
+
+- *Untouched:* Math, arrays, property-descriptor semantics, `with` and the global object.
+- *The String exotic (B3c)* hooks #3518's existing `string-exotic` define mode into the existing descriptor owner. It
+  changes no descriptor algorithm.
+- *Own-key enumeration* stays as it is. B3c adds only the String wrapper's virtual keys.
+- *`this` of `undefined` / `null`* stays the abort.
+- *`Number.parseFloat` / `parseInt`* wait for the global function rows.
+- *A wrapper as an array-like* (`Array.prototype.m.call(w)`) stays G4 / Session B.
+
+### Acceptance criteria (B3b; B3c in brackets)
+
+Correctness:
+
+1. Census on the 728 carriers B3a stops at a B3bc wall, the 1,977 carriers, o411 and l420, base `1770ed68f3` (or
+   B3a's merge on main) vs head:
+   - files lost 0, new crashes 0;
+   - gained within the measured range: carriers 295 to 481 [B3c: up to 3 more], o411 11 to 17, l420 10 to 17;
+   - a gain below the lower bound is explained row by row before the hold is released.
+
+   B3's named rows pass, each with a mutated twin that fails. Every gained row gets a twin.
+2. B3's probe matrix against node, at module level and inside a function, each row with a wrong twin, plus:
+   - a write to `X.prototype` read back through a primitive and through a wrapper;
+   - an inherited setter and a setter-less accessor on a primitive, in strict and sloppy code;
+   - `Number.prototype.toString` with the radices 16, 1, 37, `Infinity` and `undefined`;
+   - the expando statement forms of to-do 2, with a fold of a written member (`Number.isNaN = f; Number.isNaN(1)`)
+     answering `f`'s result;
+   - [B3c: String wrapper indices, own keys and descriptors; a sloppy method on a primitive].
+
+No regression:
+
+3. No test262 verdict regresses in any edition; ES5's `completed` ratchet holds. CI's merge group is the gate.
+4. JS-environment and ordinary-pipeline output byte-identical (`prove-emit-identity.mjs` on the carriers × default and
+   standalone). The change touches no `src/codegen/` file.
+5. `check:prepared-bytes`: 804 / 804 identical (condition 1). Any changed row is listed with the same outcome on base
+   and head.
+6. The holding gate (condition 2) is measured and recorded in the PR body.
+
+Code quality:
+
+7. One catalog shape (`wrapperRows` beside `errorRows`), one recogniser (`realmIntrinsicOf`), one held-family table,
+   one realm-method-by-identity table, one set body with an optional operand, and no `as` cast on a constructor name.
+8. The removals listed above are in the diff, the identity mark's per condition 3.
+9. The prototype key-set unit test: the catalog-derived set united with Object.prototype's equals the old hand lists.
+10. No `loc-budget-allow` / `func-budget-allow`: `from-ast.ts` ends at or below its base. Gates run bare before each
+    commit.
+11. A fresh-context adversarial review per PR, given the diff and this plan. Its verdict is in the PR body.
+
+**Not measured here:**
+
+- the verdict of the 189 compile-clean files that read the prototype graph (the stub traps there);
+- the holding size gate;
+- whether any compile-clean file needs the sloppy `this` (none showed a primitive-read hook).
+
+All three are measured on the branch.
