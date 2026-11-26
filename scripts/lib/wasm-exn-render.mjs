@@ -135,6 +135,19 @@ export function isWasmTrap(err) {
 }
 
 /**
+ * The Wasm frames of `err`'s stack, innermost first, and, for a trap whose innermost frame is a Prepared function
+ * with an abort body (#7354 U: its body could not be lowered, so the abort is its whole body), that function's row.
+ *
+ * @param {any} err
+ * @param {readonly { name: string }[]} [abortBodies]
+ */
+export function wasmErrorSite(err, abortBodies = []) {
+  const frames = [...String(err?.stack ?? "").matchAll(/at\s+(\S+)\s+\(wasm:\/\//g)].map((m) => m[1]);
+  const aborted = isWasmTrap(err) && frames.length > 0 ? abortBodies.find((row) => row.name === frames[0]) : undefined;
+  return { frames, aborted };
+}
+
+/**
  * A host error's message, followed for a trap by its Wasm frames in
  * trap-first order (#1316/#1317: the leaf is often a tiny lifted helper whose
  * name alone says nothing without its callers).
@@ -146,14 +159,8 @@ export function isWasmTrap(err) {
 export function renderHostError(err, abortBodies = []) {
   let info = err.message ?? String(err);
   if (!/illegal cast|null|unreachable|out of bounds/.test(info)) return info;
-  const frameRe = /at\s+(\S+)\s+\(wasm:\/\//g;
-  const frames = [];
-  let m;
-  while ((m = frameRe.exec(err.stack ?? "")) !== null) frames.push(m[1]);
+  const { frames, aborted } = wasmErrorSite(err, abortBodies);
   if (frames.length === 0) return info;
-  // (#7354 U) A Prepared function whose body could not be lowered has the abort as its whole body, so a trap whose
-  // top frame is that function is its abort.
-  const aborted = isWasmTrap(err) ? abortBodies.find((row) => row.name === frames[0]) : undefined;
   if (aborted) info = `aborted in unlowerable unit ${aborted.name}: ${aborted.detail}`;
   info = `${info} [in ${frames[0]}()`;
   // Cap at 3 caller frames so the line stays readable inside the 300-char

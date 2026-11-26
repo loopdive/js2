@@ -27,6 +27,7 @@ import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { isWasmTrap, wasmErrorSite } from "../lib/wasm-exn-render.mjs";
 import { childLoop, errorText, runPool } from "./pool.mts";
 import { assembleStandIn } from "./stand-in-harness.mjs";
 
@@ -171,13 +172,17 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
 
 /**
  * Where a run-time trap fired: the innermost Wasm frame's function name and, when that function got an abort
- * body (#7354 U, `unlowerableBodies: "abort"`), the refusal the abort stands for.
+ * body (#7354 U), the refusal the abort stands for. Only a Wasm trap counts; a host error (a stack-overflow
+ * `RangeError`) is not attributed to the frame it happened in.
  */
 function trapOf(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>, error: unknown) {
-  const frame = /^\s*at (.+?) \(wasm:\/\//m.exec(error instanceof Error ? (error.stack ?? "") : "")?.[1];
-  if (frame === undefined) return {};
-  const abort = tools.entry.requiredPreparedAbortBodies?.(result)?.find((row) => row.name === frame);
-  return { trapFrame: frame, ...(abort ? { abort: { code: abort.code, detail: abort.detail.slice(0, DETAIL_CAP) } } : {}) };
+  if (!isWasmTrap(error)) return {};
+  const { frames, aborted } = wasmErrorSite(error, tools.entry.requiredPreparedAbortBodies?.(result) ?? []);
+  if (frames.length === 0) return {};
+  return {
+    trapFrame: frames[0],
+    ...(aborted ? { abort: { code: aborted.code, detail: aborted.detail.slice(0, DETAIL_CAP) } } : {}),
+  };
 }
 
 const argv = process.argv.slice(2);
