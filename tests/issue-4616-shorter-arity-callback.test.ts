@@ -17,7 +17,6 @@ async function compileAndRunMulti(files: Record<string, string>, entryFile: stri
     true,
   );
   const instance = await instantiateWithRuntime(result);
-  (result.importObject as { __setExports?: (e: WebAssembly.Exports) => void }).__setExports?.(instance.exports);
   return instance.exports as Record<string, Function>;
 }
 
