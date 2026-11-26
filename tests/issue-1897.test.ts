@@ -77,7 +77,7 @@ describe("#1897 standalone test262 merge gate", () => {
     const branchProtection = readRepo("scripts/enable-branch-protection.sh");
 
     expect(policy).toContain("Standalone regression guard (#1897)");
-    expect(policy).toContain("no branch-protection change is needed");
+    expect(policy).toMatch(/no branch-protection change\s+is needed/);
     // Pre-existing prose drift: the script's #1897 note now reads "needed NO
     // separate entry here and NO ruleset re-apply". Assert the CLAIM (no extra
     // required-check entry, no re-apply) rather than one exact sentence, so a
