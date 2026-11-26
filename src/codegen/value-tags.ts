@@ -27,6 +27,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../shared/contracts/f64-value-markers.js";
 import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 /**
@@ -118,6 +119,34 @@ export function f64MayHoldUndefined(ctx: CodegenContext, node: ts.Node, type: Va
     ctx.oracle.nullabilityOf(node).undefinable ||
     (operand !== node && ctx.oracle.nullabilityOf(operand).undefinable)
   );
+}
+
+/**
+ * (#7464) ToNumber of a number of type `type` on the stack (unary `+`): a branded f64's sentinel is ToNumber(undefined),
+ * a plain NaN, so the result carries no brand for a later reader to take for `undefined`. Any other type is returned
+ * as it is.
+ */
+export function emitF64ToNumber(fctx: FunctionContext, type: ValType): ValType {
+  if (type.kind !== "f64" || type.undefSentinel !== true) return type;
+  const value = allocTempLocal(fctx, { kind: "f64" });
+  fctx.body.push({ op: "local.set", index: value }, { op: "f64.const", value: NaN });
+  fctx.body.push({ op: "local.get", index: value }, { op: "local.get", index: value });
+  emitIsUndefF64(fctx.body);
+  fctx.body.push({ op: "select" });
+  releaseTempLocal(fctx, value);
+  return { kind: "f64" };
+}
+
+/**
+ * (#7464) The type of the declared f64 slot named `name` (a module binding, a class field or static), branded
+ * `undefSentinel` when the slot can hold `undefined` (`optional` for a `?:` field). Every read of the slot carries the
+ * brand, and the readers that box or stringify an f64 (`String`, `+`, `typeof`, `JSON.stringify`) key on it, so they
+ * answer `undefined` where they would otherwise print the sentinel as NaN.
+ */
+export function undefinedCapableSlotType(ctx: CodegenContext, name: ts.Node, type: ValType, optional = false): ValType {
+  return type.kind === "f64" && (optional || f64MayHoldUndefined(ctx, name, type))
+    ? { kind: "f64", undefSentinel: true }
+    : type;
 }
 
 /**
