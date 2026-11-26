@@ -17230,6 +17230,14 @@
       "nextBoundary": "Checker-certified `any` parameter/result contracts of the Prepared source producer (#7354 D1); moves with program-source.ts under frontend/ts."
     },
     {
+      "path": "src/ir/hoisted-closures.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7492",
+      "nextBoundary": "Pure TS-AST placement of a function body's nested-declaration closures, read by from-ast (#7492); moves with from-ast's AST half under frontend/ts."
+    },
+    {
       "path": "src/ir/abort-bodies.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
