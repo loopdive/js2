@@ -36,7 +36,9 @@ Measured on `origin/main` 1a726b3e64, `--target standalone`, `hostBridge: "off"`
 The emitted callee is `(func $f (param i64) …)`; the caller passes the wrapped `i64.const 0`.
 
 Also fails at `688eb4de41` (before #6182), so it is not part of #7497's regression. It is why
-`function LoS(t) {…}; LoS(2n ** 64n)` with no other caller still answers false after #7497.
+`function LoS(t) {…}; LoS(2n ** 64n)` with no other caller still answers false after #7497, and it is the
+pre-existing gap RV7450 recorded as probes `S2` / `S3` in the 6656 SOURCE (review of #7450): both are called only with
+`2n ** 64n`, fail on main and with #7497's fix, and pass with #7497's fix once given a non-BigInt caller.
 
 ## Expected
 
