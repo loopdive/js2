@@ -62,6 +62,54 @@ register 111, string arrays 112, dynamic `+` on a string 109, `Object` as a
 class 91, `eval(…)` as a direct call 84, `Function` 79, `RegExp` as a
 class 74, `Math` 66, `Date` 63.
 
+## The 777 run-time failures, by cause
+
+Every failure is a Wasm `unreachable` trap. The census now records the
+innermost Wasm frame of the trap and, when that function got an **abort body**
+(#7354 U: a function whose body the Prepared path cannot lower is compiled as
+a run-time abort instead of refusing the program), the refusal the abort
+stands for (`requiredPreparedAbortBodies`, matched by the frame's function
+name). Re-run of the 777 files on the same tree:
+
+- **716 traps are abort bodies**: the program called a function whose body was
+  refused; the refusal names the cause.
+- **61 traps are the run-time kind abort `__js_value_unsupported`**
+  (`js.value.unsupported`, #7354 C2): an operation on a dynamic value whose
+  kind turns out at run time to be one the realm cannot answer (42 of them
+  in `built-ins/String/prototype`, e.g. `str.trim()`). This abort carries no
+  reason; see the proposal below.
+
+| # | cause | files | Session B | example (trap frame) |
+|---|---|---:|:---:|---|
+| 1 | `eval` statement has no eval provider | 154 | no | `annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-block.js` (`<module-init>__closure_13`) |
+| 2 | name not in scope: `f` 83 (Annex B block-level function hoisting), others 12 | 95 | no | `annexB/language/function-code/if-decl-else-decl-b-func-skip-early-err-switch.js` |
+| 3 | built-in global as a value: `JSON` 23, `Object` 21, `Function` 15, `Array` 11, `String` 4 | 78 | partly (`Array`, `Object`, `Math`) | `built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A13.js` |
+| 4 | member read or write on a function: `caller` 38, `apply` 12, `call` 10, `bind` 10 | 70 | no | `built-ins/Function/15.3.5.4_2-84gs.js` |
+| 5 | run-time kind abort `js.value.unsupported` (no reason recorded) | 61 | no | `built-ins/String/prototype/trim/15.5.4.20-2-44.js` (`__js_value_unsupported`) |
+| 6 | `arguments` not in scope | 54 | yes | `language/arguments-object/10.6-13-a-3.js` (`test2`) |
+| 7 | nested function without annotations | 39 | no | `language/identifier-resolution/S10.2.2_A1_T8.js` (`f1`) |
+| 8 | function declaration in a block | 37 | no | `annexB/language/function-code/switch-case-func-skip-param.js` |
+| 9 | statement shape before or at a function tail | 37 | no | `built-ins/Function/15.3.5.4_2-20gs.js` |
+| 10 | compound property write on a dynamic value | 22 | no | `language/expressions/compound-assignment/11.13.2-23-s.js` |
+
+The rest (130): assignment to an undeclared identifier 18, a closure
+capturing a non-local binding 15, redeclaration 10, an unknown class 9, a
+direct call to a built-in 9, `null` in a number context 8, and a tail of
+one-to-six-file causes (`arguments.length` 4, `delete` 3, `with` 2, …).
+Session B's share: row 6 (54), part of row 3 (`Array` 11, `Object` 21 and
+`Math`), `arguments.length` 4, `with` 2.
+
+**Proposal for row 5:** the kind abort ends the program in the shared
+helper `__js_value_unsupported`, so the trap frame names only the helper,
+and its caller (the second frame) only the function. The smallest change
+that names the reason is the one abort bodies already use: record each
+abort site at compile time (calling function, reason text, e.g. "member
+read 'trim' of a value that may be a function") in the entry's result,
+next to `abortBodies`, and give each site a distinct call target or an
+i32 site id passed to the helper so the trap can be matched to its row.
+A per-reason named wrapper is simpler still, but grows the module by one
+function per distinct reason.
+
 ## Reproduce
 
 ```bash
