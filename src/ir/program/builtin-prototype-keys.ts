@@ -15,7 +15,9 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  modelledRow,
   realmMethodId,
+  type NativeErrorConstructor,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
@@ -63,21 +65,29 @@ export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): stri
 export const ERROR_ID = "%Error%";
 export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 
-/** (#7350 B3a) The realm's constructor families: (#7354 G1) the Error constructors and the primitive wrappers. */
-export type RealmFamily = "error" | "wrapper";
+/** (#7350 B3a) The realm's constructor families and their names: (#7354 G1) the Error constructors, the wrappers. */
+interface RealmFamilyNames {
+  readonly error: NativeErrorConstructor;
+  readonly wrapper: NativeWrapperConstructor;
+}
+export type RealmFamily = keyof RealmFamilyNames;
 /**
  * A constructor the realm serves: its global name, catalog id (`%name%`), family, and selector within the family's
  * list (`NATIVE_ERROR_CONSTRUCTORS` for `js.object.create-error`, `NATIVE_WRAPPER_CONSTRUCTORS`).
  */
-export interface RealmConstructor {
-  readonly name: string;
+interface FamilyConstructor<F extends RealmFamily> {
+  readonly name: RealmFamilyNames[F];
   readonly id: string;
-  readonly family: RealmFamily;
+  readonly family: F;
   readonly selector: number;
 }
-const constructors = (family: RealmFamily, names: readonly string[]) =>
-  names.map((name, selector): [string, RealmConstructor] => [name, { name, id: `%${name}%`, family, selector }]);
-const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map([
+/** (#7350 B3b-0) {@link FamilyConstructor} as a union by family, so a test of `family` narrows `name`. */
+export type RealmConstructor<F extends RealmFamily = RealmFamily> = F extends RealmFamily
+  ? FamilyConstructor<F>
+  : never;
+const constructors = <F extends RealmFamily>(family: F, names: readonly RealmFamilyNames[F][]) =>
+  names.map((name, selector): [string, FamilyConstructor<F>] => [name, { name, id: `%${name}%`, family, selector }]);
+const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map<string, RealmConstructor>([
   ...constructors("error", NATIVE_ERROR_CONSTRUCTORS),
   ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
 ]);
@@ -114,8 +124,8 @@ export const realmConstructorById = (id: string): RealmConstructor | undefined =
  * (`NativeRealmIntrinsic.identityOnly`), by id: any other key of it is one the realm lacks.
  */
 const IDENTITY_ONLY_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
-  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, identityOnly, properties }) =>
-    identityOnly ? [[id, stringKeys(properties)] as const] : [],
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, identityOnly }) =>
+    identityOnly ? [[id, new Set(identityOnly)] as const] : [],
   ),
 );
 
@@ -139,9 +149,10 @@ export function identityOnlyKeyRefusal(ctor: RealmConstructor, key: string): str
  */
 export function nativeConstantStatic(name: string, key: string): number | undefined {
   const ctor = realmConstructorId(name);
-  const property = NATIVE_REALM_CATALOG.intrinsics
-    .find((row) => row.id === ctor?.id)
-    ?.properties.find((row) => row.key.kind === "string" && row.key.value === key);
+  const row = NATIVE_REALM_CATALOG.intrinsics.find(({ id }) => id === ctor?.id);
+  const property = (row && modelledRow(row))?.properties.find(
+    (own) => own.key.kind === "string" && own.key.value === key,
+  );
   return property?.kind === "data" && property.value.kind === "number" && !property.writable && !property.configurable
     ? property.value.value
     : undefined;

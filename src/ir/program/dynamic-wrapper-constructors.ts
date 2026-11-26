@@ -12,7 +12,6 @@
  * Construction. `new X(v)` makes a wrapper object, which the realm does not have yet: it refuses by name.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
 import { WRAPPER_CONVERSIONS, type RealmConstructor } from "./builtin-prototype-keys.js";
 import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
 import { carried } from "./dynamic-value-chains.js";
@@ -26,7 +25,7 @@ type WrapperBuilders = RealmConstructionBuilders & {
 export function dynamicWrapperConstruction(
   b: WrapperBuilders,
   instr: RealmConstruction,
-  ctor: RealmConstructor,
+  ctor: RealmConstructor<"wrapper">,
   args: readonly IrValueId[],
 ): IrInstr[] {
   if (instr.kind === "dyn.construct") gap(`new ${ctor.name} (a wrapper object; #7350 B3bc)`);
@@ -41,7 +40,7 @@ export function dynamicWrapperConstruction(
     result: converted,
     resultType: { kind: "val", val: typeof value === "number" ? { kind: "f64" } : { kind: "i32", boolean: true } },
   });
-  const conversion = WRAPPER_CONVERSIONS[ctor.name as NativeWrapperConstructor];
+  const conversion = WRAPPER_CONVERSIONS[ctor.name];
   switch (conversion.to) {
     case "string":
       return into(

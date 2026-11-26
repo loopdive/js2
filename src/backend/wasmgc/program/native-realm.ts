@@ -296,10 +296,11 @@ function beginRealm(
     { vectors, vectorPlan, strings: strings.strings, ...(errorCreate ? { errorCreate } : {}) },
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
-  const catalog = requirements.description.catalog;
+  const catalog = requirements.description.catalog,
+    held = heldCatalogRows(requirements.description);
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
-    const row = catalog.intrinsics.find((row) => row.id === id),
+    const row = held.find((row) => row.id === id),
       call = row?.callable;
     const behavior =
       index < catalog.bootstrap.length
@@ -335,7 +336,7 @@ function beginRealm(
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, ...familyObjects(heldCatalogRows(requirements.description)) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(held) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,

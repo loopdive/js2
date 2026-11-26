@@ -5,6 +5,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  modelledRow,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
 import { ERROR_TO_STRING_ID } from "./builtin-prototype-keys.js";
@@ -173,11 +174,15 @@ function heldFamilies(uses: readonly Use[], program: PreparedIrProgram): Readonl
     }),
   );
 }
-/** (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its constructors bring. */
+/**
+ * (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its constructors bring,
+ * (#7350 B3b-0) each as far as a realm models it (`modelledRow`).
+ */
 export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {
-  return description.catalog.intrinsics.filter(
-    (row) => row.heldWith === undefined || description.intrinsics.includes(row.heldWith),
-  );
+  return description.catalog.intrinsics.flatMap((row) => {
+    const modelled = modelledRow(row);
+    return modelled && (row.heldWith === undefined || description.intrinsics.includes(row.heldWith)) ? [modelled] : [];
+  });
 }
 function calculate(
   program: PreparedIrProgram,

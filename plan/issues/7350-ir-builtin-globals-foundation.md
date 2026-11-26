@@ -1406,3 +1406,73 @@ All three are measured on the branch.
 | N4 re-split | accepted | Slices 1 expando fix, 2 B3b-0, 3 B3b-1, 4 B3b-2, 5 B3c, with yields from the measurement data; B3b-1 refuses a member access on a primitive of a held kind by name, at no measured cost |
 | N5 reproducibility | done | `plan/samples/7350-b3bc/`: `stub.patch` (reconstructed: the scratch trees were gone; re-run on the 728 wall files reproduces every verdict in both builds, "Measured"), `walls-728.txt`, `carriers.txt`, `l420.txt`, `README.md` with the census command per head; `plan/samples/7354-o411.txt` from `b1a7c75a16` (`origin/claude/7354-o411-sample`), byte-identical to `.tmp/o411/sample.txt` of the B3 worktree and to the list at `155b06691f` |
 | boundaries (lead's standing rule) | n/a | "Compiler boundaries" section: no slice adds a `src/` file; per slice the layers touched and the one edge to watch (the escape fact reaches `realm-static-call.ts` by its host interface) |
+
+### B3b-0 result (2026-11-26, branch `claude/7350-b3b0` on plan head `a2e9a7858b`)
+
+**Built** (one code commit):
+
+- `wrapperRows` complete, in `errorRows`' shape. Each constructor row gains:
+  - its statics (`String.fromCharCode` / `fromCodePoint` / `raw`; `Number.isFinite` / `isInteger` / `isNaN` /
+    `isSafeInteger`);
+  - Number's `EPSILON`, `MAX_SAFE_INTEGER` and `MIN_SAFE_INTEGER`;
+  - an own `prototype` {!w, !e, !c}.
+- Each prototype row: `primitiveData` ("", 0, false), `constructor`, and one property per method (50 / 6 / 2). String's
+  Annex B.2.2 members are `legacy`.
+- One function row per static and method, all `unavailable`.
+- `legacyProperty` replaces Object.prototype's inline Annex B map.
+- `RealmConstructor<F>` is a union by family, built by one generic `constructors(family, names)`.
+  `dynamicWrapperConstruction` takes `RealmConstructor<"wrapper">` and `dynamicErrorConstruction` takes
+  `RealmConstructor<"error">`, so the `ctor.name as NativeWrapperConstructor` cast is gone.
+- `tests/issue-7350-b3b0-wrapper-catalog.test.ts` (15 tests) pins:
+  - the key sets, names, lengths and attributes against node 22;
+  - Number's constants;
+  - the Annex B and trim aliases;
+  - the gate;
+  - criterion 9's key-set equality with the hand lists.
+
+**Deviations from the plan:**
+
+- *"By construction" did not hold.* `heldCatalogRows` brings every row whose `heldWith` the realm holds, and B3a
+  already holds `%String%` / `%Number%` / `%Boolean%` wherever the IR reads the name. Without a gate, those realms
+  would have gained the following, so B3a's tests would have changed behaviour and bytes:
+  - the prototype objects (`familyObjects`);
+  - the statics' references (`familyProperties`);
+  - about 60 literals;
+  - the folds and keys of `EPSILON` and the other new constants.
+
+  The gate is one catalog function, `modelledRow(row)`, read by its four consumers:
+  - `heldCatalogRows`;
+  - `beginRealm`, which now reads its intrinsic rows from the held rows;
+  - `IDENTITY_ONLY_KEYS`;
+  - `nativeConstantStatic`.
+
+  `modelledRow` answers three ways:
+  - an identity-only constructor: only the own properties its `identityOnly` names (`length`, `name`, and Number's B3a
+    five, in B3a's order);
+  - the other rows of that family: none;
+  - every other row: itself.
+
+  To make this possible, `identityOnly` changes from `true` to the list of modelled keys. B3b-1 deletes `modelledRow`
+  with `identityOnly`. Two files this adds to the boundaries table: `native-realm-requirements.ts` (ir-program) and
+  `native-realm.ts` (backend-wasmgc). Both edges already exist.
+- *`trimLeft` / `trimRight` are properties, not rows.* They reference `%String.prototype.trimStart%` /
+  `%String.prototype.trimEnd%` (Annex B.2.2.15-16; node: `trimLeft === trimStart`). That gives 48 String method rows
+  for its 50 method properties.
+- *Not in B3b-0:*
+  - `NATIVE_MEMBERS` (`valueOf` / `toString` as native);
+  - the appended `NATIVE_VALUE_INTRINSICS` ids.
+
+  Marking a row native claims an algorithm, and appending holds a function value. Both belong to B3b-1, which writes
+  the algorithms. `dynamic-realm-calls.ts` needed no change: it returns the union.
+- The catalog version is now `…Wrappers:v4`.
+
+**Measured:**
+
+- `prepared-byte-identity.mts`: 804 / 804 identical. Base `a2e9a7858b` and head both give 745 bytes, 58 refused and 1
+  threw; the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Tests: B3a's test, its 7 pin files and the new test all pass.
+- Gates exit 0: loc, func, coercion sites, oracle ratchet, dead exports, typecheck, import cycles, compiler boundaries
+  (`--base HEAD^1` and `--base origin/main`).
+- With `LOC_GATE_BASE=origin/main`, the loc and func gates fail, but only on files this branch does not touch:
+  `src/codegen/*` and `src/ir/from-ast.ts` (+2). Main has moved past the base.

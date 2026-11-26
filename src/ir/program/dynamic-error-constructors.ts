@@ -30,7 +30,7 @@ import { gap } from "./dynamic-value-gap.js";
 export function dynamicErrorConstruction(
   b: RealmConstructionBuilders,
   instr: RealmConstruction,
-  ctor: RealmConstructor,
+  ctor: RealmConstructor<"error">,
   args: readonly IrValueId[],
 ): IrInstr[] {
   if (args.length > 1) gap(`${ctor.name} with a second argument (options.cause)`);
