@@ -166,6 +166,17 @@ export type NativeErrorConstructor = (typeof NATIVE_ERROR_CONSTRUCTORS)[number];
  */
 export const NATIVE_WRAPPER_CONSTRUCTORS = Object.freeze(["String", "Number", "Boolean"] as const);
 export type NativeWrapperConstructor = (typeof NATIVE_WRAPPER_CONSTRUCTORS)[number];
+/**
+ * (#7354 W2) The wrapper of each primitive type (the type of its [[StringData]] / [[NumberData]] / [[BooleanData]]
+ * slot): the one map between a primitive kind and its wrapper.
+ */
+export const WRAPPER_OF_PRIMITIVE = Object.freeze({
+  string: "String",
+  number: "Number",
+  boolean: "Boolean",
+} as const satisfies Record<string, NativeWrapperConstructor>);
+/** (#7354 W2) The questions `js.object.wrapper-data` answers (its selector): a slot, or a wrapper method's thisXValue. */
+export const WRAPPER_DATA = Object.freeze({ slot: 0, valueOf: 1, toString: 2 } as const);
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,

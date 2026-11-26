@@ -14,22 +14,18 @@
  * receiver and takes the dispatcher.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrType } from "../core/types.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
-import { wrapperMethodTest, type BuiltinMethodTest } from "./dynamic-wrapper-methods.js";
+import { builtinMethodChain, identityTest, wrapperMethodTests } from "./dynamic-builtin-methods.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-realm-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
-
-/** The Boolean the realm's tests answer, boxed into the call's carrier. */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /**
  * The realm methods `call` may call, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a populated name on its
@@ -136,7 +132,7 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
  * The legalized call: the algorithm of the realm's own method the callee is, tested in turn, else the call as it was.
  * (#7354 G1) Error.prototype.toString is the realm's own (§20.5.3.4, `js.object.error-to-string`): its receiver is the
  * [[Get]]'s, an object, as no primitive's wrapper prototype reaches it. (#7354 W2) A wrapper's `valueOf` / `toString`
- * (`dynamic-wrapper-methods.ts`; Number.prototype.toString with a radix argument is the run-time abort).
+ * (`dynamic-builtin-methods.ts`; Number.prototype.toString with a radix argument is the run-time abort).
  */
 export function dynamicPrototypeMethodCall(
   b: ObjectStaticBuilders,
@@ -152,28 +148,18 @@ export function dynamicPrototypeMethodCall(
       if (id === objectPrototypeMethodId("isPrototypeOf")) return prototypeOf(b, instr, r);
       return ownProperty(b, instr, id === objectPrototypeMethodId("propertyIsEnumerable"), r);
     };
-  const identity = (id: string): BuiltinMethodTest => {
-    const [builtin, cond] = [b.fresh(), b.fresh()];
-    return {
-      instrs: [...b.realmIntrinsic(id, builtin), b.intrinsic(instr, "js.value.strict_eq", [callee, builtin], cond)],
-      cond,
-      answer: algorithm(id),
-    };
-  };
   const tests = [
-    ...methods.ids.map((id) => () => identity(id)),
+    ...methods.ids.map((id) => () => identityTest(b, instr, id, callee, algorithm(id))),
     ...(methods.wrapper
-      ? [() => wrapperMethodTest({ ...b, carrier: CARRIER }, instr, callee, receiver, instr.args.length > 2)]
+      ? wrapperMethodTests(b, instr, callee, receiver, instr.args.length > 2).map((test) => () => test)
       : []),
   ];
-  const call = tests.reduceRight(
-    (otherwise: (r: IrValueId) => IrInstr[], test) =>
-      (r: IrValueId): IrInstr[] => {
-        const { instrs, cond, answer } = test();
-        return [...instrs, b.branch(cond, answer, otherwise, r, CARRIER)];
-      },
-    // Without a source function no dispatcher exists, and every function value is a built-in: its abort.
-    (r: IrValueId): IrInstr[] => (dispatches ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r)),
+  // Without a source function no dispatcher exists, and every function value is a built-in: its abort.
+  const call = builtinMethodChain(
+    b,
+    tests,
+    (r) => (dispatches ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r)),
+    CARRIER,
   );
   return call(instr.result!);
 }

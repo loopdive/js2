@@ -13,7 +13,8 @@ import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import type { ChainBuilders } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import {
   IS_OBJECT,
   holdsErrors,
@@ -27,9 +28,6 @@ import { functionChainAnswer } from "./dynamic-realm-constructors.js";
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
-
-/** The Boolean carrier `instanceof` and the realm's tests answer with (the chains' `TEST_RESULT` is unbranded). */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /**
  * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects

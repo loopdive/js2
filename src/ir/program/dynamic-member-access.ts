@@ -17,8 +17,8 @@ import {
   objectPrototypeMethodId,
   heldWrapperPrototypeKey,
   unheldWrapperPrototypeKeys,
-  WRAPPER_OF_KIND,
 } from "./builtin-prototype-keys.js";
+import { WRAPPER_OF_PRIMITIVE } from "../../runtime/contracts/native-realm-catalog.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
@@ -178,7 +178,7 @@ function functionMissing(b: MemberAccessBuilders, name: string): string | undefi
  * keys and Object.prototype's unpopulated ones, but (#7354 W2) what a held family's prototype holds.
  */
 function primitiveLacks(b: MemberAccessBuilders, kind: CarrierKind, name: string): boolean {
-  const wrapper = WRAPPER_OF_KIND[kind as keyof typeof WRAPPER_OF_KIND];
+  const wrapper = WRAPPER_OF_PRIMITIVE[kind as keyof typeof WRAPPER_OF_PRIMITIVE];
   const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
   return reachable.has(name) && !(b.wrappers.has(`%${wrapper}%`) && heldWrapperPrototypeKey(wrapper, name));
 }
@@ -193,7 +193,7 @@ function throughPrototype(
   access: (base: IrValueId, result: IrValueId) => IrInstr[],
   result: IrValueId,
 ): IrInstr[] {
-  const wrapper = WRAPPER_OF_KIND[kind as keyof typeof WRAPPER_OF_KIND];
+  const wrapper = WRAPPER_OF_PRIMITIVE[kind as keyof typeof WRAPPER_OF_PRIMITIVE];
   const base = b.fresh();
   const id = b.wrappers.has(`%${wrapper}%`) ? `%${wrapper}.prototype%` : "%Object.prototype%";
   return [...b.realmIntrinsic(id, base), ...access(base, result)];

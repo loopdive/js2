@@ -87,14 +87,10 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
   // (#7354 W2) A new wrapper of the primitive (already converted) of the wrapper constructor `selector` (its index in
-  // `NATIVE_WRAPPER_CONSTRUCTORS`), and an object's [[StringData]] / [[NumberData]] / [[BooleanData]] as the primitive
-  // value, or `undefined` for an object that is no wrapper.
+  // `NATIVE_WRAPPER_CONSTRUCTORS`); and a wrapper's slot as the realm answers it (`realm-wrapper-bodies.ts`
+  // `WRAPPER_DATA`): the slot of an object, or thisXValue where the method is a held wrapper's `valueOf` / `toString`.
   "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
-  "js.object.primitive-data": declaration("js.object.primitive-data", [EXTERNAL], [EXTERNAL]),
-  // (#7354 W2) thisXValue(this) where the method is a held wrapper prototype's `valueOf` / `toString` (null for any
-  // other method, a TypeError for a wrong receiver), and whether the method is such a `toString`.
-  "js.object.wrapper-this": declaration("js.object.wrapper-this", [EXTERNAL, EXTERNAL], [EXTERNAL]),
-  "js.object.wrapper-to-string": declaration("js.object.wrapper-to-string", [EXTERNAL], [BOOLEAN]),
+  "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, SELECTOR], [EXTERNAL]),
 });
 
 /**

@@ -54,10 +54,8 @@ import {
   realmMethodId,
 } from "../../../runtime/contracts/native-realm-catalog.js";
 import {
-  buildPrimitiveDataDefinition,
   buildWrapperCreateDefinition,
-  buildWrapperThisDefinition,
-  buildWrapperToStringDefinition,
+  buildWrapperDataDefinition,
 } from "../../../runtime/wasmgc/values/realm-wrapper-bodies.js";
 import { realmWrapperKinds, type NativeRealmWrappers } from "./native-realm-wrappers.js";
 import type { NativeStringFlattenReservations } from "./native-string-flatten.js";
@@ -80,11 +78,8 @@ export interface NativeSourceObjectDependencies {
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly kernel: NativeBuiltinFunctionReservations;
   readonly errors: NativeErrorReservations;
-  /** (#7354 W2) Where the realm holds a wrapper family: its wrappers, the held kinds' selectors, and the flattener. */
-  readonly wrappers?: NativeRealmWrappers & {
-    readonly selectors: readonly number[];
-    readonly flatten: NativeStringFlattenReservations;
-  };
+  /** (#7354 W2) Where the realm holds a wrapper family: its wrappers and the string flattener. */
+  readonly wrappers?: NativeRealmWrappers & { readonly flatten: NativeStringFlattenReservations };
 }
 const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
@@ -101,57 +96,61 @@ function literalKey(tx: PhysicalModuleReservations, { kernel }: NativeSourceObje
   const strings = nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings;
   return (text: string): Instr[] => [...nativeStringLiteralInstrs(tx, strings, text), { op: "extern.convert_any" }];
 }
-/** (#7354 W2) The realm's wrappers, as their bodies take them (a realm that serves a wrapper contract holds them). */
-function wrapperOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
-  const { values, kernel } = dependencies,
-    wrappers = dependencies.wrappers!;
-  const d = nativeBuiltinFunctionOperands(tx, kernel);
-  const strings = nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings.layout;
-  return {
-    kinds: realmWrapperKinds(tx, wrappers, wrappers.selectors),
-    initializer: d.initializer,
-    undefinedGlobal: d.undefinedGlobal,
-    anyStrTypeIdx: strings.anyStrTypeIdx,
-    nativeStrTypeIdx: strings.nativeStrTypeIdx,
-    nativeStrDataTypeIdx: strings.nativeStrDataTypeIdx,
-    boxedBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
-    flatten: wrappers.flatten.flatten.handle,
-    boxNumber: values.functions.boxNumber.handle,
-    unboxNumber: values.functions.unboxNumber.handle,
-    defineDataBody: d.defineDataBody,
-    lengthKey: d.lengthKey,
-  };
-}
-/** (#7354 W2) The wrapper methods' wrong-receiver messages (V8's text), by kind and method. */
+/** (#7354 W2) A wrapper prototype method's wrong-receiver message (V8's text). */
 const wrapperMethodMessage = (kind: string, method: string) =>
   `${kind}.prototype.${method} requires that 'this' be a ${kind}`;
+/** The prototype methods `wrapper-data` answers, in `WRAPPER_DATA` order. */
+const WRAPPER_METHODS = ["valueOf", "toString"] as const;
 const WRAPPER_METHOD_MESSAGES: readonly string[] = NATIVE_WRAPPER_CONSTRUCTORS.flatMap((kind) =>
-  ["valueOf", "toString"].map((method) => wrapperMethodMessage(kind, method)),
+  WRAPPER_METHODS.map((method) => wrapperMethodMessage(kind, method)),
 );
-/** The held wrapper methods, as `wrapper-this` and `wrapper-to-string` test them. */
-function wrapperMethodOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
-  const { kernel, values } = dependencies;
+/**
+ * (#7354 W2) The realm's wrappers as their bodies take them: no kind where the realm holds no wrapper family (a program
+ * may ask whether an object is a wrapper, or a method a wrapper's, where none can exist).
+ */
+function wrapperOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
+  const { values, kernel, wrappers } = dependencies;
   const d = nativeBuiltinFunctionOperands(tx, kernel);
   const key = literalKey(tx, dependencies);
-  const operands = wrapperOperands(dependencies, tx);
+  const method = (kind: string, name: (typeof WRAPPER_METHODS)[number]) => ({
+    value: [
+      {
+        op: "call",
+        funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId(`${kind}.prototype`, name)).getter
+          .handle,
+      } as Instr,
+    ],
+    throwTypeError: builtinTypeError(d, key(wrapperMethodMessage(kind, name))),
+  });
   return {
-    ...operands,
+    kinds: wrappers
+      ? realmWrapperKinds(tx, wrappers).map((kind) => ({
+          ...kind,
+          methods: WRAPPER_METHODS.map((name) => method(kind.kind, name)),
+        }))
+      : [],
+    undefinedGlobal: d.undefinedGlobal,
     sameValue: d.sameValue,
+    anyStrTypeIdx: nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings.layout.anyStrTypeIdx,
+    boxedBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
+    boxNumber: values.functions.boxNumber.handle,
+    unboxNumber: values.functions.unboxNumber.handle,
     isNumber: values.functions.isNumber.handle,
-    methods: operands.kinds.flatMap((kind) =>
-      (["valueOf", "toString"] as const).map((method) => ({
-        kind,
-        method,
-        value: [
-          {
-            op: "call",
-            funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId(`${kind.kind}.prototype`, method))
-              .getter.handle,
-          } as Instr,
-        ],
-        throwTypeError: builtinTypeError(d, key(wrapperMethodMessage(kind.kind, method))),
-      })),
-    ),
+  };
+}
+/** Creation's operands: a program creates a wrapper only of a family the realm then holds (`create-wrapper`'s selector). */
+function wrapperCreateOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
+  const wrappers = dependencies.wrappers!;
+  const d = nativeBuiltinFunctionOperands(tx, dependencies.kernel);
+  return {
+    ...wrapperOperands(dependencies, tx),
+    initializer: d.initializer,
+    nativeStrTypeIdx: nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).strings.layout
+      .nativeStrTypeIdx,
+    flatten: wrappers.flatten.flatten.handle,
+    indexKey: wrappers.indexKey.handle,
+    defineDataBody: d.defineDataBody,
+    lengthKey: d.lengthKey,
   };
 }
 type Signature = { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
@@ -359,7 +358,7 @@ const ROWS = {
     body: (dependencies, tx) => {
       const d = nativeBuiltinFunctionOperands(tx, dependencies.kernel);
       return buildWrapperCreateDefinition(
-        wrapperOperands(dependencies, tx),
+        wrapperCreateOperands(dependencies, tx),
         new Map(
           d.objects.flatMap(({ id, global }) => {
             const selector = NATIVE_WRAPPER_CONSTRUCTORS.findIndex((name) => id === `%${name}.prototype%`);
@@ -369,18 +368,10 @@ const ROWS = {
       );
     },
   },
-  "js.object.primitive-data": {
-    signature: { params: [EXTERNREF], results: [EXTERNREF] },
-    body: (dependencies, tx) => buildPrimitiveDataDefinition(wrapperOperands(dependencies, tx)),
-  },
-  "js.object.wrapper-this": {
-    signature: { params: [EXTERNREF, EXTERNREF], results: [EXTERNREF] },
+  "js.object.wrapper-data": {
+    signature: { params: [EXTERNREF, EXTERNREF, I32], results: [EXTERNREF] },
     literals: WRAPPER_METHOD_MESSAGES,
-    body: (dependencies, tx) => buildWrapperThisDefinition(wrapperMethodOperands(dependencies, tx)),
-  },
-  "js.object.wrapper-to-string": {
-    signature: { params: [EXTERNREF], results: [I32] },
-    body: (dependencies, tx) => buildWrapperToStringDefinition(wrapperMethodOperands(dependencies, tx)),
+    body: (dependencies, tx) => buildWrapperDataDefinition(wrapperOperands(dependencies, tx)),
   },
   "js.object.has-own": {
     signature: { params: [EXTERNREF, EXTERNREF, I32], results: [I32] },

@@ -9,7 +9,7 @@
 import type { AllocSiteRegistry } from "../analysis/alloc-registry.js";
 import { forEachInstrDeep, type IrFunction, type IrInstr } from "../core/nodes.js";
 import type { IrClosureSignature, IrType } from "../core/types.js";
-import { CARRIER } from "./dynamic-value-chains.js";
+import { CARRIER } from "./dynamic-value-types.js";
 
 /** Walk the data structurally: IR constants may hold bigints, which JSON cannot. */
 export function containsDynamic(value: unknown): boolean {

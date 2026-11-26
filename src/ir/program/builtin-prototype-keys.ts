@@ -157,9 +157,6 @@ const WRAPPER_PROTOTYPE_KEYS = Object.fromEntries(
   Record<NativeWrapperConstructor, { readonly all: ReadonlySet<string>; readonly held: ReadonlySet<string> }>
 >;
 
-/** (#7354 W2) The wrapper prototype a primitive kind reads through. */
-export const WRAPPER_OF_KIND = { number: "Number", boolean: "Boolean", string: "String" } as const;
-
 /**
  * (#7354 W2) The keys a read of a held family's object reaches on its prototype that the realm does not hold
  * (`String.prototype.charAt`): an object that may be a wrapper of `wrappers` (catalog ids) finds them only on its own

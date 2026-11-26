@@ -433,7 +433,7 @@ function reserveKernelResources(
     layoutPlan = declareNativeObjectLayouts(layoutRequirements);
   const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
   const wrappers = wrapperKinds.length
-    ? reserveNativeRealmWrappers(tx, key, { objects: layouts, objectPlan: layoutPlan, strings, symbols })
+    ? reserveNativeRealmWrappers(tx, key, wrapperKinds, { objects: layouts, objectPlan: layoutPlan, strings, symbols })
     : undefined;
   const lookupDependencies = { layouts, layoutPlan, strings, flatten, equality, symbols };
   const lookup = reserveNativeObjectLookupResources(
@@ -510,7 +510,7 @@ function reserveKernelResources(
       descriptors,
       kernel,
       errors: pack.substrate.errors,
-      ...(wrappers ? { wrappers: { ...wrappers, selectors: wrapperKinds, flatten } } : {}),
+      ...(wrappers ? { wrappers: { ...wrappers, flatten } } : {}),
     },
   );
   return {

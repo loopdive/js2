@@ -17317,7 +17317,17 @@
       "layer": "ir-program"
     },
     {
-      "path": "src/ir/program/dynamic-wrapper-methods.ts",
+      "path": "src/ir/program/dynamic-builtin-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-tag.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-types.ts",
       "state": "clean",
       "layer": "ir-program"
     },

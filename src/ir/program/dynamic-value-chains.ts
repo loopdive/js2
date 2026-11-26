@@ -13,10 +13,11 @@ import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
+import { CARRIER, F64, I32, STRING, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
-import { wrapperMethodTest, type BuiltinMethodTest } from "./dynamic-wrapper-methods.js";
+import { identityTest, wrapperMethodTests } from "./dynamic-builtin-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -30,21 +31,9 @@ import {
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 
-/** The dynamic value's carrier, the native externref. */
-export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
+export { CARRIER, carried } from "./dynamic-value-types.js";
 
-/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
-export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
-  kind: "coerce.to_externref",
-  value,
-  result,
-  resultType: CARRIER,
-});
-
-const STRING: IrType = Object.freeze({ kind: "string" });
-const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
@@ -287,25 +276,18 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** (#7354 G1, W2) Error.prototype.toString, by identity, where a value may be an error; a held wrapper's methods. */
-  const builtins = (instr: IrInstr) => [
+  /** (#7354 G1, W2) Error.prototype.toString where a value may be an error; a held wrapper's methods. */
+  const builtins = (instr: IrInstr) => (method: IrValueId, object: IrValueId) => [
     ...(holdsErrors(program)
       ? [
-          (method: IrValueId, object: IrValueId): BuiltinMethodTest => {
-            const [value, cond] = [fresh(), fresh()];
-            return {
-              instrs: [
-                ...builders.realmIntrinsic(ERROR_TO_STRING_ID, value),
-                intrinsic(instr, "js.value.strict_eq", [method, value], cond),
-              ],
-              cond,
-              answer: (r) => [realmCall("js.object.error-to-string", [object], r)],
-            };
-          },
+          () =>
+            identityTest(builtinMethodBuilders, instr, ERROR_TO_STRING_ID, method, (r) => [
+              realmCall("js.object.error-to-string", [object], r),
+            ]),
         ]
       : []),
     ...(heldWrappers(program).size > 0
-      ? [(method: IrValueId, object: IrValueId) => wrapperMethodTest(wrapperMethodBuilders, instr, method, object)]
+      ? wrapperMethodTests(builtinMethodBuilders, instr, method, object).map((test) => () => test)
       : []),
   ];
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
@@ -421,7 +403,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     );
     return { instrs, value: result };
   };
-  const wrapperMethodBuilders = { ...builders, carrier: CARRIER, stringOf };
+  const builtinMethodBuilders = { ...builders, stringOf };
   return { stringOf, toNumber, primitiveOf };
 }
 

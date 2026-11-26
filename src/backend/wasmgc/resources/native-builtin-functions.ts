@@ -77,12 +77,12 @@ import {
 } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  WRAPPER_OF_PRIMITIVE,
   type NativeRealmPrimitive,
 } from "../../../runtime/contracts/native-realm-catalog.js";
+import { wrapperOfConstant } from "../../../runtime/wasmgc/values/realm-wrapper-bodies.js";
 import type { NativePrimitiveWrapperStorageReservations } from "./native-primitive-wrapper-storage.js";
-
-/** (#7354 W2) The wrapper kind holding a primitive of each type. */
-const WRAPPER_KIND = { string: "String", number: "Number", boolean: "Boolean" } as const;
+import type { NativePrimitiveWrapperLayoutReservations } from "./native-primitive-wrapper-layouts.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -102,7 +102,10 @@ export interface NativeBuiltinFunctionDependencies {
    * store every own property (a String object's indices included, `realm-wrapper-bodies.ts`), so the plain storage
    * lookup answers them.
    */
-  readonly wrappers?: { readonly storage: NativePrimitiveWrapperStorageReservations };
+  readonly wrappers?: {
+    readonly storage: NativePrimitiveWrapperStorageReservations;
+    readonly layouts: NativePrimitiveWrapperLayoutReservations;
+  };
 }
 const functionRoles = [
   "initialize",
@@ -207,12 +210,22 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   assertBuiltinFunctionDataRecord(dd.sameValueDependencies.valueDependencies);
   nativeClosureReservationInventory(tx, d.closures, d.closurePlan);
   const inventory = nativeObjectDescriptorReservationInventory(tx, d.descriptors, dd);
-  const ordinary = dd.storageDependencies.lookupDependencies.layouts.object.object;
+  const lookupLayouts = dd.storageDependencies.lookupDependencies.layouts;
+  const ordinary = lookupLayouts.object.object;
   // ref.test includes subtypes. Plain storage lookup cannot stand in for an
   // exotic carrier's own-property method (String's virtual indices, for example).
   // Parentless structs are implicitly final in the emitted Wasm representation.
-  // (#7354 W2) The realm's wrappers are the one subtype: they store their own properties.
-  if (ordinary.kind !== "struct" || (ordinary.superTypeIdx !== undefined && ordinary.final !== true && !d.wrappers))
+  // (#7354 W2) An extensible carrier is admitted only for the realm's wrappers, #3518's subtypes of it, which store
+  // every own property (`realm-wrapper-bodies.ts`): no other subtype is declared over the realm's object layout.
+  const wrapperSubtypes =
+    d.wrappers !== undefined &&
+    Object.values(d.wrappers.layouts.types).every(
+      (type) => type.object.kind === "struct" && type.object.superTypeIdx === lookupLayouts.object.typeIndex,
+    );
+  if (
+    ordinary.kind !== "struct" ||
+    (ordinary.superTypeIdx !== undefined && ordinary.final !== true && !wrapperSubtypes)
+  )
     fail("extensible ordinary carrier requires heterogeneous prototype dispatch");
   if (
     dd.closures !== d.closures ||
@@ -535,21 +548,18 @@ function operands(
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
     ...(wrappers && {
-      wrapperAllocation: (primitive: NativeRealmPrimitive, prototype: readonly Instr[]): Instr[] => [
-        ...prototype,
-        ...(primitive.kind === "string"
-          ? literal(primitive.value)
-          : primitive.kind === "number"
-            ? [{ op: "f64.const", value: primitive.value } as Instr]
-            : [{ op: "i32.const", value: Number(primitive.value) } as Instr]),
-        ...(primitive.kind === "string"
-          ? [
-              { op: "any.convert_extern" } as Instr,
-              { op: "ref.cast", typeIdx: input.strings.layout.anyStrTypeIdx } as Instr,
-            ]
-          : []),
-        { op: "call", funcIdx: wrappers.storage.allocation[WRAPPER_KIND[primitive.kind]].handle },
-      ],
+      wrapperAllocation: (primitive: NativeRealmPrimitive, prototype: readonly Instr[]): Instr[] => {
+        const kind = WRAPPER_OF_PRIMITIVE[primitive.kind];
+        const representation = {
+          anyStrTypeIdx: input.strings.layout.anyStrTypeIdx,
+          boxedBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
+          boxNumber: values.functions.boxNumber.handle,
+          unboxNumber: values.functions.unboxNumber.handle,
+          isNumber: values.functions.isNumber.handle,
+        };
+        const allocation = wrappers.storage.allocation[kind].handle;
+        return wrapperOfConstant(representation, kind, allocation, primitive, prototype, (text) => literal(text));
+      },
     }),
     ...(calls && {
       accessorCalls: {

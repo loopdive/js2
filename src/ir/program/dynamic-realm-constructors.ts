@@ -30,7 +30,12 @@
  * abort for `%Error%` (`F.prototype = Error; TypeError instanceof F`), and `false` for every other prototype
  * ({@link functionChainAnswer}).
  */
-import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
+import type { IrInstr, IrValueId } from "../core/nodes.js";
+import {
+  NATIVE_WRAPPER_CONSTRUCTORS,
+  WRAPPER_OF_PRIMITIVE,
+  type NativeWrapperConstructor,
+} from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrType } from "../core/types.js";
 import {
   ERROR_ID,
@@ -39,7 +44,8 @@ import {
   wrapperConstructorSelector,
 } from "./builtin-prototype-keys.js";
 import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import type { ChainBuilders } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, F64, carried } from "./dynamic-value-types.js";
 import { gap } from "./dynamic-value-gap.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 
@@ -65,26 +71,6 @@ export function realmConstructorOf(
   return id !== undefined && isRealmConstructor(id) ? id : undefined;
 }
 
-/**
- * The realm constructors `functions` read as values: the front end's reads of the realm's intrinsic (`identifier-read.ts`)
- * that name a constructor. The one answer to "which constructors does the program hold" on the IR side; the realm
- * derives its families from the same reads (`native-realm-requirements.ts`).
- */
-export function realmConstructorsRead(functions: readonly IrFunction[]): ReadonlySet<string> {
-  const read = new Set<string>();
-  for (const fn of functions)
-    for (const block of fn.blocks)
-      for (const root of block.instrs)
-        forEachInstrDeep(root, (instr) => {
-          const id =
-            instr.kind === "call" && instr.target.binding.kind === "runtime"
-              ? realmIntrinsicOfHelper(instr.target.binding.symbol)
-              : undefined;
-          if (id !== undefined && isRealmConstructor(id)) read.add(id);
-        });
-  return read;
-}
-
 const isRealmConstructor = (id: string): boolean =>
   id === "%Object%" || errorConstructorSelector(id) >= 0 || wrapperConstructorSelector(id) >= 0;
 
@@ -100,16 +86,13 @@ export function dynamicRealmConstruction(
   if (error >= 0) return errorConstruction(b, instr, error, args);
   if (id === "%Object%") return objectConstruction(b, instr, args[0]);
   const selector = wrapperConstructorSelector(id);
-  const primitive = wrapperPrimitive(b, instr, selector, args[0]);
+  const conversion = CONVERSION[NATIVE_WRAPPER_CONSTRUCTORS[selector]!];
+  const primitive = (r: IrValueId): IrInstr[] =>
+    args[0] === undefined ? conversion.absent(b, instr, r) : conversion.convert(b, instr, args[0], r);
   if (!construct) return primitive(instr.result!);
   const value = b.fresh();
   return [...primitive(value), ...b.selectorCall("js.object.create-wrapper", [value], selector, instr.result!)];
 }
-
-/** The carrier `undefined` into `result`. */
-const undefinedValue =
-  (b: ChainBuilders, instr: IrInstr): Arm =>
-  (r) => [b.intrinsic(instr, "js.value.undefined", [], r)];
 
 /** `create` of the message `undefined` (none, a null reference) or of ToString(message), per the message's kind. */
 function errorConstruction(b: RealmConstructorBuilders, instr: IrInstr, selector: number, args: readonly IrValueId[]) {
@@ -147,40 +130,59 @@ function withUndefined(
   ];
 }
 
-/** The wrapper constructor `selector`'s conversion of `value` (none: its default), a carrier primitive. */
-function wrapperPrimitive(b: RealmConstructorBuilders, instr: IrInstr, selector: number, value: IrValueId | undefined) {
-  return (r: IrValueId): IrInstr[] => {
-    const converted = b.fresh();
-    switch (selector) {
-      case 0:
-        return value === undefined
-          ? [b.text("", converted), carried(converted, r)]
-          : [...b.stringOf(instr, value, converted), carried(converted, r)];
-      case 1:
-        return value === undefined
-          ? [
-              { kind: "const", value: { kind: "f64", value: 0 }, result: converted, resultType: F64 },
-              b.intrinsic(instr, "js.number.box", [converted], r),
-            ]
-          : [...b.toNumber(instr, value, converted), b.intrinsic(instr, "js.number.box", [converted], r)];
-      default:
-        return value === undefined
-          ? [
-              { kind: "const", value: { kind: "bool", value: false }, result: converted, resultType: BOOLEAN },
-              b.intrinsic(instr, "js.boolean.box", [converted], r),
-            ]
-          : [
-              b.intrinsic(instr, "js.value.to_boolean", [value], converted),
-              b.intrinsic(instr, "js.boolean.box", [converted], r),
-            ];
+/**
+ * Each wrapper constructor's conversion (§22.1.1.1 ToString, §21.1.1.1 ToNumber, §20.3.1.1 ToBoolean) of `value`, and
+ * its value for no argument ("", +0, false), into the carrier primitive `result`.
+ */
+const CONVERSION: Readonly<
+  Record<
+    NativeWrapperConstructor,
+    {
+      readonly convert: (b: RealmConstructorBuilders, instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+      readonly absent: (b: RealmConstructorBuilders, instr: IrInstr, result: IrValueId) => IrInstr[];
     }
-  };
-}
-const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-
-/** The wrapper constructor of each primitive kind (`NATIVE_WRAPPER_CONSTRUCTORS` order). */
-const WRAPPER_OF: Readonly<Partial<Record<CarrierKind, number>>> = { string: 0, number: 1, boolean: 2 };
+  >
+> = {
+  String: {
+    convert: (b, instr, value, r) => {
+      const text = b.fresh();
+      return [...b.stringOf(instr, value, text), carried(text, r)];
+    },
+    absent: (b, _instr, r) => {
+      const text = b.fresh();
+      return [b.text("", text), carried(text, r)];
+    },
+  },
+  Number: {
+    convert: (b, instr, value, r) => {
+      const number = b.fresh();
+      return [...b.toNumber(instr, value, number), b.intrinsic(instr, "js.number.box", [number], r)];
+    },
+    absent: (b, instr, r) => {
+      const number = b.fresh();
+      return [
+        { kind: "const", value: { kind: "f64", value: 0 }, result: number, resultType: F64 },
+        b.intrinsic(instr, "js.number.box", [number], r),
+      ];
+    },
+  },
+  Boolean: {
+    convert: (b, instr, value, r) => {
+      const flag = b.fresh();
+      return [
+        b.intrinsic(instr, "js.value.to_boolean", [value], flag),
+        b.intrinsic(instr, "js.boolean.box", [flag], r),
+      ];
+    },
+    absent: (b, instr, r) => {
+      const flag = b.fresh();
+      return [
+        { kind: "const", value: { kind: "bool", value: false }, result: flag, resultType: BOOLEAN },
+        b.intrinsic(instr, "js.boolean.box", [flag], r),
+      ];
+    },
+  },
+};
 
 /** `Object(value)`: a new object for nothing, `undefined` or `null`; an object itself; a primitive's wrapper. */
 function objectConstruction(b: RealmConstructorBuilders, instr: IrInstr, value: IrValueId | undefined): IrInstr[] {
@@ -188,10 +190,10 @@ function objectConstruction(b: RealmConstructorBuilders, instr: IrInstr, value: 
   if (value === undefined) return create(instr.result!);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     if (MEMBER_ACCESS_ARM[kind] === "type-error") return create(r);
-    const wrapper = WRAPPER_OF[kind];
+    const wrapper = WRAPPER_OF_PRIMITIVE[kind as keyof typeof WRAPPER_OF_PRIMITIVE];
     return wrapper === undefined
       ? [carried(value, r)]
-      : b.selectorCall("js.object.create-wrapper", [value], wrapper, r);
+      : b.selectorCall("js.object.create-wrapper", [value], NATIVE_WRAPPER_CONSTRUCTORS.indexOf(wrapper), r);
   };
   return b.kindChain(instr, value, instr.result!, arm, b.kinds.kindsOf(value), CARRIER);
 }

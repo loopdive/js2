@@ -5,7 +5,8 @@
  * object layouts, which then take their explicit `extensible` opt-in (the wrappers are subtypes of the ordinary
  * object). A realm that holds no wrapper family reserves none of this, and its object type stays final.
  */
-import type { PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
+import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
+import { buildStringIndexKeyDefinition } from "../../../runtime/wasmgc/values/string-index-key-body.js";
 import {
   NATIVE_WRAPPER_CONSTRUCTORS,
   type NativeRealmIntrinsic,
@@ -41,7 +42,12 @@ export function heldWrapperKinds(heldRows: readonly NativeRealmIntrinsic[]): rea
 }
 
 export interface NativeRealmWrappers {
+  /** The held kinds, by selector (`heldWrapperKinds`). */
+  readonly selectors: readonly number[];
   readonly layouts: NativePrimitiveWrapperLayoutReservations;
+  /** `(index) -> key` for a String object's indices (`string-index-key-body.ts`). */
+  readonly indexKey: FunctionReservation;
+  readonly strings: NativeStringLiteralReservations;
   readonly storage: NativePrimitiveWrapperStorageReservations;
   readonly storagePlan: NativePrimitiveWrapperStoragePlan;
   readonly storageDependencies: NativePrimitiveWrapperStorageDependencies;
@@ -51,6 +57,7 @@ export interface NativeRealmWrappers {
 export function reserveNativeRealmWrappers(
   tx: PhysicalModuleReservations,
   key: string,
+  selectors: readonly number[],
   dependencies: {
     readonly objects: NativeObjectLayoutReservations;
     readonly objectPlan: NativeObjectLayoutDeclarationPlan;
@@ -78,7 +85,19 @@ export function reserveNativeRealmWrappers(
     storagePlan,
     storageDependencies,
   );
-  return Object.freeze({ layouts, storage, storagePlan, storageDependencies });
+  const indexKey = tx.reserveFunction(key + ":wrappers:index-key", key + ":index-key", {
+    params: [{ kind: "i32" }],
+    results: [{ kind: "externref" }],
+  });
+  return Object.freeze({
+    selectors,
+    layouts,
+    indexKey,
+    strings: dependencies.strings,
+    storage,
+    storagePlan,
+    storageDependencies,
+  });
 }
 
 /** The realm's wrapper resources, for its inventory: the five types and ten storage bodies #3518 issues together. */
@@ -89,19 +108,24 @@ export function nativeRealmWrapperInventory(tx: PhysicalModuleReservations, wrap
     wrappers.storagePlan,
     wrappers.storageDependencies,
   );
-  return { functions: inventory.functions, types: Object.values(inventory.layouts.types) };
+  return { functions: [...inventory.functions, wrappers.indexKey], types: Object.values(inventory.layouts.types) };
 }
 
-export const fillNativeRealmWrappers = (tx: PhysicalModuleReservations, wrappers: NativeRealmWrappers): void =>
+export function fillNativeRealmWrappers(tx: PhysicalModuleReservations, wrappers: NativeRealmWrappers): void {
   fillNativePrimitiveWrapperStorageResources(tx, wrappers.storage);
+  const { layout } = wrappers.strings;
+  tx.fillFunction(
+    wrappers.indexKey,
+    buildStringIndexKeyDefinition(layout.nativeStrTypeIdx, layout.nativeStrDataTypeIdx),
+  );
+}
 
 /** The held kinds' types and bodies, physical (fill phase). */
 export function realmWrapperKinds(
   tx: PhysicalModuleReservations,
   wrappers: NativeRealmWrappers,
-  selectors: readonly number[],
-): RealmWrapperKind[] {
-  return selectors.map((selector) => {
+): Omit<RealmWrapperKind, "methods">[] {
+  return wrappers.selectors.map((selector) => {
     const kind = NATIVE_WRAPPER_CONSTRUCTORS[selector]!;
     return {
       kind,

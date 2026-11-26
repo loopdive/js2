@@ -35,26 +35,19 @@ import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
+import { dynamicObjectTag } from "./dynamic-object-tag.js";
 import { unheldStaticKeys } from "./builtin-prototype-keys.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
 import { dynamicRealmConstruction, realmConstructorOf } from "./dynamic-realm-constructors.js";
-import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
-import {
-  CARRIER,
-  carried,
-  additionBuilder,
-  chainBuilders,
-  conversionBuilders,
-  knownKinds,
-} from "./dynamic-value-chains.js";
+import { realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
+import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
   IS_OBJECT,
   KINDS_OF_TYPEOF,
-  OBJECT_TAG,
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
@@ -92,9 +85,6 @@ function unadmittedValue(
   return `a value of type ${type?.kind === "val" ? type.val.kind : type?.kind}`;
 }
 
-/** (#7354 W2) The kinds a wrapper's slot holds: its `Object.prototype.toString` tag is the kind's (`OBJECT_TAG`). */
-const OBJECT_TAG_OF_DATA: ReadonlySet<string> = new Set(["string", "number", "boolean"]);
-
 /**
  * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
  * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
@@ -102,7 +92,7 @@ const OBJECT_TAG_OF_DATA: ReadonlySet<string> = new Set(["string", "number", "bo
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
-  program: LegalizationProgram = { objects: NO_OBJECTS, catches: false, constructors: new Set() },
+  program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
@@ -124,7 +114,7 @@ export function legalizeDynamicValues(
     errors,
     wrappers: heldWrappers(program),
     prototypes: obtainsPrototypes(program),
-    staticKeys: unheldStaticKeys(program.constructors),
+    staticKeys: unheldStaticKeys(program.objects.constructors),
   };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
@@ -132,6 +122,12 @@ export function legalizeDynamicValues(
   // realm holds (`dynamic-prototype-methods.ts`) or of an Error constructor (`dynamic-realm-constructors.ts`) is
   // written with.
   const objectStatics = { ...builders, stringOf, toNumber, errors, objects: obtainsPrototypes(program) };
+  const objectTags = {
+    program,
+    errors,
+    wrappers: memberAccess.wrappers.size > 0,
+    prototypes: memberAccess.prototypes,
+  };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -141,39 +137,6 @@ export function legalizeDynamicValues(
     return [
       ...positive(value),
       { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
-    ];
-  };
-
-  /**
-   * `Object.prototype.toString`'s tag of an object (§20.1.3.6 steps 5-14): (#7354 W2) a wrapper's kind, by its slot
-   * (`js.object.primitive-data`, `undefined` for no wrapper), (G1) "Error" for [[ErrorData]], else "Object".
-   */
-  const objectTag = (instr: IrInstr, object: IrValueId, result: IrValueId): IrInstr[] => {
-    const plain = (r: IrValueId): IrInstr[] => {
-      if (!errors) return [text("[object Object]", r)];
-      const isError = fresh();
-      return [
-        realmCall("js.object.is-error", [object], isError),
-        builders.branch(
-          isError,
-          (s) => [text("[object Error]", s)],
-          (s) => [text("[object Object]", s)],
-          r,
-        ),
-      ];
-    };
-    if (memberAccess.wrappers.size === 0) return plain(result);
-    const data = fresh();
-    const wrapped = admitted.filter((kind) => kind === "undefined" || OBJECT_TAG_OF_DATA.has(kind));
-    return [
-      realmCall("js.object.primitive-data", [object], data),
-      ...kindChain(
-        instr,
-        data,
-        result,
-        (kind, r) => (kind === "undefined" ? plain(r) : [text(`[object ${OBJECT_TAG[kind]}]`, r)]),
-        wrapped,
-      ),
     ];
   };
 
@@ -253,33 +216,9 @@ export function legalizeDynamicValues(
       case "dyn.typeof":
         if (typeofs.consumed.has(instr.result!)) return [];
         return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
-      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts: a tag per kind `v` may hold.
-      case "dyn.object_tag": {
-        const tag = (r: IrValueId) =>
-          kindChain(
-            instr,
-            instr.value,
-            r,
-            (kind, result) => {
-              if (kind === "object" && program.objects.namesSymbol)
-                gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-              if (kind !== "object") return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
-              return objectTag(instr, instr.value, result);
-            },
-            kinds.kindsOf(instr.value),
-          );
-        if (!memberAccess.prototypes) return tag(instr.result!);
-        // (#7354 W2) A program that can obtain Object.prototype can replace its `toString`, which the realm's
-        // Object.prototype otherwise lacks: the intercepted call then is the run-time abort.
-        const [prototype, name, key, replaced] = [fresh(), fresh(), fresh(), fresh()];
-        return [
-          ...builders.realmIntrinsic("%Object.prototype%", prototype),
-          text("toString", name),
-          carried(name, key),
-          ...builders.selectorCall("js.object.has-own", [prototype, key], 0, replaced),
-          builders.branch(replaced, (r) => [intrinsic(instr, "js.value.unsupported", [], r)], tag, instr.result!),
-        ];
-      }
+      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts (`dynamic-object-tag.ts`).
+      case "dyn.object_tag":
+        return dynamicObjectTag(builders, objectTags, instr);
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
