@@ -28,10 +28,12 @@ import {
 import { isLinearSafe, searchLinear } from "./linear.js";
 import { asciiFold, assertionHolds, classMatch, forwardCodePoint, unitMatches } from "./match-units.js";
 
-// The budget numbers are part of the bytecode contract (the Wasm VM bodies sit
-// below this file); this VM is where the formula is specified and tested.
-
-/** The shared budget formula — used by BOTH this mirror VM and the Wasm VM. */
+/**
+ * The shared budget formula — used by BOTH this mirror VM and the Wasm VM. Its
+ * numbers are part of the bytecode contract, because the Wasm VM bodies sit
+ * below this file in the layering; this VM is where the formula is specified
+ * and tested.
+ */
 export function regexStepBudget(len: number): number {
   return REGEX_STEP_CAP + REGEX_STEP_CAP_PER_UNIT * Math.min(len, REGEX_STEP_CAP_LEN_SATURATION);
 }

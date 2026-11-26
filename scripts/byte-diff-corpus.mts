@@ -1,8 +1,8 @@
-// #2138 Slice 1 acceptance probe — byte-identity corpus diff.
+// Byte-identity corpus diff between two compiler trees (#2138; regexp corpus #7369).
 // Usage:
 //   npx tsx scripts/byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N]
 //   npx tsx scripts/byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> \
-//       [--recheck <baseRoot> <headRoot>] [--corpus sample|regexp]
+//       <baseRoot> <headRoot> [--corpus sample|regexp]
 // Compiles a fixed corpus with the compiler at <compilerRoot> and writes JSONL of
 // {file, mode, status, sha, errs}; run it once per tree (baseline upstream/main,
 // then the branch) and `--compare` the two files.
@@ -23,11 +23,12 @@
 // from both identical and differing rows.
 //
 // Order: both trees compile the same sorted corpus in the same chunks, but a
-// compile can still depend on what its process compiled before it (#7369: a
-// file differed inside a chunk and was identical alone). `--recheck` therefore
-// recompiles every differing row alone, in a fresh process per tree, and counts
-// it as a difference only if it still differs; one that agrees alone is
-// reported as order-dependent.
+// compile can still depend on what its process compiled before it (#7410:
+// TypeScript's process-global symbol ids reach emitted names), and a change
+// that compiles one file differently shifts that state for the files after it.
+// `--compare` therefore recompiles every differing row alone, in a fresh
+// process per tree, and counts it as a difference only if it still differs;
+// one that agrees alone is listed as order-dependent, not as a difference.
 //
 // Env: INPUT_ROOT (default /workspace), the tree the inputs are read from, the
 // same for both runs so both sides compile identical sources; STRIDE (default 20).
@@ -225,7 +226,12 @@ async function run(compilerRoot: string, outFile: string, corpus: string, lanes:
 
 /** Compiles one job alone in a fresh process (with the usual crash handling). */
 async function compileAlone(compilerRoot: string, job: Job, scratch: string): Promise<Row> {
-  const out = join(scratch, createHash("sha1").update(`${compilerRoot}\t${keyOf(job)}`).digest("hex"));
+  const out = join(
+    scratch,
+    createHash("sha1")
+      .update(`${compilerRoot}\t${keyOf(job)}`)
+      .digest("hex"),
+  );
   await runChunk(compilerRoot, [job], `${out}.json`, `${out}.jsonl`);
   return readRows(`${out}.jsonl`)[0]!;
 }
@@ -238,13 +244,13 @@ async function compileAlone(compilerRoot: string, job: Job, scratch: string): Pr
 const sameOutput = (a: Row, b: Row | undefined) => b !== undefined && a.status === b.status && a.sha === b.sha;
 const show = (row: Row | undefined) => (row ? `${row.status} ${row.sha}` : "missing");
 
-interface Recheck {
+interface Trees {
   corpus: string;
   baseRoot: string;
   headRoot: string;
 }
 
-async function compare(baseFile: string, headFile: string, recheck?: Recheck): Promise<number> {
+async function compare(baseFile: string, headFile: string, trees: Trees): Promise<number> {
   const head = new Map(readRows(headFile).map((row) => [keyOf(row), row]));
   const unseen = new Set(head.keys());
   const perMode = new Map<string, { compiled: number; failed: number; bothFailed: number; differ: number }>();
@@ -270,10 +276,10 @@ async function compare(baseFile: string, headFile: string, recheck?: Recheck): P
       continue;
     }
     let detail = `\n  base: ${show(base)}\n  head: ${show(after)}`;
-    if (recheck && after) {
-      const job = jobOf(recheck.corpus, join(INPUT_ROOT, base.file), base.mode);
-      const baseAlone = await compileAlone(recheck.baseRoot, job, scratch);
-      const headAlone = await compileAlone(recheck.headRoot, job, scratch);
+    if (after) {
+      const job = jobOf(trees.corpus, join(INPUT_ROOT, base.file), base.mode);
+      const baseAlone = await compileAlone(trees.baseRoot, job, scratch);
+      const headAlone = await compileAlone(trees.headRoot, job, scratch);
       if (sameOutput(baseAlone, headAlone)) {
         orderDependent.push(`ORDER-DEPENDENT [${base.mode}] ${base.file}${detail}\n  alone: ${show(baseAlone)}`);
         continue;
@@ -292,28 +298,33 @@ async function compare(baseFile: string, headFile: string, recheck?: Recheck): P
     console.log(
       `  ${mode}: ${c.compiled} compiled + ${c.failed} failed on base, ${c.bothFailed} failed on both, ${c.differ} differ on head`,
     );
-  const tail =
-    `${identical} identical binaries, ${crashes.length} crash rows, ` +
-    (recheck ? `${orderDependent.length} order-dependent rows` : "differences not rechecked alone");
+  const tail = `${identical} identical binaries, ${crashes.length} crash rows, ${orderDependent.length} order-dependent rows`;
   const verdict = differ > 0 ? "FAILED" : crashes.length > 0 ? "INCONCLUSIVE" : "IDENTICAL";
   console.log(`${verdict} — ${differ} rows differ; ${tail}`);
   return differ > 0 ? 1 : crashes.length > 0 ? 2 : 0;
 }
 
 const argv = process.argv.slice(2);
-const flag = (name: string, offset = 1) => (argv.includes(name) ? argv[argv.indexOf(name) + offset] : undefined);
+const flag = (name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
 const corpus = flag("--corpus") ?? "sample";
+const lanes = Number(flag("--jobs") ?? 1);
+const positional = argv.filter((arg, i) => !arg.startsWith("--") && !argv[i - 1]?.match(/^--(corpus|jobs)$/));
 if (argv[0] === "--worker") {
   await runWorker(argv[1]!, argv[2]!, argv[3]!);
+} else if (
+  !CORPORA[corpus] ||
+  !Number.isInteger(lanes) ||
+  lanes < 1 ||
+  positional.length !== (argv[0] === "--compare" ? 4 : 2)
+) {
+  console.error(
+    "usage: byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N]\n" +
+      "       byte-diff-corpus.mts --compare <base.jsonl> <head.jsonl> <baseRoot> <headRoot> [--corpus sample|regexp]",
+  );
+  process.exit(2);
 } else if (argv[0] === "--compare") {
-  const baseRoot = flag("--recheck");
-  const headRoot = flag("--recheck", 2);
-  process.exit(await compare(argv[1]!, argv[2]!, baseRoot && headRoot ? { corpus, baseRoot, headRoot } : undefined));
+  const [baseFile, headFile, baseRoot, headRoot] = positional as [string, string, string, string];
+  process.exit(await compare(baseFile, headFile, { corpus, baseRoot, headRoot }));
 } else {
-  const lanes = Number(flag("--jobs") ?? 1);
-  if (!CORPORA[corpus] || !Number.isInteger(lanes) || lanes < 1) {
-    console.error("usage: byte-diff-corpus.mts <compilerRoot> <outFile> [--corpus sample|regexp] [--jobs N]");
-    process.exit(2);
-  }
-  await run(argv[0]!, argv[1]!, corpus, lanes);
+  await run(positional[0]!, positional[1]!, corpus, lanes);
 }

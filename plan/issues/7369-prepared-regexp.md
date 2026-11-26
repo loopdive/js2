@@ -4,7 +4,7 @@ title: "Prepared IR path: a native RegExp provider (pure VM bodies, then create 
 status: in-progress
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
 priority: high
 horizon: m
 feasibility: hard
@@ -172,47 +172,56 @@ No behaviour change: the compiled output is byte-identical.
 
 ## Result (R0)
 
-Measured 2026-11-19 on branch `claude/7369-regexp-vm-bodies`, base
-`origin/main` `89e47482`.
+Measured 2026-11-26 on branch `s12-7369-r0-finish` (the rework of
+`claude/7369-regexp-vm-bodies`, with `origin/main` `313281866f` merged in),
+against a tree of `origin/main` `313281866f`.
 
-**Byte identity.** `node scripts/check-regexp-byte-identity.mjs --base <origin/main
-tree> --head . --jobs 1 --cache .tmp/bi-cache`: 2,691 files × 3 targets = 8,073
-comparisons, **0 differences**.
+**Byte identity.** `scripts/byte-diff-corpus.mts --corpus regexp --jobs 1` once
+per tree, then `--compare` (review RV7337 folded the regexp corpus into this
+tool and retired the separate `check-regexp-byte-identity.mjs`): 2,691 files ×
+3 targets = 8,073 comparisons, **0 differences**, 0 crash rows, 0
+order-dependent rows.
 
-| Target       | Compiled on base | Failed on base | Differ on head |
-| ------------ | ---------------: | -------------: | -------------: |
-| default      |            2,159 |            532 |              0 |
-| `standalone` |            2,160 |            531 |              0 |
-| `linear`     |            2,130 |            561 |              0 |
+| Target       | Compiled on base | Failed on base | Failed on both | Differ on head |
+| ------------ | ---------------: | -------------: | -------------: | -------------: |
+| default      |            2,159 |            532 |            532 |              0 |
+| `standalone` |            2,160 |            531 |            531 |              0 |
+| `wasi`       |            2,159 |            532 |            532 |              0 |
 
-The script exits `INCONCLUSIVE` (code 2), not `IDENTICAL`, for one file:
-`staging/sm/RegExp/regress-yarr-regexp.js` exhausts a 3 GB compiler heap on
-both trees, so its process dies and all three of its outcomes are recorded as
-`crash SIGABRT`. Compiled one target at a time with `.tmp/one.mjs`, `linear` is
-identical on both trees (`bf29245d…`), and default and `standalone` run out of
-heap on both trees. The file asks for `x{2147483648}`. That is a crash on
-`main` already, in the compile-time half this PR does not touch. Net: 8,071
-comparisons proven identical, 2 not comparable on either tree.
+The 6,478 compiled rows emit identical binaries. A row that fails on both trees
+proves nothing about bytes, so it is counted apart and never as identical; all
+1,595 failed with the same message on both trees. `wasi` replaces the earlier
+`linear` column, because the linear backend never emits the WasmGC RegExp
+engine.
 
-The first full run, at `--jobs 2` with V8's default heap and 150-file chunks,
-died at the last base chunk on V8's heap limit. The script now gives each
-compiler process a 3 GB heap and 100-file chunks. When a process dies, the
-script reruns the file it died on alone, in a fresh process, and then the rest
-of the chunk. `--cache` keys finished chunks by tree content, so a head-only
-edit recompiles only the head.
+`staging/sm/RegExp/regress-yarr-regexp.js` (`x{2147483648,}`) used to exhaust a
+3 GB compiler heap on both trees, which made the first run `INCONCLUSIVE`.
+#7409 has since fixed that on main: the file is now a compile error on both
+trees ("exceeds expansion cap"), in the "failed on both" column.
 
-**Tests.** The 65 `tests/*regex*` / `*regexp*` files, `npx vitest run
---maxWorkers=1`, on the branch and on the base tree: 1,133 tests, 1,084 pass and
-the same 12 fail on both sides. The failure-set diff is empty.
+**Compile order (#7410).** Compiled bytes can depend on what the same process
+compiled before, because TypeScript's symbol ids are process-global and reach
+emitted names such as `__@replace@22`. The tool does both things: the two trees
+compile the same sorted corpus in the same 300-compile chunks, **and**
+`--compare` recompiles every differing row alone, in a fresh process per tree,
+counting it as a difference only if it still differs alone (one that agrees is
+listed as order-dependent). The recheck is what makes the verdict
+order-independent: a change that alters one file's compile also shifts that
+state for the files after it in its chunk, which equal ordering alone does not
+rule out. This run had no differing row to recheck.
 
-**Size.** The new modules hold 2,433 lines; `src/` grows by a net 294.
+**Tests.** The 66 `tests/*regex*` / `*regexp*` files, `npx vitest run
+--maxWorkers=1`, on the branch and on the base tree: 1,143 tests, 1,094 pass,
+37 skipped and the same 12 fail on both sides. The failure-set diff is empty.
+
+**Size.** The new modules hold 2,433 lines; `src/` grows by a net 273.
 
 | File                                                | Before | After |
 | --------------------------------------------------- | -----: | ----: |
 | `src/codegen/native-regex.ts`                       |  4,396 | 2,489 |
-| `src/codegen/regexp-standalone.ts`                  |  6,659 | 6,616 |
-| `src/codegen/regex/bytecode.ts`                     |    172 |   111 |
-| `src/codegen/regex/vm.ts`                           |    313 |   303 |
+| `src/codegen/regexp-standalone.ts`                  |  6,659 | 6,600 |
+| `src/codegen/regex/bytecode.ts`                     |    172 |   110 |
+| `src/codegen/regex/vm.ts`                           |    313 |   304 |
 | `src/codegen/regex-runtime/linear-search.ts`        |    539 |   500 |
 | `src/codegen/regex-scratch-pool.ts`                 |    226 |   153 |
 | `src/codegen/helpers/host-regexp-search.ts`         |    246 |   241 |
@@ -226,21 +235,3 @@ the same 12 fail on both sides. The failure-set diff is empty.
 The largest new function is `rawLiteralAltSearch` at 172 lines, and no new file
 exceeds 1,500 lines. The LOC and function budgets pass with no grant, against
 both the merge base and `LOC_GATE_BASE=origin/main`.
-
-## Suspended Work (2026-11-20, lane S12)
-
-- **PR #7337** (R0), head `79fc2e37` on `claude/7369-regexp-vm-bodies`, `hold`. RV7337 APPROVED on that head, with
-  one rework push required before release. `quality` is red there only at `check:orphaned-scripts`
-  (`scripts/check-regexp-byte-identity.mjs`), which the rework clears.
-- **Rework WIP**: branch `claude/7369-regexp-vm-bodies-rework-wip` (no PR). An Opus agent stopped mid-task on the rate
-  limit. It deletes `check-regexp-byte-identity.mjs`, folds the regexp corpus and the `wasi` target into
-  `scripts/byte-diff-corpus.mts`, drops re-export shims, and touches tests. **Not validated**: no byte run, tests or
-  gates since the agent stopped.
-- **Next step**: review the WIP diff against RV7337's items (wasi instead of linear; one byte-diff tool; "both failed"
-  counted separately; no shims; byte-diff must re-verify a diff in a fresh process or keep file order equal — #7410
-  makes same-process compile order change bytes). Run byte-diff-corpus (regexp corpus × default/standalone/wasi,
-  `--jobs 1`), the regexp tests (same 12 failures as main), and the full gate chain incl. `check:orphaned-scripts`.
-  Then ONE push to `claude/7369-regexp-vm-bodies`, announce it, and send RV7337 (session_016FRcLzQDYNuMcMSuuMEfuz)
-  the delta.
-- **Open review threads**: none beyond RV7337's rework items. R1 (create/test contracts) and R2 (exec, needs S13's
-  arrays) are not started.
