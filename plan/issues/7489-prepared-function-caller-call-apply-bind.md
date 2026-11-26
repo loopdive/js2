@@ -612,3 +612,67 @@ Branch `claude/s20-fn-arguments` is stacked on slice B (#7480); it was measured 
   - node-agreement pins for strict declaration and expression, read and write, from sloppy and from strict code.
 - G1's write pin moved here.
 - The `issue-7354-*` / `7106` / `3518-native-realm*` / `7489-*` suites fail only main's 4 tests.
+
+## Slice C-2 plan addendum: the resource owner (for PRV-7489C's delta check, 2026-11-26)
+
+The approved C.1–C.4 design (a bound function is a closure whose fixed trampoline is one `NativeClosureMethodEntry`) needs a resource owner. Every type, function and dispatcher entry in the native backend is issued by an owner that authenticates its dependencies and its inventory, and today every closure owner is tied to an IR source unit. This section fixes that owner's shape before code. It reuses the sibling owners' pattern (`native-invocation.ts`, `native-source-objects.ts`): a `WeakMap` owner record, `reserve…` / `fill…` / `require…` / `…Inventory`, and dependency-identity checks.
+
+**R.1 Requirements: the IR side decides; the backend never re-derives.**
+
+- **Features.** `js.object.bind(target, thisArg, args) -> externref` and `js.object.is-bound-function(value) -> i32` become ordinary-object features:
+  - their declarations go in `src/ir/runtime/ordinary-object-callables.ts`;
+  - their names go in `src/ir/runtime/contracts/manifest.ts`'s feature list.
+- **Demand.** The legalization writes `js.object.bind` (C.3) and `js.object.is-bound-function` (C.4). `deriveNativeObjectAccessRequirements` therefore sees them as uses like every other `js.object.*` call, with no new census.
+- **Invocation requirements.** `native-invocation-requirements.ts` gains `boundFunctions?: true`. It is set where a call's binding symbol is `js.object.bind`, detected in the same loop and the same way as `realmAccessors` (`definesAccessors`). It forces `applyVector: true`, because the trampoline calls `apply-vector`. Like `realmAccessors`, it is not a `use`.
+- **Holding.** The realm holds %Function.prototype.bind% by S9's per-method holding rule (#7517, the read of `bind`). The Function.prototype catalog row then seeds the data property (`familyProperties`). No new holding rule.
+
+**R.2 The owner: `src/backend/wasmgc/resources/native-bound-functions.ts`.**
+
+It is a new module, classified in `scripts/compiler-boundaries.json` in the same commit as its sibling `native-invocation.ts`. No new layer edge: it depends only on what `native-invocation.ts` already depends on.
+
+- **`reserveNativeBoundFunctions(tx, requirements, { source, vectors })`**, reserving three resources:
+  - the bound layout, a struct type:
+    - `final: true`;
+    - supertype: the closure root `source.closures.root`;
+    - fields: the capture header (`func`, arity, bag) plus `target` (externref), `boundThis` (externref) and `boundArgs` (`ref` of the externref argument-vector carrier).
+    `final` keeps it from being structurally equal to any source capture type, which is non-final (`createClosureCaptureType`), so a `ref.test` of it matches only bound functions. The PR records this choice.
+  - the trampoline's function type, `(ref bound) -> externref`;
+  - the trampoline function.
+- **`fillNativeBoundFunctions(tx, pack, invocation)`**: the trampoline body (`buildBoundTrampolineDefinition`, `bound-function-bodies.ts`). Its handles come from the issued invocation pack:
+  - `applyVector`;
+  - the `argc` / extras globals;
+  - argument-vector `new`, `push` and the new `buildArgumentVectorConcat`.
+- **`requireNativeBoundFunctions` / `nativeBoundFunctionsInventory`**: authentication and the function list, which joins `program-consumer.ts`'s native-function census beside `invocationFunctions`.
+
+**R.3 Invocation: one optional dependency.**
+
+- `NativeInvocationDependencies` gains `bound?: NativeBoundFunctionReservations`. `authenticate` requires it exactly when `requirements.boundFunctions` is set, and `requireNativeBoundFunctions` validates it.
+- `invocationLayout()` adds the bound type to its tokens, so the existing ancestry check proves that the bound layout descends from the root.
+- `entries()` appends one entry after the source entries:
+  - `allocationTypeIdx` = `selfTypeIdx`: the bound type;
+  - `funcTypeIdx`: the trampoline's;
+  - `closureArity: 0`, `params: []`;
+  - result: an externref value.
+  Both dispatcher bodies are untouched.
+
+**R.4 Realm kernel and source objects.**
+
+- `native-source-objects.ts` binds the two features:
+  - `js.object.bind`: `buildBoundFunctionCreateDefinition` (`bound-function-bodies.ts`). Its operands are the kernel's (`has-own`, [[Get]], `getPrototypeOf`, the %Function.prototype% singleton, the string concatenation, the shared `buildFunctionObjectPrologue`) plus the bound pack's type and trampoline (`ref.func`).
+  - `js.object.is-bound-function`: one `ref.test` of the bound type.
+- `reserveNativeRealmKernel(tx, realm, tag, sourceTypes, invocationPack, boundPack)` passes the pack through to the source-object binding, as it already does with `invocationPack` for the accessor calls.
+
+**R.5 `program-consumer.ts`: order, and no-change guarantees.**
+
+- Reserve, before the index space freezes:
+  1. `reserveNativeBoundFunctions` (when `record.nativeInvocation.boundFunctions`);
+  2. then `reserveNativeInvocationResources` with `bound`;
+  3. then `reserveNativeRealmKernel` with the bound pack.
+- Fill: the realm's bodies (including `js.object.bind`), then invocation, then `fillNativeBoundFunctions`. Completion is checked with the siblings.
+- A program whose IR calls no `js.object.bind` reserves nothing new: no type, function or entry, so its bytes are unchanged. The JS environment and the ordinary pipeline do not reach this owner.
+
+**R.6 What this owner does not do.**
+
+- No [[Construct]] (C.4 aborts it).
+- No mixing with the built-in metadata family: the bound layout carries no builtin metadata, so the kernel's `match` reads it as a source closure.
+- No second dispatcher path.
