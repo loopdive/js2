@@ -287,6 +287,40 @@ describe("#7354 O2 — definitions", () => {
   ])("%s", async (_, body) => agrees(body), SLOW);
 });
 
+// An accessor function has no [[Construct]] (§10.2.9 / IsConstructor): `new` on it is a TypeError, raised after
+// EvaluateNew has evaluated the arguments (§13.3.5.1.1).
+describe("#7354 O2 — `new` on an accessor function", () => {
+  const getter = "var o = {get x(){ return 1; }}; var g = Object.getOwnPropertyDescriptor(o, 'x').get;";
+  it.each([
+    ["a getter is a TypeError", `${T} ${getter} var out = t(function(){ return typeof new g(); });`],
+    [
+      "a setter is a TypeError",
+      `${T} var o = {set x(v){}}; var g = Object.getOwnPropertyDescriptor(o, 'x').set;` +
+        " var out = t(function(){ return typeof new g(5); });",
+    ],
+    [
+      "the getter's body never runs",
+      `${T} var n = 0; var o = {get x(){ n = n + 1; return 1; }}; var g = Object.getOwnPropertyDescriptor(o, 'x').get;` +
+        " var out = t(function(){ return typeof new g(); }) + String(n);",
+    ],
+    [
+      "the arguments are evaluated first, in order",
+      `${T} var log = ''; function a(k){ log = log + k; return k; } ${getter}` +
+        " var out = t(function(){ return typeof new g(a('1'), a('2')); }) + log;",
+    ],
+    [
+      "a declaration and a function expression still construct",
+      `${getter} function F(v){ this.v = v; } var G = function(w){ this.w = w; }; var f = new F(3), h = new G(4);` +
+        " var out = String(f.v) + String(h.w) + String(f instanceof F) + String(h instanceof G);",
+    ],
+    [
+      "its prototype is undefined: instanceof and Object.create of it are TypeErrors",
+      `${T} ${getter} var out = String(g.prototype) + t(function(){ return ({}) instanceof g; })` +
+        " + t(function(){ return Object.create(g.prototype); });",
+    ],
+  ])("%s", async (_, body) => agrees(body), SLOW);
+});
+
 describe("#7354 O2 — what stays an abort or a refusal", () => {
   it(
     "a typed closure (not dispatchable) as a descriptor's getter: its call is the abort, not a catchable TypeError",
