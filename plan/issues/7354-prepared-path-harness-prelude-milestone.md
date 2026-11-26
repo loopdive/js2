@@ -7021,3 +7021,25 @@ runtime-providers 299, o1-create-and-define-properties 14, c2-constructors 19, p
 117, native-realm-requirements 25; `issue-3518-native-getter-results` 19 / 21 — the same 2 fail on main (not modified
 here). Gates: typecheck, LOC / function budgets (also `LOC_GATE_BASE` = main), coercion-sites, oracle-ratchet,
 dead-exports, import-cycles, compiler-boundaries inventory: exit 0; from-ast net 0.
+
+### Review r2 of PR 7446 (2026-11-26)
+
+- One constructor rule: `isConstructorFunction` (`function-object-lowering.ts`: a declaration or function expression,
+  not a generator or async function) is what `init-function` records; it always sets the bag's bit, and
+  `dynamicConstruct` always asks `js.object.is-constructor` after the function-kind test. `ProgramObjects
+  .nonConstructors`, the `marksNonConstructors` gate and the row `Body`'s `served` parameter are gone (Prepared bytes
+  of `new` / function-creating programs change; agreed). An arrow function as a value is not expressible on this
+  path yet (`closure must have a return type annotation`, `module-level closure binding … not in module-init`), so
+  the arrow case has no probe.
+- The bag is cast once in init (`bagObject` + a typed local); getOwn's ABI comment no longer names status 3;
+  `buildBuiltinVectorCall` / `buildAccessorCall` take the arguments together with their vector local
+  (`BuiltinCallArguments`), so arguments without a vector cannot be expressed; the `NOT_CONSTRUCTOR` comment names
+  the legacy `OBJ_FLAG_CONSTRUCTOR` (0x20) as a different realm's.
+- Re-run: blocker programs + wrong twins 6 / 6; o2-accessors `new` block 6 / 6; o2-object-values 13 / 13;
+  c2-constructors 19, c2-this 18, f1b-function-objects 9, f2 10, m-refusals 43; the reviewer's five batches vs main
+  c3b7be667a: identical verdicts except the three blocker programs (WRONG → `T`). Gates (chained, bare): typecheck,
+  LOC / function budgets (also `LOC_GATE_BASE` = origin/main 1a726b3e64), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, compiler-boundaries inventory: exit 0.
+- Follow-ups to file: (1) the realm `$Object` flags field index (`OBJECT_FLAGS_FIELD = 4`) has a third copy in
+  `mixed-object-access` bodies — one named constant for the layout; (2) `dynamicClosureSignature` is asked twice for
+  an accessor (from-ast's signature choice and `isFunctionObject`) — one answer per closure literal.
