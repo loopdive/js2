@@ -1610,7 +1610,10 @@ export function prepareIrProgramSources(
           identityContext: identity,
           target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
           deferTopLevelInit: input.deferTopLevelInit,
-          functionValues: dynamicContracts.functionDeclarationValues,
+          // (#7363) This script's homes: the values are the only startup source's, so a called eval source holds none.
+          functionValues: dynamicContracts.functionDeclarationValues.filter(
+            (value) => value.getSourceFile() === sourceFile,
+          ),
           called: literalEval.sources.has(sourceFile),
         }),
       );

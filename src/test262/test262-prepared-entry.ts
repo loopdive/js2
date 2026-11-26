@@ -374,7 +374,8 @@ function withLiteralEvalSources(files: Record<string, string>, texts: readonly s
   Object.assign(graph, files);
   texts.forEach((text, index) => {
     const name = literalEvalFileName(index);
-    if (names.has(normalizeMultiFileName(name))) invalidRequest(`source name ${name} is reserved for a literal eval source`);
+    if (names.has(normalizeMultiFileName(name)))
+      invalidRequest(`source name ${name} is reserved for a literal eval source`);
     Object.defineProperty(graph, name, { value: text, enumerable: true });
   });
   return graph;
@@ -438,8 +439,12 @@ function present(
     );
   const literalEvalSources =
     evalTexts.length === 0 ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, evalTexts.length);
+  // (#7363) An eval source's supplied text is its own; the entry's is the unelided one.
   const supplied = new Map(
-    [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [normalizeMultiFileName(file), text]),
+    [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [
+      normalizeMultiFileName(file),
+      text,
+    ]),
   );
   const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;
   // The public single-source compiler always applies its parser-syntax gate,

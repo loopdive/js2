@@ -96,6 +96,37 @@ describe("#7363 A3 — a script var keeps its home beside called eval sources", 
   });
 });
 
+describe("#7363 A3 — function values keep their homes beside called eval sources", () => {
+  /** The program's Wasm functions; `body` once with a never-lowered site and once without. */
+  const functions = async (body: string, site: string) => {
+    const result = await compile(`${body}\ndo { break; ${site} } while (false);`, { ...options, emitWat: true });
+    expect(errorsOf(result)).toEqual([]);
+    return result.wat!.match(/\(func /g)!.length;
+  };
+
+  it("stops at the eval site, not at a declaration read as a value or constructed", async () => {
+    expect(await gaps('function f() {}\nf.x = 1;\neval("1");')).toEqual([`${CALLED} in <module-init>`]);
+    expect(await gaps('function E() {}\nnew E();\neval("1");')).toEqual([`${CALLED} in <module-init>`]);
+  });
+
+  it("runs a declaration's value beside an eval text that writes its property", async () => {
+    const source = `function f() { return 1; }\nf.x = 2;\n${deadSite("f.x = 3")}\nif (f.x !== 2 || f() !== 1) throw 1;`;
+    expect(run(await compile(source, options))).toEqual({
+      sources: ["test.js", literalEvalFileName(0)],
+      startup: "returned",
+    });
+  });
+
+  // The called source adds its own init and nothing else: it makes no function object, and a call through a static
+  // function value stays the closure's direct call.
+  it.each([
+    ["a declaration read as a value", "function f() { return 1; }\nf.x = 2;\nif (f.x !== 2 || f() !== 1) throw 1;"],
+    ["a static function value", "var g = function () { return 1; };\nif (g() !== 1) throw 1;"],
+  ])("lowers the entry as without the site: %s", async (_label, body) => {
+    expect(await functions(body, 'eval("1");')).toBe((await functions(body, "")) + 1);
+  });
+});
+
 describe("#7363 A3 — an eval source follows its caller", () => {
   it("is planned after the entry although its name sorts first", async () => {
     expect(literalEvalFileName(0) < "test.js").toBe(true);

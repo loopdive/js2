@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/c-lead
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
 priority: high
 horizon: l
 feasibility: hard
@@ -26,6 +26,10 @@ related: [7354, 7106, 7345, 3630]
 # 2026-11-19 (slice A, A3): program-source.ts +11, the two seams that read the relation: `sourceInventoryOptions`
 # (the inventory options moved out of prepareIrProgramSources, plus the edge that orders an eval source after its
 # caller; the function itself shrinks by 3) and the startup sources the script-var home is asked over.
+# 2026-11-26 (merged onto main 6694a8b8): compiler.ts +6, not +4: since #7428 a single-source request has no graph,
+# so its program's source list names its called eval sources (+2). program-source.ts +20, not +17: a script's
+# module-init plan takes only its own function values (#7354 F1b), so a called eval source holds none (+3). The
+# capability now rides on SourceUnitLowering in program-source-units.ts (+5, under its ceiling).
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts
@@ -35,7 +39,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/ir/from-ast.ts::lowerCall
 import-cycles-allow:
-  - ir->frontend: 10 # 2026-11-19 (#7363 A2): src/ir/eval-literal.ts asks the shared pure eval syntax in src/frontend/eval/ (parse, static SyntaxError, declared names), the one copy both pipelines ask, as the plan's "Reused" list says
+  - ir->frontend: 11 # 2026-11-26 (#7363 A2, on main 6694a8b8, where it is 9; was 10 on the 2026-11-19 base): src/ir/eval-literal.ts's two edges ask the shared pure eval syntax in src/frontend/eval/ (parse, static SyntaxError, declared names), the one copy both pipelines ask, as the plan's "Reused" list says
 ---
 
 # #7363 — `eval` on the Prepared IR path
@@ -419,27 +423,49 @@ Findings:
   100-file sample × default and standalone; Prepared output identical to base on the sample's 92 files with no
   qualifying site.
 
-## Suspended Work (2026-11-20, end of budget window)
+## Merged onto main (2026-11-26, base `6694a8b8`)
 
-- **Slice 1:** PR #7310, merged into main on 2026-11-20 (head `9554f3c6`, review RV7310 APPROVE).
-- **Eval-A (A0 + A1 + A2 + A3):** branch `claude/prepared-eval-a5`, head = the commit that adds this section (A3 is
-  `6c4d022c`). Its parent chain is `7883f81a` (A2), then `4e7d2921` (merges of slice 1 final and of the
-  `src/frontend/eval/` move `0cf01923`), then A0/A1 `6e182f9e`, `0b6bbd79`, `43f3b37d`. No PR yet; it was held
-  until #7310 merged, which has now happened.
-  - **Next step:** merge `origin/main` into the branch (it contains #7310 and #7319, which fixes the `''` /
-    `var x;` crashes); rerun the gates, the byte check, the fail sets and the 118-file census in both harnesses;
-    then open ONE PR (base main, `hold`) with A0 to A3. The adversarial review is still to be run.
-  - **Accepted by the lead:** A3 meets the acceptance bar. On the 118 A0 files no first gap moves earlier than on
-    base `4e7d2921`, in either harness.
-- **Next slices:**
-  - **A4 (the statement-position call):** needs the run-time %eval% identity test. Lane S5's B2b is on
-    `claude/7350-b2b` @ `dbc0b2343e`. Read the global through contract `js.object.global` (`dyn.global_object`
-    legalizes to it); `eval` is an identity row compared with `js.value.strict_eq`.
-  - **A5 (completion value):** follows A4.
-  - **A6 (eval texts that declare names):** uses S10's globals registry (`claude/7372-globals-registry` @
-    `4792b8f2`, `src/ir/program-source-globals.ts`), with a new `initialization` kind `on-first-run`.
-- **Parked, not for review:**
-  - `claude/prepared-eval-s2` / `claude/prepared-eval-s2b`: an old stack that holds the move commit `0cf01923`,
-    already merged into the eval-A branch.
-  - The slice-B design (splicing closed literal texts, a run-time SyntaxError throw) is replaced by slices A and 2.
-- **Open review threads:** none.
+Eval-A (A0–A3) is merged with `origin/main` `6694a8b8` (872 commits since the slice-1 merge base `9554f3c6`) on
+branch `claude/prepared-eval-a6`. No PR yet; the adversarial review is still to be run. Slice 1 is on main (PR
+#7310). S10's globals registry (`program-source-globals.ts`) is not on main yet, so A6 still waits for it.
+
+**What main changed under eval-A.** Main has no eval-on-Prepared commit of its own since 2026-11-20; `c511b34f`
+only re-pins the slice-1 refusal test to the `"refuse"` policy and drops its `this.eval` row (#7354 C2). Five
+main designs met eval-A. None contradicts A0–A3; each needed its seam re-applied:
+
+| main change | what eval-A does now |
+| --- | --- |
+| #7380 retired the startup-contract declaration-hash pins | A1's re-pinned hashes are gone with them |
+| #7428: a single-source request reaches the pipeline without a graph | the single-source program's sources are the entry plus its called eval sources (`compiler.ts`) |
+| #7354 U moved the unit lowering to `program-source-units.ts`; abort bodies | the A2 capability rides on `SourceUnitLowering.literalEvalCalls`; the A2 test asks for refusals with `"refuse"`, as the slice-1 test does |
+| #7354 F0 dead-binding elision of a one-source graph | the eval sources join after it; the sites are the elided entry's (F0 keeps every name a literal eval text mentions) |
+| #7354 F1b and Fa: function declarations as values and static function values need the program's only source | as A3's script-var home: only startup source (`programDynamicContracts` asks them over `startupSources`), and a script's function values are its own, so a called eval source holds and makes none |
+
+The last row was a regression after the plain merge: on the real harness 114 of the 118 A0 files stopped at
+`identifier "assert" is not in scope` (assert.js's `assert._isSameValue = …` reads `assert` as a value), and 3
+stand-in files at a declaration read as a value or constructed (`__FACTORY`, `Test262Error`). A write
+in an eval text to such a binding takes the eval route, which main's H2 invariant leaves to the slice that admits
+it (`module-binding-script-var.ts`): A4 must make it write the home or refuse.
+
+**Re-measured on the merged head, base `origin/main` `6694a8b8`.**
+
+- Gates: typecheck, LOC, function, coercion-site, oracle, dead-export, compiler-boundary inventory, import-cycle
+  and IR-layering gates pass, LOC and function also with `LOC_GATE_BASE` = `6694a8b8`. `ir->frontend` is 9 on
+  main, 11 here (the grant above).
+- Ordinary-pipeline bytes: identical on the 100-file sample, default and standalone.
+- Prepared bytes: identical on the sample's 92 files with no qualifying site; 2 of the other 8 change only the
+  site's label.
+- Fail sets: the 52 listed test files (49 on main) fail the same 47 tests as main. The three eval-A test files
+  pass. Mutation: each of the six seams the merge changed, reverted alone, turns at least one of them red.
+- Census on the 118 A0 files, S9's census (`scripts/ir-census/`), both harnesses, compared per file by
+  `.tmp/compare.mjs` (A3's rule). The census reports a module-init gap at the init's first line, so the detail
+  decides within it.
+
+| harness | identical | same site, A2 label instead of slice 1's | earlier | later |
+| --- | ---: | ---: | ---: | ---: |
+| stand-in | 94 | 24 | 0 | 0 |
+| real | 96 | 22 | 0 | 0 |
+
+No file passes or compiles on main or here. On the real harness 72 files stop at an expression-position site
+(`direct call to "eval" has no exact AST-site plan`, A5's), 22 at the A2 label (A4's), and 24 at another gap
+before any site.

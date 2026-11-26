@@ -42,8 +42,9 @@ const DEAD_SITE = 'do { break; eval("throw 1;"); } while (false);';
 
 const errorsOf = (result: Awaited<ReturnType<typeof compile>>) =>
   result.errors.filter((error) => error.severity === "error").map((error) => error.message);
+/** (#7354 U) Without abort bodies, under which an eval refused inside a function becomes that function's abort body. */
 const gaps = async (source: string, overrides: Partial<Test262CompileOptions> = {}) =>
-  errorsOf(await compile(source, { ...options, ...overrides } as Test262CompileOptions));
+  errorsOf(await compile(source, { ...options, ...overrides } as Test262CompileOptions, undefined, "refuse"));
 
 /** Run a compiled program's startup; report its sources and whether startup threw. */
 function run(result: Awaited<ReturnType<typeof compile>>) {

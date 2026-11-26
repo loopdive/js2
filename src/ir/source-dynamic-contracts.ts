@@ -240,21 +240,21 @@ function sourceDynamicClosureSignature(
 
 /**
  * (#7354 Fa) A script `var` that holds its function-expression initializer from its declaration on: a top-level
- * statement's declarator of the program's only source, whose binding nothing else writes
- * (`preparedBindingRewritten`, which sees every write on this path). from-ast keeps the closure on the binding's
- * module-init scope entry when it lowers the store, so only module-init code after the declaration, outside every
- * function, sees it: there the slot holds exactly that closure, and a call through the name is the closure's direct
- * call.
+ * statement's declarator of the program's only startup source (`programDynamicContracts`), whose binding nothing
+ * else writes (`preparedBindingRewritten`, which sees every write on this path). from-ast keeps the closure on the
+ * binding's module-init scope entry when it lowers the store, so only module-init code after the declaration, outside
+ * every function, sees it: there the slot holds exactly that closure, and a call through the name is the closure's
+ * direct call.
  */
 function staticFunctionValue(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
   declaration: ts.VariableDeclaration,
 ): boolean {
   const { name, initializer } = declaration;
   if (
-    sourceFiles.length !== 1 ||
+    startupSources.length !== 1 ||
     !initializer ||
     !ts.isFunctionExpression(initializer) ||
     !sourceDynamicClosureSignature(policy, initializer) ||
@@ -347,8 +347,9 @@ export interface RefusalOwners {
 /**
  * `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. `input` is
  * the producer's: its checker, policy and the compiler's answer to the strictness of a piece of code. (#7363 A3)
- * `startupSources` are the sources startup runs, every one but the called eval sources: the script-var homes are
- * asked over them (`irOwnedScriptVarHome`); every other answer here reads the whole program.
+ * `startupSources` are the sources startup runs, every one but the called eval sources. The answers that need the
+ * program's only script to run first are asked over them: the script-var homes (`irOwnedScriptVarHome`), the function
+ * declarations read as values and the static function values. Every other answer here reads the whole program.
  */
 export function programDynamicContracts(
   input: {
@@ -364,7 +365,7 @@ export function programDynamicContracts(
   // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
-  const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
+  const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, startupSources) : [];
   const objects = programObjects(
     sourceFiles,
     functionDeclarationValues.length > 0,
@@ -403,7 +404,7 @@ export function programDynamicContracts(
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
-            !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
+            !closuresBindReceivers && staticFunctionValue(checker, policy, startupSources, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),

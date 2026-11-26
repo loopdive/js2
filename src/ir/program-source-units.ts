@@ -98,6 +98,7 @@ function lowerUnitOnce(
   abortBodies: AbortBodies | undefined,
 ): LoweredSourceUnit {
   const { input, identity, dynamicContracts } = lowering;
+  const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
     let symbol = input.checker.getSymbolAtLocation(node);
     if (!symbol) return undefined;
@@ -118,7 +119,9 @@ function lowerUnitOnce(
     sourceClosureInvocation: (expression) => lowering.closureInvocations.get(expression),
     sourceClosureCallableParameter: (node) => lowering.closureCallableParameters.has(node),
     resolveModuleBinding: resolveBinding,
-    moduleInitFunctionValues: () => lowering.functionValues,
+    // (#7363) This script's: a called eval source makes none, so a call of it never remakes a function object.
+    moduleInitFunctionValues: () =>
+      lowering.functionValues.filter((value) => value.declaration.getSourceFile() === source),
     literalEvalHasCalledSource: (call) => lowering.literalEvalCalls.has(call),
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
@@ -136,7 +139,6 @@ function lowerUnitOnce(
     ...dynamicContracts.resolver,
     ...(abortBodies ? { abortedBody: (fn) => abortBodies.has(fn) } : {}),
   };
-  const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const moduleInit = unit.kind === "module-init";
   const declaration = moduleInit
     ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
