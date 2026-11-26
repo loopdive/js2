@@ -12674,7 +12674,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
   }
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
-    annexB.instantiateBlockFunctions(stmt, annexBHost(cx));
+    annexB.instantiateBlockFunctions(stmt, annexBHost(childCx));
     lowerBodyStatements(stmt.statements, childCx);
     joinScopeStringEncodingFacts(cx.scope, [childCx.scope]);
     return;
@@ -12799,7 +12799,8 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     lowerEarlyReturn(stmt, cx);
     return;
   }
-  if (ts.isFunctionDeclaration(stmt) && annexB.evaluateBlockFunction(stmt, annexBHost(cx))) return;
+  const clauseCx = { ...cx, scope: new Map(cx.scope) }; // an `if` clause's function is its own scope
+  if (ts.isFunctionDeclaration(stmt) && annexB.evaluateBlockFunction(stmt, annexBHost(clauseCx))) return;
   demoteToLegacy(
     "body-shape-rejected",
     `ir/from-ast: unsupported body statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
@@ -13037,7 +13038,6 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: switch disc must lower to i32/f64 in ${cx.funcName}`);
   }
   const discSlot = cx.builder.declareSlot("__switch_disc", discT);
-  annexB.instantiateBlockFunctions(stmt.caseBlock, annexBHost(cx));
   // A labeled switch (`lbl: switch (...)`) adopts the pre-allocated label
   // as its break target, so `break lbl` and unlabeled `break` coincide.
   const breakLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -13047,6 +13047,7 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     breakTargetLabel: breakLabel,
     pendingLoopLabel: undefined,
   };
+  annexB.instantiateBlockFunctions(stmt.caseBlock, annexBHost(switchCx));
   const tests: (number | null)[] = [];
   const bodies: (readonly IrInstr[])[] = [];
   for (let k = 0; k < clauses.length; k++) {
@@ -16382,11 +16383,13 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
     );
 }
 
+/** `unbind` drops a local from `cx`'s scope: there the name reaches its homes (`resolveModuleBinding`). */
 function annexBHost(cx: LowerCtx): annexB.BlockFunctionLoweringHost {
   const value = (fn: ts.FunctionDeclaration) => lowerClosureExpression(fn, cx);
   const functionValue = (fn: ts.FunctionDeclaration) =>
     functionObjects.functionObjectDynamicValue(value(fn), fn.name!, functionObjectLoweringHost(cx));
-  return { builder: cx.builder, homesOf: (fn) => cx.resolver?.annexBBlockFunctionHomes?.(fn), functionValue };
+  const homesOf = (fn: ts.FunctionDeclaration) => cx.resolver?.annexBBlockFunctionHomes?.(fn);
+  return { builder: cx.builder, homesOf, functionValue, unbind: (name) => cx.scope.delete(name) };
 }
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {

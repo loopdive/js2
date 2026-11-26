@@ -6,7 +6,14 @@
 // then the block binding's current value. Every program is run in node too, with a wrong twin that must throw.
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { preparedScriptRefusal, runPreparedScript, TEST262_SCRIPT } from "./helpers/prepared-script-run.js";
+import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import { compile, requiredPreparedEmission } from "../src/test262/test262-prepared-entry.js";
+import {
+  preparedScriptOptions,
+  preparedScriptRefusal,
+  runPreparedScript,
+  TEST262_SCRIPT,
+} from "./helpers/prepared-script-run.js";
 
 /** Node's verdict on the same sloppy script. */
 function nodeVerdict(source: string): "returned" | "threw" {
@@ -80,6 +87,58 @@ describe("#7372 2a-2 — Annex B block functions of a script", () => {
       expect(nodeVerdict(source), source).toBe(verdict);
       expect(await runPreparedScript(source, "test.js", TEST262_SCRIPT), source).toBe(verdict);
     }
+  });
+
+  // Review RV7466. B1: inside its block the name is the block binding, also under a local of the name (a catch
+  // parameter). B2: a block home's storage key is one no source identifier can spell.
+  it.each([
+    [
+      "is the block binding inside its block under a catch parameter of its name (call)",
+      "var i; try { throw 'p'; } catch (f) { { function f() { return 3; } i = f(); } }",
+      "i !== 3",
+      "i !== 'p'",
+    ],
+    [
+      "is the block binding inside its block under a catch parameter of its name (typeof)",
+      "var i; try { throw 'p'; } catch (f) { { function f() {} i = typeof f; } }",
+      "i !== 'function'",
+      "i !== 'string'",
+    ],
+    [
+      "in an if clause under a catch parameter of its name, reads its block binding inside its body only",
+      "var i, j; try { throw 'p'; } catch (f) { if (true) function f() { return typeof f; } i = f; j = typeof f; }",
+      "i !== 'p' || j !== 'string'",
+      "i === 'p'",
+    ],
+    [
+      "keeps its storage apart from a script var spelled like an internal name",
+      "var f$block0 = 'u'; var f$block1 = 'v'; { function g() {} } { function f() { return 1; } } var res = f$block0 + f$block1 + typeof f;",
+      "res !== 'uvfunction'",
+      "res !== 'uvundefined'",
+    ],
+  ])("a block function %s", async (_, program, holds, fails) => {
+    for (const [check, verdict] of [
+      [holds, "returned"],
+      [fails, "threw"],
+    ] as const) {
+      const source = `${program} if (${check}) throw 1;`;
+      expect(nodeVerdict(source), source).toBe(verdict);
+      expect(await runPreparedScript(source, "test.js", TEST262_SCRIPT), source).toBe(verdict);
+    }
+  });
+
+  // Review RV7466 B3: a reference with no checker symbol inside a function that binds the name itself is no reference
+  // to the script's binding. Function-level Annex B is slice 2b: the function ends at its abort, never with the
+  // script's value (node: "undefined").
+  it("does not resolve a nested function's own block function to the script's", async () => {
+    const source =
+      "{ function f() { return 1; } } function g() { if (false) { function f() { return 2; } } return typeof f; } var res = g();";
+    expect(runInNewContext(`${source} res`)).toBe("undefined");
+    const result = await compile(source, preparedScriptOptions("test.js", TEST262_SCRIPT));
+    expect(requiredPreparedEmission(result)).toBeDefined();
+    expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(
+      "unreachable",
+    );
   });
 
   // Not modelled in 2a; each refuses by name instead of compiling to a wrong value.

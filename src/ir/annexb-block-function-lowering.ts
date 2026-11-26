@@ -21,23 +21,38 @@ export interface BlockFunctionLoweringHost {
   readonly homesOf: (declaration: ts.FunctionDeclaration) => BlockFunctionHomeRefs | undefined;
   /** The declaration's new function object, in the dynamic carrier. */
   readonly functionValue: (declaration: ts.FunctionDeclaration) => IrValueId;
+  /** Unbind a name in the scope's own lowering scope: there it means the block binding, not an outer local. */
+  readonly unbind: (name: string) => void;
 }
 
-/** Store the function objects of the block functions `scope` declares (a Block or a CaseBlock), in source order. */
+/**
+ * Store the function objects of the block functions `scope` declares (a Block or a CaseBlock), in source order. Each
+ * name means its block binding everywhere in the scope, so an outer local of the name (a `catch (f)` parameter) is
+ * unbound there first.
+ */
 export function instantiateBlockFunctions(scope: ts.Block | ts.CaseBlock, host: BlockFunctionLoweringHost): void {
-  const statements = ts.isBlock(scope) ? scope.statements : scope.clauses.flatMap((clause) => clause.statements);
-  for (const statement of statements)
-    if (ts.isFunctionDeclaration(statement)) instantiate(statement, host.homesOf(statement), host);
+  const statements: readonly ts.Statement[] = ts.isBlock(scope)
+    ? scope.statements
+    : scope.clauses.flatMap((clause) => clause.statements);
+  const declared = statements.filter(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && host.homesOf(statement) !== undefined,
+  );
+  for (const fn of declared) host.unbind(fn.name!.text);
+  for (const fn of declared) instantiate(fn, host.homesOf(fn), host);
 }
 
 /**
  * The declaration's evaluation; false when it is no admitted block function. An `if` clause's declaration is its own
- * scope, which is entered right here.
+ * scope, which is entered right here (`host` lowers in a scope of its own, where the name is then unbound).
  */
 export function evaluateBlockFunction(declaration: ts.FunctionDeclaration, host: BlockFunctionLoweringHost): boolean {
   const homes = host.homesOf(declaration);
   if (!homes) return false;
-  if (ts.isIfStatement(declaration.parent)) instantiate(declaration, homes, host);
+  if (ts.isIfStatement(declaration.parent)) {
+    host.unbind(declaration.name!.text);
+    instantiate(declaration, homes, host);
+  }
   if (homes.var) {
     const value = host.builder.emitGlobalGet(homes.block.globalRef, homes.block.type);
     host.builder.emitGlobalSet(homes.var.globalRef, value);

@@ -20,7 +20,8 @@ related: [7354, 7106]
 # 2026-11-26 (slice 2a-1): src/codegen/expressions/identifiers.ts +4, formatting only. Its import of the Annex B
 # analysis now names the lifted module (src/shared/annexb-block-functions.ts); the longer path makes prettier
 # wrap the one-line import over five lines. No code added.
-# 2026-11-26 (slice 2a-2): src/ir/from-ast.ts +16, the dispatch the Annex B lowering needs and nothing else. The
+# 2026-11-26 (slice 2a-2, review RV7466): src/ir/from-ast.ts +19, the dispatch the Annex B lowering needs and nothing
+# else (+3 for RV7466 B1: a block's name unbinds an outer local, and an `if` clause lowers in a scope of its own). The
 # two steps live in src/ir/annexb-block-function-lowering.ts; from-ast keeps the three call sites (Block entry,
 # CaseBlock entry after the discriminant, the FunctionDeclaration arm), the resolver member, the closure-literal
 # union member with its invariant, and `annexBHost`, which binds the steps to from-ast's private closure lowering and

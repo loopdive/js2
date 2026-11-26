@@ -19,10 +19,14 @@
  * generator or async function, a scope in a loop body, and a read the var binding does not cover.
  */
 import { ts } from "../ts-api.js";
-import { irModuleGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
-import { annexBBlockFunctions, type AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
+import { irModuleGlobalBindingId } from "./abi-bindings.js";
+import { annexBBlockFunctions, scopeBindsName, type AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
-import type { FunctionValueGlobal } from "./function-declaration-values.js";
+import {
+  functionValueBindings,
+  moduleInitDynamicHome,
+  type FunctionValueGlobal,
+} from "./function-declaration-values.js";
 import { moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrSourceId, IrUnitId } from "./identity.js";
@@ -94,26 +98,19 @@ export function blockFunctionBindings(
   functions: readonly AnnexBBlockFunction[],
   firstOrdinal: number,
 ): IrModuleInitBindingIntent[] {
-  const intent = (ordinal: number, declaration: ts.FunctionDeclaration): IrModuleInitBindingIntent =>
-    Object.freeze({
-      declarationOrdinal: ordinal,
-      names: Object.freeze([declaration.name!.text]),
-      declarationKind: "var" as const,
-      mutable: true,
-      initialization: "undefined-at-instantiation" as const,
-      globalBindingId: irModuleGlobalBindingId(sourceId, ordinal),
-      tdzBindingId: null,
-      start: declaration.getStart(sourceFile),
-      end: declaration.end,
-    });
-  const blocks = functions.map((entry, index) => intent(firstOrdinal + index, entry.declaration));
-  const vars = varNames(functions).map((name, index) =>
-    intent(
-      firstOrdinal + functions.length + index,
-      functions.find((entry) => entry.declaration.name.text === name)!.declaration,
-    ),
+  const id = (ordinal: number) => irModuleGlobalBindingId(sourceId, ordinal);
+  const firstOfEach = varNames(functions).map(
+    (name) => functions.find((entry) => entry.declaration.name.text === name)!.declaration,
   );
-  return [...blocks, ...vars];
+  return [
+    ...functionValueBindings(
+      sourceFile,
+      functions.map((entry) => entry.declaration),
+      firstOrdinal,
+      id,
+    ),
+    ...functionValueBindings(sourceFile, firstOfEach, firstOrdinal + functions.length, id),
+  ];
 }
 
 /** A declaration's two homes, as from-ast stores them. */
@@ -139,22 +136,15 @@ export function blockFunctionHomes(
   moduleInit: IrUnitId,
   firstOrdinal: number,
 ): BlockFunctionHomes {
-  // The adapter name keys the storage: a block binding's is its own, apart from the script var of the same name.
-  const home = (ordinal: number, name: string): FunctionValueGlobal => {
-    const binding: ModuleBindingGlobal = {
-      ownerUnitId: moduleInit,
-      globalRef: irSourceGlobalRef(irModuleGlobalBindingId(sourceId, ordinal), name),
-      tdzGlobalRef: null,
-      globalName: name,
-      tdzGlobalName: null,
+  const home = (ordinal: number, adapterName: string) =>
+    moduleInitDynamicHome(moduleInit, sourceId, irModuleGlobalBindingId(sourceId, ordinal), adapterName, {
       type: irDynamic(),
-    };
-    return { binding, identity: { ownerUnitId: moduleInit, storageOwnerUnitId: moduleInit, sourceId, mutable: true } };
-  };
+      mutable: true,
+    });
   const blocks = new Map(
     functions.map((entry, index) => [
       entry,
-      home(firstOrdinal + index, `${entry.declaration.name.text}$block${index}`),
+      home(firstOrdinal + index, blockHomeName(entry.declaration.name.text, index)),
     ]),
   );
   const vars = new Map(
@@ -173,7 +163,9 @@ export function blockFunctionHomes(
       // The compiler's checker binds a block function to its block: a reference outside every declaring scope has
       // no symbol, and is a reference to the global of its name.
       const own = functions.filter((entry) =>
-        symbol ? symbol.declarations?.includes(entry.declaration) : entry.declaration.name.text === node.text,
+        symbol
+          ? symbol.declarations?.includes(entry.declaration)
+          : entry.declaration.name.text === node.text && !boundInEnclosingFunction(node),
       );
       if (own.length === 0) return undefined;
       const covering = own.filter((entry) => node.pos >= entry.scope.pos && node.end <= entry.scope.end);
@@ -182,6 +174,30 @@ export function blockFunctionHomes(
       return vars.get(node.text) ?? refuse(node.text, "is read where no binding of it exists");
     },
   };
+}
+
+/**
+ * A block home's adapter name, the key its storage is found by. `#` cannot occur in a binding's name (a private name
+ * is no binding), so no source identifier collides with it.
+ */
+function blockHomeName(name: string, index: number): string {
+  return `${name}#block${index}`;
+}
+
+/**
+ * Whether a function enclosing the symbol-less reference `node` binds its name itself (a parameter, a `var`, a
+ * declaration, an Annex B block function of its own): then the reference is not to the script's binding.
+ */
+function boundInEnclosingFunction(node: ts.Identifier): boolean {
+  for (let scope = node.parent; !ts.isSourceFile(scope); scope = scope.parent) {
+    if (
+      ts.isFunctionLike(scope) &&
+      (scopeBindsName(scope, node.text) ||
+        annexBBlockFunctions(scope).some((entry) => entry.declaration.name.text === node.text))
+    )
+      return true;
+  }
+  return false;
 }
 
 /**
