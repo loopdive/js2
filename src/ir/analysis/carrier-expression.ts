@@ -27,7 +27,7 @@ export interface CarrierLeaves {
    * receiver's (the carrier's method call answers the carrier).
    */
   readonly call: (call: ts.CallExpression) => boolean | undefined;
-  /** (#7462) A `new` expression's own answer. */
+  /** (#7462) A `new` expression's own answer: one that lowers to `dyn.construct` yields the carrier. */
   readonly construct?: (construction: ts.NewExpression) => boolean;
   /** A conditional whose arms are not both carriers but that still lowers to one. */
   readonly conditional?: (conditional: ts.ConditionalExpression) => boolean;

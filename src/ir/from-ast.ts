@@ -8405,6 +8405,18 @@ function lowerNestedFuncCall(
 // ---------------------------------------------------------------------------
 
 /**
+ * (#7106 S3a, S3c, #7354 C2) `new <a value>(args)` that lowers to `dyn.construct`: a dynamic local or module home
+ * (`bindingHoldsDynamic`), or a self-guarded constructor's function-object plan. (#7462) Its value is the carrier.
+ */
+function constructsDynamic(expr: ts.NewExpression, cx: LowerCtx): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee)) return false;
+  const functionValueCallee =
+    cx.scope.get(callee.text) === undefined && cx.topLevelFunctionValues?.get(callee) !== undefined;
+  return bindingHoldsDynamic(callee, cx) || functionValueCallee;
+}
+
+/**
  * Slice 4 (#1169d): lower a `new ClassName(args)` expression.
  *
  * The class shape is looked up against `cx.classShapes`. Argument types
@@ -8418,17 +8430,6 @@ function lowerNestedFuncCall(
  * `{ kind: "class", shape }` so subsequent property accesses / method
  * calls dispatch correctly.
  */
-/**
- * (#7106 S3a, S3c, #7354 C2) `new <a value>(args)` that lowers to `dyn.construct`: a dynamic local or module home
- * (`bindingHoldsDynamic`), or a self-guarded constructor's function-object plan. (#7462) Its value is the carrier.
- */
-function constructsDynamic(expr: ts.NewExpression, cx: LowerCtx): boolean {
-  const callee = expr.expression;
-  if (!ts.isIdentifier(callee)) return false;
-  const functionValueCallee =
-    cx.scope.get(callee.text) === undefined && cx.topLevelFunctionValues?.get(callee) !== undefined;
-  return bindingHoldsDynamic(callee, cx) || functionValueCallee;
-}
 
 function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)

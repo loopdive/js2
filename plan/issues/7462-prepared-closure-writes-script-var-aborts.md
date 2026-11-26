@@ -295,6 +295,45 @@ expects it (PRV-7462 note b).
 - No new demote label and no defensive branch. `from-ast.ts` net ≤ 0 lines. A fresh-context adversarial review of the
   diff and this plan, with its verdict in the PR body.
 
+### Adversarial review
+
+A fresh-context reviewer (Claude Opus, `claude -p`, read-only tools) was given this plan as approved (`d2f2f45a7eb`),
+`git diff d2f2f45a7eb..HEAD -- src tests` and the IR code-quality rule, and asked to prove the goal was not met.
+Verdict: "quality goal NOT met", on findings 1 and 2. Each finding and its resolution:
+
+1. **should-fix, fixed.** `constructsDynamic` and its doc were inserted between `lowerNewExpression`'s doc comment and
+   the function, orphaning that comment. Moved above it.
+2. **should-fix, recorded.** Two mutated twins survive: the TDZ guard after the read, and caching resolver storage in
+   scope. Neither is observable on any lane today. The Prepared path refuses any TDZ guard (`__new_ReferenceError`
+   has no runtime function there), and the ordinary selector never sends a compound or update to a module binding.
+   A cached `var` read is the same `global.get`, and after a write that passed its TDZ guard, the guard on a later
+   read is redundant. The ordering and the no-cache rule stay as the plan states them, for the lane that will
+   materialize the guard. See `## Result`.
+3. **should-fix, evidence added.** `lowerDiscardedUpdate` in the discard authority also routes member targets
+   (`o.x++`, `a[i]--`), as the statement walker already did. A claimed ordinary unit that had demoted after claim
+   could now change bytes. Measured: 17 probes, base vs head, gc and standalone, `.ts` and `.js` (68 compiles). They
+   cover member and element updates as a void tail, in a comma, in a conditional arm and in a for-update clause, local
+   and module-binding updates in those positions, and `new` as a `+` operand. All 68 match in status, sha256 and claim
+   set. Gate 4 covers the rest. The member route is recorded among the deviations above
+   (`issue-7354-m-refusals` G45).
+4. **should-fix, rebutted.** The `readonly` kind is dropped. This was measured (see "The `readonly` kind" above),
+   and the selector sites the reviewer cited read the resolver without a value only to detect a module binding:
+   - a `=` is then gated by `moduleBindingWrite` / `moduleBindingTakes`, both of which ask the resolver with the value
+     (`select.ts` `moduleBindingWrite`; the for-update `=` arm; the tail, body and non-tail `=` arms through
+     `moduleBindingTakes` → `moduleBindingMatches`);
+   - a compound or update in a function is refused (`module-update`, `tail-module-compound`, `*-module-compound`).
+
+   The classifier's doc comment now names `moduleBindingWrite`.
+5. **nit, kept as planned.** `id.parent as ts.Expression` is the plan's write value for the compound and update
+   writers. Every caller passes `expr.left` or `expr.operand` that is itself an `Identifier` (a parenthesised operand
+   never reaches them), so the parent is the assignment or update. The Prepared resolver reads only that a write value
+   is present, and the ordinary pipeline never asks with it.
+6. **nit, rebutted.** No triplet is left for a follow-up. The eight moduleGlobal / slot / cell read and write
+   triplets were all in the compound and update writers, and fold into `readStorage` / `writeStorage`. The `=`
+   writer's arms each store one kind after their own type check, so they are not copies of the triplet.
+7. **nit, fixed.** The `construct` leaf's comment now says why it exists.
+8. **nit, recorded.** The `Map` / `Promise` / `Number` / `RegExp` pins are listed among the deviations above.
+
 ## Result
 
 Base `6694a8b8391`, head = this branch, measured 2026-11-26.
@@ -311,7 +350,9 @@ Base `6694a8b8391`, head = this branch, measured 2026-11-26.
 - **Gate 4, ordinary pipeline:** 3,816 inputs (the equivalence corpus's compile inputs captured from its own run, the
   13 playground examples, 21 gap programs as `.js` and `.ts`), each gc and standalone: 7,632 compiles, all identical
   in status, binary sha256 and claim set (`irCompiledFuncs`, 6,379 claimed functions over 3,677 compiles). No unit's
-  claim set changed. The gap programs keep main's claims (`a = b = 1` → `["g"]`; `new C()` → `["C"]`).
+  claim set changed. The gap programs keep main's claims (`a = b = 1` → `["g"]`; `new C()` → `["C"]`). Rerun on
+  the implementation commit after the `readonly` kind was dropped: 7,632 identical again. The 68 discarded-update
+  probes of review finding 3 are identical as well.
 - **Mutated twins** (each run against the new test file): dropping the module-binding answer (15 fail), passing no write
   value (the `const` pin fails), dropping `lowerDiscardedUpdate` from the discard authority (6 fail), dropping the
   `construct` leaf (4 fail), `constructsDynamic` false (4 fail). Two survive, both unobservable on every lane today:
