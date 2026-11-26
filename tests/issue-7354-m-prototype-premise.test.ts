@@ -62,8 +62,9 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ["a dynamic value's __proto__", "function f(v){ return v.__proto__; } f(1);"],
     ["a dynamic value's constructor", "function f(v){ return v.constructor; } f(1);"],
     // (#7354 P1) The routes a populated Object.prototype method opens: it is a built-in function object, and every key
-    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts.
-    ...(["constructor", "__proto__", "call"] as const).flatMap((key) =>
+    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts. (#7489) The
+    // realm holds `call` and `apply`, whose values are function objects too; `bind` still leads nowhere it holds.
+    ...(["constructor", "__proto__", "bind"] as const).flatMap((key) =>
       ["({})", "1"].map((receiver): [string, string] => [
         `a method of ${receiver}'s ${key}`,
         `var fv = function(){ return 1; }; fv(); function f(v){ return v.hasOwnProperty.${key}; } f(${receiver});`,
@@ -71,7 +72,7 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ),
     // (#7354 G1) The Error family's values and prototypes are the program's to read and write, but none leads on to a
     // prototype the premise covers: each route past them (a function's or an object's [[Prototype]], Function) aborts.
-    ...["TypeError.__proto__", "TypeError.constructor", "TypeError.call", "Error.prototype.__proto__"].map(
+    ...["TypeError.__proto__", "TypeError.constructor", "TypeError.bind", "Error.prototype.__proto__"].map(
       (route): [string, string] => [
         `the Error family's ${route}`,
         `var fv = function(){ return 1; }; fv(); function f(){ return ${route}; } f();`,
