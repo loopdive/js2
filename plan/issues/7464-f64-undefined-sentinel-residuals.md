@@ -1,7 +1,8 @@
 ---
 id: 7464
 title: "f64 `undefined` sentinel residuals: per-evaluation statics, `for (var …)` heads, String/JSON/typeof, same-named module `let`s"
-status: in-progress
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
@@ -73,3 +74,34 @@ unchanged outside the affected shapes (checked on 240 test262 files × gc/standa
 
 Out of scope, noted: `` `${g}` `` with `g: number | undefined` is a compile error ("Template literal numeric
 substitution requires number_toString"). `static a: number` (no `undefined` in the type) is not re-seeded either.
+
+## Results (2026-11-26, merged with origin/main 1a726b3e64)
+
+gc and standalone answer the same on every row.
+
+| Case | Program | node | main | now |
+| --- | --- | --- | --- | --- |
+| 1 | function-local class `static a: number \| undefined`, `f(true) + f(false) * 10` | 77 | wrong | 77 |
+| 2 | `for (var g: number \| undefined, i = 0; …)` and the single-binding head | 2 | invalid Wasm | 2 |
+| 3 | module `let`: `String(g)`, `"" + g`, `g + ""` | "undefined" | "NaN" | "undefined" |
+| 3 | field / static: `String`, `typeof` | "undefined" | "NaN" / "number" | "undefined" |
+| 3 | `String(+g)` (unary `+` drops the brand) | "NaN" | "NaN" | "NaN" |
+
+Case 3 brands an f64 slot that can hold `undefined` once, at its declaration (`undefinedCapableSlotType` in
+`value-tags.ts`, applied to fields, statics and module bindings). The existing `emitNumberToStringSentinelAware`
+reader now runs on every lane: its JS-host-only gate was dead, because `coercionMode()` always returns `"standalone"`.
+The IR's ToString and `typeof` share `emitUndefinedStringOr` (`src/ir/f64-undefined-marker.ts`).
+
+Checks: 240 test262 files × gc/standalone byte-identical to origin/main; pin tests fail on main and pass now.
+
+### Left open (follow-up issue still to be filed; id allocation failed because the open-PR scan was down)
+
+- **JSON.stringify:** the native codec writes `null` for a property that holds `undefined`, even for
+  `JSON.stringify({ a: undefined })`. Its `$AnyValue` arm maps tag 1 to `"null"` (`json-codec-native.ts` ~L411).
+  This is a codec defect, not a sentinel one.
+- **Parameter properties:** a `number | undefined` parameter property has no struct field (#7215), so `??`, `String`
+  and `typeof` see NaN. Giving it a branded field fixes those but turns `JSON.stringify(new C(undefined))` into
+  `{"a":null}` until the codec defect is fixed.
+- **Omitted f64 constructor arguments** are padded with `0`, not the sentinel (`new-super.ts` ~L7051), and
+  `function-arity-mismatch` pins that 0.
+- `` `${g}` `` is still a compile error.
