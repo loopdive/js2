@@ -172,6 +172,7 @@ import {
   ensureIrNativeStringRepeatProvider,
   hasExactIrNativeCountedStringRepeatProviderAbi,
 } from "../codegen/ir-native-string-repeat.js";
+import { ensureNativeStringPadProvider, isNativeStringPadKernel } from "../codegen/native-string-length-limit.js";
 import {
   ensureIrHostStringRepeatProvider,
   hasExactIrStringRepeatProviderAbi,
@@ -7888,6 +7889,8 @@ function resolveAndObserveCallableProvider(
         "prepared string.repeat provider has a malformed physical ABI",
       );
     }
+  } else if (ref.binding.kind === "intrinsic" && isNativeStringPadKernel(symbol)) {
+    index = ensureNativeStringPadProvider(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_AT_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
