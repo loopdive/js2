@@ -25,8 +25,9 @@ related: [7354, 7106]
 # CaseBlock entry after the discriminant, the FunctionDeclaration arm), the resolver member, the closure-literal
 # union member with its invariant, and `annexBHost`, which binds the steps to from-ast's private closure lowering and
 # cannot move out. The plan's estimate was +8; the host and the invariant are the difference.
-# 2026-11-26 (slice 2a-2): src/ir/program-source.ts +7, the block-function homes beside F1b's function values (the
-# plan input, the globals and the lowering field); the homes themselves are src/ir/annexb-block-function-values.ts.
+# 2026-11-26 (slice 2a-2, 2a-3): src/ir/program-source.ts +13, the block-function homes beside F1b's function values
+# (the plan input, the globals, the lowering field and, 2a-3, the script globals an existing binding's home is looked
+# up in); the homes themselves are src/ir/annexb-block-function-values.ts.
 loc-budget-allow:
   - src/ir/program-source.ts
   - src/codegen/expressions/identifiers.ts

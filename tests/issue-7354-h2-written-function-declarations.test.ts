@@ -110,11 +110,6 @@ describe("#7354 H2 — a written function declaration", () => {
       "function f(){ return 1; } var f = 2;",
       "script var f shares its binding with a function declaration",
     ],
-    [
-      "an Annex B block function of the same name",
-      "function f(){ return 1; } var g = f; { function f(){ return 2; } }",
-      "Annex B block function 'f' shares its name with a var or function of the script",
-    ],
   ])("refuses %s by name", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);
   });

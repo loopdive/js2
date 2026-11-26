@@ -82,10 +82,70 @@ describe("#7372 2a-2 — Annex B block functions of a script", () => {
     }
   });
 
+  // 2a-3: the script already declares the name. The evaluation writes that declaration's home: a `var`'s dynamic
+  // home, or F1b's home of a top-level function, which every call of the name then reads.
+  it.each([
+    [
+      "a var declared after the block (existing-var-update)",
+      "{ function f() { return 'fd'; } } var t = typeof f, r = f(); var f = 123;",
+      "t !== 'function' || r !== 'fd' || f !== 123",
+      "r !== 123",
+    ],
+    [
+      "a var initialized before the block (existing-var-no-init)",
+      "var f = 123; var before = f; { function f() {} }",
+      "before !== 123 || typeof f !== 'function'",
+      "typeof f !== 'number'",
+    ],
+    [
+      "a top-level function, replaced at the block (existing-fn-update)",
+      "{ function f() { return 'inner'; } } function f() { return 'outer'; }",
+      "f() !== 'inner'",
+      "f() !== 'outer'",
+    ],
+    [
+      "a top-level function, called before the block (existing-fn-no-init)",
+      "var before = f(); { function f() { return 'inner'; } } function f() { return 'outer'; }",
+      "before !== 'outer' || f() !== 'inner'",
+      "before !== 'inner'",
+    ],
+    [
+      "a top-level function called from another function and a closure",
+      "function g() { return f(); } var a = g(); { function f() { return 'inner'; } } var k = function () { return f(); }; function f() { return 'outer'; }",
+      "a !== 'outer' || g() !== 'inner' || k() !== 'inner'",
+      "g() !== 'outer'",
+    ],
+    [
+      "a top-level function read as a value before the block",
+      "var g; function f() { return 1; } g = f; { function f() { return 2; } }",
+      "g() !== 1 || f() !== 2",
+      "g() !== 2",
+    ],
+    [
+      "a top-level function and an if-clause declaration",
+      "var before = f(); if (true) function f() { return 'inner'; } function f() { return 'outer'; }",
+      "before !== 'outer' || f() !== 'inner'",
+      "f() !== 'outer'",
+    ],
+  ])("a block function beside %s", async (_, program, holds, fails) => {
+    for (const [check, verdict] of [
+      [holds, "returned"],
+      [fails, "threw"],
+    ] as const) {
+      const source = `${program} if (${check}) throw 1;`;
+      expect(nodeVerdict(source), source).toBe(verdict);
+      expect(await runPreparedScript(source, "test.js", TEST262_SCRIPT), source).toBe(verdict);
+    }
+  });
+
+  it("refuses a script var of its name whose home is typed (a TypeScript annotation)", async () => {
+    expect(await preparedScriptRefusal("var f: number = 1; { function f() {} }", "test.ts", TEST262_SCRIPT)).toContain(
+      "shares its name with a script binding that has no dynamic home",
+    );
+  });
+
   // Not modelled in 2a; each refuses by name instead of compiling to a wrong value.
   it.each([
-    ["a script var of the same name", "var f; { function f() {} }", "shares its name with a var or function"],
-    ["a top-level function of the same name", "function f() {} { function f() {} }", "shares its name"],
     ["a built-in global's name", "{ function parseInt() {} }", "shadows a built-in global"],
     ["a loop body", "for (var i = 0; i < 1; i++) { function f() {} }", "is in a loop body"],
     ["two declarations in one block", "{ function f() {} function f() {} }", "is declared twice in one scope"],

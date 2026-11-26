@@ -1655,7 +1655,13 @@ export function prepareIrProgramSources(
       globalByDeclaration.set(value.declaration, value.global);
     }
     diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFiles[0]!);
-    const blockFunctionHomes = scriptBlockFunctionHomes(input.checker, sourceFiles, identity, dynamicContracts);
+    const blockFunctionHomes = scriptBlockFunctionHomes(
+      input.checker,
+      sourceFiles,
+      identity,
+      dynamicContracts,
+      globalByDeclaration,
+    );
     for (const global of blockFunctionHomes?.globals ?? [])
       globalById.set(global.binding.globalRef.binding.bindingId, global);
     const globals = [...globalById.values()];

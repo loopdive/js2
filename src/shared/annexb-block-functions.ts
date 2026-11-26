@@ -667,3 +667,11 @@ function writesVar(declaration: ts.FunctionDeclaration, varScope: ts.Node): bool
     !scopeBindsNameAsParameter(varScope, name)
   );
 }
+
+/**
+ * (#7372 slice 2a-3) Whether evaluating an Annex B block function of the script `sourceFile` writes its var scope's
+ * binding of `name` (§B.3.2.2): a write no identifier spells.
+ */
+export function annexBWritesScriptBinding(sourceFile: ts.SourceFile, name: string): boolean {
+  return annexBBlockFunctions(sourceFile).some((entry) => entry.writesVar && entry.declaration.name.text === name);
+}

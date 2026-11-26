@@ -7,10 +7,11 @@
 // each of these routes refuses or aborts at its own site. Each program writes the binding through one route, then
 // reads it: it must refuse or end at the run-time abort, never read a stale value. A slice that admits a route
 // replaces its rows with node agreement.
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";
-import { preparedOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { preparedOptions, runnerOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 240_000;
 
@@ -30,8 +31,6 @@ const ROUTES: Record<string, (value: string) => string> = {
   "sloppy-function `this`": (v) => `(function(){ this.f = ${v}; })();`,
   "Object.defineProperty": (v) => `Object.defineProperty(this, "f", { value: ${v} });`,
   delete: () => `var d = delete f;`,
-  // (#7372 2a) An Annex B block function of the binding's name writes it when evaluated (§B.3.2.2).
-  "an Annex B block function": () => `{ function f() { return 2; } }`,
 };
 
 const BINDINGS: Record<string, (route: (value: string) => string) => string> = {
@@ -52,9 +51,9 @@ const CASES = Object.entries(ROUTES).flatMap(([route, write]) =>
 );
 
 /** "refused", "aborted" (the `unreachable` trap), or how the program ended otherwise. */
-async function outcome(source: string): Promise<string> {
+async function outcome(source: string, options = preparedOptions()): Promise<string> {
   await yieldToRpc();
-  const result = await compile(source, preparedOptions());
+  const result = await compile(source, options);
   if (!result.success) return "refused";
   expect(WebAssembly.validate(result.binary)).toBe(true);
   try {
@@ -71,6 +70,28 @@ describe("#7354 H2 — each route to a script binding refuses or aborts at its s
     "%s writing %s %s",
     async (_route, _binding, _position, source) => {
       expect(["refused", "aborted"]).toContain(await outcome(source));
+    },
+    SLOW,
+  );
+});
+
+// (#7372 2a-3) The Annex B route is admitted: an Annex B block function of the binding's name writes its home when
+// evaluated (§B.3.2.2). Each program ends as node does (its `out` is node's), or refuses or aborts; it never ends
+// with another value.
+describe("#7372 2a-3 — an Annex B block function writes the binding's home", () => {
+  const annexB = () => `{ function f() { return 2; } }`;
+  it.each(
+    Object.entries(BINDINGS).flatMap(([binding, program]) => [
+      [binding, "at top level", program(annexB)],
+      [binding, "inside a called function", program(() => `function w(){ ${annexB()} } w();`)],
+    ]),
+  )(
+    "%s %s",
+    async (_binding, _position, source) => {
+      const expected = JSON.stringify(runInNewContext(`${source} out`));
+      expect(["refused", "aborted", "returned"]).toContain(
+        await outcome(`${source} if (out !== ${expected}) throw 1;`, runnerOptions()),
+      );
     },
     SLOW,
   );

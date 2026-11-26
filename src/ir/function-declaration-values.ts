@@ -35,12 +35,13 @@ import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
+import { annexBDeclaringRange, annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
 /**
- * The top-level function declarations of a single-source program that some identifier reads as a value, in source
- * order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
+ * The top-level function declarations of a single-source program that some identifier reads as a value, or that an
+ * Annex B block function writes, in source order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
  * is one: [[Construct]] takes the function object, its `prototype` included.
  */
 export function functionDeclarationsReadAsValues(
@@ -59,8 +60,11 @@ export function functionDeclarationsReadAsValues(
     ts.forEachChild(node, visit);
   };
   visit(source);
+  // (#7372 2a-3) An Annex B block function of its name writes the binding: calls of the name then read the home.
   return source.statements.filter(
-    (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && read.has(statement),
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) &&
+      (read.has(statement) || (statement.name !== undefined && annexBWritesScriptBinding(source, statement.name.text))),
   );
 }
 
@@ -137,7 +141,10 @@ export function functionDeclarationValues(
     const unitId = identity.unitIdByDeclaration.get(declaration)!;
     diagnostic.active = unitId;
     // A JS symbol also lists the member stores of its function (`f.x = 1`), which declare no binding.
-    if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration).length > 1)
+    // (#7372 2a-3) An Annex B block function the checker binds to the file is no second declaration: it has its own
+    // block binding and writes this home (`annexb-block-function-values.ts`).
+    const declarations = checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration);
+    if (declarations.filter((other) => annexBDeclaringRange(other) === null).length > 1)
       refuse(name, "has a second declaration");
     const rewritten = preparedBindingRewritten(checker, declaration.name!);
     const { params, returnType } = signatures.get(unitId)!;
