@@ -53,8 +53,8 @@ Run it through `runFiles` from `scripts/known-failures-gate.mjs`.
 ## Fix
 
 - `scripts/lib/known-failures-late-errors.mjs`: a setup file with one
-  `afterAll` that waits a grace period (default 100 ms,
-  `KNOWN_FAILURES_LATE_ERROR_GRACE_MS`). It is registered first, so under
+  `afterAll` that waits a fixed grace period of 100 ms
+  (`LATE_ERROR_GRACE_MS`). It is registered first, so under
   vitest's default stack order it runs after the file's own `afterAll` hooks.
   An error that fires during the wait is an unhandled error inside the worker,
   which vitest reports and the gate refuses.
@@ -62,6 +62,12 @@ Run it through `runFiles` from `scripts/known-failures-gate.mjs`.
   is set, which happens only under the gate. vitest 3.2.7 has no
   `--setupFiles` CLI flag, so the config is the only seam. Ordinary
   `vitest run` invocations are unchanged.
+
+Why a fixed grace rather than a deterministic hook: vitest 3.2.7 has no hook
+that runs after a file's last test and waits for the timers it left pending.
+Waiting until the process's active handles drain
+(`process.getActiveResourcesInfo()`) would also wait on vitest's own handles
+and on any server a test leaves open, so it could hang instead of ending.
 
 ## Cost and limits
 

@@ -7,7 +7,7 @@
 // refuses it. An error scheduled further out than the grace period is still lost.
 import { afterAll } from "vitest";
 
-const graceMs = Number(process.env.KNOWN_FAILURES_LATE_ERROR_GRACE_MS) || 100;
+const LATE_ERROR_GRACE_MS = 100;
 
 // Registered first, so with vitest's default stack order it runs after the file's own afterAll hooks.
-afterAll(() => new Promise((resolve) => setTimeout(resolve, graceMs)));
+afterAll(() => new Promise((resolve) => setTimeout(resolve, LATE_ERROR_GRACE_MS)));
