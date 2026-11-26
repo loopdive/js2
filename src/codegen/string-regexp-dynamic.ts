@@ -60,7 +60,6 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { ensureNativeStringHelpers, nativeStringType, stringConstantExternrefInstrs } from "./native-strings.js";
 import {
   emitRegExpSymbolMatchBody,
@@ -87,6 +86,7 @@ import { addFuncType } from "./registry/types.js";
 import { compileExpression } from "./shared.js";
 import { dynamicReplaceAvailable, tryCompileStandaloneDynamicReplace } from "./string-replace-dynamic.js";
 import { coerceType } from "./type-coercion.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 type DynMethod = "match" | "search" | "split";
 
@@ -255,7 +255,7 @@ function buildObjectArmInstrs(
         { op: "i32.eqz" },
         { op: "br_if", depth: 0 },
         { op: "local.get", index: P_VALUE },
-        { op: "i32.const", value: getWellKnownSymbolId(symbol)! },
+        { op: "i32.const", value: wellKnownSymbolId(symbol)! },
         { op: "call", funcIdx: ctx.funcMap.get("__box_symbol")! },
         { op: "call", funcIdx: deps.externGet },
         { op: "local.tee", index: methodLocal },

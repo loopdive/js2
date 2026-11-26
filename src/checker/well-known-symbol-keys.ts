@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7410) The function name a symbol-keyed property gives, recovered from the source key.
+ * (#7410, #7427) The keys a symbol-keyed property has where the program can observe them, recovered from the
+ * source key.
  *
  * TypeScript names a `[Symbol.replace]` member `__@replace@<id>`, where `<id>` comes from its process-global
  * symbol counter. The id depends on how many compiles the process ran before, so a runtime string built from that
  * escaped name is both wrong and dependent on compile order.
  */
 import { ts } from "../ts-api.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 import type { TypeOracle } from "./oracle.js";
 import { isCurrentCompilerLibrarySourceFile } from "./index.js";
 
@@ -40,15 +42,39 @@ function wellKnownSymbolKeyName(oracle: TypeOracle, property: ts.Symbol): string
 }
 
 /**
+ * A string key's name, or `spell` of the well-known symbol a symbol-keyed property names. Any other symbol key
+ * answers undefined: its identity is a runtime value.
+ */
+function keyOfProperty(
+  oracle: TypeOracle,
+  property: ts.Symbol,
+  spell: (wellKnownName: string) => string | undefined,
+): string | undefined {
+  if (!ESCAPED_SYMBOL_KEY.test(property.escapedName as string)) return property.name;
+  const name = wellKnownSymbolKeyName(oracle, property);
+  return name === undefined ? undefined : spell(name);
+}
+
+/**
  * The `name` SetFunctionName (§10.2.9) gives a function the program stores under `property`: `"[Symbol.replace]"`
  * for a well-known symbol and the name itself for a string key. A symbol-keyed member of the compiler library
  * answers undefined too: a built-in's name is its own (`Array.prototype[Symbol.iterator]` is `values`), not its
  * key's.
  */
 export function functionNameForKey(oracle: TypeOracle, property: ts.Symbol): string | undefined {
-  if (!ESCAPED_SYMBOL_KEY.test(property.escapedName as string)) return property.name;
-  if (property.declarations?.some((declaration) => isCurrentCompilerLibrarySourceFile(declaration.getSourceFile())))
-    return undefined;
-  const name = wellKnownSymbolKeyName(oracle, property);
-  return name === undefined ? undefined : `[Symbol.${name}]`;
+  const isLibraryMember = property.declarations?.some((declaration) =>
+    isCurrentCompilerLibrarySourceFile(declaration.getSourceFile()),
+  );
+  return keyOfProperty(oracle, property, (name) => (isLibraryMember ? undefined : `[Symbol.${name}]`));
+}
+
+/**
+ * (#7427) The key a built-in prototype member has in the native-prototype tables: `@@<id>` (`WELL_KNOWN_SYMBOL_IDS`)
+ * for a well-known symbol and the name itself for a string key.
+ */
+export function memberKeyForProperty(oracle: TypeOracle, property: ts.Symbol): string | undefined {
+  return keyOfProperty(oracle, property, (name) => {
+    const id = wellKnownSymbolId(name);
+    return id === undefined ? undefined : `@@${id}`;
+  });
 }

@@ -74,7 +74,6 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { reserveNativeConstructDriver } from "./native-construct.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
@@ -104,6 +103,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { compileExpression } from "./shared.js";
 import { prepareStandaloneExternrefToNumberProviders } from "./tonumber-fast-paths.js";
 import { coerceType } from "./type-coercion.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -405,7 +405,7 @@ function emitDefaultRegExpSplitter(
   const dynIdx = ctx.nativeRegexHelpers.get("__regex_compile_dynamic_simple") ?? dynMinted;
   const boxSymbol = ctx.funcMap.get("__box_symbol");
   const externGet = ctx.funcMap.get("__extern_get");
-  const matchId = getWellKnownSymbolId("match");
+  const matchId = wellKnownSymbolId("match");
   if (toStringIdx === undefined || boxSymbol === undefined || externGet === undefined || matchId === undefined) {
     fctx.body.push({ op: "ref.null.extern" });
     return;

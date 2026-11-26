@@ -132,7 +132,7 @@ export {
 } from "./array-methods.js";
 export { compileNumericBinaryOp } from "./binary-ops.js";
 export { collectReferencedIdentifiers, collectWrittenIdentifiers } from "./closures.js";
-export { getWellKnownSymbolId, resolveComputedKeyExpression, resolveConstantExpression } from "./literals.js";
+export { resolveComputedKeyExpression, resolveConstantExpression } from "./literals.js";
 export {
   compileObjectDefineProperties,
   compileObjectDefineProperty,

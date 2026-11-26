@@ -279,9 +279,10 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
-        "src/runtime/contracts/well-known-symbols.ts"
+        "src/runtime/contracts/well-known-symbols.ts",
+        "src/runtime/contracts/regexp-bytecode.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "backend-wasmgc",
@@ -366,6 +367,8 @@
         "src/runtime/wasmgc/values/string-layouts.ts",
         "src/runtime/wasmgc/values/string-literal-bodies.ts",
         "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/emit-idioms.ts",
+        "src/runtime/wasmgc/values/json-bodies.ts",
         "src/runtime/wasmgc/values/primitive-layouts.ts",
         "src/runtime/wasmgc/values/number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-grammar.ts",
@@ -460,9 +463,13 @@
         "src/runtime/wasmgc/values/realm-object-layouts.ts",
         "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
-        "src/runtime/wasmgc/values/number-from-value-body.ts"
+        "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "src/runtime/wasmgc/values/regexp-carrier-layouts.ts",
+        "src/runtime/wasmgc/values/regexp-vm-arms.ts",
+        "src/runtime/wasmgc/values/regexp-vm-bodies.ts",
+        "src/runtime/wasmgc/values/regexp-search-body.ts"
       ],
-      "minModules": 99
+      "minModules": 103
     },
     {
       "id": "standalone-platform",
@@ -1876,6 +1883,21 @@
       "layer": "ir-analysis",
       "entries": ["src/ir/analysis/contracts/linear-memory-layout.ts", "src/ir/analysis/backend-legality.ts"],
       "minModules": 14
+    },
+    {
+      "layer": "runtime-contracts",
+      "entries": ["src/runtime/contracts/regexp-bytecode.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/regexp-carrier-layouts.ts",
+        "src/runtime/wasmgc/values/regexp-vm-arms.ts",
+        "src/runtime/wasmgc/values/regexp-vm-bodies.ts",
+        "src/runtime/wasmgc/values/regexp-search-body.ts"
+      ],
+      "minModules": 4
     }
   ],
   "nonModules": [
@@ -2301,6 +2323,16 @@
     },
     {
       "path": "src/runtime/wasmgc/values/error-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/emit-idioms.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/json-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -5386,14 +5418,6 @@
     },
     {
       "path": "src/codegen/emit-helpers.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/emit-idioms.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -17604,6 +17628,31 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/runtime/contracts/regexp-bytecode.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-carrier-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-vm-arms.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-vm-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/regexp-search-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     }
   ]
 }
