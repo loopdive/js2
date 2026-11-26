@@ -1,7 +1,7 @@
 ---
 id: 7455
 title: "Ordinary pipeline: `everyUseIsServed` is a third name-based whole-program scan of script-binding writes"
-status: ready
+status: in-progress
 created: 2026-11-23
 updated: 2026-11-23
 priority: medium
@@ -165,3 +165,24 @@ After #7354 H2 the Prepared path's soundness depends on the two agreeing (#7457)
    The new module is classified like `binding-writes.ts`, its enumerator, and its three callers:
    `mixed-needs-split`, destination `ir-core`. It reads TypeScript checker symbols, so it cannot be a
    clean layer of its own. Also run loc and func with `LOC_GATE_BASE=$(git rev-parse origin/main)`.
+
+## PR 1 measured (2026-11-26, branch `claude/7455-binding-write-index`, base main 41f0654e8c)
+
+- **Byte identity.** Base vs new, every row identical:
+  - the shared 411-row sample through the Prepared front door and the ordinary pipeline (standalone);
+  - the playground examples (gc and standalone);
+  - 848 rows in all (445 compiled, 403 refused with an identical error).
+- **Full prelude** (`FN_STANDIN_C1=1`): output sha1 8708895d in all 10 runs. Base and new ran in parallel on
+  the same box, 5 runs each.
+
+  | tree | runs (ms) | median |
+  |---|---|---|
+  | base | 3327, 4078, 3305, 3116, 3274 | 3.31 s |
+  | new | 2942, 3111, 3128, 3910, 3606 | 3.13 s |
+
+- **Tests.** 18 related test files (416 tests): 0 new failures against base. The new test
+  `tests/issue-7455-binding-write-index.test.ts` passes 5/5.
+- **For PR 2 (#7457).** In a `.js` file, `function f() {} var f = 6;` gives the `var` declarator's name a
+  different checker symbol than the function's. So the index files that write under the declarator's symbol,
+  not under the function's. The differential must show what the planner's `reassigned` and the index each
+  say there before the fold.
