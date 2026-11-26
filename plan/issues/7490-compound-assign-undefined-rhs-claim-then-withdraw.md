@@ -30,13 +30,29 @@ The unit falls back to legacy through `irPostClaimErrors`. That is the "claim, t
 
 ## Measured
 
-`.tmp` probe, `compile(..., { trackIrOutcomes: true, allowJs: true })`, 2026-11-26:
+Exact repro: the ordinary pipeline (`compile` from `src/index.ts`, not the Prepared entry), a top-level **script**,
+not a closure:
+
+```ts
+compile("var x = 2; x *= undefined;", {
+  target: "standalone", // and target "gc": same result
+  trackIrOutcomes: true,
+  allowJs: true,
+  fileName: "t.js",
+  skipSemanticDiagnostics: true,
+});
+// result.success === true; result.irPostClaimErrors ===
+// [{ kind: "build", func: "<module-init>",
+//    message: "ir/from-ast: compound assign RHS has no numeric carrier (got dynamic<tag:1>) in <module-init>" }]
+```
 
 | tree | standalone | gc |
 | --- | --- | --- |
 | main `41f0654e8` | post-claim error above | same |
 | #7375 head `c2bd96e00` | same | same |
 
+In the #7144 sweep harness (an ES-module closure, `subject.f = function (m, k) { … }`), the same statement is refused
+at select (`operand-coercion-unsupported`, RV7442). Only the script-level `<module-init>` claims it and then withdraws.
 Found by RV7427 while reviewing #7375. That PR did not change this case.
 
 ## To decide

@@ -79,7 +79,7 @@ Decided per row by the sweep's own comparison against node, plus probes with the
   leaves initializer tracing to its caller. #7282's `booleanReadBesideCarrier` counts `unknown` as a possible carrier
   (meant for an `any` module binding), so it refused. With the refusal off, a boolean beside a number or string
   local is claimed and matches node on every lane, with no post-claim error. The selector now skips the refusal when
-  an operand is an unannotated local whose slot is not the carrier (`readsTypedLocal`, with `dynamicShapedValue`).
+  an operand is an unannotated local whose slot is not the carrier (`readsNonCarrierLocal` on the operand beside the boolean: not a dynamic-shaped local, `dynamicShapedValue`).
   Carrier locals (`var x;`, `var x = m`) and carrier params stay refused, as #7282 intends.
 - **Row 4.** Since #7133 an assignment's value is its right-hand side, so `n = u = 4` writes a number into `n`,
   whatever `u` held. The expectation now asks `slotWriteVerdict("number", "number")`.
@@ -88,3 +88,8 @@ Decided per row by the sweep's own comparison against node, plus probes with the
   `!booleanReadBesideCarrier` (whether lifting that refusal inside closures is safe is unproven; not done here).
 - `tests/issue-7282-boolean-numeric-operands.test.ts` stays 39/39. Its 6 module rows fail with the refusal fully
   off, which is why only the local case is narrowed.
+- (RV7442) Follow-up, not done here: `binaryOperandFamily` could trace an unannotated local's initializer family once,
+  as `provenIrFamily`'s doc says the caller does. `booleanReadBesideCarrier` would then never see `unknown` for such a
+  local, and this exemption would go. Locals whose slot is the carrier but that `dynamicShapedValue` does not
+  recognise (`var n = (0, m)`, `var n = x = m`, `var n = m.x`) are claimed now; RV7442's probe found them giving
+  node's answer.

@@ -9642,7 +9642,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
   // prepared component cannot name.
-  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr) && !readsTypedLocal(expr)) {
+  if (
+    booleanReadBesideCarrier(binOp, left, right) &&
+    lowersAsPreparedComponent(expr) &&
+    !readsNonCarrierLocal(left === "boolean" ? expr.right : expr.left)
+  ) {
     return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
@@ -12290,14 +12294,12 @@ function resolvedKindFamily(kind: ResolvedKind): OperandFamily {
 }
 
 /**
- * (#7408) Does `expr` read an unannotated local whose slot is not the carrier? Its family is `unknown` only
- * because the binary does not trace the initializer; from-ast lowers it in the initializer's representation.
+ * (#7408) Does `operand` read an unannotated local that is not dynamic-shaped? Its family is `unknown` only because
+ * the binary does not trace the initializer; from-ast lowers it in the initializer's representation.
  */
-function readsTypedLocal(expr: ts.BinaryExpression): boolean {
-  return [expr.left, expr.right].some((side) => {
-    const read = unwrapPhase1Parens(side);
-    return ts.isIdentifier(read) && unannotatedLocal(read) !== undefined && !dynamicShapedValue(read);
-  });
+function readsNonCarrierLocal(operand: ts.Expression): boolean {
+  const read = unwrapPhase1Parens(operand);
+  return ts.isIdentifier(read) && unannotatedLocal(read) !== undefined && !dynamicShapedValue(read);
 }
 
 /** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
