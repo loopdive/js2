@@ -187,6 +187,7 @@ import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
 import { someReturnedValue } from "./function-returns.js";
 import { describeIrType } from "./describe-ir-type.js";
 import type { FunctionDeclarationValue } from "./function-declaration-values.js";
+import * as annexB from "./annexb-block-function-lowering.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -928,6 +929,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
   /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
   moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
+  /** (#7372 2a) A script-level Annex B block function's homes (`annexb-block-function-values.ts`). */
+  annexBBlockFunctionHomes?(declaration: ts.FunctionDeclaration): annexB.BlockFunctionHomeRefs | undefined;
   /**
    * #3791, #7106 lever R — the host-free `.test` / `.exec` bridge, over the
    * in-module carrier helpers' canonical receiver-first externref ABI.
@@ -12671,6 +12674,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
   }
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
+    annexB.instantiateBlockFunctions(stmt, annexBHost(cx));
     lowerBodyStatements(stmt.statements, childCx);
     joinScopeStringEncodingFacts(cx.scope, [childCx.scope]);
     return;
@@ -12795,6 +12799,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     lowerEarlyReturn(stmt, cx);
     return;
   }
+  if (ts.isFunctionDeclaration(stmt) && annexB.evaluateBlockFunction(stmt, annexBHost(cx))) return;
   demoteToLegacy(
     "body-shape-rejected",
     `ir/from-ast: unsupported body statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
@@ -13032,6 +13037,7 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: switch disc must lower to i32/f64 in ${cx.funcName}`);
   }
   const discSlot = cx.builder.declareSlot("__switch_disc", discT);
+  annexB.instantiateBlockFunctions(stmt.caseBlock, annexBHost(cx));
   // A labeled switch (`lbl: switch (...)`) adopts the pre-allocated label
   // as its break target, so `break lbl` and unlabeled `break` coincide.
   const breakLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -16365,7 +16371,8 @@ type IrClosureLiteral =
   | ts.FunctionExpression
   | ts.MethodDeclaration
   | ts.GetAccessorDeclaration
-  | ts.SetAccessorDeclaration;
+  | ts.SetAccessorDeclaration
+  | ts.FunctionDeclaration; // (#7372 2a) an Annex B block function, lowered as the function object it is
 
 function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): void {
   if (!expr.body || !ts.isBlock(expr.body) || someReturnedValue(expr.body, () => true))
@@ -16373,6 +16380,13 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
       "body-shape-rejected",
       `ir/from-ast: void closure value-bearing return requires an actual returned-value representation (${cx.funcName})`,
     );
+}
+
+function annexBHost(cx: LowerCtx): annexB.BlockFunctionLoweringHost {
+  const value = (fn: ts.FunctionDeclaration) => lowerClosureExpression(fn, cx);
+  const functionValue = (fn: ts.FunctionDeclaration) =>
+    functionObjects.functionObjectDynamicValue(value(fn), fn.name!, functionObjectLoweringHost(cx));
+  return { builder: cx.builder, homesOf: (fn) => cx.resolver?.annexBBlockFunctionHomes?.(fn), functionValue };
 }
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
@@ -16393,6 +16407,8 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       writtenParameterSlots: true,
       ...cx.resolver?.closureCodeStrictness?.(expr),
     });
+  // invariant (producer-promise): an admitted block function has the dynamic signature (`scriptBlockFunctions`).
+  if (ts.isFunctionDeclaration(expr)) throw new Error(`ir/from-ast: block function without its signature`);
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   if (ownedByDescriptorLiteral(expr)) {

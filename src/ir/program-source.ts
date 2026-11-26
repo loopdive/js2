@@ -55,6 +55,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { prepareSourceDirectCalls } from "./program-source-direct-calls.js";
 import { functionDeclarationValues, type FunctionValueGlobal } from "./function-declaration-values.js";
+import { scriptBlockFunctionHomes } from "./annexb-block-function-values.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
@@ -1596,6 +1597,7 @@ export function prepareIrProgramSources(
           target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
           deferTopLevelInit: input.deferTopLevelInit,
           functionValues: dynamicContracts.functionDeclarationValues,
+          blockFunctions: dynamicContracts.blockFunctions,
         }),
       );
     }
@@ -1652,6 +1654,10 @@ export function prepareIrProgramSources(
       globalById.set(value.home.globalRef.binding.bindingId, value.global);
       globalByDeclaration.set(value.declaration, value.global);
     }
+    diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFiles[0]!);
+    const blockFunctionHomes = scriptBlockFunctionHomes(input.checker, sourceFiles, identity, dynamicContracts);
+    for (const global of blockFunctionHomes?.globals ?? [])
+      globalById.set(global.binding.globalRef.binding.bindingId, global);
     const globals = [...globalById.values()];
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
@@ -1681,6 +1687,7 @@ export function prepareIrProgramSources(
       closureInvocations,
       closureCallableParameters,
       functionValues,
+      blockFunctionHomes,
       directCalls,
       nativeFamily,
       nativeStringValues,

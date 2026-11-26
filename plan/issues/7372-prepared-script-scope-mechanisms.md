@@ -20,9 +20,17 @@ related: [7354, 7106]
 # 2026-11-26 (slice 2a-1): src/codegen/expressions/identifiers.ts +4, formatting only. Its import of the Annex B
 # analysis now names the lifted module (src/ir/analysis/annexb-block-functions.ts); the longer path makes prettier
 # wrap the one-line import over five lines. No code added.
+# 2026-11-26 (slice 2a-2): src/ir/from-ast.ts +16, the dispatch the Annex B lowering needs and nothing else. The
+# two steps live in src/ir/annexb-block-function-lowering.ts; from-ast keeps the three call sites (Block entry,
+# CaseBlock entry after the discriminant, the FunctionDeclaration arm), the resolver member, the closure-literal
+# union member with its invariant, and `annexBHost`, which binds the steps to from-ast's private closure lowering and
+# cannot move out. The plan's estimate was +8; the host and the invariant are the difference.
+# 2026-11-26 (slice 2a-2): src/ir/program-source.ts +7, the block-function homes beside F1b's function values (the
+# plan input, the globals and the lowering field); the homes themselves are src/ir/annexb-block-function-values.ts.
 loc-budget-allow:
   - src/ir/program-source.ts
   - src/codegen/expressions/identifiers.ts
+  - src/ir/from-ast.ts
 ---
 
 # #7372 — Prepared IR path: script-scope mechanisms

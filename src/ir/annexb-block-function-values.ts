@@ -1,0 +1,216 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * (#7372 slice 2a) Annex B block functions of a script on the Prepared path (§B.3.2.2, §B.3.3). A sloppy
+ * `{ function f() {} }` at script level has two bindings:
+ *   - its block binding, a lexical binding of the declaring scope (a Block, a `switch`'s CaseBlock, or an `if` clause)
+ *     that BlockDeclarationInstantiation sets to a new function object when the scope is entered;
+ *   - where §B.3.2.2 allows it (`writesVar`, `analysis/annexb-block-functions.ts`), a script `var` of the same name,
+ *     `undefined` from instantiation, set to the block binding's current value when the declaration is evaluated.
+ *
+ * Both are homes in the dynamic carrier: module-init globals with `var` startup intents, numbered after the script's
+ * declarations and F1b's function values. Script-level code runs once, so one global per block binding is exact;
+ * a declaring scope inside a loop body is re-entered and refuses. The checker binds a sloppy block function to its
+ * file, so one symbol stands for both bindings: {@link BlockFunctionHomes.resolve} splits a reference by position.
+ *
+ * Refused by name here: a name another declaration of the script also binds (a `var`, a function, a lexical: the
+ * existing-binding cases are a later slice), a function the dynamic closure route does not take (typed, defaulted
+ * or rest parameters), a built-in global's name (the global object
+ * already has the property, whose value a read before the block sees), two declarations of a name in one scope, a
+ * generator or async function, a scope in a loop body, and a read the var binding does not cover.
+ */
+import { ts } from "../ts-api.js";
+import { irModuleGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
+import { annexBBlockFunctions, type AnnexBBlockFunction } from "./analysis/annexb-block-functions.js";
+import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
+import type { FunctionValueGlobal } from "./function-declaration-values.js";
+import { moduleBindingDeclarationOrder } from "./module-init-vars.js";
+import type { IrPlanningIdentityContext } from "./planning-identity.js";
+import type { IrSourceId, IrUnitId } from "./identity.js";
+import { irDynamic } from "./nodes.js";
+import { IrUnsupportedError } from "./outcomes.js";
+import type { IrModuleInitBindingIntent } from "./program/startup.js";
+import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
+
+/** The Annex B block functions of a single-script program; an ES module or several sources have none on this path. */
+export function scriptBlockFunctions(sourceFiles: readonly ts.SourceFile[]): readonly AnnexBBlockFunction[] {
+  const source = sourceFiles[0]!;
+  return sourceFiles.length === 1 && !ts.isExternalModule(source) ? annexBBlockFunctions(source) : [];
+}
+
+/** Refuse by name each block function this slice does not model (module doc). */
+function refuseUnmodelled(
+  checker: ts.TypeChecker,
+  source: ts.SourceFile,
+  functions: readonly AnnexBBlockFunction[],
+  dynamicClosure: (declaration: ts.FunctionDeclaration) => boolean,
+): void {
+  // The global object's own properties: the realm's built-ins and every global the lib declares.
+  const libGlobals = new Set(
+    checker
+      .getSymbolsInScope(source, ts.SymbolFlags.Value)
+      .filter((symbol) => symbol.declarations?.some((declaration) => declaration.getSourceFile().isDeclarationFile))
+      .map((symbol) => symbol.name),
+  );
+  for (const entry of functions) {
+    const { declaration, scope } = entry;
+    const name = declaration.name.text;
+    if (declaration.asteriskToken || ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Async)
+      refuse(name, "is a generator or async function");
+    if (ts.findAncestor(declaration.parent, (node) => ts.isIterationStatement(node, false)))
+      refuse(name, "is in a loop body");
+    if (REALM_GLOBAL_NAMES.has(name) || libGlobals.has(name) || name === "undefined")
+      refuse(name, "shadows a built-in global");
+    if (entry.varExists) refuse(name, "shares its name with a var or function of the script");
+    if (functions.some((other) => other !== entry && other.scope === scope && other.declaration.name.text === name))
+      refuse(name, "is declared twice in one scope");
+    if (!dynamicClosure(declaration)) refuse(name, "is outside the dynamic closure subset");
+  }
+}
+
+function refuse(name: string, why: string): never {
+  throw new IrUnsupportedError("type-resolution-unsupported", "build", `Annex B block function '${name}' ${why}`);
+}
+
+/** The first ordinal of the homes: after the script's declarations and F1b's function values. */
+export function blockFunctionFirstOrdinal(
+  sourceFile: ts.SourceFile,
+  functionValues: readonly ts.FunctionDeclaration[],
+): number {
+  return moduleBindingDeclarationOrder(sourceFile).length + functionValues.length;
+}
+
+/** The var binding's names, one per name some declaration writes, in source order. */
+function varNames(functions: readonly AnnexBBlockFunction[]): readonly string[] {
+  return [...new Set(functions.filter((entry) => entry.writesVar).map((entry) => entry.declaration.name.text))];
+}
+
+/**
+ * The startup bindings of the homes, numbered from `firstOrdinal`: each declaration's block binding in source order,
+ * then each var binding.
+ */
+export function blockFunctionBindings(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  functions: readonly AnnexBBlockFunction[],
+  firstOrdinal: number,
+): IrModuleInitBindingIntent[] {
+  const intent = (ordinal: number, declaration: ts.FunctionDeclaration): IrModuleInitBindingIntent =>
+    Object.freeze({
+      declarationOrdinal: ordinal,
+      names: Object.freeze([declaration.name!.text]),
+      declarationKind: "var" as const,
+      mutable: true,
+      initialization: "undefined-at-instantiation" as const,
+      globalBindingId: irModuleGlobalBindingId(sourceId, ordinal),
+      tdzBindingId: null,
+      start: declaration.getStart(sourceFile),
+      end: declaration.end,
+    });
+  const blocks = functions.map((entry, index) => intent(firstOrdinal + index, entry.declaration));
+  const vars = varNames(functions).map((name, index) =>
+    intent(
+      firstOrdinal + functions.length + index,
+      functions.find((entry) => entry.declaration.name.text === name)!.declaration,
+    ),
+  );
+  return [...blocks, ...vars];
+}
+
+/** A declaration's two homes, as from-ast stores them. */
+export interface BlockFunctionHomeRefs {
+  readonly block: ModuleBindingGlobal;
+  readonly var: ModuleBindingGlobal | undefined;
+}
+
+/** The homes of a script's block functions: their globals, and which one a reference means. */
+export interface BlockFunctionHomes {
+  readonly globals: readonly FunctionValueGlobal[];
+  readonly homesOf: (declaration: ts.FunctionDeclaration) => BlockFunctionHomeRefs | undefined;
+  /**
+   * The home a reference to a block function's symbol means: the block binding of the innermost declaring scope that
+   * contains it, else the var binding. A reference neither covers refuses (no binding exists there).
+   */
+  readonly resolve: (node: ts.Identifier, symbol: ts.Symbol | undefined) => FunctionValueGlobal | undefined;
+}
+
+export function blockFunctionHomes(
+  functions: readonly AnnexBBlockFunction[],
+  sourceId: IrSourceId,
+  moduleInit: IrUnitId,
+  firstOrdinal: number,
+): BlockFunctionHomes {
+  // The adapter name keys the storage: a block binding's is its own, apart from the script var of the same name.
+  const home = (ordinal: number, name: string): FunctionValueGlobal => {
+    const binding: ModuleBindingGlobal = {
+      ownerUnitId: moduleInit,
+      globalRef: irSourceGlobalRef(irModuleGlobalBindingId(sourceId, ordinal), name),
+      tdzGlobalRef: null,
+      globalName: name,
+      tdzGlobalName: null,
+      type: irDynamic(),
+    };
+    return { binding, identity: { ownerUnitId: moduleInit, storageOwnerUnitId: moduleInit, sourceId, mutable: true } };
+  };
+  const blocks = new Map(
+    functions.map((entry, index) => [
+      entry,
+      home(firstOrdinal + index, `${entry.declaration.name.text}$block${index}`),
+    ]),
+  );
+  const vars = new Map(
+    varNames(functions).map((name, index) => [name, home(firstOrdinal + functions.length + index, name)]),
+  );
+  const entryOf = (declaration: ts.FunctionDeclaration) => functions.find((entry) => entry.declaration === declaration);
+  return {
+    globals: [...blocks.values(), ...vars.values()],
+    homesOf: (declaration) => {
+      const entry = entryOf(declaration);
+      if (!entry) return undefined;
+      const varHome = entry.writesVar ? vars.get(entry.declaration.name.text) : undefined;
+      return { block: blocks.get(entry)!.binding, var: varHome?.binding };
+    },
+    resolve: (node, symbol) => {
+      // The compiler's checker binds a block function to its block: a reference outside every declaring scope has
+      // no symbol, and is a reference to the global of its name.
+      const own = functions.filter((entry) =>
+        symbol ? symbol.declarations?.includes(entry.declaration) : entry.declaration.name.text === node.text,
+      );
+      if (own.length === 0) return undefined;
+      const covering = own.filter((entry) => node.pos >= entry.scope.pos && node.end <= entry.scope.end);
+      const innermost = covering.sort((a, b) => b.scope.pos - a.scope.pos)[0];
+      if (innermost) return blocks.get(innermost);
+      return vars.get(node.text) ?? refuse(node.text, "is read where no binding of it exists");
+    },
+  };
+}
+
+/**
+ * The homes of the program's block functions, when it has any (its only source is a script), after refusing the
+ * unmodelled ones. The caller owns the refusals' diagnostics (the script's module-init).
+ */
+export function scriptBlockFunctionHomes(
+  checker: ts.TypeChecker,
+  sourceFiles: readonly ts.SourceFile[],
+  identity: Pick<IrPlanningIdentityContext, "sourceIdBySourceFile" | "moduleInitUnitIdBySourceFile">,
+  contracts: {
+    readonly blockFunctions: readonly AnnexBBlockFunction[];
+    readonly functionDeclarationValues: readonly ts.FunctionDeclaration[];
+    readonly resolver: { readonly dynamicClosureSignature?: (expression: ts.FunctionLikeDeclaration) => unknown };
+  },
+): BlockFunctionHomes | undefined {
+  const { blockFunctions } = contracts;
+  if (blockFunctions.length === 0) return undefined;
+  const source = sourceFiles[0]!;
+  refuseUnmodelled(
+    checker,
+    source,
+    blockFunctions,
+    (fn) => contracts.resolver.dynamicClosureSignature?.(fn) !== undefined,
+  );
+  return blockFunctionHomes(
+    blockFunctions,
+    identity.sourceIdBySourceFile.get(source)!,
+    identity.moduleInitUnitIdBySourceFile.get(source)!,
+    blockFunctionFirstOrdinal(source, contracts.functionDeclarationValues),
+  );
+}

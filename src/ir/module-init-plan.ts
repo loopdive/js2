@@ -5,6 +5,8 @@ import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindi
 import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "./identity.js";
 import { functionValueBindings } from "./function-declaration-values.js";
+import { blockFunctionBindings, blockFunctionFirstOrdinal } from "./annexb-block-function-values.js";
+import type { AnnexBBlockFunction } from "./analysis/annexb-block-functions.js";
 import { moduleBindingDeclarations } from "./module-bindings.js";
 import { isModuleInitGlobalDeclaration, moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
@@ -65,6 +67,8 @@ export interface BuildIrModuleInitPlanInput {
   readonly deferTopLevelInit: boolean;
   /** (#7354 F1b) The declarations read as values whose homes this script's bindings hold. */
   readonly functionValues?: readonly ts.FunctionDeclaration[];
+  /** (#7372 2a) The script's Annex B block functions, whose homes follow the function values' (`blockFunctionBindings`). */
+  readonly blockFunctions?: readonly AnnexBBlockFunction[];
 }
 
 export interface LegacyModuleInitStaticEntry {
@@ -438,6 +442,8 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
       irModuleGlobalBindingId(sourceId, ordinal),
     ),
   );
+  const blockFunctionOrdinal = blockFunctionFirstOrdinal(sourceFile, input.functionValues ?? []);
+  bindings.push(...blockFunctionBindings(sourceFile, sourceId, input.blockFunctions ?? [], blockFunctionOrdinal));
 
   const functions = sourceFile.statements.filter(ts.isFunctionDeclaration);
   for (const declaration of collectReassignedTopLevelFunctions(sourceFile, checker)) {

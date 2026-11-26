@@ -30,6 +30,8 @@ const ROUTES: Record<string, (value: string) => string> = {
   "sloppy-function `this`": (v) => `(function(){ this.f = ${v}; })();`,
   "Object.defineProperty": (v) => `Object.defineProperty(this, "f", { value: ${v} });`,
   delete: () => `var d = delete f;`,
+  // (#7372 2a) An Annex B block function of the binding's name writes it when evaluated (§B.3.2.2).
+  "an Annex B block function": () => `{ function f() { return 2; } }`,
 };
 
 const BINDINGS: Record<string, (route: (value: string) => string) => string> = {

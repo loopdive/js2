@@ -11,7 +11,8 @@
  *   - the global object as a value: script or sloppy-function `this`, `globalThis`, `Object.defineProperty(this, …)`;
  *   - dynamic code: `eval`, `Function`, `x.constructor(…)`;
  *   - `with`: the checker resolves no symbol for a name in its body, so a write there is invisible to the query;
- *   - an Annex B block function (§B.3.3.2) and `delete`;
+ *   - an Annex B block function (§B.3.3.2) of the binding's name (`annexb-block-function-values.ts` gives a block
+ *     function its own homes only where no other declaration binds the name), and `delete`;
  *   - a parameter initializer (`function w(a = (f = v)) { var f; }`): the checker resolves `f` to the body's `var`,
  *     but the write hits the outer binding (§10.2.11).
  * A slice that admits one of these routes writes the binding's home or refuses;

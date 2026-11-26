@@ -220,19 +220,16 @@ function scopeBindsNameAsParameter(scope: ts.Node, name: string): boolean {
  * binding; the existing one stays readable, so nothing is cancelled.
  */
 export function scopeBindsName(scope: ts.Node, name: string): boolean {
-  if (!ts.isSourceFile(scope) && !ts.isModuleBlock(scope)) {
-    const params = (scope as ts.FunctionLikeDeclarationBase).parameters;
-    if (params) {
-      for (const p of params) {
-        const names = new Set<string>();
-        collectBoundNames(p.name, names);
-        if (names.has(name)) return true;
-      }
-    }
-  }
-  const stmts = scopeStatements(scope);
-  if (listBindsLexically(stmts, name)) return true;
-  for (const s of stmts) {
+  return (
+    scopeBindsNameAsParameter(scope, name) ||
+    listBindsLexically(scopeStatements(scope), name) ||
+    scopeDeclaresVarOrFunction(scope, name)
+  );
+}
+
+/** Does the var scope declare `name` with a scope-top-level `function` or a `var` anywhere inside it? */
+function scopeDeclaresVarOrFunction(scope: ts.Node, name: string): boolean {
+  for (const s of scopeStatements(scope)) {
     if (ts.isFunctionDeclaration(s) && s.name?.text === name) return true;
   }
   // A `var name` ANYWHERE in the scope (var declarations are function-scoped).
@@ -613,4 +610,59 @@ export function annexBReadEscapesFunctionScope(id: ts.Identifier): boolean {
     return true;
   }
   return false;
+}
+
+/** (#7372 slice 2) One Annex B block function of a var scope and what §B.3.2 gives it. */
+export interface AnnexBBlockFunction {
+  readonly declaration: ts.FunctionDeclaration & { readonly name: ts.Identifier };
+  /** The scope its block binding belongs to ({@link annexBDeclaringRange}): a Block, a CaseBlock, or the `if` clause. */
+  readonly scope: ts.Node;
+  /**
+   * Whether evaluating the declaration writes the var scope's binding of its name (§B.3.2.1 / §B.3.2.2): sloppy code,
+   * `var F` in its place would raise no early error, and the name is not a parameter's.
+   */
+  readonly writesVar: boolean;
+  /** Whether the var scope already declares the name (a `var`, or a function at its top level): no new var binding. */
+  readonly varExists: boolean;
+}
+
+const BLOCK_FUNCTIONS_CACHE = new WeakMap<ts.Node, readonly AnnexBBlockFunction[]>();
+
+/**
+ * (#7372 slice 2) The Annex B block functions of the var scope `varScope` (a function or a source file) in source
+ * order, outside nested var scopes.
+ */
+export function annexBBlockFunctions(varScope: ts.Node): readonly AnnexBBlockFunction[] {
+  const cached = BLOCK_FUNCTIONS_CACHE.get(varScope);
+  if (cached) return cached;
+  const found: AnnexBBlockFunction[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      const scope = annexBDeclaringRange(node);
+      if (scope) {
+        const varExists = scopeDeclaresVarOrFunction(varScope, node.name.text);
+        found.push({
+          declaration: node as AnnexBBlockFunction["declaration"],
+          scope,
+          writesVar: writesVar(node, varScope),
+          varExists,
+        });
+      }
+    }
+    if (isVarScopeBoundary(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(varScope, visit);
+  BLOCK_FUNCTIONS_CACHE.set(varScope, found);
+  return found;
+}
+
+function writesVar(declaration: ts.FunctionDeclaration, varScope: ts.Node): boolean {
+  const name = declaration.name!.text;
+  return (
+    !isStrictContext(declaration) &&
+    !hasInterveningLexicalBinder(declaration.parent, name, varScope) &&
+    !listBindsLexically(scopeStatements(varScope), name) &&
+    !scopeBindsNameAsParameter(varScope, name)
+  );
 }
