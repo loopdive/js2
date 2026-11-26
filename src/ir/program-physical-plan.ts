@@ -77,7 +77,7 @@ import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import {
   freezePreparedIrValue,
-  preparedIrProgramOwner,
+  locatedFailure,
   PreparedIrProgramInvariantError,
   type PreparedIrAbiEntry,
   type PreparedIrBackendOptions,
@@ -1478,10 +1478,7 @@ export function planPhysicalSetup(
         gaps.rows.length === 1 ? "" : "s"
       }): ${gaps.rows.map((row) => row.detail).join("; ")}`,
     };
-    const owner = preparedIrProgramOwner(program, unitId);
-    if (!owner)
-      throw new PreparedIrProgramInvariantError("invalid-prepared-data", `physical plan cannot locate ${unitId}`);
-    return Object.freeze({ ...failure, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
+    return locatedFailure(program, unitId, failure);
   }
 
   const plan: PhysicalSetupPlan = {
