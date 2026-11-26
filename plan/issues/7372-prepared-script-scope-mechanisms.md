@@ -121,7 +121,7 @@ Reproduced by hand (same entry, raw source):
 - `function outer() { function g() { return 2; } return g(); } outer();` → abort `nested func must have a return
   type annotation (outer)`. **An unannotated nested function declaration fails on the Prepared path even outside a
   block.** Every function-code file has its block function inside a function (an IIFE), so the function-code
-  cluster cannot pass before nested function declarations do (#7349 S3 territory).
+  cluster cannot pass before nested function declarations do (owner: lane S21, its cluster 7 "nested function without annotations"; routed by the lead 2026-11-26, repro sent).
 - Script-level building blocks already run: `var x; function g(){return 2} x = g; x()` (F1b's value home + a script
   var), `if (true) { var y = function () { return 2; }; } y()` (slice 1's nested var + a closure literal).
 
