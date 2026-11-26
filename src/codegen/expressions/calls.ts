@@ -66,7 +66,6 @@ import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
 import { prepareBuiltinCtorValueInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
-import { registerCalleeCallableGuard } from "./callee-callable-guard.js";
 import {
   ensureObjVecBuilders,
   ensureObjectGroupBy,
@@ -485,6 +484,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import {
+  registerCalleeCallableGuard,
   tryJsxRuntimeCall,
   tryNamespaceNonCallable,
   tryNonCallableValueCall,

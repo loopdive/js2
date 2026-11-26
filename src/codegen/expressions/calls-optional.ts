@@ -25,7 +25,7 @@ import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileBuiltinStaticCall } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
-import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./callee-callable-guard.js";
+import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./calls-guards.js";
 import { isGlobalBuiltinIdentifier } from "./global-builtin-identifier.js";
 import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";

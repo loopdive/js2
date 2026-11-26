@@ -28,7 +28,7 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { isPatchedBuiltinStaticMember } from "../source-scan-predicates.js";
-import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./callee-callable-guard.js";
+import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./calls-guards.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 /**

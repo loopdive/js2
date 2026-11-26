@@ -187,7 +187,7 @@ import {
   resolveReceiverMethodClassName,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
-import { emitCalleeCallableGuard } from "./callee-callable-guard.js";
+import { emitCalleeCallableGuard } from "./calls-guards.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName, resolveStructNameForExpr, tryCompileCallableStaticField } from "./misc.js";
 
