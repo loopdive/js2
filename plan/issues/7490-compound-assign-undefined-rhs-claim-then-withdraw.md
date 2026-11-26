@@ -51,8 +51,10 @@ compile("var x = 2; x *= undefined;", {
 | main `41f0654e8` | post-claim error above | same |
 | #7375 head `c2bd96e00` | same | same |
 
-In the #7144 sweep harness (an ES-module closure, `subject.f = function (m, k) { … }`), the same statement is refused
-at select (`operand-coercion-unsupported`, RV7442). Only the script-level `<module-init>` claims it and then withdraws.
+It needs a non-module script, or a function body: `export function f() { var x = 2; x *= undefined; return x; }`
+claims and withdraws too (RV7442, standalone and gc). In an ES module's `<module-init>` (`export {}` beside the
+statement) and in the #7144 sweep's closure (`subject.f = function (m, k) { … }`) it is refused at select
+(`operand-coercion-unsupported`).
 Found by RV7427 while reviewing #7375. That PR did not change this case.
 
 ## To decide
