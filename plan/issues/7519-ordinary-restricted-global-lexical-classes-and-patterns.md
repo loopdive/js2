@@ -64,19 +64,25 @@ Written 2026-11-26, stacked on PR 7489 (#7499, head `1451f3b1`). That PR adds `s
 
 An ambient declaration binds nothing at run time, so GlobalDeclarationInstantiation has no name to reject. The
 ordinary pipeline already skips it: `hasDeclareModifier` at the top of the `VariableStatement` arm of
-`collectDeclarations`. The shared walker does not skip it. So switching the ordinary pipeline to the predicate as-is would
-make these TS programs throw, a regression. On the Prepared path it is an over-refusal: no wrong value, but the
+`collectDeclarations`. The shared predicate does not skip it. So switching the ordinary pipeline to the predicate as-is
+would make these TS programs throw, a regression. On the Prepared path it is an over-refusal: no wrong value, but the
 wrong label for a program that tsc rejects anyway (TS2451 against lib's `declare var NaN`).
 
 ### Target structure
 
-1. **The ambient test moves to `src/shared`.** `git mv src/ir/ambient-declarations.ts src/shared/ambient-declarations.ts`.
-   Its three importers (`ir/identity.ts`, `ir/class-method-names.ts`, `ir/prepared-select-refusals.ts`) change only
-   the import path. Its `compiler-boundaries.json` entry keeps its classification under the new path. It is the
-   AST-only test both pipelines need, and `src/shared` is where the walker that uses it lives.
-2. **The walker skips ambient statements.** In `scriptGlobalLexicalNames`, a statement for which
-   `isAmbientDeclaration(statement)` holds contributes no name. The predicate, the Prepared rule (#7499) and
-   `recordSourceGlobalEnvironment` (`codegen/index.ts`) all inherit this; none gets its own filter.
+1. **The ambient test moves to `src/shared`.** A plain `git mv src/ir/ambient-declarations.ts
+   src/shared/ambient-declarations.ts`, with no re-export shim. Its three importers (`ir/identity.ts`,
+   `ir/class-method-names.ts`, `ir/prepared-select-refusals.ts`) change only the import path. Its
+   `compiler-boundaries.json` entry is re-pathed, keeps its classification, and its `nextBoundary` names the new user.
+2. **Only the predicate filters ambient names (PRV-7499, lead decision 2026-11-26, option a).**
+   `restrictedGlobalLexicalName` becomes
+   `scriptGlobalLexicalNames(sourceFile).find((id) => GLOBAL_CONSTANTS.has(id.text) && !isAmbientDeclaration(id))`.
+   `isAmbientDeclaration` walks from the identifier through its declaration's parents, so a pattern element or a class
+   name under `declare` is ambient.
+   - The walker is unchanged, and so is `recordSourceGlobalEnvironment` (`codegen/index.ts`). Its
+     `ctx.globalLexicalBindings` feeds the eval machinery (`calls-guards.ts`, `ir-overlay-preparation.ts`,
+     `runtime-eval-provider.ts`, `eval-inline.ts`, `index.ts`), which this change must not touch.
+   - The Prepared rule (#7499) inherits the filter through the predicate.
 3. **The ordinary pipeline asks the predicate once per source.** In `collectDeclarations`
    (`src/codegen/declarations.ts`), before the top-level statement loop:
    `ctx.restrictedGlobalLexicalName ??= restrictedGlobalLexicalName(sourceFile)?.text;`. `??=` keeps today's rule
@@ -92,7 +98,7 @@ wrong label for a program that tsc rejects anyway (TS2451 against lib's `declare
   prologue throw, and `isAmbientDeclaration` (moved, not copied).
 - Removes: `noteRestrictedGlobalLexicalName` (its own three-name test and Module check) and the per-declarator call.
 - Code-quality acceptance:
-  - one walker, one predicate and one ambient test serve both pipelines;
+  - one predicate serves both pipelines, and the restricted-name path uses one ambient test;
   - `GLOBAL_CONSTANTS` is the only list of the three names on this path;
   - no new `ctx` field, and no new filter at any caller.
 
@@ -106,8 +112,8 @@ wrong label for a program that tsc rejects anyway (TS2451 against lib's `declare
 - **Prepared:** the three ambient forms are no longer refused as `restricted-global-lexical`. The #7499 pin test gains
   them as "not refused by this rule".
 - **Bytes:** ordinary output changes only for programs with a restricted class or pattern name. The byte check is
-  default and standalone on a 100-file test262 sample, plus the TS test sources whose top level has `declare let`,
-  `declare const` or `declare class`. Those exercise the walker change in `recordSourceGlobalEnvironment`.
+  default and standalone on a 100-file test262 sample. `ctx.globalLexicalBindings` must stay identical, since the walker
+  is unchanged.
 
 ### Yield (measured with #7499's walker scan)
 
