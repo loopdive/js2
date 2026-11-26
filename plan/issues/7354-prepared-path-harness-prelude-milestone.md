@@ -7041,3 +7041,93 @@ Catalog rows in `native-realm-catalog.ts`; kernel bodies beside G1's in `realm-f
 `native-source-objects.ts`; IR in `dynamic-realm-constructors.ts` (the renamed G1 module) and the existing chain /
 member-access / to-primitive modules. from-ast net ≤ 0. Quality: no Error-only module stays where it is now one family
 of several; no second wrapper layout; no hand list of wrapper-prototype keys left beside the catalog.
+
+## Slice W2 result (2026-11-26, branch `claude/7354-w2` from `origin/main` 1a726b3e64)
+
+### Built
+
+- **Catalog** (`native-realm-catalog.ts`): G1's `errorRows` is one family builder (`familyRows` over a `Family`
+  record); the Error family and the three wrapper families are rows of it. The wrapper families carry their statics,
+  data constants (`Number.MAX_VALUE`, …) and every prototype method (Annex B included) as `unavailable` rows, but
+  `valueOf` / `toString`; a wrapper prototype carries its primitive slot. `%Object%` is native (a value).
+  `NATIVE_VALUE_INTRINSICS` gains `Object`, the wrapper constructors and methods, and the prototype objects a
+  primitive's member read goes through (appended: G1/P1 selectors unchanged).
+- **What a realm holds** (`native-realm-requirements.ts`): `heldErrorConstructors` → `heldFamilyMembers`, one rule per
+  family over the IR's uses; `heldCatalogRows` holds a family's callable row only if it is a value the realm holds, so
+  an unheld member (`String.prototype.charAt`) is no row, no literal and no seeded property.
+- **Kernel**: the wrappers are #3518's subtypes (`createPrimitiveWrapperDeclaration`, payload field 6) and storage
+  bodies, reserved over the realm's object layouts only where a wrapper family is held
+  (`native-realm-wrappers.ts`; the layouts take the existing `extensible` opt-in then). `realm-wrapper-bodies.ts`:
+  `create-wrapper` (a String's indices {!w,e,!c} and `length` {!w,!e,!c} are stored at creation, so every realm
+  lookup, define, write and key walk answers the exotic object's answer), `primitive-data` (the slot, `undefined` for
+  no wrapper), `wrapper-this` (thisXValue for a held wrapper method, TypeError for a wrong receiver, null for any other
+  method), `wrapper-to-string`. The family seeding takes number values and skips unheld members; a wrapper prototype is
+  allocated as a wrapper. `js.object.intrinsic` also answers the family objects and Object.prototype.
+- **IR**: `dynamic-error-constructors.ts` → `dynamic-realm-constructors.ts` (Error, Object, String, Number, Boolean,
+  call and construct at the site; `realmConstructorsRead`; `functionChainAnswer` answers `true` for
+  %Object.prototype%). Which constructors a program holds is now the IR's answer (`realmConstructorsRead` over the
+  front end's intrinsic reads), not a source walk: an intercepted `String(v)`, `Object.defineProperty(…)` or
+  `Object.prototype.toString.call(v)` reads none, so the prelude holds no wrapper family.
+  `dynamic-wrapper-methods.ts`: one `wrapper-this` call answers a wrapper method in OrdinaryToPrimitive and in P1's
+  method call (G1's error-to-string row and it are entries of one `builtins` list). Member access: unheld statics
+  (`unheldStaticKeys`) and unheld wrapper-prototype keys come from the catalog (the hand lists `STRING_PROTOTYPE` /
+  `NUMBER_PROTOTYPE` are gone); where a program can obtain a prototype (`obtainsPrototypes`) a primitive's read goes
+  through the realm's prototype object and a write of a key found there aborts; the intercepted
+  `Object.prototype.toString.call` aborts if the program replaced Object.prototype.toString. `dyn.object_tag` reads a
+  wrapper's kind through its slot. `new X` answers the carrier in the `+` analysis (`construct` leaf).
+- from-ast: net 0 (the `construct` leaf +1; `Number(v)`'s lane arm moved to `function-object-lowering.ts`
+  `preparedToNumber`).
+
+### Cast / test sites checked for the extensible `$Object` (lead condition)
+
+- `native-builtin-functions.ts` refused an extensible ordinary carrier ("plain storage lookup cannot stand in for an
+  exotic carrier's own-property method"): relaxed only where the realm holds the wrappers, whose own properties are all
+  stored. This is the one site touched.
+- Every other kernel / source-object body casts to `$Object` (`ref.cast`, which accepts the subtype) or tests it as
+  "is ordinary" (`ref.test`, true for a wrapper: a wrapper is an ordinary object with a slot, as intended). No
+  `br_on_cast` on `$Object` exists on this path; no `struct.new $Object` reads a wrapper. Function entries are
+  distinct closure types, unaffected.
+
+### Refuses / aborts (each sound)
+
+Unheld statics and prototype methods (`String.fromCharCode`, `Object.keys`, `"a".charAt`): refusal by name where
+every kind refuses, else the abort; a constructor through a variable (`var C = String; new C()`): the dispatcher's
+built-in abort; `Number.prototype.toString(radix)`: abort; `Object.prototype.constructor`: abort (not seeded);
+`==` with a wrapper: refused as all loose equality; `var String;`: refused by name (G1's S1 rule now covers the four);
+`'a'.valueOf()` on a statically typed string, `(1).toString()`: from-ast's typed refusals, unchanged; a sloppy method
+on String.prototype called on a primitive: the existing C2-D3 abort.
+
+### Proof (local node 22)
+
+- Probes (`.tmp/w2a.json` 92 + `.tmp/w2c.json` 40, each against node with a wrong twin, chunks of 10 programs per
+  process): head 59+33 OK, 0 WRONG, 0 twin failures, 0 invalid, 0 EXC; base → head on the 92: REFUSED→OK 56,
+  REFUSED→REFUSED 27, REFUSED→ABORT 5 (the designed aborts above), OK→OK 2, ABORT→OK 1, EXC→REFUSED 1 (`var String;`,
+  a verifier exception on the base).
+- The probe driver throws invariant errors with message "r" (`verifier-failure`, `invalid-host-capability-catalog`,
+  duplicate module binding) after ~20 compiles in one process, on the base too; each such program compiles and agrees
+  when run alone. Not investigated.
+- Tests (each alone, one fork): `issue-7354-w2-wrappers` (new) 24; g1-error-values 14, g1-refusals-and-aborts 14,
+  g1-spelled-names 17, g1-assert-throws 5, c2-constructors 19, c2-this 18, p1-method-values 19, p1-own-property 18,
+  o1-define-property 30, o1-create-and-define-properties 14, o2-accessors 43, o2-object-values 12, m-refusals 43,
+  m-prototype-premise 18, t2-typeof-standard-globals 16, ty-typeof-comparisons 57, u-prelude 3; 3518
+  native-realm-requirements 25, native-object-realm-declarations 21, ordinary-object-callable-contracts 61,
+  native-builtin-functions 36, native-primitive-wrapper-layouts 71, -storage 178, primitive-wrapper-bodies 185,
+  native-realm-wrapper-storage 24: all pass. Pins moved: premise routes (String/Number/Boolean/Object.prototype are
+  values now; `Object.getPrototypeOf` is an abort row), `typeof` of the four, O1's computed static and M1's G45
+  `Object.freeze` (a call through a value), the catalog's native list, `programObjects` (no constructor names).
+- Ordinary pipeline: 12 test262 files (wrappers, Object, operators, Error) × gc + standalone: 24/24 byte-identical
+  to the base.
+- Prelude + `assert(true);`: 81,397 B → 81,408 B (+11 B: the intrinsic getter's Object.prototype arm in a program
+  holding the Error family), 8.5 s → 8–10 s. Prelude + a `new String` program: 103,727 B, ~13 s (an earlier inline
+  design took 35 s and was replaced by the realm call).
+
+### Sample (the 59 rows of the 411 whose first error names String/Number/Boolean/Object; real runner, two runs)
+
+Base: 59 compile errors. Head: **22 pass**, 18 fail, 19 compile errors. Fails: 16 run-time aborts, almost all an
+unheld String.prototype method (`concat`, `trim`, `toLowerCase`, …) or `Object.preventExtensions` / `isFrozen`; one
+closure body the path cannot lower. Next compile blockers: `delete` 4, `Array` 3, computed member keys 3, RegExp
+literal 2, loose equality 2, `<` / `<=` on dynamic values 2, implicit dynamic flows 3. Sample passes not twin-checked.
+
+### Not verified
+
+Node 25; the full 3518/7354 suites beyond the files above; `check:prepared-bytes`; no adversarial review agent run.
