@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports as buildRuntimeImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileAndInstantiate(source: string) {
   const result = await compile(source);
@@ -19,11 +19,7 @@ async function compileAndInstantiate(source: string) {
   if (!WebAssembly.validate(result.binary)) {
     throw new Error(`Invalid Wasm binary (WebAssembly.validate failed)\nWAT:\n${result.wat}`);
   }
-  const runtimeResult = buildRuntimeImports(result.imports ?? [], undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, runtimeResult);
-  if (runtimeResult.setExports) {
-    runtimeResult.setExports(instance.exports as Record<string, Function>);
-  }
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, Function>;
 }
 
