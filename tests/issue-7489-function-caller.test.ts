@@ -29,18 +29,6 @@ var out = ${caught("s.caller")} + ${caught("s.caller = 1")};`,
 var out = (function () { "use strict"; return ${caught("s.caller")} + ${caught("s.caller = 1")}; })();`,
     ],
     [
-      "a sloppy declaration's and expression's own caller is null when not running",
-      `function g() {}
-var e = function () {};
-var out = String(g.caller) + String(e.caller) + String(g.hasOwnProperty("caller")) + String(e.hasOwnProperty("caller"));`,
-    ],
-    [
-      "a sloppy write is ignored, a strict write throws (read only)",
-      `function g() {}
-g.caller = 5;
-var out = String(g.caller) + (function () { "use strict"; return ${caught("g.caller = 1")}; })();`,
-    ],
-    [
       "a strict function owns no caller",
       `function s() { "use strict"; }
 var out = String(s.hasOwnProperty("caller"));`,
@@ -53,14 +41,45 @@ var out = ${caught("s()")};`,
   ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
 });
 
+// A sloppy function's `caller` is implementation-defined, and V8's answer has changed between node versions, so these
+// pin this model (node 22's: an own, read-only `null`) instead of the node that runs the test.
+const pinned = async (body: string, expected: string) => {
+  const asserting = (answer: string) => `${body}\nif (out !== ${JSON.stringify(answer)}) throw new Error(out);`;
+  expect(await runPrepared(asserting(expected), runnerOptions())).toBe("returned");
+  expect(await runPrepared(asserting(`${expected}!`), runnerOptions())).toBe("threw");
+};
+
 describe("#7489 A — the implementation-defined answer", () => {
   it(
-    "a sloppy caller reads null where V8 answers the calling function",
+    "a sloppy declaration's and expression's own caller is null when not running",
+    () =>
+      pinned(
+        `function g() {}
+var e = function () {};
+var out = String(g.caller) + String(e.caller) + String(g.hasOwnProperty("caller")) + String(e.hasOwnProperty("caller"));`,
+        "nullnulltruetrue",
+      ),
+    SLOW,
+  );
+
+  it(
+    "a sloppy write is ignored, a strict write throws (read only)",
+    () =>
+      pinned(
+        `function g() {}
+g.caller = 5;
+var out = String(g.caller) + (function () { "use strict"; return ${caught("g.caller = 1")}; })();`,
+        "nullTE",
+      ),
+    SLOW,
+  );
+
+  it(
+    "a sloppy caller reads null while it runs (node 22 answers the calling function)",
     async () => {
       const source = `function g() { return g.caller; }
 function h() { return g(); }
 if (h() !== null) throw new Error("caller");`;
-      expect(() => new Function(source)()).toThrow("caller");
       expect(await runPrepared(source, runnerOptions())).toBe("returned");
     },
     SLOW,
