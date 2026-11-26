@@ -1,10 +1,10 @@
 ---
 id: 7436
 title: "Prepared: source-closure requirements never settle, so every downstream currentness check re-derives per literal"
-status: suspended
+status: wont-fix
 sprint: current
 created: 2026-11-19
-updated: 2026-11-20
+updated: 2026-11-26
 priority: high
 horizon: s
 feasibility: easy
@@ -136,3 +136,13 @@ Source sha1 c70fb78b. 4-core box, one compile per process.
      with perf2's owner first).
   6. Open the PR with hold, stacked as needed, and say so in the body.
 - **Open review threads:** none.
+
+## Superseded (2026-11-26)
+
+Closed as superseded by #7354 Perf3–Perf6, merged to main on 2026-11-21/22. On
+main 6694a8b839, the full-prelude program (source sha1 c70fb78b, S1's `t3.mts`)
+compiles in 3.6–4.2 s, peak RSS about 580 MB, and the output runs. On
+2026-11-20 it took 1,002 s (base) and 475 s with #7436. Perf6 checks a native
+string plan as issued instead of re-planning it for each literal, which removes
+the per-literal re-derivation measured above. No PR was opened from this
+branch.
