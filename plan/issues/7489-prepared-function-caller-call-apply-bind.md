@@ -385,135 +385,199 @@ Branch `claude/s20-fn-call-apply` (stacked on slice A), measured against main
   seeding (`object-prototype-method`). `builtin-prototype-keys.ts`
   derives both prototypes' unpopulated keys with one helper.
 
-## Slice C plan: `bind` (2026-11-26)
+## Slice C plan: `bind` (2026-11-26, r1)
 
 Branch `claude/s20-fn-bind`, stacked on slice B (#7480).
 
+### Plan review r0 (PRV-7489C on fd56edfd) and how this plan answers it
+
+| finding | answer |
+|---|---|
+| 1 [[Prototype]] of a target that is not under %Function.prototype% (a NativeError constructor's is %Error%) | `js.object.bind` aborts at run time when the target's [[GetPrototypeOf]] is not %Function.prototype%; pinned (`TypeError.bind(null)`) (C.1) |
+| 2 no `return_call` inside the invocation boundary | none: the trampoline calls `apply-vector` and returns its result (C.2) |
+| 3 reuse the closure extension point | a bound function is a closure; one fixed lifted "bound trampoline" is one `NativeClosureMethodEntry`; no new dispatcher arm (C.2) |
+| 4 §20.2.3.2 order and arithmetic | HasOwnProperty(`length`) → Get(`length`) → Get(`name`), f64 arithmetic; the concat helper is named (C.1) |
+| 5 `bind(null)` keeps `null` | an absent `thisArg` is `undefined`; a given one, `null` included, is passed as is (C.3) |
+| 6 yield | ≤ 29, an estimate; per-file reading below |
+| 7 counts | corrected against `bind.txt` below |
+| 8 one prologue for `init-function` and `bind`; the concat in `argument-vector-bodies.ts` | C.1, C.2 |
+| C.5 | approved by the lead with the reviewer's conditions (a)–(d); C.5 below |
+
 ### Measured
 
-Slice B's head `38ef5af6` includes main `1a726b3e`. The census of `candidates.txt` (the Measurement commands) finds **30 files whose
-only blocker outside the harness is "member read 'bind' of a function"**. They are listed in `plan/log/7489-census/bind.txt`:
+The census of `candidates.txt` on slice B's head `38ef5af6` (main `1a726b3e`), using the Measurement commands, finds 30 files whose only blocker outside the harness is "member read 'bind' of a function" (`plan/log/7489-census/bind.txt`):
 
-- 10 trap in an abort body: the cluster's `15.3.5.4_2-70…73gs`, `-89…92gs` and `10.4.3-1-98(-s|gs)`.
-- 20 refuse at compile: `Function/prototype/bind/*` (12), `10.4.3-1-76…79(-s|gs)` (8). For a compile error the census
-  shows only the first gap, so these 20 are a ceiling. **Estimate: ≤ 30 files**; the measured count goes in the PR.
+- 10 trap in an abort body: `15.3.5.4_2-70…73gs`, `-89…92gs`, `10.4.3-1-98(-s|gs)`.
+- 20 refuse at compile:
+  - `Function/prototype/bind/*`: 11;
+  - `10.4.3-1-76…79(-s|gs)`: 8;
+  - `15.3.5.4_2-97gs`: 1.
 
-Not in this slice: the 2 slice-B cluster files `10.4.3-1-85(-s|gs)`. They call a sloppy `f` through `f.apply()` with no
-`this`, which needs the global object (`dynamicCurrentThis`, C2-D3). That belongs to the global object and top-level
-`this`, which are Session B's area, not `bind`.
+A compile error shows only its first gap.
+
+Per-file reading, i.e. what each needs past `bind`:
+
+| files | needs |
+|---|---|
+| `15.3.5.4_2-70…73gs`, `-89…92gs`, `-97gs` | a bound call (strict or sloppy target, `this` absent / `null` / `undefined` / object); slice A's `caller` |
+| `10.4.3-1-76…79(-s|gs)` | a strict target sees the bound `this` as is (`undefined`, `null`, `undefined`, an object) |
+| `10.4.3-1-98(-s|gs)` | a sloppy target bound to an object |
+| `bind/15.3.4.5-2-16` | `bind()` with no arguments, result unused |
+| `bind/15.3.4.5-8-1` | `typeof bf` is "function" |
+| `bind/15.3.4.5-16-2` | a write to a bound function creates an own property (`hasOwnProperty`) |
+| `bind/15.3.4.5-20-2`, `-20-3` | `bf.caller` read and write throw a TypeError (slice A's accessor) |
+| `bind/15.3.4.5-21-2`, `-21-3`, `S15.3.4.5_A2` | `bf.arguments` read and write throw a TypeError: C.5 |
+| `bind/S15.3.4.5_A1` | `bf.caller` read inside the target |
+| `bind/S15.3.4.5_A4` | leading and actual arguments; the bound call never reads the target's `apply` |
+| `bind/15.3.4.5-8-2` | **also** `Object.prototype.toString.call(bf)`: `toString` is not native, so it stays refused |
+
+**Estimate: ≤ 29 files** (30 minus `8-2`). The measured count goes in the PR.
+
+The 2 slice-B cluster files `10.4.3-1-85(-s|gs)` are not in this slice: a sloppy `f.apply()` with no `this` needs the global object (C2-D3), which is Session B's area.
 
 ### What JavaScript answers (§20.2.3.2, §10.4.1)
 
 - `F.bind(thisArg, …args)`:
-  - IsCallable(F), else a TypeError.
-  - BoundFunctionCreate: [[BoundTargetFunction]] F, [[BoundThis]], [[BoundArguments]], and [[Prototype]] =
-    F.[[GetPrototypeOf]]().
-  - `length` = max(0, L − args.length), where L is F's own `length` if it is a Number (ToIntegerOrInfinity), else 0.
-  - `name` = "bound " + F's `name` if it is a String, else "bound ".
-  - Both are non-writable, non-enumerable and configurable.
-- [[Call]]: Call(target, boundThis, boundArgs ++ args).
-- [[Construct]], only when the target is a constructor: Construct(target, boundArgs ++ args, newTarget), where
-  newTarget = target when it is F itself.
-- A bound function owns no `prototype`, `caller` or `arguments`. A read of `caller` or `arguments` reaches
-  Function.prototype's %ThrowTypeError% accessor, so it throws a TypeError (`15.3.4.5-20-*`, `-21-*`,
-  `BoundFunction_restricted-properties`).
+  1. IsCallable(F), else a TypeError.
+  2. BoundFunctionCreate(F, thisArg, args): [[Prototype]] = F.[[GetPrototypeOf]]().
+  3. HasOwnProperty(F, "length"). If true: Get(F, "length"). If it is a Number:
+     - +∞ stays +∞;
+     - −∞ gives 0;
+     - otherwise ToIntegerOrInfinity, then max(0, L − args.length).
+     Otherwise L is 0.
+  4. Get(F, "name"). If it is not a String, it becomes "". `name` = "bound " + that name.
+  5. `length` and `name` are non-writable, non-enumerable and configurable.
+- [[Call]]: Call(target, boundThis, boundArgs ++ args). [[Construct]] exists only when the target is a constructor.
+- A bound function owns no `prototype`, `caller` or `arguments`. Its `caller` / `arguments` reach Function.prototype's %ThrowTypeError% accessor.
 
 ### Implementation Plan
 
-**C.1 The value: one kernel layout for a bound function.**
-- **Where**: `src/runtime/wasmgc/values/bound-function-bodies.ts`, a new module classified in
-  `scripts/compiler-boundaries.json` like its sibling `source-function-object-bodies.ts`.
-- **Layout**: a closure-root subtype with fields `bag`, `target`, `boundThis` and `boundArgs` (the argument-vector
-  layout `argument-vector-bodies.ts` already owns).
-- **Behaviour that follows with no new code**:
-  - It is a function value to every existing kind test (`js.value.is_function`: a closure root).
-  - The kernel's `match` treats it like a source closure for its bag, so [[Get]] and [[Set]] find its own `length` and
-    `name`.
-  - Its [[Prototype]] is %Function.prototype%: every target on this path has that prototype, since no Prepared program
-    obtains another (M1, the premise test). So `bf.caller` / `bf.arguments` reach slice A's accessor.
-- **Constructor**: `js.object.bind(target, thisArg, argsVector) -> externref` (an ordinary-object callable, beside
-  `js.object.init-function`).
-  - It reads the target's `length` and `name` with the kernel's [[Get]]. That get already calls a source getter through
-    F2's dispatcher, for a program that redefined `length` with an accessor.
-  - It seeds the two properties with the builtin length/name seed (`buildFunctionLengthNameSeed`, "bound " prefix).
+**C.1 Creation: `js.object.bind(target, thisArg, argsVector) -> externref`.**
 
-**C.2 The call: one bound-function arm, shared by both dispatchers.**
-- `js.closure.call:<n>` (`closure-method-body.ts`) and `js.closure.apply-vector` (`closure-vector-apply-body.ts`) each
-  gain the same arm.
-- The arm matches the bound layout, builds `boundArgs ++ actual arguments` as one vector, and tail-calls
-  `apply-vector(target, boundThis, vector)`. A nested bound function recurses through apply-vector.
-- The arm comes from one builder in `bound-function-bodies.ts`, used by both dispatchers, as they already share
-  `buildNativeClosureMethodMatch` and `buildClosureInvocationFailure`.
-- The receiver the call installs is ignored, as [[Call]] requires.
+- **Where.** An ordinary-object callable, beside `js.object.init-function`:
+  - declaration in `src/ir/runtime/ordinary-object-callables.ts`;
+  - binding in `native-source-objects.ts`;
+  - body in a new `src/runtime/wasmgc/values/bound-function-bodies.ts`, classified in `scripts/compiler-boundaries.json` in the same commit by copying `source-function-object-bodies.ts`'s row.
+- **The value.** A closure of one fixed capture layout (`createClosureCaptureType`):
+  - field 0 is the bound trampoline's funcref (C.2), with closure arity 0;
+  - the bag;
+  - captures `target`, `boundThis` and `boundArgs` (the argument-vector type).
 
-**C.3 The call site: P1's shape, a sibling of `call` / `apply`.**
+  Because it is a source-closure-shaped value:
+  - every kind test answers "function" (`js.value.is_function` is a closure-root test);
+  - the kernel's `match` reads its bag;
+  - [[Get]] / [[Set]] / `hasOwnProperty` work on it (`16-2`, `20-*`).
+- **The shared prologue (finding 8).** Allocating the null-prototype bag, `$bag` set, and the length/name seed become one helper, `buildFunctionObjectPrologue`, in `source-function-object-bodies.ts`. `init-function` and `bind` both call it. `init-function` keeps its tail (own `caller`, `prototype`).
+- **[[Prototype]] (finding 1).**
+  - A bound function's [[Prototype]] is the closure's: %Function.prototype%.
+  - That is right only for a target whose [[GetPrototypeOf]] is %Function.prototype%. On Prepared, that holds for every source function, every Object.prototype / Function.prototype method, and %Error%.
+  - It does not hold for a NativeError constructor, whose prototype is %Error%.
+  - So `bind`'s first step after IsCallable compares the target's prototype (the kernel's `getPrototypeOf`) with the %Function.prototype% singleton and takes the run-time abort when they differ. A pin covers it: `TypeError.bind(null)` aborts.
+- **`length` / `name` (finding 4)**, in this order, with the kernel's own roles:
+  1. `has-own(target, "length")`. If true, [[Get]] of it. If the result is a Number, f64:
+     - `+∞` stays;
+     - `−∞` or NaN gives 0;
+     - otherwise `f64.trunc`, then `max(0, L − n)`, which gives `+0` for `−0`.
+  2. [[Get]] of `name`. If it is not a string, use `""`. Then concatenate "bound " with it.
+
+  [[Get]] is the kernel's, which calls a source getter through F2's dispatcher. A program can redefine `length` with an accessor; its getter then runs, and may throw, at this step, as in the specification.
+
+**C.2 Calling: one bound trampoline, one `NativeClosureMethodEntry` (findings 2, 3).**
+
+- **The trampoline.** A fixed lifted function `(self) -> externref` in `bound-function-bodies.ts`:
+  1. read `target`, `boundThis` and `boundArgs` from `self`;
+  2. build `boundArgs ++ actual arguments` with the new `buildArgumentVectorConcat` in `argument-vector-bodies.ts`. With closure arity 0, every actual argument is in the dispatcher's extras vector and `argc`;
+  3. return `apply-vector(target, boundThis, vector)`.
+
+  It is a plain call, not `return_call`, so the invocation boundary's restore of `this` / `argc` / extras runs.
+- **Registration.** `native-invocation.ts`'s `entries()` adds the trampoline's entry where the realm holds `bind`:
+  - allocation type: the bound layout;
+  - `closureArity` 0;
+  - result: an externref value.
+
+  Both dispatchers (`js.closure.call:<n>`, `apply-vector`) then reach it through their existing per-entry match. `closure-method-body.ts` and `closure-vector-apply-body.ts` are unchanged.
+- **The receiver.** The receiver the dispatcher installs is ignored, as [[Call]] requires. A nested bound function recurses through `apply-vector`.
+
+**C.3 The call site: P1's shape, the sibling of `call` / `apply`.**
+
 - `bind` joins `NATIVE_FUNCTION_PROTOTYPE_METHODS`.
-- `f.bind(t, …a)`, where the value read is the realm's built-in, becomes:
-  1. IsCallable of the receiver (`holds` over `function`), else a TypeError, as `apply` does;
-  2. then the realm call `js.object.bind(f, t ?? undefined, vec(a))`.
-- `invoke`/`apply`/`bind` in `dynamic-prototype-methods.ts` share the receiver/argument unpacking. Today `call` and
-  `apply` each destructure `instr.args` by hand; a third copy would be duplication, so the three take one helper.
+- `f.bind(…)` whose callee is the realm's built-in becomes:
+  1. IsCallable of the receiver (`holds` over `function`), else `throwingArm`'s TypeError;
+  2. then `js.object.bind(f, thisArg, vec(rest))`.
+- **`thisArg` (finding 5).** An absent one is `undefined`. A given one is passed as is, so `bind(null)` keeps `null`.
+- **Shared unpacking.** `call`, `apply` and `bind` share one unpacking of `instr.args` into receiver, `thisArg` and rest. Today `invoke` and `apply` each destructure by hand.
 
-**C.4 What a bound function does not do yet: run-time abort, never a wrong answer.**
-- `new bf(…)` and `x instanceof bf`: today `dynamicConstruct` / `dynamicInstanceOf` read `bf.prototype` (absent) and
-  would call the dispatcher with the new object as receiver, which the bound arm ignores. Both get a bound test
-  (`js.object.is-bound-function`, a `ref.test` of the layout) whose arm is the run-time abort.
-- [[Construct]] through the target (§10.4.1.2) is its own later step; the estimate counts no file that needs it.
+**C.4 What a bound function does not do yet: run-time abort.**
 
-**C.5 Question for the plan reviewer: `arguments` on a bound function (3 files: `S15.3.4.5_A2`, `15.3.4.5-21-2`,
-`-21-3`).**
-- `bf.arguments` must throw the accessor's TypeError. Slice A refuses `arguments` by name at select for every function
-  value, because a sloppy plain function's V8 `arguments` is its live arguments object.
-- Option:
-  - replace the select-time refusal with a run-time split on the receiver: a function that owns `caller` (a sloppy
-    plain function: slice A's model, `js.object.has-own`) takes the run-time abort;
-  - every other function takes the realm's [[Get]], which is the accessor's TypeError.
-- Never a wrong answer, but it changes slice A's binding rule ("refused by name at select in every function arm"). So
-  it is done only with the lead's approval. Without it, those 3 files stay refused and the estimate drops to ≤ 27.
+- `new bf(…)` and `x instanceof bf`: `dynamicConstruct` / `dynamicInstanceOf` add a bound test, a `ref.test` of the bound layout through `js.object.is-bound-function`, whose arm is the abort.
+- [[Construct]] through the target is later work; no file in the estimate needs it.
+
+**C.5 `arguments` on a function: run-time split (approved by the lead, conditions (a)–(d)).**
+
+- **The predicate (b).** One predicate, `ownsSloppyCaller(value)`: `js.object.has-own(value, "caller")`. It is true exactly for slice A's own-caller rule (`plainFunction && !strict`, written only by `init-function`).
+  - The same function is the definition the IR's read and write arms test.
+  - A program that defines an own `caller` on a strict function makes it true too. That case takes the abort, which is conservative.
+- **Read and write (a).** Both arms of an access to `arguments` on a function value become:
+  - predicate true: the run-time abort, because a sloppy function's value is implementation-defined (V8: its live arguments object);
+  - otherwise: the realm's [[Get]] / [[Set]], whose accessor throws the TypeError.
+
+  The select-time refusal goes. Nothing is claimed and then withdrawn: the arm is chosen at run time, and the access is lowered in every case.
+- **Slice A's text and pins (c).** The issue's slice A section and `tests/issue-7489-function-caller.test.ts`'s "refusals that stay" become: sloppy `f.arguments` read and write abort; strict and bound read and write throw a TypeError. That gives one pin per function kind admitted on Prepared: sloppy declaration, sloppy expression, strict declaration, bound. Arrows, methods, generators and async functions still refuse before this site, so the existing refusal pins cover them.
+- (d) the lead's OK is given.
+
+**C.6 Carried-over wording.** RV7449's optional point: "V8's shape" becomes "node 22's" in `function-object-lowering.ts` and `source-function-object-bodies.ts`.
 
 ### Reuse and duplication
 
-- **Reuses**: `apply-vector` and its argument-vector layout; the builtin length/name seed; the kernel [[Get]]; P1/B's
-  call-site identity branch; `holds` / `typeErrorThen`; `buildNativeClosureMethodMatch`.
-- **Removes**: the hand-written argument unpacking of `call` / `apply` (C.3). The bound arm is written once and used by
-  both dispatchers (C.2).
+- **Reuses:**
+  - the closure capture layout and the `NativeClosureMethodEntry` extension point (no new dispatcher arm);
+  - `apply-vector`;
+  - the kernel's `has-own` / [[Get]] / `getPrototypeOf`;
+  - the length/name seed;
+  - P1/B's identity branch, `holds` and `throwingArm`.
+- **Removes:**
+  - the duplicate function-object prologue (`init-function` and `bind` share `buildFunctionObjectPrologue`);
+  - the hand-written argument unpacking of `call` / `apply`.
 
 ### Bytes
 
-- The bound layout, its dispatcher arms and `js.object.bind` are emitted only where the realm holds
-  %Function.prototype.bind%, i.e. where some use reads `bind`. Other Prepared programs' bytes are unchanged.
-- JS-environment and ordinary-pipeline output stay byte-identical, checked with the 170-compile digest.
+- The bound layout, its trampoline entry and `js.object.bind` are emitted only where the realm holds %Function.prototype.bind% (a use reads `bind`).
+- Other Prepared programs' bytes are unchanged.
+- JS-environment and ordinary-pipeline output stay byte-identical (the 170-compile digest).
 
-### Pins (`tests/issue-7489-function-bind.test.ts`)
+### Pins (`tests/issue-7489-function-bind.test.ts`; all fail on slice B's head)
 
-These fail on slice B's head unless marked otherwise.
-
-- **Agree with node**:
+- **Agree with node:**
   - `f.bind(o)()` binds `this`;
-  - leading and actual arguments concatenate;
-  - a strict `f.bind()()` sees `undefined`;
-  - nested `f.bind(a).bind(b)()` keeps `a`;
+  - a strict target sees an absent / `null` / `undefined` bound `this` as is;
+  - leading and actual arguments are concatenated;
+  - `f.bind(a).bind(b)()` keeps `a`;
   - `typeof bf`;
-  - `bf.length` with and without leading arguments, and `bf.name`;
+  - `bf.length` with 0, 1 and more leading arguments than parameters;
+  - `bf.name`;
   - `bf.hasOwnProperty("caller")` is false;
-  - `bf.caller` throws a TypeError;
+  - `bf.caller` and `bf.arguments`, read and write, throw a TypeError;
   - `bf.call(x)` ignores `x`;
-  - `x.bind` on a non-callable `o` with the realm's `bind` throws a TypeError.
-- **Abort**:
+  - a write to `bf` creates an own property;
+  - the realm's `bind` on a non-callable `o` throws a TypeError;
+  - a bound call does not read the target's `apply` (`S15.3.4.5_A4`).
+- **Abort:**
   - `new bf()`;
   - `x instanceof bf`;
-  - a sloppy bound target called with an `undefined` bound `this` (C2-D3).
-- **Outside this slice**: slice B's `o.bind` (the M1 premise pin) moves to a key the realm still lacks, `toString`.
+  - `TypeError.bind(null)` (finding 1);
+  - a sloppy target bound to `undefined` that reads `this` (C2-D3);
+  - sloppy `f.arguments` read and write (C.5).
+- **`length` order:** a target whose `length` is an accessor runs its getter once, before `name` is read.
+- **M1 premise:** slice B's `bind` routes move to `toString`, a key the realm still does not hold.
 
 ### Acceptance
 
 - Each pin fails on slice B's head and passes.
-- On the census of `candidates.txt`, no file goes pass → fail. The pass count of `bind.txt` is reported with the main
-  sha.
+- On the census of `candidates.txt`, no file goes pass → fail. The pass count of `bind.txt` is reported with the main sha.
 - Bytes as above.
 - Quality:
-  - one new module, `bound-function-bodies.ts`;
-  - the arm is built once for both dispatchers;
-  - the call-site unpacking is shared;
-  - no function over its budget without a reviewed grant;
-  - the adversarial review verdict goes in the PR body.
+  - one new module (`bound-function-bodies.ts`, classified);
+  - no new dispatcher arm;
+  - the prologue and the call-site unpacking are shared;
+  - no function over budget without a reviewed grant;
+  - the adversarial-review verdict goes in the PR body.
