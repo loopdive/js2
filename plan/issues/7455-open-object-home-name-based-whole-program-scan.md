@@ -109,8 +109,10 @@ After #7354 H2 the Prepared path's soundness depends on the two agreeing (#7457)
    - It includes a program per known difference form: `var f = 1` merging, a destructuring default, a
      `for (f in o)` head, a shorthand target, an aliased import.
 2. **Byte identity.**
-   - Prepared path: the test262 ES5 sample used by the IR census gives identical output sha1 before and after
-     each slice, and so does the full-prelude program. On main 41f0654e8c the full prelude is source sha1
+   - Prepared path: identical output sha1 before and after each slice on two inputs:
+     - the shared 411-row Prepared sample, `plan/samples/7354-o411.txt` with its tally script (branch
+       `claude/7354-o411-sample` 155b06691f; no second sample);
+     - the full-prelude program. On main 41f0654e8c the full prelude is source sha1
      c70fb78b → output 8708895d with `FN_STANDIN_C1=1`, and 6ea9a0d0 → 932570e5 without.
    - Ordinary pipeline: the `tests/equivalence/` corpus and the playground examples emit identical bytes.
      Every listed difference from slices 2 and 3 must be a classified fix, with a test.
