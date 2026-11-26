@@ -39,64 +39,83 @@ message `RangeError: Invalid string length`, and the check builder `buildNativeS
 (`src/codegen/native-string-length-limit.ts`). It applied them to repeat and pad only. This issue applies the same limit
 to every remaining builder.
 
-## Implementation Plan (2026-11-26, draft: needs the lead's decision D1)
+## Implementation Plan (2026-11-26, v2: answers PRV-7513's blocker on 34b37fcb)
 
-**Builders that compute a result length** (all in the native-string prelude, `ensureNativeStringHelpers`):
+**D1 = (A), decided by the lead on 2026-11-26.** One guard in the native-string prelude, called once where each
+kernel computes a result length. No per-call-site wrappers.
 
-- `__str_concat` (`native-strings-basics.ts`), which `+`, `String.prototype.concat`, templates and join reach;
-- `__str_concat_owned` (the IR owned-append fast path), plus `__str_buf_next_cap` and the legacy #1210
-  string-builder growth (`string-builder.ts`), which `+=` builder loops reach;
-- the batched `concat_many` helpers (`native-batched-concat.ts`), to be confirmed: they may call `__str_concat`;
-- `__str_replace` / `__str_replaceAll` (`native-strings-rewrite.ts`), result sizing.
+**The guard.** `__str_check_length(len: i32) -> i32` returns `len`, or throws `RangeError: Invalid string length`
+(#7460's message) when `len` exceeds `NATIVE_STRING_MAX_LENGTH` (2^30).
 
-**D1, the decision: where the throw lives.** The prelude is throw-free today. #7442 kept its checks in lazy providers
-for that reason: a throw registers the error constructor (a late import on the JS target, the in-module constructor in
-standalone) and the exception tag.
+- It reads `len` **unsigned** (`f64.convert_i32_u` into #7460's `buildNativeStringLengthCheck`), so a sum that wrapped
+  past 2^31 counts as too long.
+- `len` is in UTF-16 code units under both storages. `--utf8-storage`'s `Utf8String.len` is also the code-unit count
+  (`native-strings-core.ts`, `__str_utf8_to_flat`), so one limit covers both.
 
-- **(A) One guard in the prelude.** `__str_check_length(len: i32)` (or its sum form) throws `Invalid string length` when
-  the length exceeds `NATIVE_STRING_MAX_LENGTH`. Each kernel above calls it once, at the point where it computes the
-  result length.
-  - One site per kernel and no call-site changes; the cost is one compare per concat.
-  - **Bytes change in every module that emits the string prelude**: the guard function, the constructor or import,
-    and the tag. The size of that will be measured on the usual 100-file sample before I code it.
-- **(B) Lazy checked providers.** Like #7442's pad provider: a `…_checked` wrapper per kernel, materialized on first
-  use, with every call site switched to it.
-  - Bytes change only in modules that concatenate, but that is nearly every module that uses strings.
-  - About 60 `__str_concat` references and the IR concat resolver arms would have to switch, plus one more call per
-    concat.
+**Where it is checked: at the length computation, not the allocation (PRV item 5).** A ConsString stores `newLen`
+without allocating anything (`string-concat-bodies.ts`, the `newLen >= 64` arm). A check at `array.new` would never see
+the rope that carries a wrapped length; the next flatten would then trap or misread it. So the guard sits on the sum.
 
-**Measured, prototype of (A) (2026-11-26).** The prelude guard `__str_check_length(len: i32) -> i32` throws through
-#7460's `buildNativeStringLengthCheck` on an unsigned read, so a wrapped sum counts as too long; it is called once in
-`__str_concat` after the length sum. Base is #7460's head df9c70c9. The prototype throws `RangeError` for every row
-above except `replaceAll`, which has a kernel of its own.
+**Sums cannot wrap past the guard (PRV item 2).** Every string that exists is at most 2^30 code units, because every
+builder checks. So one add of two lengths is at most 2^31, which an unsigned read still holds exactly.
 
-- 100-file test262 sample, default pipeline. Every compiled module (83 per target) emits the string prelude.
+- `__str_concat`: one add, then the guard.
+- The batched `concat_many` kernel (`buildStringBatchedConcatDefinition`): the guard runs **after each add**. Then
+  four 2^30 lengths cannot wrap to 0, because the partial sum is checked before the next add.
+
+**Both emitters (PRV item 1).** The check goes in the shared body builders (`src/runtime/wasmgc/values/string-concat-bodies.ts`),
+with the guard passed in as a resource (`checkLengthIdx`, required, not optional).
+
+- **Legacy prelude** (`native-strings-basics.ts`) emits the guard function and passes it to both builders.
+- **IR / Prepared** (`src/backend/wasmgc/resources/native-string-output.ts` L330/L338): today its error resources
+  (`native-errors.ts`) reserve only a TypeError constructor and tag.
+  - The pack gains a RangeError reservation in the same shape as `newTypeError`, and a guard function the pack owns.
+  - The concat and batched bodies there get the same `checkLengthIdx`.
+  - One error family, two kinds; no second catalog.
+
+**No new host import (PRV item 3).**
+
+- The guard uses the in-module constructor on every target (`forceInModuleCtor: true`).
+- The guard is emitted inside `ensureNativeStringHelpers`. That function flushes pending late imports on entry, and
+  the guard adds none: no late-import shift happens mid-function, so no flush owner is needed.
+- Measured on a minimal `a + b` module, gc: the import list is unchanged (the 3 existing `env` string imports), and so
+  on standalone (0 imports).
+- `strictNoHostImports` uses the same in-module path. It is pinned by a row in the new test.
+
+**Kernels, completed list (PRV item 4).** Each one gets the guard where it computes a result length:
+
+- `__str_concat` and `concat_many`, as above. `+`, `String.prototype.concat`, templates and `Array.prototype.join` reach
+  them; join folds through `__str_concat` via `builtin-scaffold.ts` `emitStringJoinFold`, with no buffer sizing of its
+  own, so join needs no array-code change.
+- `__str_concat_owned`, `__str_buf_next_cap` and the legacy #1210 string-builder growth (`+=` loops);
+- `__str_replace`, `__str_replaceAll` and `__str_getSubstitution` (`native-strings-rewrite.ts`);
+- the `JSON.stringify` output length (`json-bodies.ts`, `L_OUTLEN`);
+- the regexp-vm replace result (`regexp-vm-arms.ts`).
+
+For each kernel, the PR body names the exact add the guard follows.
+
+**Measured cost (PRV item 7).** Prototype of the guard plus one call in `__str_concat`, base #7460 df9c70c9:
+
+- **100-file test262 sample**, default pipeline. All 83 compiled modules per target already emit the string prelude.
   - gc: +124 to +487 B, median +150 B (+0.06 % of a median 302 KB module).
   - standalone: +131 to +675 B, median +244 B (+0.17 %).
-- **A minimal string module**, `export function f(a: string, b: string): string { return a + b; }`:
-  - gc: 13,054 → 38,498 B (×2.9);
-  - standalone: 11,974 → 32,501 B (×2.7).
-
-  The throw pulls in the RangeError constructor and the error-object runtime, which the test262 modules already
-  carry but a small module does not. (B) costs the same as soon as a module concatenates, so the size question is not
-  A versus B; it is whether a concatenating module may pay for RangeError at all.
-
-**D1 decided (lead, 2026-11-26): (A).** The minimal-module measurement above was taken after that decision and is
-reported back to the lead before code. One guard and one call per kernel. B's byte scope is about the same in practice (concat is
-everywhere strings are), with far more sites and a wrapper call on the hottest string path.
-
-**Under either option:**
-- The guard reuses #7460's message and limit. With (A), `buildNativeStringLengthCheck` becomes the body of the prelude
-  guard instead of a second copy.
-- `.length` of a string built before the check (none, once every builder checks) needs no change.
-- Join is Session B's area (arrays). It is covered through `__str_concat` without touching array code; if it has its
-  own sizing, I tell the lead first.
+- **Minimal string module** (`f(a, b) { return a + b }`):
+  - gc: 13,054 → 38,498 B. Tags 0 → 2, functions 62 → 108, globals 11 → 39, imports unchanged (3).
+  - standalone: 11,974 → 32,501 B. Tags 0 → 2, functions 56 → 99, globals 11 → 39, imports 0 → 0.
+  - The growth is the error-object runtime that a RangeError needs. The test262 modules already carry it; a minimal
+    string module does not. This cost is reported to the lead. **Open: does the lead accept it?**
+- **Tests that pin imports, tags or minimal-module bytes:** found by running the prototype through 323 candidate test
+  files (the size / prelude / import / tag / recgroup suites, and every test asserting empty imports or byte bounds),
+  then comparing failures with base df9c70c9. The list goes here before code.
 
 **Acceptance.**
 
-- Every row of the table throws `RangeError` on gc and standalone, default and legacy, pinned by a test that fails on
-  main.
-- Below the limit, results are unchanged (the existing string suites and `tests/issue-7442-*`).
-- Bytes: under (A), the measured per-module growth is stated, and modules without strings are identical. Under (B),
-  only concatenating modules change.
-- Quality: one limit, one message, one check builder (#7460's), one guard call per kernel; no per-call-site copies.
+- Every row of the table throws `RangeError` on gc and standalone, default and legacy, plus a `--utf8-storage` row and
+  a `strictNoHostImports` row, pinned by a test that fails on main.
+- Below the limit, results are unchanged (the string suites and `tests/issue-7442-*`).
+- Bytes: the per-module growth above is listed in the PR; there are no new imports on any target.
+- Quality:
+  - one limit, one message, one check builder (#7460's);
+  - one guard, called once per kernel length computation;
+  - the guard passed to the shared body builders as a required resource;
+  - no per-call-site copies.
