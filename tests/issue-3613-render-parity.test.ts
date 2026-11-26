@@ -95,8 +95,9 @@ describe("#3613 both lanes render the SAME thrown payload identically", () => {
     const { kinds, text } = readThrownValue(caught, { instance });
     expect(text).toContain("PARITY-MARKER-42");
     expect(text).not.toContain("non-stringifiable payload");
-    // The error KIND must survive too — the runtime-negative verdict matches it.
-    expect(kinds).toEqual(["TypeError"]);
+    // The error KINDS must survive too — the runtime-negative verdict matches them. Its `name` and its
+    // `constructor.name`, as a host TypeError reads (below).
+    expect(kinds).toEqual(["TypeError", "TypeError"]);
   });
 
   it("the native renderer is the mechanism (removing it reproduces the opaque label)", async () => {

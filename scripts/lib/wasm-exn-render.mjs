@@ -86,25 +86,29 @@ function renderBufferText(chr, len) {
 }
 
 /**
- * (#7453) The error kind the module itself reads off a host-opaque payload: `__exn_render_kind` (published under the
- * `exceptionKindExport` harness opt-in) names an Error object's name or an error class's name into the render buffer,
- * and answers -1 for any other value. `undefined` when there is no kind, no export, or anything throws.
+ * (#7453) The error kinds the module itself reads off a host-opaque payload: `__exn_render_kind` (published under the
+ * `exceptionKindExport` harness opt-in) writes slot 0, the payload's `name`, and slot 1, its `constructor.name`, into
+ * the render buffer — the two a host value is read for (`thrownErrorKinds`) — and answers -1 for a slot with no
+ * string. Empty when there is no export, or when a slot throws (a throwing getter: the kinds were not read).
  *
- * @param {any} instance
+ * @param {any} module the instance (or `{ exports }` of a linked peer)
  * @param {any} payload
- * @returns {string | undefined}
+ * @returns {string[]}
  */
-function tryNativeExnKind(instance, payload) {
+function tryNativeExnKinds(module, payload) {
+  const kind = module?.exports?.__exn_render_kind;
+  const chr = module?.exports?.__exn_render_char;
+  if (typeof kind !== "function" || typeof chr !== "function") return [];
+  const kinds = [];
   try {
-    const kind = instance?.exports?.__exn_render_kind;
-    const chr = instance?.exports?.__exn_render_char;
-    if (typeof kind !== "function" || typeof chr !== "function") return undefined;
-    const len = kind(payload);
-    if (typeof len !== "number" || len < 0 || len > 65536) return undefined;
-    return renderBufferText(chr, len);
+    for (const slot of [0, 1]) {
+      const len = kind(payload, slot);
+      if (typeof len === "number" && len >= 0 && len <= 65536) kinds.push(renderBufferText(chr, len));
+    }
   } catch {
-    return undefined;
+    return [];
   }
+  return kinds;
 }
 
 /**
@@ -195,15 +199,15 @@ export function renderHostError(err, abortBodies = []) {
  * constructor is not an instance of it). A runtime-negative verdict compares these and never the message, so
  * `new Error("expected a TypeError")` is an `Error`.
  *
- * A host-opaque WasmGC payload has neither; its kind is then the one the module that rendered it answers
- * (`tryNativeExnKind`, #7453), never its rendered text: a thrown string or an object whose `toString` returns
- * "TypeError: x" has no kind.
+ * A host-opaque WasmGC payload has neither; its kinds are then the ones a module that knows its layout answers
+ * (`tryNativeExnKinds`, #7453) — the first of `modules` that answers any — never its rendered text: a thrown string
+ * or an object whose `toString` returns "TypeError: x" has no kind.
  *
  * @param {unknown} value
- * @param {any} [renderer] the instance (or `{ exports }` of a linked peer) whose `__exn_render_*` rendered it
+ * @param {readonly any[]} [modules] the instances (or `{ exports }` of linked peers) to ask, the one that rendered it first
  * @returns {string[]}
  */
-function thrownErrorKinds(value, renderer) {
+function thrownErrorKinds(value, modules = []) {
   if (value === null || typeof value !== "object") return [];
   let kinds;
   try {
@@ -212,9 +216,11 @@ function thrownErrorKinds(value, renderer) {
     // A throwing `name`/`constructor` getter: the kind was not read.
     return [];
   }
-  if (kinds.length > 0 || renderer === undefined) return kinds;
-  const kind = tryNativeExnKind(renderer, value);
-  return kind === undefined ? [] : [kind];
+  for (const module of modules) {
+    if (kinds.length > 0) break;
+    kinds = tryNativeExnKinds(module, value);
+  }
+  return kinds;
 }
 
 /** A value the reader could not read: no kind, and a text that says what was not read. */
@@ -224,11 +230,11 @@ function unread(text, observation) {
   return { kinds: [], text };
 }
 
-/** The reading of a payload whose text is known; `renderer` is the module that rendered it, if one did. */
-function payloadReading(payload, text, route, observation, renderer) {
+/** The reading of a payload whose text is known; `modules` are the ones to ask its kinds, as `thrownErrorKinds`. */
+function payloadReading(payload, text, route, observation, modules) {
   observation?.("text-route", route);
   observation?.("reader-text", text);
-  return { kinds: thrownErrorKinds(payload, renderer), text };
+  return { kinds: thrownErrorKinds(payload, modules), text };
 }
 
 /**
@@ -287,6 +293,10 @@ export function readThrownValue(error, { instance, peers = [], abortBodies = [],
     // (#2962) A host-opaque GC payload renders through the module's own
     // exports before falling back to the #2870 label; host-readable
     // primitives keep the direct String() path.
+    // Its kinds come from the module that rendered it first, then from every module that could have minted it
+    // (#7453) — asked whether or not any of them could render it.
+    const modules = [instance, ...peers.map((exports) => ({ exports }))];
+    const renderedBy = (renderer) => [renderer, ...modules.filter((module) => module !== renderer)];
     if (typeof payload === "object" || typeof payload === "function") {
       const native = tryNativeExnRender(instance, payload);
       observation?.("consumer-native", native);
@@ -295,24 +305,24 @@ export function readThrownValue(error, { instance, peers = [], abortBodies = [],
       // `toString` lives on the provider's prototype. Treat that answer as
       // "not mine" when a linked peer can do better.
       if (native != null && (native !== "[object Object]" || peers.length === 0))
-        return payloadReading(payload, native, "consumer-native", observation, instance);
+        return payloadReading(payload, native, "consumer-native", observation, modules);
       // (#6723) A STANDALONE linked row: the payload may be minted by the
       // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
       // layout only the provider's own `__exn_render_*` exports can read.
       let generic = native == null ? undefined : { text: native, renderer: instance };
       let peerOrdinal = 0;
-      for (const peer of peers) {
-        const renderer = { exports: peer };
+      for (const renderer of modules.slice(1)) {
         const viaPeer = tryNativeExnRender(renderer, payload);
         observation?.("linked-peer-ordinal", ++peerOrdinal);
         observation?.("linked-peer-native", viaPeer);
         if (viaPeer != null && viaPeer !== "[object Object]")
-          return payloadReading(payload, viaPeer, "linked-peer-native", observation, renderer);
+          return payloadReading(payload, viaPeer, "linked-peer-native", observation, renderedBy(renderer));
         if (viaPeer != null) generic ??= { text: viaPeer, renderer };
       }
-      if (generic) return payloadReading(payload, generic.text, "generic-native", observation, generic.renderer);
+      if (generic)
+        return payloadReading(payload, generic.text, "generic-native", observation, renderedBy(generic.renderer));
     }
-    return payloadReading(payload, safeStringifyThrown(payload), "payload-safe-stringification", observation);
+    return payloadReading(payload, safeStringifyThrown(payload), "payload-safe-stringification", observation, modules);
   }
   if (error instanceof Error) {
     observation?.("exception-kind", "host-Error");

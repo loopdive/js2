@@ -4933,6 +4933,8 @@ export async function runSyntheticTest262File(
       // 6–19 false-positive `compile_error` failures per validator run depending on the
       // sample. Aligning the flag eliminates the entire TS-checker non-determinism cluster.
       skipSemanticDiagnostics: true,
+      // (#7453) The runtime-negative verdict reads a thrown payload's kinds through `__exn_render_kind`.
+      exceptionKindExport: true,
     });
     compileMs = performance.now() - compileStart;
 
@@ -5099,7 +5101,7 @@ export async function runSyntheticTest262File(
     // `__module_init` now that `setInstance` has wired the runtime. Inside the
     // same try as instantiate + test(), so a top-level throw keeps the exact
     // classification it had when it surfaced from the `(start)` section
-    // (runtime-negative → pass, else fail — see the catch below).
+    // (the runtime-negative verdict, else fail — see the catch below).
     const moduleInit = (instance.exports as any).__module_init;
     if (typeof moduleInit === "function") {
       moduleInit();
@@ -5307,12 +5309,6 @@ export async function runSyntheticTest262File(
       executeMs: round2(executeMs),
     };
 
-    if (isRuntimeNegative) {
-      // Runtime negative test: execution threw/trapped — this is the expected
-      // behavior. The test passes.
-      return { file: relPath, category, status: "pass", timing, wasm_sha };
-    }
-
     // WebAssembly.CompileError / LinkError during instantiation is a true
     // compile/link failure, not a test failure. Distinguish from
     // `WebAssembly.Exception`, which is a runtime throw from the start
@@ -5340,6 +5336,23 @@ export async function runSyntheticTest262File(
         wasm_sha,
         hardError: true,
         hardErrorKind: "malformed_wasm",
+      };
+    }
+    // (#7459) A runtime negative passes only on a throw of the expected type, by the rule every lane asks.
+    if (isRuntimeNegative) {
+      const thrown = readThrownValue(err, { instance });
+      const accepted = runtimeNegativeThrowAccepted(err, thrown, {
+        expectedErrorType: meta.negative!.type,
+        prepared: false,
+      });
+      if (accepted) return { file: relPath, category, status: "pass", timing, wasm_sha };
+      return {
+        file: relPath,
+        category,
+        status: "fail",
+        error: `expected runtime ${meta.negative!.type}, got: ${enrichErrorMessage(thrown.text, err, result.sourceMap, bodyLineOffset)}`,
+        timing,
+        wasm_sha,
       };
     }
     // (#1155) Use extractWasmExceptionMessage so a `WebAssembly.Exception`

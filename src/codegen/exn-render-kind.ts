@@ -1,105 +1,262 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7453) The error KIND of a thrown payload, for a JS-side harness that must
+ * (#7453) The error KINDS of a thrown payload, for a JS-side harness that must
  * tell an Error object from any other thrown value.
  *
  * A natively-thrown payload is a WasmGC ref the host cannot inspect, so the
- * test262 runtime-negative verdict took the kind from the module's own
- * `String(payload)` (`__exn_render_*`) up to the first `": "` — and then
- * `throw "TypeError: x"`, or an object whose `toString` returns that text, read
- * as a TypeError. `__exn_render_kind(payload: externref) -> i32` answers what
- * the harness reads off a host value (`name`, `constructor.name`) through the
- * render buffer `__exn_render_char` reads:
+ * harness cannot read the two kinds it reads off a host value — `value.name`
+ * and `value.constructor.name`. `__exn_render_kind(payload: externref, slot:
+ * i32) -> i32` answers them, one slot each, through the render buffer
+ * `__exn_render_char` reads, or -1 when that slot has no string answer:
  *
- *   - `$Error_struct`         → its name (§20.5.3.4 step 3: the `name` field
- *                               when it is a string, else "Error")
- *   - a nominal instance      → its constructor: the `$__fnctor_F` struct of
- *                               a `new F()`, or a class's struct
- *   - an open `$Object`       → `[[Get]](o, "constructor").name` through the
- *                               module's own `__extern_get` (the harness's
- *                               `new Test262Error()` is one, its prototype
- *                               carrying the `toString`)
- *   - anything else (a string, a number, null), or no string name → -1: no kind
+ *   slot 0 (`name`):
+ *     - `$Error_struct`   → its `name` field when it is a string
+ *     - any other object  → `[[Get]](o, "name")` through the module's own
+ *                           `__extern_get`, when it has one
+ *   slot 1 (`constructor.name`):
+ *     - `$Error_struct`   → a user subclass's class (its `$userClassId` brand),
+ *                           else the builtin constructor its `$tag` names (a
+ *                           `Test262Error` sharing the `Error` tag by name)
+ *     - a class instance  → its class, by the `__tag` brand: exact for a
+ *                           subclass or a same-layout sibling, which a
+ *                           structural `ref.test` cannot tell apart
+ *     - any other object  → `[[Get]]([[Get]](o, "constructor"), "name")`
+ *                           through `__extern_get`; a module without one names
+ *                           a `new F()` instance by its `$__fnctor_F` struct
+ *                           when no other struct shares that layout
  *
- * Published only under the `exceptionKindExport` harness opt-in.
+ * A primitive (a string, a number) has no kind in either slot. Published only
+ * under the `exceptionKindExport` harness opt-in.
  */
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { Instr } from "../ir/types.js";
+import { BUILTIN_TYPE_TAGS } from "./builtin-tags.js";
+import { layoutTwins } from "./class-arm-tag-guard.js";
 import type { CodegenContext } from "./context/types.js";
 import { storeAndReturnLen } from "./exn-render-lite.js";
 import { COLD_TAIL_SUFFIX } from "./fnctor-cold-tail.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { userErrorCtorNames, WASI_ERROR_NAMES } from "./registry/error-names.js";
 import { addFuncType } from "./registry/types.js";
 
 const FNCTOR_PREFIX = "__fnctor_";
+/** `$Error_struct` fields read here (see `getOrRegisterErrorStructType`). */
+const ERROR_TAG_FIELD = 0;
+const ERROR_NAME_FIELD = 2;
+const ERROR_USER_CLASS_FIELD = 4;
 
-/** The nominal instance structs and their constructors' names: every `new F()` layout, then every class. */
-function constructorKinds(ctx: CodegenContext): { typeIdx: number; name: string }[] {
-  const kinds: { typeIdx: number; name: string }[] = [];
-  for (const [structName, typeIdx] of ctx.structMap)
-    if (structName.startsWith(FNCTOR_PREFIX) && !structName.endsWith(COLD_TAIL_SUFFIX))
-      kinds.push({ typeIdx, name: structName.slice(FNCTOR_PREFIX.length) });
-  for (const [typeIdx, structName] of ctx.typeIdxToStructName)
-    if (typeIdx !== ctx.errorStructTypeIdx && ctx.classSet.has(structName)) kinds.push({ typeIdx, name: structName });
-  return kinds;
+// `__exn_render_kind`'s params and locals.
+const L_PAYLOAD = 0;
+const L_SLOT = 1;
+const L_TMP = 2; // anyref
+const L_BRAND = 3; // i32
+
+const payload: Instr[] = [{ op: "local.get", index: L_PAYLOAD }, { op: "any.convert_extern" }];
+
+/** What every arm shares: the store-and-return tail, the helpers it calls, and the nominal structs it names. */
+interface KindEmit {
+  ctx: CodegenContext;
+  store: Instr[];
+  flattenIdx: number;
+  strEqualsIdx: number;
+  externGetIdx: number | undefined;
+  classes: { typeIdx: number; tag: number }[];
+  fnctors: { typeIdx: number; structName: string; name: string }[];
 }
 
-/**
- * §20.5.3.4 steps 3–4 on the `$Error_struct` ref on the stack: its `name` field
- * when that is a native string, else "Error". `tmp` is an `anyref` local.
- */
-export function errorStructNameInstrs(ctx: CodegenContext, errStructIdx: number, tmp: number): Instr[] {
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
-  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
-  return [
-    { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 2 }, // $name (externref)
-    { op: "any.convert_extern" },
-    { op: "local.tee", index: tmp },
-    { op: "ref.test", typeIdx: anyStrTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: strRef },
-      then: [
-        { op: "local.get", index: tmp },
-        { op: "ref.cast", typeIdx: anyStrTypeIdx },
-      ],
-      else: nativeStringLiteralInstrs(ctx, "Error"),
-    },
-  ];
+/** `then` when the payload is a `typeIdx` ref. */
+function ifPayloadIs(typeIdx: number, then: Instr[]): Instr[] {
+  return [...payload, { op: "ref.test", typeIdx }, { op: "if", blockType: { kind: "empty" }, then }];
 }
 
-/** `[[Get]](o, "constructor").name` of the `$Object` payload, when the module has the object runtime. */
-function objectConstructorNameArm(ctx: CodegenContext, store: Instr[]): Instr[] {
-  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
-  const externGetIdx = ctx.funcMap.get("__extern_get");
-  if (objectTypeIdx === undefined || externGetIdx === undefined) return [];
-  const get = (key: string): Instr[] => [
-    ...nativeStringLiteralInstrs(ctx, key),
-    { op: "extern.convert_any" },
-    { op: "call", funcIdx: externGetIdx },
-  ];
+/** Store the anyref on the stack and return, when it is a native string. */
+function storeIfString(k: KindEmit): Instr[] {
+  const anyStr = k.ctx.anyStrTypeIdx;
   return [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: objectTypeIdx },
+    { op: "local.tee", index: L_TMP },
+    { op: "ref.test", typeIdx: anyStr },
     {
       op: "if",
       blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: L_TMP }, { op: "ref.cast", typeIdx: anyStr }, ...k.store],
+    },
+  ];
+}
+
+/** Store `name` and return when the i32 on the stack is non-zero. */
+function storeNameIf(k: KindEmit, name: string): Instr[] {
+  return [{ op: "if", blockType: { kind: "empty" }, then: [...nativeStringLiteralInstrs(k.ctx, name), ...k.store] }];
+}
+
+/** Store `name` and return when the i32 on the stack is `tag`. */
+function storeIfTag(k: KindEmit, tag: number, name: string): Instr[] {
+  return [{ op: "i32.const", value: tag }, { op: "i32.eq" }, ...storeNameIf(k, name)];
+}
+
+/** `[[Get]](payload, keys[0])…[[Get]](…, keys[n])`, stored when it is a string. */
+function getChainArm(k: KindEmit, externGetIdx: number, keys: string[]): Instr[] {
+  const chain: Instr[] = [{ op: "local.get", index: L_PAYLOAD }];
+  for (const key of keys)
+    chain.push(
+      ...nativeStringLiteralInstrs(k.ctx, key),
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: externGetIdx },
+    );
+  return [...chain, { op: "any.convert_extern" }, ...storeIfString(k)];
+}
+
+/** Every tagged class struct no non-class struct shares a layout with: its `__tag` field names it exactly. */
+function brandedClasses(ctx: CodegenContext): KindEmit["classes"] {
+  const isBranded = (name: string) => ctx.classTagMap.has(name) && ctx.structFields.get(name)?.[0]?.name === "__tag";
+  const classes: KindEmit["classes"] = [];
+  for (const [name, tag] of ctx.classTagMap) {
+    const typeIdx = ctx.structMap.get(name);
+    if (typeIdx !== undefined && isBranded(name) && [...layoutTwins(ctx, name)].every(isBranded))
+      classes.push({ typeIdx, tag });
+  }
+  return classes;
+}
+
+/** The `new F()` structs, as `F`. */
+function fnctorStructs(ctx: CodegenContext): KindEmit["fnctors"] {
+  const structs: KindEmit["fnctors"] = [];
+  for (const [structName, typeIdx] of ctx.structMap)
+    if (structName.startsWith(FNCTOR_PREFIX) && !structName.endsWith(COLD_TAIL_SUFFIX))
+      structs.push({ typeIdx, structName, name: structName.slice(FNCTOR_PREFIX.length) });
+  return structs;
+}
+
+/** `then` when the payload is an object `[[Get]]` reads: an open `$Object`, a `new F()` instance or a class instance. */
+function ifPayloadIsObject(k: KindEmit, then: Instr[]): Instr[] {
+  const types = new Set<number>([...k.fnctors.map((s) => s.typeIdx), ...k.classes.map((c) => c.typeIdx)]);
+  const objectTypeIdx = k.ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (objectTypeIdx !== undefined) types.add(objectTypeIdx);
+  if (types.size === 0) return [];
+  const test = [...types].flatMap((typeIdx, i): Instr[] => [
+    ...payload,
+    { op: "ref.test", typeIdx },
+    ...(i === 0 ? [] : [{ op: "i32.or" } as const]),
+  ]);
+  return [...test, { op: "if", blockType: { kind: "empty" }, then }];
+}
+
+/** Slot 0: the payload's `name`. */
+function nameSlotArms(k: KindEmit): Instr[] {
+  const err = k.ctx.errorStructTypeIdx;
+  const arms: Instr[] =
+    err < 0
+      ? []
+      : ifPayloadIs(err, [
+          ...payload,
+          { op: "ref.cast", typeIdx: err },
+          { op: "struct.get", typeIdx: err, fieldIdx: ERROR_NAME_FIELD },
+          { op: "any.convert_extern" },
+          ...storeIfString(k),
+          { op: "i32.const", value: -1 },
+          { op: "return" },
+        ]);
+  if (k.externGetIdx !== undefined) arms.push(...ifPayloadIsObject(k, getChainArm(k, k.externGetIdx, ["name"])));
+  return arms;
+}
+
+/**
+ * An `$Error_struct` no user subclass branded: the builtin constructor its `$tag` names. A user error constructor
+ * lowered to an `$Error_struct` (`Test262Error`) shares the `Error` tag, so where the module has one the `name` field
+ * tells which constructed it — as `fillExternGetErrorProps` answers `e.constructor`.
+ */
+function builtinConstructorArms(k: KindEmit, errField: (fieldIdx: number) => Instr[]): Instr[] {
+  const sharingError = userErrorCtorNames(k.ctx);
+  const nameFieldIs = (name: string): Instr[] => [
+    ...errField(ERROR_NAME_FIELD),
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: L_TMP },
+    { op: "ref.test", typeIdx: k.ctx.anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
       then: [
-        { op: "local.get", index: 0 },
-        ...get("constructor"),
-        ...get("name"),
-        { op: "any.convert_extern" },
-        { op: "local.tee", index: 1 },
-        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        { op: "local.get", index: L_TMP },
+        { op: "ref.cast", typeIdx: k.ctx.anyStrTypeIdx },
+        { op: "call", funcIdx: k.flattenIdx },
+        ...nativeStringLiteralInstrs(k.ctx, name),
+        { op: "call", funcIdx: k.strEqualsIdx },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    ...storeNameIf(k, name),
+  ];
+  const arms: Instr[] = [];
+  for (const name of WASI_ERROR_NAMES) {
+    arms.push(...errField(ERROR_TAG_FIELD));
+    if (name !== "Error" || sharingError.length === 0) arms.push(...storeIfTag(k, BUILTIN_TYPE_TAGS[name], name));
+    else
+      arms.push(
+        { op: "i32.const", value: BUILTIN_TYPE_TAGS.Error },
+        { op: "i32.eq" },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "local.get", index: 1 }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }, ...store],
+          then: [...sharingError, "Error"].flatMap(nameFieldIs),
         },
+      );
+  }
+  return arms;
+}
+
+/**
+ * Leave the payload's class brand on the stack: an `$Error_struct`'s `$userClassId` (answering its builtin
+ * constructor first when it has none), a class instance's `__tag`, else -1.
+ */
+function classBrand(k: KindEmit): Instr[] {
+  let brand: Instr[] = [{ op: "i32.const", value: -1 }];
+  for (const { typeIdx } of k.classes)
+    brand = [
+      ...payload,
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [...payload, { op: "ref.cast", typeIdx }, { op: "struct.get", typeIdx, fieldIdx: 0 }],
+        else: brand,
+      },
+    ];
+  const err = k.ctx.errorStructTypeIdx;
+  if (err < 0) return brand;
+  const errField = (fieldIdx: number): Instr[] => [
+    ...payload,
+    { op: "ref.cast", typeIdx: err },
+    { op: "struct.get", typeIdx: err, fieldIdx },
+  ];
+  return [
+    ...payload,
+    { op: "ref.test", typeIdx: err },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        ...errField(ERROR_USER_CLASS_FIELD),
+        { op: "local.tee", index: L_BRAND },
+        { op: "i32.const", value: -1 },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: builtinConstructorArms(k, errField) },
+        { op: "local.get", index: L_BRAND },
       ],
+      else: brand,
     },
   ];
+}
+
+/** Slot 1: the payload's `constructor.name`. */
+function constructorSlotArms(k: KindEmit): Instr[] {
+  const arms: Instr[] = [...classBrand(k), { op: "local.set", index: L_BRAND }];
+  for (const [name, tag] of k.ctx.classTagMap)
+    arms.push({ op: "local.get", index: L_BRAND }, ...storeIfTag(k, tag, name));
+  if (k.externGetIdx !== undefined)
+    return [...arms, ...ifPayloadIsObject(k, getChainArm(k, k.externGetIdx, ["constructor", "name"]))];
+  for (const { typeIdx, structName, name } of k.fnctors)
+    if (layoutTwins(k.ctx, structName).next().done)
+      arms.push(...ifPayloadIs(typeIdx, [...nativeStringLiteralInstrs(k.ctx, name), ...k.store]));
+  return arms;
 }
 
 /**
@@ -113,43 +270,38 @@ export function exnRenderKindBody(
   flattenIdx: number,
   flatTypeIdx: number,
 ): Instr[] {
-  const payload: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }];
-  const kindArm = (typeIdx: number, nameInstrs: Instr[]): Instr[] => [
-    ...payload,
-    { op: "ref.test", typeIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [...nameInstrs, ...storeAndReturnLen(flattenIdx, bufGlobalIdx, flatTypeIdx)],
-    },
+  const k: KindEmit = {
+    ctx,
+    store: storeAndReturnLen(flattenIdx, bufGlobalIdx, flatTypeIdx),
+    flattenIdx,
+    // Emitted with the string runtime `emitExceptionRenderExports` requires.
+    strEqualsIdx: ctx.nativeStrHelpers.get("__str_equals")!,
+    externGetIdx: ctx.funcMap.get("__extern_get"),
+    classes: brandedClasses(ctx),
+    fnctors: fnctorStructs(ctx),
+  };
+  return [
+    { op: "local.get", index: L_SLOT },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: nameSlotArms(k), else: constructorSlotArms(k) },
+    { op: "i32.const", value: -1 },
   ];
-  const errStructIdx = ctx.errorStructTypeIdx;
-  const body: Instr[] =
-    errStructIdx < 0
-      ? []
-      : kindArm(errStructIdx, [
-          ...payload,
-          { op: "ref.cast", typeIdx: errStructIdx },
-          ...errorStructNameInstrs(ctx, errStructIdx, 1),
-        ]);
-  for (const { typeIdx, name } of constructorKinds(ctx))
-    body.push(...kindArm(typeIdx, nativeStringLiteralInstrs(ctx, name)));
-  body.push(...objectConstructorNameArm(ctx, storeAndReturnLen(flattenIdx, bufGlobalIdx, flatTypeIdx)));
-  body.push({ op: "i32.const", value: -1 });
-  return body;
 }
 
 /** Mint and export `__exn_render_kind` with a body from `exnRenderKindBody`. */
 export function pushExnRenderKindExport(ctx: CodegenContext, body: Instr[]): void {
-  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$exn_render_prepare_type");
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "i32" }]);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__exn_render_kind", funcIdx);
   pushDefinedFunc(ctx, funcIdx, {
     name: "__exn_render_kind",
     typeIdx,
-    locals: [{ name: "tmp", type: { kind: "anyref" } }],
+    locals: [
+      { name: "tmp", type: { kind: "anyref" } },
+      { name: "brand", type: { kind: "i32" } },
+    ],
     body,
     exported: true,
-  } as WasmFunction);
+  });
   ctx.mod.exports.push({ name: "__exn_render_kind", desc: { kind: "func", index: funcIdx } });
 }
