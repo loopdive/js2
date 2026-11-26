@@ -58,7 +58,6 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { ensureNativeStringHelpers, nativeStringType, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
@@ -82,6 +81,7 @@ import {
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const HELPER_NAME = "__str_replace_dyn";
 const EXTERNREF: ValType = { kind: "externref" };
@@ -318,7 +318,7 @@ function emitStringArm(ctx: CodegenContext, fctx: FunctionContext): void {
         { op: "i32.eqz" },
         { op: "br_if", depth: 0 },
         { op: "local.get", index: P_SEARCH },
-        { op: "i32.const", value: getWellKnownSymbolId("replace")! },
+        { op: "i32.const", value: wellKnownSymbolId("replace")! },
         { op: "call", funcIdx: boxSymbol },
         { op: "call", funcIdx: deps.externGet },
         { op: "local.tee", index: method },

@@ -30,6 +30,7 @@ import {
   isSymbolType,
   isVoidType,
 } from "../../checker/type-mapper.js";
+import { memberKeyForProperty } from "../../checker/well-known-symbol-keys.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileHostFreeCryptoCall, isHostFreeCryptoCall, marshalRegimeCryptoUuid } from "./standalone-crypto.js";
 import { tryStandaloneQueueMicrotaskCall } from "./standalone-queue-microtask.js";
@@ -1230,15 +1231,14 @@ function tryEmitNativeProtoReflectiveCall(
     const invoked = tryEmitPrimitiveToLocaleStringInvoke(ctx, fctx, expr, expr.expression);
     if (invoked !== undefined) return invoked;
   }
-
-  // Resolve the member name + declaring builtin from the receiver's symbol.
+  // Resolve the member key (#7427: `@@1` for `[Symbol.iterator]`) + declaring builtin from the receiver's symbol.
   let sym: ts.Symbol | undefined;
   try {
     sym = ctx.checker.getTypeAtLocation(receiver).getSymbol();
   } catch {
     return undefined;
   }
-  let member = sym?.getName();
+  let member = sym === undefined ? undefined : memberKeyForProperty(ctx.oracle, sym);
   const decl = sym?.declarations?.[0];
   let ifaceName: string | undefined;
   if (member && decl && ts.isMethodSignature(decl) && decl.parent && ts.isInterfaceDeclaration(decl.parent)) {
