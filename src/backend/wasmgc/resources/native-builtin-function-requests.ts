@@ -17,7 +17,8 @@ import {
   heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
-import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
+import type { NativeRealmIntrinsic, NativeRealmPrimitive } from "../../../runtime/contracts/native-realm-catalog.js";
+import type { RealmFamilyProperty } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
 
 /**
  * What a built-in entry is: one of the realm's two bootstrap functions, (#7354 P1) a method the realm's
@@ -31,21 +32,16 @@ export type NativeBuiltinFunctionBehavior =
   | "throw-type-error"
   | "object-prototype-method"
   | "native";
-/** (#7354 G1) A property value the kernel seeds: a string, or the realm's entry or object with that catalog id. */
-export type NativeBuiltinPropertyValue =
-  | { readonly kind: "string"; readonly value: string }
-  | { readonly kind: "intrinsic"; readonly id: string };
 /** (#7354 G1) A non-enumerable data property the kernel seeds on an entry's bag or on a realm object. */
-export interface NativeBuiltinProperty {
-  readonly key: string;
-  readonly value: NativeBuiltinPropertyValue;
-  readonly writable: boolean;
-  readonly configurable: boolean;
-}
-/** (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one. */
+export type NativeBuiltinProperty = RealmFamilyProperty;
+/**
+ * (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one;
+ * (W2) a wrapper prototype's primitive slot.
+ */
 export interface NativeBuiltinObject {
   readonly id: string;
   readonly prototype: string;
+  readonly primitive?: NativeRealmPrimitive;
   readonly properties: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequirement {

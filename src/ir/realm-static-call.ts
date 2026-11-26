@@ -6,8 +6,9 @@
  * is evaluated and dropped, a missing one is `undefined`; the call is one front-end helper, which the dynamic-value
  * legalization expands (`program/dynamic-object-statics.ts`).
  *
- * The receiver must be the unchanged global `Object` (`builtin-global-binding.ts`: lib-declared only, never assigned);
- * `Object` is no value on this path (a read refuses), so no program can replace `Object.defineProperty` itself.
+ * The receiver must be the unchanged global `Object` (`builtin-global-binding.ts`: lib-declared only, never assigned).
+ * (#7354 W2) `Object` is a value, but the realm holds none of its statics: a write of a static's key refuses by name
+ * (`builtin-prototype-keys.ts` `unheldStaticKeys`), so no program replaces `Object.defineProperty` itself.
  */
 import { ts } from "../ts-api.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
@@ -21,7 +22,7 @@ import { IrUnsupportedError } from "./outcomes.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
-import { errorConstructorId, nativeObjectStatic } from "./program/builtin-prototype-keys.js";
+import { realmConstructorId, nativeObjectStatic } from "./program/builtin-prototype-keys.js";
 
 /**
  * The catalog's native `Object` static `call` names, with its `length`, when the receiver is the unchanged global
@@ -52,7 +53,7 @@ const DESCRIPTOR_DEPTH: Readonly<Record<NativeObjectStatic, readonly number[]>> 
  * (#7354 O1) The flow rule's exemption: an argument of a native `Object` static, or a descriptor field (name or value)
  * of a literal descriptor or descriptor map passed as one, is taken as a carrier whatever the lib's signature types it
  * (`PropertyDescriptor`'s `enumerable: boolean` does not bind a test262 `enumerable: 1`); (#7354 G1) so is an argument
- * of a call or `new` of an Error constructor the realm holds, or a field of a literal passed as one (the lib's
+ * of a call or `new` of a realm constructor (an Error constructor, (W2) `Object` or a wrapper constructor), or a field of a literal passed as one (the lib's
  * `message?: string` does not bind a message object, which ToString reads through the program).
  */
 export function realmBuiltinOperand(
@@ -67,7 +68,7 @@ export function realmBuiltinOperand(
     (ts.isCallExpression(call) || ts.isNewExpression(call)) &&
     call.arguments?.includes(operand) === true &&
     ts.isIdentifier(call.expression) &&
-    errorConstructorId(call.expression.text) !== undefined &&
+    realmConstructorId(call.expression.text) !== undefined &&
     isPristineGlobal(call.expression)
   )
     return true;

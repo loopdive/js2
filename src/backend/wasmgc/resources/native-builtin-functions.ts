@@ -75,7 +75,14 @@ import {
   buildErrorCreateDefinition,
   type ErrorCreateOperands,
 } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
-import { NATIVE_ERROR_CONSTRUCTORS } from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  NATIVE_ERROR_CONSTRUCTORS,
+  type NativeRealmPrimitive,
+} from "../../../runtime/contracts/native-realm-catalog.js";
+import type { NativePrimitiveWrapperStorageReservations } from "./native-primitive-wrapper-storage.js";
+
+/** (#7354 W2) The wrapper kind holding a primitive of each type. */
+const WRAPPER_KIND = { string: "String", number: "Number", boolean: "Boolean" } as const;
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -90,6 +97,12 @@ export interface NativeBuiltinFunctionDependencies {
   readonly errorCreate?: FunctionReservation;
   /** (#7354 O2) The program's dispatchers a source getter / setter is called through (`nativeInvocationAccessorCalls`). */
   readonly accessorCalls?: { readonly get: FunctionReservation; readonly set: FunctionReservation };
+  /**
+   * (#7354 W2) Where the realm holds a wrapper family: #3518's wrapper storage, whose subtypes of the ordinary object
+   * store every own property (a String object's indices included, `realm-wrapper-bodies.ts`), so the plain storage
+   * lookup answers them.
+   */
+  readonly wrappers?: { readonly storage: NativePrimitiveWrapperStorageReservations };
 }
 const functionRoles = [
   "initialize",
@@ -178,7 +191,7 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   const required = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
     required.some((key) => !Object.hasOwn(d, key)) ||
-    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls"].includes(key))
+    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls", "wrappers"].includes(key))
   )
     fail("unexpected dependency input");
   if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
@@ -198,7 +211,8 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   // ref.test includes subtypes. Plain storage lookup cannot stand in for an
   // exotic carrier's own-property method (String's virtual indices, for example).
   // Parentless structs are implicitly final in the emitted Wasm representation.
-  if (ordinary.kind !== "struct" || (ordinary.superTypeIdx !== undefined && ordinary.final !== true))
+  // (#7354 W2) The realm's wrappers are the one subtype: they store their own properties.
+  if (ordinary.kind !== "struct" || (ordinary.superTypeIdx !== undefined && ordinary.final !== true && !d.wrappers))
     fail("extensible ordinary carrier requires heterogeneous prototype dispatch");
   if (
     dd.closures !== d.closures ||
@@ -457,7 +471,8 @@ function operands(
 ): BuiltinFunctionPrototypeOperands {
   const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests),
     dd = owner.dependencies.descriptorDependencies,
-    calls = owner.dependencies.accessorCalls;
+    calls = owner.dependencies.accessorCalls,
+    wrappers = owner.dependencies.wrappers;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
   const literal = (text: string, external = true): Instr[] => [
@@ -519,6 +534,23 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(wrappers && {
+      wrapperAllocation: (primitive: NativeRealmPrimitive, prototype: readonly Instr[]): Instr[] => [
+        ...prototype,
+        ...(primitive.kind === "string"
+          ? literal(primitive.value)
+          : primitive.kind === "number"
+            ? [{ op: "f64.const", value: primitive.value } as Instr]
+            : [{ op: "i32.const", value: Number(primitive.value) } as Instr]),
+        ...(primitive.kind === "string"
+          ? [
+              { op: "any.convert_extern" } as Instr,
+              { op: "ref.cast", typeIdx: input.strings.layout.anyStrTypeIdx } as Instr,
+            ]
+          : []),
+        { op: "call", funcIdx: wrappers.storage.allocation[WRAPPER_KIND[primitive.kind]].handle },
+      ],
+    }),
     ...(calls && {
       accessorCalls: {
         source: [calls.get.handle, calls.set.handle],

@@ -13,7 +13,7 @@
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { errorConstructorId } from "./program/builtin-prototype-keys.js";
+import { realmConstructorId } from "./program/builtin-prototype-keys.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -33,15 +33,13 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
-  let namesErrors = false;
+  const constructors = new Set<string>();
   const visit = (node: ts.Node): void => {
-    // (#7354 G1) A read of the unchanged global Error constructor (`identifier-read.ts` reads it the same way, through
-    // `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such read.
-    namesErrors ||=
-      ts.isIdentifier(node) &&
-      errorConstructorId(node.text) !== undefined &&
-      !isMemberName(node) &&
-      isPristineGlobal(node);
+    // (#7354 G1, W2) A read of an unchanged global realm constructor (`identifier-read.ts` reads it the same way,
+    // through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such read.
+    const id = ts.isIdentifier(node) ? realmConstructorId(node.text) : undefined;
+    if (id !== undefined && !isMemberName(node as ts.Identifier) && isPristineGlobal(node as ts.Identifier))
+      constructors.add(id);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -51,5 +49,5 @@ export function programObjects(
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
+  return { present: present || constructors.size > 0, functions, namesSymbol, constructors };
 }

@@ -14,6 +14,7 @@ import {
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
   realmMethodId,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
@@ -67,6 +68,22 @@ export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
  */
 export const errorConstructorId = (name: string): string | undefined =>
   (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined;
+
+/**
+ * (#7354 W2) The catalog id of the realm constructor the global `name` names, if it names one: an Error constructor,
+ * a wrapper constructor (`NATIVE_WRAPPER_CONSTRUCTORS`), or `Object`. The IR's one read of which global names read
+ * realm constructors (`identifier-read.ts`).
+ */
+export const realmConstructorId = (name: string): string | undefined =>
+  errorConstructorId(name) ??
+  (name === "Object" || (NATIVE_WRAPPER_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined);
+
+/** (#7354 W2) The wrapper constructors' catalog ids, in selector order. */
+export const WRAPPER_IDS: readonly string[] = NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`);
+
+/** (#7354 W2) The wrapper constructor `id`'s selector (`js.object.create-wrapper`), or -1. */
+export const wrapperConstructorSelector = (id: string): number =>
+  NATIVE_WRAPPER_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
 
 /** (#7354 G1) The Error constructor `id`'s selector (`js.object.create-error`), or -1. */
 export const errorConstructorSelector = (id: string): number =>

@@ -17327,6 +17327,16 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/realm-wrapper-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/ir/builtin-global-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

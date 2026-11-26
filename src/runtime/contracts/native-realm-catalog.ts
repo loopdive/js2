@@ -21,6 +21,10 @@ export type NativeRealmProperty = {
   | { readonly kind: "data"; readonly writable: boolean; readonly value: NativeRealmPropertyValue }
   | { readonly kind: "accessor"; readonly get: string; readonly set: string }
 );
+export type NativeRealmPrimitive =
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "number"; readonly value: number }
+  | { readonly kind: "boolean"; readonly value: boolean };
 export interface NativeRealmIntrinsic {
   readonly id: string;
   /**
@@ -36,6 +40,8 @@ export interface NativeRealmIntrinsic {
   readonly normativeOptional: boolean;
   readonly legacy: boolean;
   readonly properties: readonly NativeRealmProperty[];
+  /** (#7354 W2) A non-callable row's [[StringData]] / [[NumberData]] / [[BooleanData]]: a wrapper prototype's. */
+  readonly primitive?: NativeRealmPrimitive;
   readonly callable?: {
     readonly initialName: string;
     readonly length: number;
@@ -154,11 +160,18 @@ export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "URIError",
 ] as const);
 export type NativeErrorConstructor = (typeof NATIVE_ERROR_CONSTRUCTORS)[number];
+/**
+ * (#7354 W2) The primitive wrapper constructors (§22.1.1, §21.1.1, §20.3.1), in the order of their selector
+ * (`js.object.create-wrapper`): each wrapper is #3518's subtype of the ordinary object with the primitive in its slot.
+ */
+export const NATIVE_WRAPPER_CONSTRUCTORS = Object.freeze(["String", "Number", "Boolean"] as const);
+export type NativeWrapperConstructor = (typeof NATIVE_WRAPPER_CONSTRUCTORS)[number];
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
   "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
   "Error.prototype": ["toString"],
+  ...Object.fromEntries(NATIVE_WRAPPER_CONSTRUCTORS.map((name) => [name + ".prototype", ["toString", "valueOf"]])),
 };
 const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
 const objectMethods: readonly Method[] = [
@@ -205,55 +218,214 @@ function members(parent: string, rows: readonly Method[], legacy = false): Nativ
 const methodProperties = (parent: string, rows: readonly Method[]) =>
   rows.map(([name]) => reference(name, realmMethodId(parent, name)));
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
+const wrapperId = (name: NativeWrapperConstructor) => `%${name}%`;
 /**
- * (#7354 G1) The function values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)`
- * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`.
+ * (#7354 G1, W2) The values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)` numbers
+ * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, `Object`, the wrapper
+ * constructors and their native methods (function values, which the realm holds as entries), then the prototype
+ * objects a primitive's member read goes through (ordinary objects).
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
   ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
   realmMethodId("Error.prototype", errorToString[0]),
+  "%Object%",
+  ...NATIVE_WRAPPER_CONSTRUCTORS.map(wrapperId),
+  ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap((name) =>
+    NATIVE_MEMBERS[name + ".prototype"]!.map((method) => realmMethodId(name + ".prototype", method)),
+  ),
+  objectPrototype,
+  ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}.prototype%`),
 ]);
+/** An intrinsic family (#7354 G1, W2): a constructor, its prototype object, and the members both own. */
+interface Family {
+  readonly name: string;
+  readonly requires: readonly string[];
+  /** The constructor's [[Prototype]] when it is not %Function.prototype% (a NativeError's: %Error%). */
+  readonly constructorParent?: string;
+  readonly statics?: readonly Method[];
+  readonly staticData?: readonly NativeRealmProperty[];
+  readonly prototypeParent: string;
+  readonly prototypeData: readonly NativeRealmProperty[];
+  readonly methods: readonly Method[];
+  /** The prototype object's own primitive slot (a wrapper prototype is itself a wrapper, §22.1.3 …). */
+  readonly primitive?: NativeRealmPrimitive;
+}
 /**
- * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a constructor (length 1, own `prototype` read only; a NativeError's
- * [[Prototype]] is %Error%) and its prototype object (`constructor`, `name`, `message` "", and Error.prototype's
- * `toString`; [[Prototype]] %Object.prototype% for Error.prototype, %Error.prototype% for the others).
+ * A family's rows, each `heldWith` its constructor: the constructor (length 1, own `prototype` read only), its statics,
+ * its prototype object (`constructor`, the family's data, its methods), and the methods.
  */
-function errorRows(name: NativeErrorConstructor): NativeRealmIntrinsic[] {
-  const id = `%${name}%`,
-    prototype = `%${name}.prototype%`,
-    base = name === "Error";
+function familyRows(family: Family): NativeRealmIntrinsic[] {
+  const { name } = family,
+    id = `%${name}%`,
+    prototype = `%${name}.prototype%`;
   const ctor = callable(
     id,
     name,
     1,
     name,
-    ["OrdinaryCreateFromConstructor", "ToString", "CreateNonEnumerableDataPropertyOrThrow", "InstallErrorCause"],
-    [reference("prototype", prototype, false, false)],
+    family.requires,
+    [
+      reference("prototype", prototype, false, false),
+      ...methodProperties(name, family.statics ?? []),
+      ...(family.staticData ?? []),
+    ],
     true,
     "native",
   );
   return [
-    { ...ctor, aliases: [id, name], ...(base ? {} : { prototype: "%Error%" }) },
+    { ...ctor, aliases: [id, name], ...(family.constructorParent ? { prototype: family.constructorParent } : {}) },
+    ...members(name, family.statics ?? []),
     {
       id: prototype,
       aliases: [prototype],
-      prototype: base ? objectPrototype : "%Error.prototype%",
+      prototype: family.prototypeParent,
       extensible: true,
       immutablePrototype: false,
       constructible: false,
       normativeOptional: false,
       legacy: false,
+      ...(family.primitive ? { primitive: family.primitive } : {}),
       properties: [
         reference("constructor", id),
-        data("message", { kind: "string", value: "" }),
-        data("name", { kind: "string", value: name }),
-        ...(base ? methodProperties("Error.prototype", [errorToString]) : []),
+        ...family.prototypeData,
+        ...methodProperties(name + ".prototype", family.methods),
       ],
     },
-    ...(base ? members("Error.prototype", [errorToString]) : []),
+    ...members(name + ".prototype", family.methods),
   ].map((row) => ({ ...row, heldWith: id }));
 }
+/**
+ * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a NativeError's [[Prototype]] is %Error% and its prototype's %Error.prototype%;
+ * each prototype has `message` "" and its `name`, Error.prototype also `toString`.
+ */
+const errorFamily = (name: NativeErrorConstructor): Family => ({
+  name,
+  requires: [
+    "OrdinaryCreateFromConstructor",
+    "ToString",
+    "CreateNonEnumerableDataPropertyOrThrow",
+    "InstallErrorCause",
+  ],
+  ...(name === "Error" ? {} : { constructorParent: "%Error%" }),
+  prototypeParent: name === "Error" ? objectPrototype : "%Error.prototype%",
+  prototypeData: [data("message", { kind: "string", value: "" }), data("name", { kind: "string", value: name })],
+  methods: name === "Error" ? [errorToString] : [],
+});
+const constant = (name: string, value: number) => data(name, { kind: "number", value }, false, false);
+/** (#7354 W2) §22.1, §21.1, §20.3: the wrapper families, their statics and prototype methods (Annex B included). */
+const WRAPPER_FAMILIES: Readonly<Record<NativeWrapperConstructor, Family>> = {
+  String: {
+    name: "String",
+    requires: ["ToString", "StringCreate", "GetPrototypeFromConstructor"],
+    statics: [
+      ["fromCharCode", 1, ["ToUint16"]],
+      ["fromCodePoint", 1, ["ToNumber"]],
+      ["raw", 1, ["ToObject", "Get", "ToString"]],
+    ],
+    prototypeParent: objectPrototype,
+    prototypeData: [data("length", { kind: "number", value: 0 }, false, false)],
+    primitive: { kind: "string", value: "" },
+    methods: (
+      [
+        ["at", 1],
+        ["charAt", 1],
+        ["charCodeAt", 1],
+        ["codePointAt", 1],
+        ["concat", 1],
+        ["endsWith", 1],
+        ["includes", 1],
+        ["indexOf", 1],
+        ["isWellFormed", 0],
+        ["lastIndexOf", 1],
+        ["localeCompare", 1],
+        ["match", 1],
+        ["matchAll", 1],
+        ["normalize", 0],
+        ["padEnd", 1],
+        ["padStart", 1],
+        ["repeat", 1],
+        ["replace", 2],
+        ["replaceAll", 2],
+        ["search", 1],
+        ["slice", 2],
+        ["split", 2],
+        ["startsWith", 1],
+        ["substring", 2],
+        ["toLocaleLowerCase", 0],
+        ["toLocaleUpperCase", 0],
+        ["toLowerCase", 0],
+        ["toString", 0],
+        ["toUpperCase", 0],
+        ["toWellFormed", 0],
+        ["trim", 0],
+        ["trimEnd", 0],
+        ["trimStart", 0],
+        ["valueOf", 0],
+        ["substr", 2],
+        ["anchor", 1],
+        ["big", 0],
+        ["blink", 0],
+        ["bold", 0],
+        ["fixed", 0],
+        ["fontcolor", 1],
+        ["fontsize", 1],
+        ["italics", 0],
+        ["link", 1],
+        ["small", 0],
+        ["strike", 0],
+        ["sub", 0],
+        ["sup", 0],
+        ["trimLeft", 0],
+        ["trimRight", 0],
+      ] as const
+    ).map(([name, length]): Method => [name, length, ["RequireObjectCoercible", "ToString"]]),
+  },
+  Number: {
+    name: "Number",
+    requires: ["ToNumeric", "OrdinaryCreateFromConstructor"],
+    statics: [
+      ["isFinite", 1, []],
+      ["isInteger", 1, ["IsIntegralNumber"]],
+      ["isNaN", 1, []],
+      ["isSafeInteger", 1, ["IsIntegralNumber"]],
+      ["parseFloat", 1, ["ToString", "TrimString"]],
+      ["parseInt", 2, ["ToString", "TrimString", "ToInt32"]],
+    ],
+    staticData: [
+      constant("EPSILON", Number.EPSILON),
+      constant("MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER),
+      constant("MAX_VALUE", Number.MAX_VALUE),
+      constant("MIN_SAFE_INTEGER", Number.MIN_SAFE_INTEGER),
+      constant("MIN_VALUE", Number.MIN_VALUE),
+      constant("NaN", NaN),
+      constant("NEGATIVE_INFINITY", -Infinity),
+      constant("POSITIVE_INFINITY", Infinity),
+    ],
+    prototypeParent: objectPrototype,
+    prototypeData: [],
+    primitive: { kind: "number", value: 0 },
+    methods: [
+      ["toExponential", 1, ["ThisNumberValue", "ToIntegerOrInfinity"]],
+      ["toFixed", 1, ["ThisNumberValue", "ToIntegerOrInfinity"]],
+      ["toLocaleString", 0, ["ThisNumberValue"]],
+      ["toPrecision", 1, ["ThisNumberValue", "ToIntegerOrInfinity"]],
+      ["toString", 1, ["ThisNumberValue", "Number::toString"]],
+      ["valueOf", 0, ["ThisNumberValue"]],
+    ],
+  },
+  Boolean: {
+    name: "Boolean",
+    requires: ["ToBoolean", "OrdinaryCreateFromConstructor"],
+    prototypeParent: objectPrototype,
+    prototypeData: [],
+    primitive: { kind: "boolean", value: false },
+    methods: [
+      ["toString", 0, ["ThisBooleanValue"]],
+      ["valueOf", 0, ["ThisBooleanValue"]],
+    ],
+  },
+};
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);
@@ -320,6 +492,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
         ...methodProperties("Object", objectStatics.slice(20)),
       ],
       true,
+      "native",
     ),
     callable(
       "%Function%",
@@ -359,7 +532,8 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     callable("%Function.prototype[@@hasInstance]%", "[Symbol.hasInstance]", 1, "OrdinaryHasInstance", [
       "OrdinaryHasInstance",
     ]),
-    ...NATIVE_ERROR_CONSTRUCTORS.flatMap(errorRows),
+    ...NATIVE_ERROR_CONSTRUCTORS.map(errorFamily).flatMap(familyRows),
+    ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => WRAPPER_FAMILIES[name]).flatMap(familyRows),
   ];
   return rows.map((row) => ({
     ...row,
@@ -385,9 +559,12 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ],
   }));
 }
-/** Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error family. */
+/**
+ * Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error
+ * family; (W2) the String, Number and Boolean families.
+ */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function+Error:v2" as const,
+  version: "ecma262-2026:Object+Function+Error+wrappers:v3" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [

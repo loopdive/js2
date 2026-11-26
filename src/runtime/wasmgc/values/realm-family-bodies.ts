@@ -9,15 +9,17 @@
  * `Object.prototype.toString` reads (§20.1.3.6 step 9).
  */
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import type { NativeRealmPrimitive } from "../../contracts/native-realm-catalog.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 
-/** A family property: a string, or a realm entry or object by catalog id. */
+/** A family property: a string, (#7354 W2) a number, or a realm entry or object by catalog id. */
 export interface RealmFamilyProperty {
   readonly key: string;
   readonly value:
     | { readonly kind: "string"; readonly value: string }
+    | { readonly kind: "number"; readonly value: number }
     | { readonly kind: "intrinsic"; readonly id: string };
   readonly writable: boolean;
   readonly configurable: boolean;
@@ -28,6 +30,7 @@ export interface RealmFamilyOperands {
   readonly objectPrototype: number;
   readonly createWithPrototype: FuncHandle;
   readonly defineDataBody: FuncHandle;
+  readonly boxNumber: FuncHandle;
   /** A realm string literal as an externref. */
   readonly text: (value: string) => Instr[];
   readonly entries: readonly {
@@ -41,8 +44,12 @@ export interface RealmFamilyOperands {
     readonly id: string;
     readonly global: number;
     readonly prototype: string;
+    /** (#7354 W2) A wrapper prototype's primitive slot. */
+    readonly primitive?: NativeRealmPrimitive;
     readonly properties: readonly RealmFamilyProperty[];
   }[];
+  /** (#7354 W2) Where the realm holds wrappers: the wrapper of `primitive` with the prototype `prototype` leaves. */
+  readonly wrapperAllocation?: (primitive: NativeRealmPrimitive, prototype: readonly Instr[]) => Instr[];
 }
 
 const global = (index: number): Instr => ({ op: "global.get", index });
@@ -51,8 +58,9 @@ const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => [
   { op: "ref.cast", typeIdx: d.objectTypeIdx },
 ];
 
-/** The externref of the realm's entry or object `id`. */
+/** The externref of the realm's entry or object `id` ((#7354 W2) its Object.prototype too). */
 function intrinsic(d: RealmFamilyOperands, id: string): Instr[] {
+  if (id === "%Object.prototype%") return [global(d.objectPrototype)];
   const object = d.objects.find((row) => row.id === id);
   if (object) return [global(object.global)];
   const entry = d.entries.find((row) => row.id === id);
@@ -71,12 +79,25 @@ const word = (property: Pick<RealmFamilyProperty, "writable" | "configurable">):
 
 /** Each object, linked to the realm's Object.prototype or to an object created before it, into its global. */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
-  return d.objects.flatMap((object): Instr[] => [
-    ...(object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype)),
-    ...asObject(d),
-    { op: "call", funcIdx: d.createWithPrototype },
-    { op: "global.set", index: object.global },
-  ]);
+  return d.objects.flatMap((object): Instr[] => {
+    const prototype =
+      object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype);
+    const created = object.primitive
+      ? d.wrapperAllocation!(object.primitive, prototype)
+      : [...prototype, ...asObject(d), { op: "call", funcIdx: d.createWithPrototype } as Instr];
+    return [...created, { op: "global.set", index: object.global }];
+  });
+}
+
+/** A property's value as an externref. */
+function propertyValue(d: RealmFamilyOperands, value: RealmFamilyProperty["value"]): Instr[] {
+  if (value.kind === "string") return d.text(value.value);
+  if (value.kind === "number")
+    return [
+      { op: "f64.const", value: value.value },
+      { op: "call", funcIdx: d.boxNumber },
+    ];
+  return intrinsic(d, value.id);
 }
 
 /** Define `property` on the storage `target` leaves. */
@@ -84,7 +105,7 @@ function define(d: RealmFamilyOperands, target: readonly Instr[], property: Real
   return [
     ...target,
     ...d.text(property.key),
-    ...(property.value.kind === "string" ? d.text(property.value.value) : intrinsic(d, property.value.id)),
+    ...propertyValue(d, property.value),
     { op: "f64.const", value: word(property) },
     { op: "call", funcIdx: d.defineDataBody },
     { op: "drop" },
