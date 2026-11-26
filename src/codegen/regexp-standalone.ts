@@ -5299,6 +5299,29 @@ export function emitStandaloneRegExpToStringFromExpr(
   return repr.resultType;
 }
 
+/**
+ * `re.exec(s)`, `re.test(s)`, `re.toString()` and `re.compile(p, f)` (#5142, Annex B §B.2.4.1) on a RegExp receiver,
+ * through the native provider. Shared by the plain call path and `re?.m(…)` (#7395), which must not reach the
+ * generic receiver ladder: it has no RegExp arm and would ask the host for `RegExp_test`.
+ */
+export function tryCompileStandaloneRegExpMethod(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): InnerResult | undefined {
+  for (const arm of [
+    tryCompileStandaloneRegExpExec,
+    tryCompileStandaloneRegExpTest,
+    tryCompileStandaloneRegExpToString,
+    tryCompileStandaloneRegExpCompile,
+  ]) {
+    const result = arm(ctx, fctx, expr, propAccess);
+    if (result !== undefined) return result;
+  }
+  return undefined;
+}
+
 export function tryCompileStandaloneRegExpToString(
   ctx: CodegenContext,
   fctx: FunctionContext,
