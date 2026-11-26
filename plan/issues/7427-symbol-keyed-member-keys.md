@@ -90,3 +90,12 @@ files, × 2 targets. The id-table fold adds no byte change.
 standalone give 281 pass / 51 fail / 17 skip on main and on the branch, with 0 verdict changes. The byte cause
 above was re-checked on this base: a WAT diff of `Date/prototype/Symbol.toPrimitive/hint-default-first-non-callable.js`
 shows the same `.call`-on-undefined TypeError string present on main and gone on the branch.
+
+## Review round RV7419 (2026-11-26)
+
+- Every codegen caller reads `wellKnownSymbolId` from `runtime/contracts/well-known-symbols.ts` directly. The
+  pass-through `getWellKnownSymbolId` (`literals.ts`), the re-exported alias in `builtin-value-read.ts` and the
+  barrel re-export in `expressions.ts` are gone.
+- `functionNameForKey` tests `ESCAPED_SYMBOL_KEY` once, inside `keyOfProperty`; its library-member decline moved
+  into the spell callback.
+- Renames only: a 20-file sample hashes identically to the previous head (39 rows, 0 differ).

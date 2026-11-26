@@ -51,7 +51,7 @@ import { addFuncType, getOrRegisterVecType, taCtorKindOf } from "./registry/type
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
-import { getWellKnownSymbolId, wellKnownSymbolName } from "./literals.js"; // (#5142) @@<id> → "[Symbol.x]" display name
+import { wellKnownSymbolName } from "./literals.js"; // (#5142) @@<id> → "[Symbol.x]" display name
 // (#4491 T9) `constructor` is an own data property of every builtin prototype and
 // is deliberately NOT in `memberCsv`; the companion gets it from the #4200 carrier.
 import { pushCompanionConstructorSeed } from "./builtin-proto-constructor-seed.js";
@@ -79,6 +79,7 @@ export {
   builtinBrandOffsetOf,
   isBrandedBuiltinName,
 } from "./builtin-brands.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * Resolve (and lazily seed) the builtin brand id for `name`. Asserts the brand
@@ -997,7 +998,7 @@ function nativeProtoMemberDisplayName(member: string): string {
  */
 function nativeProtoMemberSymbolId(member: string): number | undefined {
   const tail = member.slice(2);
-  const id = /^\d+$/.test(tail) ? Number(tail) : getWellKnownSymbolId(tail);
+  const id = /^\d+$/.test(tail) ? Number(tail) : wellKnownSymbolId(tail);
   return id !== undefined && Number.isInteger(id) ? id : undefined;
 }
 

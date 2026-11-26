@@ -53,12 +53,12 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { getBuiltinBrand } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -84,7 +84,7 @@ export function tryEmitAnyReceiverRegExpSymbolCall(
   const fact = ctx.oracle.typeFactOf(regexExpr).kind;
   if (fact !== "any" && fact !== "unknown") return undefined;
   if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
-  const symbolId = getWellKnownSymbolId(symbolMethod);
+  const symbolId = wellKnownSymbolId(symbolMethod);
   const brand = getBuiltinBrand(ctx, "RegExp");
   if (symbolId === undefined || brand === undefined || !rx.ensureGlue()) return undefined;
   const regexpStructIdx = rx.regexpStruct();

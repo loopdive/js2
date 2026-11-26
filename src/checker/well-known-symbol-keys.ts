@@ -62,12 +62,10 @@ function keyOfProperty(
  * key's.
  */
 export function functionNameForKey(oracle: TypeOracle, property: ts.Symbol): string | undefined {
-  if (
-    ESCAPED_SYMBOL_KEY.test(property.escapedName as string) &&
-    property.declarations?.some((declaration) => isCurrentCompilerLibrarySourceFile(declaration.getSourceFile()))
-  )
-    return undefined;
-  return keyOfProperty(oracle, property, (name) => `[Symbol.${name}]`);
+  const isLibraryMember = property.declarations?.some((declaration) =>
+    isCurrentCompilerLibrarySourceFile(declaration.getSourceFile()),
+  );
+  return keyOfProperty(oracle, property, (name) => (isLibraryMember ? undefined : `[Symbol.${name}]`));
 }
 
 /**

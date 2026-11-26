@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { TsCheckerOracle } from "../src/checker/oracle.js";
 import { memberKeyForProperty } from "../src/checker/well-known-symbol-keys.js";
-import { getWellKnownSymbolId, resolveWellKnownSymbol } from "../src/codegen/literals.js";
+import { resolveWellKnownSymbol } from "../src/codegen/literals.js";
+import { wellKnownSymbolId } from "../src/runtime/contracts/well-known-symbols.js";
 import { ts } from "../src/frontend/typescript.js";
 import { compile } from "../src/index.js";
 
@@ -48,12 +49,12 @@ describe("#7427 — one well-known-symbol table", () => {
     ["iterator", 1],
     ["matchAll", 15],
   ])("%s has id %i", (name, id) => {
-    expect(getWellKnownSymbolId(name)).toBe(id);
+    expect(wellKnownSymbolId(name)).toBe(id);
     expect(resolveWellKnownSymbol(name)).toBe(`@@${name}`);
   });
 
   it.each(["toString", "constructor", "hasOwnProperty"])("%s is not a well-known symbol", (name) => {
-    expect(getWellKnownSymbolId(name)).toBeUndefined();
+    expect(wellKnownSymbolId(name)).toBeUndefined();
     expect(resolveWellKnownSymbol(name)).toBeUndefined();
   });
 });

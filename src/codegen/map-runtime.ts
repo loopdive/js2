@@ -42,10 +42,10 @@ import { resolveWasmType, resolveWasmTypeForClosureReturn } from "./index.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
-import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#5267 A-2) symbol keys box as symbols, not ids
 import { ensureNativeIteratorRuntime, ITER_FAMILY_MAP, ITER_FAMILY_SET } from "./iterator-native.js"; // (#5267 B-2) live collection iterator records; (#6484 S1) family tags
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
  *  object keys (only GC eqrefs can be compared by identity). */
@@ -2971,7 +2971,7 @@ export function fillMapSetDynDispatchArms(ctx: CodegenContext): void {
     }
     // @@iterator symbol key → the callable closure singleton (only when the
     // module minted the $Symbol carrier AND the native __iterator exists).
-    const wkIterId = getWellKnownSymbolId("iterator");
+    const wkIterId = wellKnownSymbolId("iterator");
     if (ctx.symbolTypeIdx >= 0 && iterIdx !== undefined && wkIterId !== undefined) {
       const closureGlobalIdx = ensureMapSetIteratorClosureSingleton(ctx, iterIdx);
       if (closureGlobalIdx !== undefined) {

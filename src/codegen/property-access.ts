@@ -235,7 +235,6 @@ import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
   ensureStandaloneBuiltinStaticMethodClosure,
-  getWellKnownSymbolId,
   hasNativeBuiltinConstantHandler,
   reportUnsupportedStandaloneBuiltinValueRead,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
@@ -446,6 +445,7 @@ import {
   trySuperAndImportMetaRead,
 } from "./property-access-dispatch.js"; // (#3276) Wave B — extracted guard bands
 import { readEnv } from "../env.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /**
  * (#3037 CS1b) True when `expr` is a direct operand of a standalone
@@ -719,7 +719,7 @@ export function isLogicalAssignNamedEvalNameRead(ctx: CodegenContext, node: ts.E
  * vec computed-get to route `vec[Symbol.iterator]` to %Array.prototype.values%
  * instead of coercing the Symbol key to a numeric index (which ToNumber-throws
  * "Cannot convert a Symbol value to a number"). Matches the same syntactic gate
- * `getWellKnownSymbolId` uses (`Symbol.iterator` as a bare identifier member),
+ * `wellKnownSymbolId` uses (`Symbol.iterator` as a bare identifier member),
  * so a locally-shadowed `Symbol` is not special-cased here either.
  */
 function isSymbolIteratorKey(expr: ts.Expression): boolean {

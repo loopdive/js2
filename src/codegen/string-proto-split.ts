@@ -64,11 +64,11 @@ import {
 } from "./regexp-standalone.js";
 import { ensureRegexSplit } from "./native-regex.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { getWellKnownSymbolId } from "./literals.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
 import { ensureVecConstructorCarrier } from "./vec-constructor-carrier.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 /** `__str_split`'s "no limit" sentinel — 0xFFFFFFFF read as a signed i32. */
 const NO_LIMIT = -1;
@@ -106,7 +106,7 @@ const SPLIT_PROTOCOL_NATIVES = [
  * body unchanged) when a native is unavailable. Flushes late-import shifts.
  */
 function prepareSplitProtocolDispatch(ctx: CodegenContext, fctx: FunctionContext): Instr[] | undefined {
-  if (getWellKnownSymbolId("split") === undefined) return undefined;
+  if (wellKnownSymbolId("split") === undefined) return undefined;
   reserveApplyClosure(ctx);
   ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
   ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
@@ -167,7 +167,7 @@ function emitSplitProtocolDispatch(ctx: CodegenContext, fctx: FunctionContext, n
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: 2 },
-        { op: "i32.const", value: getWellKnownSymbolId("split")! },
+        { op: "i32.const", value: wellKnownSymbolId("split")! },
         { op: "call", funcIdx: fn("__box_symbol") },
         { op: "call", funcIdx: fn("__extern_get") },
         { op: "local.set", index: mLocal },

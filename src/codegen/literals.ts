@@ -1271,7 +1271,7 @@ function compileObjectLiteralWithAccessors(
           ts.isIdentifier(inner.expression) &&
           inner.expression.text === "Symbol"
         ) {
-          wellKnownSymId = getWellKnownSymbolId(inner.name.text);
+          wellKnownSymId = wellKnownSymbolId(inner.name.text);
         }
         if (wellKnownSymId === undefined) {
           propName = resolveComputedKeyExpression(ctx, prop.name.expression);
@@ -1341,7 +1341,7 @@ function compileObjectLiteralWithAccessors(
           ts.isIdentifier(inner.expression) &&
           inner.expression.text === "Symbol"
         ) {
-          wellKnownSymId = getWellKnownSymbolId(inner.name.text);
+          wellKnownSymId = wellKnownSymbolId(inner.name.text);
         }
         if (wellKnownSymId === undefined) {
           // Fall back to the resolved string key (e.g. "@@dispose").
@@ -1437,7 +1437,7 @@ function compileObjectLiteralWithAccessors(
       // the interned symbol carrier, not the "@@name" spelling.
       // Only @@unscopables: the iterator-protocol readers still look the other
       // well-known accessors up under their "@@name" key.
-      const wkSymId = propName === "@@unscopables" ? getWellKnownSymbolId(propName.slice(2)) : undefined;
+      const wkSymId = propName === "@@unscopables" ? wellKnownSymbolId(propName.slice(2)) : undefined;
       const boxSymIdx =
         wkSymId !== undefined
           ? ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }])
@@ -1634,7 +1634,7 @@ export function _hasRuntimeComputedKey(ctx: CodegenContext, expr: ts.ObjectLiter
       ts.isPropertyAccessExpression(inner) &&
       ts.isIdentifier(inner.expression) &&
       inner.expression.text === "Symbol" &&
-      getWellKnownSymbolId(inner.name.text) !== undefined
+      wellKnownSymbolId(inner.name.text) !== undefined
     ) {
       continue;
     }
@@ -2711,15 +2711,7 @@ export function resolveWellKnownSymbol(name: string): string | undefined {
 }
 
 /**
- * Get the i32 constant for a well-known symbol, or undefined if not well-known. User-created symbols start at
- * ID 100 via the global counter. (#7427) The table is `WELL_KNOWN_SYMBOL_IDS`, shared with the runtime.
- */
-export function getWellKnownSymbolId(name: string): number | undefined {
-  return wellKnownSymbolId(name);
-}
-
-/**
- * (#5142) Reverse of {@link getWellKnownSymbolId}: the JavaScript spelling of a
+ * (#5142) Reverse of {@link wellKnownSymbolId}: the JavaScript spelling of a
  * well-known symbol id, e.g. `7` → `"match"`. The `@@<id>` member keys used by
  * the native-proto glue are physical compiler keys; §10.2.9 SetFunctionName
  * spells the exposed `.name` of a symbol-keyed method `"[Symbol.match]"`, and

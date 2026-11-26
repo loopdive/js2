@@ -77,11 +77,11 @@ import {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
 } from "./property-access.js";
-import { getWellKnownSymbolId } from "./builtin-value-read.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 
 // §6.1.7.3 attribute flag bits — mirrors object-runtime's `__create_descriptor`
 // (1=writable, 2=enumerable, 4=configurable).
@@ -368,7 +368,7 @@ export function tryEmitStandaloneBuiltinStaticGopd(
   // below, because `Symbol`'s own universe stays open (a user
   // `Symbol.foo = …` is a legal write the tables here cannot model).
   if (builtinName === "Symbol") {
-    const wellKnownId = getWellKnownSymbolId(member);
+    const wellKnownId = wellKnownSymbolId(member);
     if (wellKnownId === undefined) return false;
     const createIdx = resolveCreateDescriptor(ctx, fctx);
     if (createIdx === undefined) return false;
