@@ -7528,3 +7528,102 @@ Statement and expression shapes. Every arm is gated on the Prepared lane (`creat
 - The 197 targeted rows and the sample through the runner, each new pass with a failing twin; all gates.
 - Quality: from-ast does not grow; no second ladder (the carrier dispatch feeds the existing `emitSwitch`); one arity
   plan; every arm gated on the lane.
+
+## Slice L0b result (2026-11-26, branch `claude/7354-l0b` from `claude/7354-l0` 8a7f1ada7d)
+
+Every arm is gated on the Prepared lane (`createsFunctionObjects`). `from-ast.ts` 17235 → 17179.
+
+### Built
+
+- **EmptyStatement.** `lowerStmt` returns at one; `lowerStatementList` drops them before it picks the tail. No
+  `statement-shapes.ts`: the predicate is `ts.isEmptyStatement`, so a module for it would have one trivial user.
+- **switch** (`src/ir/switch-dispatch.ts`, new, `switchDiscriminant`).
+  - It owns the choice from-ast made inline: the typed ladder, the string dispatch (moved here unchanged), or (new)
+    the carrier dispatch.
+  - The carrier dispatch keeps the discriminant in an externref slot. Each test, in source order, is lowered inside
+    the previous test's `else`, boxed (`carrierOperand`) and compared by `dyn.eq` (strict). The first match writes the
+    clause index; no match leaves -1. The existing `emitSwitch` ladder runs on that index, so `default` keeps its place.
+  - Taken for a discriminant the typed ladder cannot compare, and for mixed or non-literal tests. Two `default`s and a
+    test of no carrier kind still refuse.
+- **Extra arguments** (`src/ir/direct-call-arity.ts`, new, `directCallArityPlan`). The under-arity plan moved out of
+  from-ast and now covers both directions. Extra arguments are lowered as discarded expressions after the supplied
+  ones. A callee that reads `arguments` keeps the refusal, because the extras are not passed.
+- **A void call used as a value** is the carrier's `undefined` (`voidCallValue`, both call sites).
+- **`null` under a non-reference hint** is the carrier's null (the existing externref-null box).
+- **Value-position `++`/`--`** (`lowerValueUpdate`). `lowerIncrementDecrement` returns the old ToNumeric value and the
+  new value; prefix answers the new one, postfix the old. Only an identifier operand; statement position is unchanged.
+- **`+` that is neither provably numeric nor provably string** (`true + 1`) takes the dynamic `+` over
+  `carrierOperand`. The addition chain no longer builds an empty kind test when neither side may be a string (that
+  threw out of `compile()` in the first cut).
+- **A conditional of differing primitive arms** (`laneMixedConditional`). Number, string, Boolean (checker), `null`
+  and `undefined`/`void` (syntax) of different kinds join on the carrier through the arm lowering the dynamic join
+  already had (`lowerCarrierConditional`, extracted from `tryLowerDynamicConditionalValue`). An arm of unknown kind
+  (`c ? 1 : id(null)`) keeps the refusal: boxing it would change the bytes of conditionals that compile today.
+- **A function's string local stored into again.** Not a from-ast slot change: the lane has no string slot type at
+  from-ast time. The provenance (`rewrittenStringLocal` in `source-dynamic-provenance.ts`) names such a local, the
+  lane resolver hands that to from-ast's existing `localNeedsDynamicCarrier`, and the local counts as carrying. So the
+  local, its function's result and every value it reaches agree on the carrier. A first cut that boxed in
+  `bindLocalName` alone ended in `dyn.string_carrier` at the typed-string return.
+- **`null == undefined`** (cheap, seen in the probes): the null fold now leaves it to the carrier comparison on the
+  lane instead of refusing.
+
+### Still refused or aborting
+
+- Nested function declarations, `log += v` on an outer local inside a function (L0c), array literals (#7352).
+- `arguments` with extra arguments; two `default`s; a conditional arm of unknown kind.
+- A string's own `length` and indices read through the carrier are the run-time abort (they come with arrays, #7352).
+  A reassigned string local is now carrier-held, so `s.length` on it aborts at run time where the function used to be
+  an abort body; base `id("x").length` aborts the same way.
+- `{ ; }` as a block statement in a function prefix (`unexpected statement before tail (got Block)`); blocks are not L0b.
+- `for (var i…) …; return i` (`identifier "i" is not in scope`), independent of `;`.
+
+### Proof
+
+- **Probes**, base → head, one process per set:
+  - The 51 L0b programs (`l0b.json`, base = main a9cdc8857a): refused→right 22, abort→right 18, nothing right
+    changed, 0 wrong. Remaining: the 6 named above.
+  - Extra sets (switch 9, conditional/arguments 11, string locals 7, null 3): all node's answer, with twins, except the
+    named refusals (`arguments` with extras) and the `.length`/`.charAt` aborts.
+  - The L0a and reviewer sets (343 programs), L0a head → L0b head: refused/abort→right 76, refused→abort 2 (`log += …`
+    in an inner function, L0c), nothing right changed, 0 wrong/invalid/exceptions. Base main → L0b head: 0 lost.
+- **Ordinary pipeline.** Identical bytes, main vs head: 62 test262 files (the 22 comparison files plus every fifth
+  targeted L0 row) × default/standalone, and 19 ordinary probes × 2, 13 of them L0b shapes (string/numeric/any switch,
+  `;`, extra and missing arguments, mixed conditionals, `++` values, `true + 1`, a string local, `== null`, a void
+  call's value).
+- **`check:prepared-bytes`**, 804 rows vs the L0a head: 4 differ, all explained, all run:
+  - 179 (`id(1, 2)`) and 203 (`s = s + "q"` in `h`): refused → compiles, returns.
+  - 243 (`return ++x`) and 578 (`v == null` in `q`): an abort body before → `main=2` / returns.
+- **Runner** (CI's IR-path runner, standalone, honest):
+
+  | set | main | L0a | L0b |
+  |---|---:|---:|---:|
+  | sample (411) | 62 | 85 | **87** |
+  | targeted (197) | 16 | 30 | **41** |
+
+  - No pass lost against main or L0a.
+  - New: if S12.5_A10_T1, defineProperties 15.2.3.7-5-b-218 (sample); asi S7.9_A11_T11, S7.9_A9_T5, call 11.2.3-3_1,
+    does-not-equals S11.9.2_A6.2_T1, logical-and S11.11.1_A2.4_T2, prefix-increment S11.4.4_A4_T4, function
+    S13.2.1_A7_T2, switch S12.11_A1_T1 and A1_T3, while S12.6.2_A4_T2, string S8.4_A8 (targeted).
+  - **Twins.** 12 of 13 have a failing twin. Seven come from the generic flip. Five are hand-made, because the generic
+    flip found no `!==`/`if (`; its twins for them were garbage and passed, so they are discarded:
+    `SwitchTest('0') === 6`, `SwitchTest(NaN) === 128`, `if(!function …)`, `return x.p`, `get: undefined`. All 12
+    FAIL. S7.9_A9_T5 has no check (an ASI parse test), so it has no twin.
+- **Tests.** `issue-7354-l0b-statements` 6/6 and `issue-7354-l0b-expressions` 6/6, every program node's answer plus a
+  wrong twin. Rows that L0b lifts were removed or turned into node agreement: m-refusals (F41), d1 (prefix update),
+  p (extra argument), str (reassigned string local), t (`== null`), ty (five non-literal case tests, now node
+  agreement with twins), w (mixed arm, now node agreement).
+  - Each alone, exit 0: l0a-relational 9, l0a-loose-equality 5, d1 42, m-refusals 42, p 25, str 17, t 105, ty 61,
+    w 8, h2 31, t2 7, 7340 66, 7341 91, 7143 3, 7106 prophelper 18, 7106 s1i 3, 3518 cutover 6, 3518 leaf 71, 4502 29.
+  - Red on main and on head alike: 2952-slice6 (16, `type incompatibility when transforming from/to JS`), 4515-wave5
+    (3), 7106-lever-v (2).
+
+### Gates
+
+Exit 0, against the merge base and `LOC_GATE_BASE` = a9cdc8857a: typecheck, LOC, function budget (`lowerCall` held at
+its budget by passing the lane it already computes), coercion sites, oracle ratchet, dead exports, import cycles,
+compiler boundaries (`--mode inventory`; both new modules mixed-needs-split like `switch-case-tests.ts`).
+
+### Not verified
+
+- The full vitest suite (only the files above).
+- Node 25 (Node 22 here).
