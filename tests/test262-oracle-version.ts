@@ -429,7 +429,7 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
     version: 18,
     note:
       "#7453/#7459: a host-opaque thrown payload's kind is the module's own `__exn_render_kind` answer (an Error " +
-      "object's name or an error class's name; the harness compiles with `exceptionKindExport`), never its rendered " +
+      "object's name or the object's constructor name; the harness compiles with `exceptionKindExport`), never its rendered " +
       "text split at ': ', so `throw \"TypeError: x\"` and an object whose toString returns that text have no kind. " +
       "The rule has no any-throw escape any more: the worker's exported-test() arm and scripts/wasm-exec-worker.mjs " +
       "ask it too. Measured on the 40 runtime negatives + a 40-probe matrix: only probe rows flip (pass -> fail).",
