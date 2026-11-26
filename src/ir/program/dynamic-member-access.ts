@@ -11,13 +11,14 @@ import type { IrType } from "../core/types.js";
 import {
   BUILTIN_REACHABLE_KEYS,
   FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
+  identityOnlyKeys,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
-import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
 /** The legalization builders a member access is written with. */
@@ -35,7 +36,7 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly admitted: readonly CarrierKind[];
   /** (#7354 P1, G1) The realm's built-in function object `id` into `result`. */
   readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
-  /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
+  /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsFamily`). */
   readonly errors: boolean;
   readonly branch: (
     cond: IrValueId,
@@ -87,9 +88,17 @@ export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key:
   return text?.kind === "string.const" ? text.value : undefined;
 }
 
-/** The access's constant key; any other key refuses by name. */
+/**
+ * The access's constant key; any other key refuses by name. (#7350 B3a) So does a key the receiver, a pristine realm
+ * constructor the catalog models only as an identity (`String.prototype`), does not own: the realm lacks it, and the
+ * kernel would abort the access at run time.
+ */
 function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): string {
-  return constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
+  const key = constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
+  const ctor = realmConstructorOf(instr.recv, b.definitions);
+  const own = ctor === undefined ? undefined : identityOnlyKeys(ctor.id);
+  if (own !== undefined && !own.has(key)) gap(`${ctor!.name}.${key} is not reachable on this path yet (#7350 B3bc)`);
+  return key;
 }
 
 /** "a number", "an object". */

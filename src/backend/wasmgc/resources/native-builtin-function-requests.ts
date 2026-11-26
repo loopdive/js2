@@ -31,9 +31,13 @@ export type NativeBuiltinFunctionBehavior =
   | "throw-type-error"
   | "object-prototype-method"
   | "native";
-/** (#7354 G1) A property value the kernel seeds: a string, or the realm's entry or object with that catalog id. */
+/**
+ * (#7354 G1) A property value the kernel seeds: a string, (#7350 B3a) a number, or the realm's entry or object with
+ * that catalog id.
+ */
 export type NativeBuiltinPropertyValue =
   | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "number"; readonly value: number }
   | { readonly kind: "intrinsic"; readonly id: string };
 /** (#7354 G1) A non-enumerable data property the kernel seeds on an entry's bag or on a realm object. */
 export interface NativeBuiltinProperty {
@@ -63,6 +67,8 @@ export interface NativeBuiltinFunctionRequirement {
   readonly aliases: readonly string[];
   /** (#7354 G1) A family member's own properties beyond `length` and `name`. */
   readonly properties?: readonly NativeBuiltinProperty[];
+  /** (#7350 B3a) A family member the catalog models only as an identity (`NativeRealmIntrinsic.identityOnly`). */
+  readonly identityOnly?: true;
 }
 export interface NativeBuiltinFunctionRequirements {
   readonly key: string;
@@ -172,6 +178,7 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
             "constructible",
             "aliases",
             "properties",
+            "identityOnly",
           ].includes(key),
       )
     )

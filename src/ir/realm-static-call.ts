@@ -8,20 +8,23 @@
  *
  * The receiver must be the unchanged global `Object` (`builtin-global-binding.ts`: lib-declared only, never assigned);
  * `Object` is no value on this path (a read refuses), so no program can replace `Object.defineProperty` itself.
+ * (#7350 B3a) Beside it, a constant a realm constructor holds (`Number.MAX_VALUE`) and the conversion calls of the
+ * wrapper constructors' source-bound plans (`Number(v)`, `Boolean(v)`).
  */
 import { ts } from "../ts-api.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { irDynamic, type IrValueId } from "./nodes.js";
+import { asVal, irDynamic, irVal, type IrValueId } from "./nodes.js";
 import {
   createsFunctionObjects,
   dynamicStoreOperand,
   type FunctionObjectLoweringHost,
 } from "./function-object-lowering.js";
 import { IrUnsupportedError } from "./outcomes.js";
+import type { IrFromAstResolver } from "./from-ast.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
-import { errorConstructorId, nativeObjectStatic } from "./program/builtin-prototype-keys.js";
+import { nativeConstantStatic, nativeObjectStatic, realmConstructorId } from "./program/builtin-prototype-keys.js";
 
 /**
  * The catalog's native `Object` static `call` names, with its `length`, when the receiver is the unchanged global
@@ -35,6 +38,69 @@ export function nativeObjectStaticCall(
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
   if (callee.expression.text !== "Object" || callee.questionDotToken || call.questionDotToken) return undefined;
   return isPristineGlobal(callee.expression) ? nativeObjectStatic(callee.name.text) : undefined;
+}
+
+/**
+ * (#7350 B3a) `X.<key>` with `X` the unchanged global of a realm constructor and `key` one of its constant value
+ * properties (`nativeConstantStatic`: `Number.MAX_VALUE`, …): that number. The fold reads nothing, so the realm holds
+ * nothing for it.
+ */
+export function realmConstantRead(
+  access: ts.PropertyAccessExpression,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): number | undefined {
+  const receiver = access.expression;
+  return ts.isIdentifier(receiver) && isPristineGlobal(receiver)
+    ? nativeConstantStatic(receiver.text, access.name.text)
+    : undefined;
+}
+
+/**
+ * `Number.<CONST>` / `Math.<CONST>` as a constant: (#7106 module-init lever A) off the unshadowed ambient namespace,
+ * legacy's own (`ambientNamespaceConstant`); (#7350 B3a) else, on the lane where the realm holds the program's objects,
+ * one a realm constructor holds ({@link realmConstantRead}).
+ */
+export function constantMemberRead(
+  access: ts.PropertyAccessExpression,
+  inScope: (name: string) => boolean,
+  resolver: Pick<IrFromAstResolver, "isAmbientBinding" | "ambientNamespaceConstant"> | undefined,
+  host: FunctionObjectLoweringHost,
+): number | undefined {
+  const receiver = access.expression;
+  if (ts.isIdentifier(receiver) && !inScope(receiver.text) && resolver?.isAmbientBinding?.(receiver) === true)
+    return resolver.ambientNamespaceConstant?.(access);
+  return createsFunctionObjects(host) ? realmConstantRead(access, host.isPristineGlobal) : undefined;
+}
+
+/**
+ * (#7350 B3a) A source-bound conversion call on that lane (`prepare-number-conversion.ts`): `Number(v)`'s or (#7354 T)
+ * `isNaN(v)`'s ToNumber, or `Boolean(v)`'s ToBoolean, of the first argument; every extra one is evaluated and dropped,
+ * in source order, before the conversion. A number or a Boolean converts inline, any other operand as a carrier
+ * through the legalization (the lane binds no `js.number.from-value`). Without an argument: `absent`, or false.
+ */
+export function lowerRealmConversionCall(
+  call: ts.CallExpression,
+  host: FunctionObjectLoweringHost,
+  to: "number" | "boolean",
+  absent = 0,
+): IrValueId {
+  const [operand, ...extras] = call.arguments;
+  const b = host.builder;
+  if (operand === undefined)
+    return to === "number"
+      ? b.emitConst({ kind: "f64", value: absent }, irVal({ kind: "f64" }))
+      : b.emitConst({ kind: "bool", value: false }, irVal({ kind: "i32", boolean: true }));
+  const value = host.lowerExpression(operand);
+  extras.forEach((extra) => host.lowerExpression(extra));
+  const scalar = asVal(b.typeOf(value));
+  if (scalar?.kind === "f64" && to === "number") return value;
+  if (scalar?.kind === "i32" && scalar.boolean === true)
+    return to === "boolean" ? value : b.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+  const carried = dynamicStoreOperand(value, operand, host, "conversion operand");
+  if (to === "number") return b.emitDynToNumber(carried);
+  // ToBoolean is `!!v`: `dyn.truthy` answers an i32, which each negation makes a JS Boolean.
+  const not = (v: IrValueId) => b.emitUnary("i32.eqz", v, irVal({ kind: "i32", boolean: true }));
+  return not(not(b.emitDynTruthy(carried)));
 }
 
 /**
@@ -67,7 +133,7 @@ export function realmBuiltinOperand(
     (ts.isCallExpression(call) || ts.isNewExpression(call)) &&
     call.arguments?.includes(operand) === true &&
     ts.isIdentifier(call.expression) &&
-    errorConstructorId(call.expression.text) !== undefined &&
+    realmConstructorId(call.expression.text)?.family === "error" &&
     isPristineGlobal(call.expression)
   )
     return true;

@@ -16,7 +16,7 @@ import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
-  holdsErrors,
+  holdsFamily,
   isOrdinaryObject,
   type CarrierKind,
   type LegalizationProgram,
@@ -180,7 +180,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
-        : functionChainAnswer(b, instr, holdsErrors(b.program), prototype, (t) => [unread(t)], s, BOOLEAN);
+        : functionChainAnswer(b, instr, holdsFamily(b.program, "error"), prototype, (t) => [unread(t)], s, BOOLEAN);
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,

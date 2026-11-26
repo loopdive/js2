@@ -330,6 +330,7 @@ function beginRealm(
       constructible: row.constructible,
       aliases: row.aliases,
       ...(entry === "native" ? { properties: familyProperties(row) } : {}),
+      ...(row.identityOnly ? { identityOnly: true as const } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(

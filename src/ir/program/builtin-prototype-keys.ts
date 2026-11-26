@@ -14,6 +14,7 @@ import {
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
   realmMethodId,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
@@ -61,23 +62,56 @@ export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): stri
 export const ERROR_ID = "%Error%";
 export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 
+/** (#7350 B3a) The realm's constructor families: (#7354 G1) the Error constructors and the primitive wrappers. */
+export type RealmFamily = "error" | "wrapper";
 /**
- * (#7354 G1) The catalog id of the Error constructor `name` names (`NATIVE_ERROR_CONSTRUCTORS`), if it names one: the
- * IR's one read of which global names are the realm's Error constructors.
+ * A constructor the realm serves: its global name, catalog id (`%name%`), family, and selector within the family's
+ * list (`NATIVE_ERROR_CONSTRUCTORS` for `js.object.create-error`, `NATIVE_WRAPPER_CONSTRUCTORS`).
  */
-export const errorConstructorId = (name: string): string | undefined =>
-  (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined;
-
-/** (#7354 G1) The Error constructor `id`'s selector (`js.object.create-error`), or -1. */
-export const errorConstructorSelector = (id: string): number =>
-  NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
-
-/** (#7354 G1) The Error constructor's name a `js.object.create-error` selector stands for. */
-export const errorConstructorName = (selector: number): string => NATIVE_ERROR_CONSTRUCTORS[selector]!;
+export interface RealmConstructor {
+  readonly name: string;
+  readonly id: string;
+  readonly family: RealmFamily;
+  readonly selector: number;
+}
+const constructors = (family: RealmFamily, names: readonly string[]) =>
+  names.map((name, selector): [string, RealmConstructor] => [name, { name, id: `%${name}%`, family, selector }]);
+const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map([
+  ...constructors("error", NATIVE_ERROR_CONSTRUCTORS),
+  ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
+]);
 
 /**
- * (#7354 G1) The global names the realm serves a built-in for (`Object`, `Function`, the Error constructors): the
- * catalog's plain-name aliases.
+ * (#7354 G1, #7350 B3a) The realm constructor the global `name` names, if it names one: the IR's one read of which
+ * global names are the realm's constructors (`realmConstructorOf` derives the IR value's answer from it).
+ */
+export const realmConstructorId = (name: string): RealmConstructor | undefined => REALM_CONSTRUCTORS.get(name);
+
+/**
+ * (#7350 B3a) The own string keys of the realm constructor `id` where the catalog models only its identity
+ * (`NativeRealmIntrinsic.identityOnly`): any other key of it is one the realm lacks.
+ */
+export const identityOnlyKeys = (id: string): ReadonlySet<string> | undefined =>
+  NATIVE_REALM_CATALOG.intrinsics.some((row) => row.id === id && row.identityOnly) ? realmStringKeys(id) : undefined;
+
+/**
+ * (#7350 B3a) `<name>.<key>` as a constant where the realm constructor `name` holds `key` as a data property with a
+ * number value that is neither writable nor configurable (Number's value properties, §21.1.2): no program can change
+ * it, so a read of it off the pristine global is that number.
+ */
+export function nativeConstantStatic(name: string, key: string): number | undefined {
+  const ctor = realmConstructorId(name);
+  const property = NATIVE_REALM_CATALOG.intrinsics
+    .find((row) => row.id === ctor?.id)
+    ?.properties.find((row) => row.key.kind === "string" && row.key.value === key);
+  return property?.kind === "data" && property.value.kind === "number" && !property.writable && !property.configurable
+    ? property.value.value
+    : undefined;
+}
+
+/**
+ * (#7354 G1) The global names the realm serves a built-in for (`Object`, `Function`, the Error constructors, (#7350
+ * B3a) the wrapper constructors): the catalog's plain-name aliases.
  */
 export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
   NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),

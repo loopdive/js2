@@ -28,6 +28,12 @@ export interface NativeRealmIntrinsic {
    * a row without one belongs to every realm. What a realm holds, and so the literals it carries, follows this field.
    */
   readonly heldWith?: string;
+  /**
+   * (#7350 B3a) The realm models only this row's identity: its listed own properties are real, but the specification
+   * gives it more, which the realm lacks (a wrapper constructor's `prototype` and statics until B3bc). A query that
+   * misses its own properties is unknown, never absent: the kernel aborts it (`BUILTIN_IDENTITY_ONLY_FLAG`).
+   */
+  readonly identityOnly?: true;
   readonly aliases: readonly string[];
   readonly prototype: string | null;
   readonly extensible: boolean;
@@ -154,6 +160,9 @@ export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "URIError",
 ] as const);
 export type NativeErrorConstructor = (typeof NATIVE_ERROR_CONSTRUCTORS)[number];
+/** (#7350 B3a) The primitive wrapper constructors (§22.1.1, §21.1.1, §20.3.1). */
+export const NATIVE_WRAPPER_CONSTRUCTORS = Object.freeze(["String", "Number", "Boolean"] as const);
+export type NativeWrapperConstructor = (typeof NATIVE_WRAPPER_CONSTRUCTORS)[number];
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
@@ -207,12 +216,14 @@ const methodProperties = (parent: string, rows: readonly Method[]) =>
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
 /**
  * (#7354 G1) The function values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)`
- * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`.
+ * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a)
+ * the wrapper constructors. Positional: new rows are appended.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
   ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
   realmMethodId("Error.prototype", errorToString[0]),
+  ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`),
 ]);
 /**
  * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a constructor (length 1, own `prototype` read only; a NativeError's
@@ -253,6 +264,30 @@ function errorRows(name: NativeErrorConstructor): NativeRealmIntrinsic[] {
     },
     ...(base ? members("Error.prototype", [errorToString]) : []),
   ].map((row) => ({ ...row, heldWith: id }));
+}
+/** (#7350 B3a) §21.1.2: Number's value properties, each {!w, !e, !c}. */
+const NUMBER_CONSTANTS: readonly (readonly [name: string, value: number])[] = [
+  ["MAX_VALUE", Number.MAX_VALUE],
+  ["MIN_VALUE", Number.MIN_VALUE],
+  ["NaN", NaN],
+  ["NEGATIVE_INFINITY", -Infinity],
+  ["POSITIVE_INFINITY", Infinity],
+];
+const WRAPPER_REQUIRES: Readonly<Record<NativeWrapperConstructor, readonly string[]>> = {
+  String: ["ToString", "SymbolDescriptiveString", "StringCreate", "GetPrototypeFromConstructor"],
+  Number: ["ToNumeric", "OrdinaryCreateFromConstructor"],
+  Boolean: ["ToBoolean", "OrdinaryCreateFromConstructor"],
+};
+/**
+ * (#7350 B3a) §22.1.1, §21.1.1, §20.3.1: a wrapper constructor (length 1) with, for Number, its value properties. Its
+ * `prototype` and statics wait for B3bc, so the row is identity-only.
+ */
+function wrapperRows(name: NativeWrapperConstructor): NativeRealmIntrinsic[] {
+  const id = `%${name}%`;
+  const constants = name === "Number" ? NUMBER_CONSTANTS : [];
+  const properties = constants.map(([key, value]) => data(key, { kind: "number", value }, false, false));
+  const ctor = callable(id, name, 1, name, WRAPPER_REQUIRES[name], properties, true, "native");
+  return [{ ...ctor, aliases: [id, name], heldWith: id, identityOnly: true }];
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -360,6 +395,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       "OrdinaryHasInstance",
     ]),
     ...NATIVE_ERROR_CONSTRUCTORS.flatMap(errorRows),
+    ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap(wrapperRows),
   ];
   return rows.map((row) => ({
     ...row,
@@ -385,9 +421,12 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ],
   }));
 }
-/** Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error family. */
+/**
+ * Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error
+ * family; (#7350 B3a) the wrapper constructors' identity rows.
+ */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function+Error:v2" as const,
+  version: "ecma262-2026:Object+Function+Error+Wrappers:v3" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [

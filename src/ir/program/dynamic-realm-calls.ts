@@ -8,6 +8,7 @@ import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
+import { realmConstructorId, type RealmConstructor } from "./builtin-prototype-keys.js";
 
 /** The call of the realm's `feature` on `args`, its result (if the contract has one) into `result`. */
 export function realmCall(
@@ -34,6 +35,24 @@ export const realmIntrinsicHelper = (id: string): string => INTRINSIC_HELPER_PRE
 /** The intrinsic id a helper symbol reads, if it is one. */
 export const realmIntrinsicOfHelper = (symbol: string): string | undefined =>
   symbol.startsWith(INTRINSIC_HELPER_PREFIX) ? symbol.slice(INTRINSIC_HELPER_PREFIX.length) : undefined;
+
+/**
+ * (#7354 G1, #7350 B3a) The realm constructor `value` is, when its definition (through its coercions) is the front
+ * end's read of one: `realmConstructorId`'s answer for the id the helper reads (a constructor's id is `%name%`).
+ */
+export function realmConstructorOf(
+  value: IrValueId,
+  definitions: ReadonlyMap<IrValueId, IrInstr>,
+): RealmConstructor | undefined {
+  let definition = definitions.get(value);
+  while (definition?.kind === "coerce.to_externref") definition = definitions.get(definition.value);
+  const id =
+    definition?.kind === "call" && definition.target.binding.kind === "runtime"
+      ? realmIntrinsicOfHelper(definition.target.binding.symbol)
+      : undefined;
+  const ctor = id === undefined ? undefined : realmConstructorId(id.slice(1, -1));
+  return ctor?.id === id ? ctor : undefined;
+}
 
 /** The builders a synthesized TypeError is written with. */
 export interface TypeErrorBuilders {
