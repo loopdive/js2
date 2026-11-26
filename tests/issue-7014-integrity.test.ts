@@ -163,6 +163,44 @@ await new Promise(r=>setTimeout(r,20));expect(1).toBe(1)});\n`,
     expect(errors.join("\n")).toMatch(/real unhandled error/);
   });
 
+  it("refuses a rejection a file schedules after its last test (#7509)", async () => {
+    // Before #7509 the worker was torn down when the last hook ended, the timer never fired, and the run had no
+    // record of the error at all. The gate's setup file (wired in vitest.config.ts) holds the file open briefly.
+    const root = scratch();
+    symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "dir");
+    const setup = join(ROOT, "scripts", "lib", "known-failures-late-errors.mjs");
+    writeFileSync(
+      join(root, "vitest.config.mjs"),
+      `export default { test: { include: ["*.test.js"], pool: "forks", setupFiles: [${JSON.stringify(setup)}] } };\n`,
+    );
+    writeFileSync(
+      join(root, "late.test.js"),
+      `import {it,expect} from "vitest";
+it("ok",()=>{setTimeout(()=>Promise.reject(new Error("late rejection after the last test")),50);expect(1).toBe(1)});\n`,
+    );
+    const errors: string[] = [];
+    await runFiles(root, makeToRel(root), ["late.test.js"], {
+      label: "late rejection",
+      onRunIntegrity: (e: string) => errors.push(e),
+    });
+    expect(errors.join("\n")).toContain("late rejection after the last test");
+  });
+
+  it("vitest.config.ts adds the late-error setup file only under the gate (#7509)", async () => {
+    const previous = process.env.KNOWN_FAILURES_PROGRESS;
+    try {
+      process.env.KNOWN_FAILURES_PROGRESS = "/dev/null";
+      const gated = (await import("../vitest.config.ts?gate")).default;
+      expect(gated.test?.setupFiles).toEqual(["./scripts/lib/known-failures-late-errors.mjs"]);
+      Reflect.deleteProperty(process.env, "KNOWN_FAILURES_PROGRESS");
+      const plain = (await import("../vitest.config.ts?plain")).default;
+      expect(plain.test?.setupFiles).toEqual([]);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "KNOWN_FAILURES_PROGRESS");
+      else process.env.KNOWN_FAILURES_PROGRESS = previous;
+    }
+  });
+
   for (const mode of ["gate", "update", "bootstrap", "ratchet"]) {
     it(`merged run integrity refuses ${mode} without writing a baseline`, () => {
       const root = scratch();
