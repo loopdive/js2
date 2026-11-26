@@ -67,6 +67,7 @@ import {
   tryConstantFoldToBoolean,
   unwrapTransparentExpression,
 } from "./object-descriptor-analysis.js";
+import { requireHelper } from "./helpers/required-helper.js";
 
 export { tryConstantFoldToBoolean } from "./object-descriptor-analysis.js";
 
@@ -2600,9 +2601,8 @@ function emitDefinePropertyRejectionThrow(
   // not a [[DefineOwnProperty]] answer. `__is_truthy` reports 1 for any
   // non-null non-primitive ref, so on the proxy arm the trap-absent object
   // result is unaffected and only a genuine falsy trap return throws.
-  const isTruthyIdx = options.falsyIsRejection === true ? ctx.funcMap.get("__is_truthy") : undefined;
-  if (isTruthyIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: isTruthyIdx }, { op: "i32.eqz" });
+  if (options.falsyIsRejection) {
+    fctx.body.push({ op: "call", funcIdx: requireHelper(ctx, "__is_truthy") }, { op: "i32.eqz" });
   } else {
     fctx.body.push({ op: "ref.is_null" });
   }
