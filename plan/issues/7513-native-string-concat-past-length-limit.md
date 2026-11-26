@@ -90,7 +90,23 @@ carries a wrapped length; the next flatten would then trap at `array.new` or mis
 - the `JSON.stringify` output length (`json-bodies.ts`, `L_OUTLEN`);
 - the regexp-vm replace result (`regexp-vm-arms.ts`).
 
-For each kernel, the PR body names the exact add the guard follows.
+**Two kernels need more than one guard call (PRV-7513 delta on 9bcc7d61).**
+
+- **`__str_buf_next_cap(curCap, needed)`** (`native-strings-basics.ts`, the #1210 builder growth).
+  - The guard runs on the requested length `needed`, never on the capacity.
+  - The doubled capacity is then clamped to `min(doubled, NATIVE_STRING_MAX_LENGTH)` with unsigned compares, so the
+    doubling loop always ends.
+  - Today the loop doubles a signed i32. Once the capacity reaches 2^30, `curCap * 2` wraps negative and stays below
+    `needed`, so the loop never ends.
+  - Pinned by a test just under the limit that must not trap.
+- **The size of the replaced result is a sum, not a product.**
+  - `__str_replace` and `__str_replaceAll` guard the running output length after each append, the same per-step rule
+    as `concat_many`. No `len + count × (repLen − patLen)` is ever formed in i32.
+  - The same per-step rule covers `__str_getSubstitution`'s `$`-expansions, `json-bodies.ts`'s `L_OUTLEN` (the adds at
+    L413–416) and the regexp-vm replace result.
+  - Every step adds at most one string, so at most 2^30, to a sum already checked to be at most 2^30. That bounds every
+    step by 2^31, which the unsigned guard holds exactly. The PR body gives this argument per kernel, with the exact
+    add each guard follows.
 
 **Length unit (PRV item 6).** `len` is in UTF-16 code units under both storages. `--utf8-storage`'s `Utf8String.len` is
 also the code-unit count (`native-strings-core.ts`, `__str_utf8_to_flat`), so one limit covers both. The test gets a
