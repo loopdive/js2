@@ -518,3 +518,64 @@ Proofs:
 Left open: a text the IR cannot lower (`[x]`, `delete x`, `with`, a read of a caller function as a value) still
 fails a program whose site never runs. That is a lowering gap of the called init, not a diagnostic. The census
 shows no such file, because a reached site stops first. A4 must claim a site only when its source's unit lowered.
+
+### A4 narrowed: a static proof instead of the run-time identity test (2026-11-26, base `caaef907`)
+
+B2b (the realm's %eval% intrinsic, lane S5) is stalled, so A4 no longer waits for it. A4 needs from B2b only the
+value to compare against; `dyn.global_object` and `dyn.member_get` are on main (#7106 S3c). The narrowed A4 drops the
+run-time test and asks a static proof that already exists.
+
+- **The proof.** A site is a direct eval only while the global `eval` is the realm's %eval%. If no source ever
+  rebinds it, that holds at every site. `pristineBuiltinGlobal` (`src/ir/builtin-global-binding.ts`, #7354 O1) is
+  that proof for `Object`'s statics, and A4 reuses it unchanged:
+  - `eval` is declared in lib files only;
+  - no source declares a binding named `eval` at any level;
+  - no source writes it: an assignment, a compound assignment, `++`/`--`, a destructuring or for-in/of target, or a
+    member write through `globalThis`/`global`/`window`/`self`/`this`.
+  A4 asks it through the existing resolver capability `isPristineBuiltinGlobal` (`from-ast.ts`), over every source
+  of the program, the `<eval:N>.js` sources included. A text that writes is no site anyway (RV7432 B2).
+- **The call.** Pristine: `lowerCall` lowers the statement site as a direct call of the source's called init unit
+  (A1's `"called"` kind). There is no identity test and no read of the global. Not pristine: the site refuses at
+  select, by name: `eval literal: the global eval is not pristine (#7363 A4)`.
+- **Claimed only when the text's unit lowered.** RV7432 B1 left this open: a text the IR cannot lower (`[x]`,
+  `delete x`, `with`, a read of a caller function as a value, `undeclaredX` as "identifier not in scope") fails the
+  program even when its site never runs. Admission stays in one place, `withLiteralEvalSources`
+  (`test262-prepared-entry.ts`). There the texts already join only when the compile's gates pass them. A failure of
+  the preparation with the texts, inside an `<eval:N>.js` unit, now also falls back to the preparation without them.
+  - The program is then exactly main's, and every site keeps its refusal.
+  - Nothing is claimed and then withdrawn inside one program; the decision is the entry's, before emission.
+  - The fallback is all or nothing per file, as in B1.
+- **Soundness boundary.** The proof does not see these writes:
+  - a computed key (`globalThis["ev" + "al"] = f`);
+  - an escaped global-object value (`var g = globalThis; g.eval = f`);
+  - `Object.defineProperty(globalThis, "eval", …)` or `Reflect.set`;
+  - code run by the runtime-eval provider or the `Function` constructor.
+
+  Each needs the global object as a first-class value, or a dynamic code path. Neither is reachable on the Prepared
+  path today: `globalThis` lowers to "identifier "globalThis" is not in scope", script-level `this` to "'this'
+  reference outside an instance method body", a plain call of a `this`-using function to "installs no receiver for
+  its 'this'", and an unbound eval statement or indirect eval to the slice-1 refusal. The `Object` statics rest on
+  the same boundary. Before `globalThis` or script `this` lowers, both proofs need an escape check:
+  [#7503](7503-pristine-builtin-global-escaped-writes.md).
+- **Pins.**
+  - The refusal: one row per write shape (`eval = f`, `eval += ""`, `[eval] = [f]`, `var eval`, `function eval(){}`,
+    `globalThis.eval = f`, `this.eval = f`). Each refuses the site by the A4 name.
+  - The boundary: a program whose site is pristine but that also reads `globalThis`, and one with script-level
+    `this`, still refuse, by the existing labels. If either label ever goes away, the test fails and points at #7503.
+  - The lowering fallback: a text that cannot lower (`eval("[x]")` after `break`, never run) leaves the program
+    byte-identical to main's.
+  - Run: the A3 program runs and agrees with node; a site in a loop runs its text each time.
+- **Yield, measured on `caaef907` (real harness).**
+  - 16 files stop at the A4 label (18 with the stand-in harness).
+  - Simulated by rewriting each top-level statement site into its text as a block (the narrowed A4's semantics), 12
+    pass: `11.1.5_4-4-b-1`, `S7.3_A5.4`, and the ten `language/white-space/comment-{single,multi}-*`. None has an
+    `eval` binding or write in the test or the harness, so the proof holds for all 12.
+  - The other 6:
+    - 2 need `.call`/`.apply` on a closure;
+    - 2 need the `Function` constructor (#7487);
+    - `cptn-thrw-prim` also has an expression-position site (A5);
+    - `15.3.5.4_2-12gs` compiles but fails at run time ("unreachable").
+  - The static SyntaxError throw adds 3. Total: 15.
+  - The earlier "A4 alone 18" was an estimate made another way; this measurement replaces it.
+- **Size (estimate).** `lowerCall` arm about 15 lines, the capability about 5, the admission fallback about 15, the
+  call of the called unit about 25. One test file for the pins.
