@@ -121,7 +121,7 @@ Reproduced by hand (same entry, raw source):
 - `function outer() { function g() { return 2; } return g(); } outer();` → abort `nested func must have a return
   type annotation (outer)`. **An unannotated nested function declaration fails on the Prepared path even outside a
   block.** Every function-code file has its block function inside a function (an IIFE), so the function-code
-  cluster cannot pass before nested function declarations do (owner: lane S21, its cluster 7 "nested function without annotations"; routed by the lead 2026-11-26, repro sent).
+  cluster cannot pass before nested function declarations do (lane S21 builds it as #7492; routed by the lead 2026-11-26, repro sent).
 - Script-level building blocks already run: `var x; function g(){return 2} x = g; x()` (F1b's value home + a script
   var), `if (true) { var y = function () { return 2; }; } y()` (slice 1's nested var + a closure literal).
 
@@ -197,7 +197,7 @@ declares its own *F*) it is the block binding; elsewhere it is the var binding.
   module-binding write) ask the analysis which binding a reference to *F* means by position.
 - **Function level (2b), after nested function declarations run on the Prepared path:** the same analysis; the block
   binding is a function local (a ref cell when a closure writes it, as captured locals are), the var binding a
-  function local created by the existing function-local var model (`function-local-var.ts`). Starts only when
+  function local created by the existing function-local var model (`function-local-var.ts`). Starts only when #7492 lands, i.e. when
   `function outer(){ function g(){return 2} return g(); }` runs on main. Until then the function-level arm keeps
   aborting by name, with one named reason instead of today's five.
 
