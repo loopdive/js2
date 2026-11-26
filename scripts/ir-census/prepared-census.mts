@@ -165,8 +165,19 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
     (instance.exports.__module_init as (() => void) | undefined)?.();
     return { file, status: "pass", ...flags };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error) };
+    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, error) };
   }
+}
+
+/**
+ * Where a run-time trap fired: the innermost Wasm frame's function name and, when that function got an abort
+ * body (#7354 U, `unlowerableBodies: "abort"`), the refusal the abort stands for.
+ */
+function trapOf(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>, error: unknown) {
+  const frame = /^\s*at (.+?) \(wasm:\/\//m.exec(error instanceof Error ? (error.stack ?? "") : "")?.[1];
+  if (frame === undefined) return {};
+  const abort = tools.entry.requiredPreparedAbortBodies?.(result)?.find((row) => row.name === frame);
+  return { trapFrame: frame, ...(abort ? { abort: { code: abort.code, detail: abort.detail.slice(0, DETAIL_CAP) } } : {}) };
 }
 
 const argv = process.argv.slice(2);
