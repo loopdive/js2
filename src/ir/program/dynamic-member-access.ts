@@ -18,7 +18,7 @@ import {
   heldWrapperPrototypeKey,
   unheldWrapperPrototypeKeys,
 } from "./builtin-prototype-keys.js";
-import { WRAPPER_OF_PRIMITIVE } from "../../runtime/contracts/native-realm-catalog.js";
+import { WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";

@@ -11,7 +11,7 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "../../runtime/contracts/native-realm-catalog.js";
+import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
 import type { CarrierKind } from "./dynamic-value-kinds.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";

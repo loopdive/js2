@@ -9,7 +9,7 @@
  * otherwise lacks: the intercepted call then is the run-time abort.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "../../runtime/contracts/native-realm-catalog.js";
+import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
 import { gap } from "./dynamic-value-gap.js";

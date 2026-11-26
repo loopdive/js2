@@ -31,13 +31,11 @@
  * ({@link functionChainAnswer}).
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
+import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
+import type { IrType } from "../core/types.js";
 import {
   NATIVE_WRAPPER_CONSTRUCTORS,
   WRAPPER_OF_PRIMITIVE,
-  type NativeWrapperConstructor,
-} from "../../runtime/contracts/native-realm-catalog.js";
-import type { IrType } from "../core/types.js";
-import {
   ERROR_ID,
   errorConstructorName,
   errorConstructorSelector,
