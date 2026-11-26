@@ -14,10 +14,10 @@ import { compileIrPathFunctions } from "../src/ir/integration.js";
 import type { IrClassShape } from "../src/ir/nodes.js";
 import type { IrSelection } from "../src/ir/select.js";
 import { createEmptyModule } from "../src/ir/types.js";
-import { buildImports } from "../src/runtime.js";
 
 // Register the codegen expression/statement delegates used by generateModule.
 import "../src/codegen/expressions.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -47,14 +47,7 @@ function classId(inventory: ReturnType<typeof buildIrUnitInventory>, name: strin
 async function runtimeValue(source: string, experimentalIR: boolean): Promise<unknown> {
   const compiled = await compile(source, { experimentalIR });
   expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildImports(compiled.imports, ENV_STUB, compiled.stringPool);
-  const { instance } = await WebAssembly.instantiate(compiled.binary, {
-    env: imports.env,
-    "wasm:js-string": imports["wasm:js-string"],
-    string_constants: imports.string_constants,
-    string_constants16: imports.string_constants16,
-  });
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(compiled, ENV_STUB);
   return (instance.exports.main as () => unknown)();
 }
 

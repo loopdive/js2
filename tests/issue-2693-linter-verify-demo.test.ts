@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // The ESLint-style Linter, compiled to Wasm. Parse host-delegated via imports.
 const LINTER_SRC = `
@@ -76,14 +77,12 @@ describe("#2693 MILESTONE — ESLint-style Linter.verify runs as Wasm in Node", 
       return toks.length;
     };
 
-    const io = r.importObject as unknown as { env: Record<string, unknown>; __setExports?: (e: unknown) => void };
-    io.env.__parse = (code: string) => hostParse(code);
-    io.env.__tok_value = (i: number) => toks[i]!.value;
-    io.env.__tok_line = (i: number) => toks[i]!.line;
-    io.env.__tok_col = (i: number) => toks[i]!.col;
-
-    const { instance } = await WebAssembly.instantiate(r.binary, io as unknown as WebAssembly.Imports);
-    io.__setExports?.(instance.exports);
+    const instance = await instantiateWithRuntime(r, {
+      __parse: (code: string) => hostParse(code),
+      __tok_value: (i: number) => toks[i]!.value,
+      __tok_line: (i: number) => toks[i]!.line,
+      __tok_col: (i: number) => toks[i]!.col,
+    });
     const verify = instance.exports.verify as (c: string) => string;
 
     // The wasm Linter.verify runs and produces correct semi-rule diagnostics.

@@ -36,8 +36,8 @@ import { describe, expect, it } from "vitest";
 
 import { ts } from "../src/ts-api.js";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
 import { planIrCompilation } from "../src/ir/select.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -45,28 +45,12 @@ const ENV_STUB = {
   console_log_bool: () => {},
 };
 
-const JS_STRING_STUB = {
-  concat: (a: string, b: string) => a + b,
-  length: (s: string) => s.length,
-  equals: (a: string, b: string) => (a === b ? 1 : 0),
-  substring: (s: string, start: number, end: number) => s.substring(start, end),
-  charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-  fromCharCode: (c: number) => String.fromCharCode(c),
-  cast: (s: unknown) => String(s),
-  test: (v: unknown) => (typeof v === "string" ? 1 : 0),
-};
-
 async function instantiate(source: string, experimentalIR: boolean): Promise<Record<string, unknown>> {
   const r = await compile(source, { fileName: "test.ts", experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
-  const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, {
-    env: built.env,
-    string_constants: built.string_constants,
-    "wasm:js-string": JS_STRING_STUB,
-  } as never);
+  const instance = await instantiateWithRuntime(r, ENV_STUB);
   return instance.exports as Record<string, unknown>;
 }
 
