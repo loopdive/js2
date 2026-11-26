@@ -144,15 +144,7 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     expect(await run('function f() { throw "x"; }\nf();')).toBe("threw");
   });
 
-  it.each([
-    [
-      "a reassigned typed string local (from-ast has no string slot on this path)",
-      'function h() { var s = "p"; s = s + "q"; return s; }\nh();',
-      "mutable binding 's' (string) has no slot representation",
-    ],
-  ])("refuses %s", async (_, source, detail) => {
-    expect(await refusal(source)).toContain(detail);
-  });
+  // (#7354 L0b) A reassigned string local lives in the carrier now (tests/issue-7354-l0b-expressions.test.ts).
 
   // (#7354 C2, C2-D1) The home may also hold `undefined` or `null`, whose arm answers, so the string's arm aborts (a
   // string's own `length` comes with arrays, #7352); it refused at compile time before C2.

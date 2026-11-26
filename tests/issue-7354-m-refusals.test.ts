@@ -172,11 +172,6 @@ describe("#7354 M1 — refusals that stay", () => {
       'ir/from-ast: identifier "Object" is not in scope in <module-init>',
     ],
     [
-      "F41: a switch over a member",
-      "function sw(v){ switch (v.k) { case 1: return 1; } return 0; } sw({k:1});",
-      "ir/from-ast: switch disc must lower to i32/f64 in sw",
-    ],
-    [
       "F44: a return inside try",
       "function fin(v){ try { return 1; } finally { v.z; } } fin({z:1});",
       "ir/from-ast: early return inside try/for-of-iter not in IR scope (fin)",

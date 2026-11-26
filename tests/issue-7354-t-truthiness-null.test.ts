@@ -147,12 +147,8 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
   });
 
   // (#7354 L0a) Loose equality of two dynamic values is lowered now (tests/issue-7354-l0a-loose-equality.test.ts).
+  // (#7354 L0b) So is `== null` (tests/issue-7354-l0b-expressions.test.ts).
   it.each([
-    [
-      "`== null`",
-      "function q(v) { return v == null; }\nif (q(undefined) !== true) throw 1;",
-      "bare 'null' in non-reference context (f64)",
-    ],
     // The other from-ast paths the externref-carrier flag switches on; each still refuses before it matters.
     [
       "a dynamic for-in head",

@@ -189,28 +189,34 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
   // (#7354 Str2) A `typeof` read any other way (assigned, returned, concatenated, compared with a non-literal or with
   // another `typeof`) is its answer string now: tests/issue-7354-str2-to-string.test.ts proves each position.
 
-  // The string dispatch compares only literal tests; any other case test (first, last, only, or a call) refuses by
-  // name instead of being skipped — never compared, its expression never evaluated (a wrong answer, review round 1).
+  // The string dispatch compares only literal tests. (#7354 L0b) Any other case test (first, last, only, or a call) takes
+  // the carrier dispatch: compared by strict equality, evaluated lazily in source order (review round 1 of Ty refused
+  // them, rather than skip one).
   it.each([
     [
       "last",
-      'function t(v) { var s = "boolean"; switch (typeof v) { case "number": return 1; case s: return 2; } return 3; }\nt(true);',
+      'function t(v) { var s = "boolean"; switch (typeof v) { case "number": return 1; case s: return 2; } return 3; }',
+      "t(true) * 100 + t(1) * 10 + t(null)",
     ],
     [
       "first",
-      'function t(v, w) { switch (typeof v) { case w: return 1; case "number": return 2; } return 3; }\nt(1, 2);',
+      'function t(v, w) { switch (typeof v) { case w: return 1; case "number": return 2; } return 3; }',
+      't(1, 2) * 100 + t(1, "number") * 10 + t(true, 2)',
     ],
-    ["only", "function t(v, w) { switch (typeof v) { case w: return 1; } return 3; }\nt(1, 2);"],
+    ["only", "function t(v, w) { switch (typeof v) { case w: return 1; } return 3; }", 't(1, 2) * 10 + t(1, "number")'],
     [
       "a call with a side effect",
-      'var n = 0;\nfunction g(w) { n = 1; return w; }\nfunction t(v) { switch (typeof v) { case "number": return 1; case g(v): return 2; } return 3; }\nt(true);',
+      'var n = 0;\nfunction g(w) { n = n + 1; return w; }\nfunction t(v) { switch (typeof v) { case "number": return 1; case g(v): return 2; } return 3; }',
+      't(true) * 1000 + t(1) * 100 + t("boolean") * 10 + n',
     ],
     [
       "a numeric switch's",
-      "function t(v) { var k = 1; switch (v * 1) { case 1: return 1; case k: return 2; } return 3; }\nt(1);",
+      "function t(v) { var k = 1; switch (v * 1) { case 2: return 1; case k: return 2; } return 3; }",
+      "t(1) * 100 + t(2) * 10 + t(3)",
     ],
-  ])("refuses a non-literal case test (%s) by name", async (_label, source) => {
-    expect(await refusal(source)).toContain("ir/from-ast: switch-case-test-nonliteral in t");
+  ])("answers a non-literal case test (%s) like JavaScript", async (_label, functions, probe) => {
+    const expected = Number(new Function(`${functions}\nreturn ${probe};`)());
+    await expectLikeNode((right) => `${functions}\nif (${probe} !== ${right ? expected : expected + 1}) throw 1;`);
   });
 
   it("answers a switch on the typeof with the default clause in the middle", async () => {

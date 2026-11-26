@@ -174,7 +174,7 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       "function f(v) { return arguments.length; }\nif (f(1) !== 1) throw 1;",
       "dynamic operation dyn.arguments_length has no Prepared intrinsic",
     ],
-    ["an extra argument", `${ID}if (id(1, 2) !== 1) throw 1;`, "call to id has 2 args, expected 1"],
+    // (#7354 L0b) An extra argument is expressed now (tests/issue-7354-l0b-statements.test.ts).
   ])("refuses %s", async (_name, source, message) => {
     expect(await refusal(source)).toContain(message);
   });
