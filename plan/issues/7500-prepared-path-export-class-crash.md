@@ -11,7 +11,7 @@ feasibility: medium
 reasoning_effort: high
 task_type: bug
 goal: backend-agnostic-ir
-related: [7488, 7354]
+related: [7488, 7508, 7354]
 ---
 
 # Prepared path crashes on `export class C {}`
@@ -85,7 +85,8 @@ lowered:
    today reaches the final validation and throws. It covers classes (`class C {} export { C }`, `{ C as D }`,
    `{ C as default }`, before the declaration, `class C {} { let C = 1; } export { C }`) and PRV-7500's six non-class
    shapes: an import binding (`import { a } …`, `import * as m …`, `import x = require(…)`), a type (`type T`), an
-   ambient `declare function`, and an undeclared name (`export { zz }`). New `IrUnsupportedCode`
+   ambient `declare function`, and an undeclared name (`export { zz }`), filed as
+  [#7508](7508-prepared-path-unresolved-local-export-crash.md) and closed by this rule. New `IrUnsupportedCode`
    `export-target-unsupported`, stage `select`, detail "export X has no local binding the Prepared path plans".
 2. **An exported class declaration (modifier).** `export class C {}`, `export default class D {}`,
    `export abstract class C {}`: `buildIrModuleInitPlan` records an alias to the callable binding of the class's
