@@ -59,8 +59,7 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
   type Mutation =
     | { kind: "init"; expr: ts.Expression | undefined }
     | { kind: "assign"; expr: ts.Expression }
-    | { kind: "compound"; op: ts.SyntaxKind; rhs: ts.Expression }
-    | { kind: "incdec" };
+    | { kind: "compound"; op: ts.SyntaxKind };
   const candidates = new Map<string, Mutation[]>();
   // Names of for-loop counters that the existing detectI32LoopVar already
   // promotes (see statements/loops.ts). We respect those by adding them
@@ -244,9 +243,7 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
         if (ts.isIdentifier(target) && candidates.has(target.text)) {
           recordCandidate(
             target.text,
-            op === ts.SyntaxKind.EqualsToken
-              ? { kind: "assign", expr: node.right }
-              : { kind: "compound", op, rhs: node.right },
+            op === ts.SyntaxKind.EqualsToken ? { kind: "assign", expr: node.right } : { kind: "compound", op },
           );
         }
       }
@@ -268,8 +265,15 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
       (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     ) {
+      // (#7411) `x++` / `x--` are `x += 1` / `x -= 1`, which leave int32 at its bounds: same rule as the compounds.
       const operand = skipTransparentExpressions(node.operand);
-      if (ts.isIdentifier(operand) && candidates.has(operand.text)) recordCandidate(operand.text, { kind: "incdec" });
+      if (ts.isIdentifier(operand) && candidates.has(operand.text)) {
+        const op =
+          node.operator === ts.SyntaxKind.PlusPlusToken
+            ? ts.SyntaxKind.PlusEqualsToken
+            : ts.SyntaxKind.MinusEqualsToken;
+        recordCandidate(operand.text, { kind: "compound", op });
+      }
     }
     forEachChild(node, collectMutations);
   }
@@ -400,16 +404,15 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
     return false;
   }
 
-  /** Compound assignment is i32-safe if RHS is i32-safe (the result wraps to int32 in JS for bitwise/shift compounds, and for +=/-=/*= it requires the local to stay int32 for both the read and the write). */
-  function isCompoundI32Safe(op: ts.SyntaxKind, rhs: ts.Expression): boolean {
-    // Bitwise compound: always i32
+  /** A compound assignment keeps the local int32 exactly when JavaScript's result is a signed int32, whatever the RHS. */
+  function isCompoundI32Safe(op: ts.SyntaxKind): boolean {
+    // Signed bitwise / shift compounds: always int32. (#7411) `>>>=` is not among them: its result is uint32.
     if (
       op === ts.SyntaxKind.AmpersandEqualsToken ||
       op === ts.SyntaxKind.BarEqualsToken ||
       op === ts.SyntaxKind.CaretEqualsToken ||
       op === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken
+      op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken
     ) {
       return true;
     }
@@ -430,23 +433,10 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
       if (!i32Set.has(name)) continue;
       let safe = true;
       for (const m of muts) {
-        if (m.kind === "init") {
-          if (!isI32SafeExpr(m.expr)) {
-            safe = false;
-            break;
-          }
-        } else if (m.kind === "assign") {
-          if (!isI32SafeExpr(m.expr)) {
-            safe = false;
-            break;
-          }
-        } else if (m.kind === "compound") {
-          if (!isCompoundI32Safe(m.op, m.rhs)) {
-            safe = false;
-            break;
-          }
+        if (m.kind === "compound" ? !isCompoundI32Safe(m.op) : !isI32SafeExpr(m.expr)) {
+          safe = false;
+          break;
         }
-        // incdec is always i32-safe (operand is the local itself, already a candidate)
       }
       if (!safe) {
         i32Set.delete(name);
