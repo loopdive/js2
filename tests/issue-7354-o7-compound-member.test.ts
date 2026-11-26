@@ -4,7 +4,7 @@
 // lane (`lowerDynamicMemberCompound` in src/ir/from-ast.ts): one `[[Get]]`, the RHS, the dynamic binary producer (or
 // `++` / `--`'s ToNumeric step), one `[[Set]]` with the plain write's strict/sloppy failure rule. Every program asserts
 // node's answer (must return) and a wrong one (must throw). A computed key, `**=` and a script-var array refuse by
-// name; the ordinary pipeline keeps its refusal.
+// name (the array at its literal); the ordinary pipeline keeps its refusal.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -103,8 +103,9 @@ describe("#7354 O7 — a compound write of a dynamic value's member", () => {
       'var o = { a: 1 }; var k = "a"; o[k] += 2;',
       "compound element write on dynamic not in IR scope",
     ],
-    ["**=", "var o = { x: 2 }; o.x **= 2;", "compound member write **= of"],
-    // B4: `lowerDynamicMemberCompound` refuses a script-var array by name; on this lane its literal refuses first.
+    ["**=", "var o = { x: 2 }; o.x **= 2;", "dynamic compound **= of"],
+    // B4: a script-var array never reaches the member arm on this lane: its literal refuses first (RV7491 F3 removed
+    // the arm's own guard as unreachable). The slice that registers array literals pins the compound.
     ["a script-var array", "var a = [1, 2]; a.length += 1;", "resolver cannot register vec for array literal"],
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);

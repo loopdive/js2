@@ -624,9 +624,12 @@ export function isNumberCompoundAssignOperator(op: ts.SyntaxKind): boolean {
   return numberCompoundBinaryOperator(op) !== undefined;
 }
 
-/** The binary operator a numeric field's `++` / `--` steps by 1 with. */
-export function updateStepOperator(op: ts.SyntaxKind): NumberBinaryOperator {
-  return op === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
+/** The binary operator a member compound applies: `op=`'s own, and `+` / `-` for `++` / `--` (a step of 1). */
+export function compoundStepOperator(token: ts.SyntaxKind): NumberBinaryOperator {
+  return (
+    numberCompoundBinaryOperator(token) ??
+    (token === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken)
+  );
 }
 
 /** `lowerIncrementDecrement`: `++` / `--` lower on an f64 or a dynamic slot. */

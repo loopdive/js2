@@ -5946,6 +5946,22 @@ Measured:
 - **Pin updated.** `tests/issue-7354-o2-accessors.test.ts` pinned the accessor `o.x += 1` / `o.x++` refusal. It now
   agrees with node: one getter and one setter call each.
 
+### O7 review RV7491 (2026-11-26): fixes
+
+The verdict was REQUEST CHANGES (minor), with no wrong answers; 22/22 reproduced.
+
+- **F1.** The dynamic read-modify-write step is one helper, `dynamicCompoundStep(token, old, left, rhs, cx)`: the RHS
+  on the carrier, admission, the dynamic binary producer, the carrier form. The dynamic-slot arm and the member arm
+  both call it, so their RHS hint no longer drifts (both are `irDynamic()`). Prepared bytes 804/804 are unchanged.
+- **F2.** `lowerElementCompound` takes the compound token like `lowerPropertyCompound`. Both take their operator from
+  the one `compoundStepOperator` (`operand-admissibility.ts`), which replaces `updateStepOperator`.
+- **F3.** The unreachable `op === undefined` branch and the script-var-vec guard (B4) are gone. The vec row's pin
+  stays at its literal's refusal, which comes first on this lane.
+- **F4.** The slot arm's entry gate is direct: a dynamic slot that is no captured cell and no `**=`.
+- **F5.** Filed as [#7535](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7535-fn-declaration-tail-member-compound-abort)
+  (after S21's #7492 `lowerTail` rewrite).
+- **F6.** Filed as [#7536](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7536-move-dynamic-operator-helpers-out-of-from-ast).
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs

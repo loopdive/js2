@@ -87,7 +87,7 @@ import {
   nullishLeftAdmissible,
   nullValueAdmissible,
   numberCompoundBinaryOperator,
-  updateStepOperator,
+  compoundStepOperator,
   slotWriteVerdict,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -7214,12 +7214,12 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
  */
 function lowerElementCompound(
   lhs: ts.ElementAccessExpression,
-  op: NumberBinaryOperator,
+  token: ts.SyntaxKind,
   rhs: ts.Expression | null,
   cx: LowerCtx,
 ): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
-    withMutationSourceSite(cx, lhs, () => lowerElementCompound(lhs, op, rhs, cx));
+    withMutationSourceSite(cx, lhs, () => lowerElementCompound(lhs, token, rhs, cx));
     return;
   }
   if (lhs.questionDotToken) {
@@ -7303,6 +7303,7 @@ function lowerElementCompound(
   }
   // (5) binop — `++`/`--` has no RHS node — then (6) the store tail, keyed
   // off the SAME slot (index and bounds proof) as the read.
+  const op = compoundStepOperator(token);
   emitElementWrite(lhs, recv, vec, slot, emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx), cx);
 }
 
@@ -10880,7 +10881,7 @@ function lowerPropertyCompound(
     );
   }
   // (4) binop in source Number space — `++`/`--` has no RHS node — then (5) the write tail.
-  const op = numberCompoundBinaryOperator(token) ?? updateStepOperator(token);
+  const op = compoundStepOperator(token);
   const result = numericFieldUpdate(cx.builder, oldValue, rhsValue, fieldType, (left, right) =>
     emitNumberBinary(op, left, right, lhs, rhs, cx),
   );
@@ -10900,8 +10901,7 @@ function lowerPropertyCompound(
  * with the plain write's target and failure rule ({@link dynamicNamedMember}). A getter or setter runs through the
  * realm in both. Returns `false` when the receiver is no such member.
  * - `++` / `--` is ToNumeric(old) ± 1 ({@link dynamicIncrement}), never `+= 1`: `"1"` becomes 2, not "11".
- * - Every other operator is the dynamic binary producer, whose conversions follow the RHS.
- * - A script-var vec refuses: its expando store rule is the plain write's, not proven for a read-modify-write.
+ * - Every other operator is {@link dynamicCompoundStep}, whose conversions follow the RHS.
  */
 function lowerDynamicMemberCompound(
   lhs: ts.PropertyAccessExpression,
@@ -10910,31 +10910,36 @@ function lowerDynamicMemberCompound(
   recv: IrValueId,
   cx: LowerCtx,
 ): boolean {
-  if (isScriptVarVec(lhs.expression, cx))
-    demoteToLegacy(
-      "property-write-unsupported",
-      `ir/from-ast: compound member write on a script-var array (${cx.funcName})`,
-    );
   const member = dynamicNamedMember(lhs, recv, cx);
   if (member === undefined) return false;
   const old = cx.builder.emitDynMemberGet(member.target, member.key);
-  let result: IrValueId | null;
-  if (rhs === null) result = dynamicIncrement(old, token, cx);
-  else {
-    const rhsValue = lowerExpr(rhs, cx, irDynamic());
-    const rhsType = cx.builder.typeOf(rhsValue);
-    const op = numberCompoundBinaryOperator(token);
-    if (op === undefined || !compoundWriteAdmissible(token, "dynamic", irOperandFamily(rhsType, rhs))) {
-      const detail = `${ts.tokenToString(token)} of ${describeIrType(rhsType)} on a dynamic value (${cx.funcName})`;
-      demoteToLegacy("compound-assign-unsupported", `ir/from-ast: compound member write ${detail}`);
-    }
-    result = lowerDynamicBinaryValues(op, old, rhsValue, lhs, rhs, cx);
-  }
-  // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
-  if (result === null)
-    throw new Error(`ir/from-ast: admitted dynamic member compound has no lowering (${cx.funcName})`);
-  cx.builder.emitDynMemberSet(member.target, member.key, dynamicBinaryOnCarrier(result, cx), member.sloppy);
+  const stored = rhs === null ? dynamicIncrement(old, token, cx) : dynamicCompoundStep(token, old, lhs, rhs, cx).stored;
+  cx.builder.emitDynMemberSet(member.target, member.key, stored, member.sloppy);
   return true;
+}
+
+/**
+ * (#7354 O7) A dynamic compound's step after its read of `old` (a dynamic slot's or a member's): the RHS on the
+ * carrier, admitted for the dynamic family, then the dynamic binary producer. `result` is the operator's value, and
+ * `stored` its carrier form.
+ */
+function dynamicCompoundStep(
+  token: ts.SyntaxKind,
+  old: IrValueId,
+  left: ts.Expression,
+  rhs: ts.Expression,
+  cx: LowerCtx,
+): { readonly result: IrValueId; readonly stored: IrValueId } {
+  const rhsValue = lowerExpr(rhs, cx, irDynamic());
+  const rhsType = cx.builder.typeOf(rhsValue);
+  if (!compoundWriteAdmissible(token, "dynamic", irOperandFamily(rhsType, rhs))) {
+    const detail = `${ts.tokenToString(token)} of ${describeIrType(rhsType)} has no carrier (${cx.funcName})`;
+    demoteToLegacy("compound-assign-unsupported", `ir/from-ast: dynamic compound ${detail}`);
+  }
+  const result = lowerDynamicBinaryValues(compoundStepOperator(token), old, rhsValue, left, rhs, cx);
+  // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
+  if (result === null) throw new Error(`ir/from-ast: admitted dynamic compound has no lowering (${cx.funcName})`);
+  return { result, stored: dynamicBinaryOnCarrier(result, cx) };
 }
 
 /**
@@ -10976,7 +10981,7 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
         return true;
       }
       if (ts.isElementAccessExpression(expr.left)) {
-        lowerElementCompound(expr.left, binaryOp, expr.right, cx);
+        lowerElementCompound(expr.left, op, expr.right, cx);
         return true;
       }
     }
@@ -10997,7 +11002,7 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
     return true;
   }
   if (ts.isElementAccessExpression(operand)) {
-    lowerElementCompound(operand, updateStepOperator(expr.operator), null, cx);
+    lowerElementCompound(operand, expr.operator, null, cx);
     return true;
   }
   return false;
@@ -13486,30 +13491,16 @@ function lowerCompoundAssignment(
   const binaryOp = numberCompoundBinaryOperator(compoundOp);
   // invariant (producer-promise): every caller passes a numeric compound operator (`isNumberCompoundAssignOperator`).
   if (binaryOp === undefined) throw new Error(`ir/from-ast: compound operator has no binary form in ${cx.funcName}`);
-  // A dynamic slot reads the binding before the RHS, then applies the dynamic binary producer (#7354 O7). A dynamic
-  // captured cell needs a separately proven storage contract.
-  if (
-    slotFamily === "dynamic" &&
-    storage.kind !== "local" &&
-    compoundWriteAdmissible(compoundOp, slotFamily, "number")
-  ) {
+  // (#7354 O7) A dynamic slot reads the binding before the RHS, then takes the dynamic compound step. A dynamic
+  // captured cell needs a separately proven storage contract; `**=` has no dynamic step.
+  const dynamicSlot =
+    slotFamily === "dynamic" && storage.kind !== "local" && compoundOp !== ts.SyntaxKind.AsteriskAsteriskEqualsToken;
+  if (dynamicSlot) {
     const lhs =
       storage.kind === "moduleGlobal"
         ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
         : cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
-    const rhsValue = lowerExpr(rhs, cx, logicalType);
-    const rhsType = cx.builder.typeOf(rhsValue);
-    if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
-      demoteToLegacy(
-        "compound-assign-unsupported",
-        `ir/from-ast: dynamic "${id.text} ${ts.tokenToString(compoundOp)}" operand ${describeIrType(rhsType)} has no carrier (${cx.funcName})`,
-      );
-    }
-    const result = lowerDynamicBinaryValues(binaryOp, lhs, rhsValue, id, rhs, cx);
-    // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
-    if (result === null)
-      throw new Error(`ir/from-ast: admitted dynamic compound operand has no lowering (${cx.funcName})`);
-    const stored = dynamicBinaryOnCarrier(result, cx);
+    const { result, stored } = dynamicCompoundStep(compoundOp, lhs, id, rhs, cx);
     if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, stored);
     else cx.builder.emitSlotWrite(storage.slotIndex, stored);
     return result;
