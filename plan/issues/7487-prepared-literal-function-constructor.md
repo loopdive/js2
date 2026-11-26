@@ -214,7 +214,13 @@ blocker). That is PR #7441, which addresses review P1.
    This arm takes the B2 fix A1–A4 adopts: those analyses walk virtual sources. Because this kind's source is a
    function declaration, its body is analysed as call-time code, the case they already model for any declaration.
    Nothing kind-specific is added.
-7. **The site's identity test.** The site tests global `Function` === %Function% through `js.object.global` and
+7. **Claim only what lowered.** As A4 does, the arm claims a site only after its function unit has lowered, and never
+   claims a site and then withdraws it. S2's B1 tolerates TS2304, but tolerating a diagnostic is not lowering it. A
+   body that **reads** an undeclared global (not `typeof`) fails lowering ("identifier not in scope") until something
+   gives that name a home, so its site keeps a named refusal. Checked on main `c3b7be667a`: `typeof <undeclared>` does
+   lower, at top level and inside a function, so the `typeof anonymous` rows stay JS-answer rows. The re-measure on a7
+   shows how many of the 27 such reads cost.
+8. **The site's identity test.** The site tests global `Function` === %Function% through `js.object.global` and
    `js.value.strict_eq`, the A4 shape for %eval%:
    - equal: the site evaluates to item 5's closure;
    - unequal: the site is a generic call or construct of the value, through C2's `lowerDynamicConstruct` / the
