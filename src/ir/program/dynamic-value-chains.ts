@@ -43,6 +43,14 @@ const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+/** (#7354 C2) The Boolean that `instanceof`, a comparison and the realm's tests answer (`TEST_RESULT` is unbranded). */
+export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+export const boolean = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
 /** (#7354 M2) `js.object.error-field`'s selectors. */
 export const ERROR_FIELD = { message: 0, name: 1 } as const;
 
@@ -167,6 +175,18 @@ export function chainBuilders(
         : intrinsic(instr, test, [value], result),
     ];
   };
+  /**
+   * (#7354 C2) Whether the once-evaluated `value` is one of `of`, into a fresh value: the kind tests of those `value`
+   * may hold, or constant where it may hold all of them or none (`known`).
+   */
+  const holds = (instr: IrInstr, value: IrValueId, of: readonly CarrierKind[]) => {
+    const held = kinds.kindsOf(value);
+    const cond = fresh();
+    const tested = held.filter((kind) => of.includes(kind));
+    const known = tested.length === held.length ? true : tested.length === 0 ? false : undefined;
+    const instrs = known === undefined ? anyKind(instr, tested, value, cond) : [boolean(known, cond)];
+    return { instrs, cond, known };
+  };
   const text = (value: string, result: IrValueId): IrInstr => ({
     kind: "string.const",
     value,
@@ -264,6 +284,7 @@ export function chainBuilders(
     disjunction,
     anyKind,
     kindTest,
+    holds,
     text,
     branch,
     concat,
