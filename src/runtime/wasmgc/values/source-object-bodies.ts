@@ -6,7 +6,7 @@
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
-import { buildAccessorCall } from "./builtin-function-property-bodies.js";
+import { buildAccessorCall, builtinAccessorCall } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 import type { BuiltinFunctionPrototypeOperands } from "./builtin-function-prototype-bodies.js";
 
@@ -131,8 +131,8 @@ export const CREATE_DATA_PROPERTY =
  * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
  * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
  * or a setter-less accessor answers `false`; (#7354 O2) an accessor's setter is called with the receiver and the
- * value (`buildAccessorCall`), answering `true`. Without `accessorCalls` no source closure can be a setter and a
- * setter call traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
+ * value (`buildAccessorCall`), answering `true`. Without `accessorCalls` no source closure can be a setter: (#7489) a
+ * built-in setter (%ThrowTypeError%) is the kernel's own call, anything else traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
  * (`Object.preventExtensions`, slice O3).
  */
 /** The kernel operands OrdinarySet reads: its walk, its define, and (#7354 O2) the accessor call's dispatch. */
@@ -147,9 +147,13 @@ type SourceObjectSetOperands = Pick<
   | "accessorCalls"
   | "match"
   | "entries"
+  | "newVector"
+  | "push"
+  | "vectorTypeIdx"
+  | "callVector"
 >;
 export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): SourceObjectDefinition {
-  const [status, entry, storage, setter] = [4, 5, 6, 7];
+  const [status, entry, storage, setter, vector] = [4, 5, 6, 7, 8];
   const calls = d.accessorCalls;
   const entryFlag = (flag: number): Instr[] => [
     { op: "local.get", index: entry },
@@ -165,9 +169,16 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.set },
   ];
+  const answered = (call: Instr[]): Instr[] => [
+    ...call,
+    { op: "drop" },
+    { op: "i32.const", value: 1 },
+    { op: "return" },
+  ];
+  // (#7489) Without `accessorCalls` a setter is a built-in (%ThrowTypeError%, %Function.prototype%'s `caller`).
   const callSetter: Instr[] = calls
-    ? [...buildAccessorCall(d, calls, setter, 3, [2]), { op: "drop" }, { op: "i32.const", value: 1 }, { op: "return" }]
-    : [{ op: "unreachable" }];
+    ? answered(buildAccessorCall(d, calls, setter, 3, [2]))
+    : builtinAccessorCall(d, setter, 3, { local: 2, vector }, [{ op: "unreachable" }], answered);
   const requireWritable: Instr[] = [
     ...entryFlag(flags.accessor),
     {
@@ -175,7 +186,8 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
       blockType: { kind: "empty" },
       then: [
         ...setterField,
-        ...(calls ? ([{ op: "extern.convert_any" }, { op: "local.tee", index: setter }] satisfies Instr[]) : []),
+        { op: "extern.convert_any" },
+        { op: "local.tee", index: setter },
         { op: "ref.is_null" },
         { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
         ...callSetter,
@@ -199,7 +211,8 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
       { name: "status", type: { kind: "i32" } },
       { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
       { name: "storage", type: { kind: "externref" } },
-      ...(calls ? [{ name: "setter", type: { kind: "externref" } } satisfies LocalDef] : []),
+      { name: "setter", type: { kind: "externref" } },
+      ...(calls ? [] : [{ name: "arguments", type: { kind: "externref" } } satisfies LocalDef]),
     ],
     body: [
       // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.

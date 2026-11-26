@@ -117,11 +117,19 @@ export function lowerTopLevelFunctionValue(
  * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
  * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
  * A function whose name is a computed key the compiler cannot evaluate refuses by name.
+ *
+ * (#7489) A sloppy plain function (a declaration or expression, neither a generator nor async: the functions §17.1 lets
+ * an implementation extend) owns V8's `caller`, read only and `null`; every other function's `caller` is
+ * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`, which
+ * the lane that creates function objects always has).
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
+  resolver:
+    | { closureCodeStrictness?(code: ts.FunctionLikeDeclaration): { readonly functionCodeStrict?: boolean } }
+    | undefined,
 ): void {
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
@@ -137,6 +145,11 @@ export function emitFunctionObjectInit(
     );
   const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
+  const ownsCaller =
+    isConstructor &&
+    fn.asteriskToken === undefined &&
+    !ts.getModifiers(fn)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+    resolver?.closureCodeStrictness?.(fn).functionCodeStrict === false;
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
@@ -144,6 +157,7 @@ export function emitFunctionObjectInit(
       builder.emitCoerceToExternref(builder.emitStringConst(name)),
       builder.emitConst({ kind: "f64", value: expectedArgumentCountOfParams(fn.parameters) }, irVal({ kind: "f64" })),
       builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
+      builder.emitConst({ kind: "bool", value: ownsCaller }, irVal({ kind: "i32", boolean: true })),
     ],
     null,
   );

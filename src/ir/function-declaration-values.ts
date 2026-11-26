@@ -191,6 +191,8 @@ export interface FunctionValueHost {
   readonly lifted: IrFunction[];
   readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   readonly allocRegistry?: AllocSiteRegistry;
+  /** (#7489) The program's code strictness, for a function object's own `caller` (`emitFunctionObjectInit`). */
+  readonly resolver?: Parameters<typeof emitFunctionObjectInit>[3];
 }
 
 /** The module-init prologue: each declaration's closure, stored in its home. */
@@ -201,7 +203,7 @@ export function emitFunctionDeclarationValues(
   for (const value of values) {
     const signature: IrClosureSignature = { params: value.params, returnType: DYNAMIC };
     const closure = cx.builder.emitClosureNew(liftTrampoline(cx, value, signature), signature, [], []);
-    emitFunctionObjectInit(cx.builder, closure, value.declaration);
+    emitFunctionObjectInit(cx.builder, closure, value.declaration, cx.resolver);
     const callable = cx.builder.emitCallablePack(closure, signature);
     const dynamic = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [callable], irDynamic());
     cx.builder.emitGlobalSet(value.home.globalRef, dynamic!);

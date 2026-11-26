@@ -297,6 +297,15 @@ function beginRealm(
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
   const catalog = requirements.description.catalog;
+  const heldRows = heldCatalogRows(requirements.description);
+  // (#7489) The realm's entry or object for a catalog id: a bootstrap function's entry is named by its behavior.
+  const entryOf = (id: string): string | undefined => {
+    const bootstrap = catalog.bootstrap.indexOf(id);
+    if (bootstrap >= 0) return catalog.intrinsics.find((row) => row.id === id)?.callable?.implementation;
+    return requirements.description.intrinsics.includes(id) || heldRows.some((row) => row.id === id && !row.callable)
+      ? id
+      : undefined;
+  };
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
     const row = catalog.intrinsics.find((row) => row.id === id),
@@ -313,6 +322,7 @@ function beginRealm(
         : call?.implementation === "native";
     if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
     const entry = behavior as NativeBuiltinFunctionBehavior;
+    const properties = familyProperties(row, entryOf);
     return {
       id: index < catalog.bootstrap.length ? entry : id,
       behavior: entry,
@@ -329,12 +339,12 @@ function beginRealm(
             : row.prototype!,
       constructible: row.constructible,
       aliases: row.aliases,
-      ...(entry === "native" ? { properties: familyProperties(row) } : {}),
+      ...(properties.length > 0 ? { properties } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, ...familyObjects(heldCatalogRows(requirements.description)) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(heldRows, entryOf) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,
