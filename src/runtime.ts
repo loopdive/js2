@@ -3864,6 +3864,8 @@ function resolveImport(
     getNodeRequire,
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
+    nativePrimitiveToHost: (value) => _nativePrimitiveToHost(value, marshalExports(callbackState)),
+    nativeMiss: _MISS,
   });
   if (capability)
     return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS, _nativeDynamicFromHost);
