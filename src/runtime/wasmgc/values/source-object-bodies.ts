@@ -132,8 +132,8 @@ export const CREATE_DATA_PROPERTY =
  * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
  * or a setter-less accessor answers `false`; (#7354 O2) an accessor's setter is called with the receiver and the
  * value (`buildAccessorCall`), answering `true`. Without `accessorCalls` no source closure can be a setter: (#7489) a
- * built-in setter (%ThrowTypeError%) is the kernel's own call, anything else traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
- * (`Object.preventExtensions`, slice O3).
+ * built-in setter (%ThrowTypeError%) is the kernel's own call, anything else traps. A non-extensible receiver is
+ * unreachable: no Prepared program can make one yet (`Object.preventExtensions`, slice O3).
  */
 /** The kernel operands OrdinarySet reads: its walk, its define, and (#7354 O2) the accessor call's dispatch. */
 type SourceObjectSetOperands = Pick<
@@ -212,7 +212,7 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
       { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
       { name: "storage", type: { kind: "externref" } },
       { name: "setter", type: { kind: "externref" } },
-      ...(calls ? [] : [{ name: "arguments", type: { kind: "externref" } } satisfies LocalDef]),
+      ...(calls ? [] : [{ name: "vector", type: { kind: "externref" } } satisfies LocalDef]),
     ],
     body: [
       // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.
