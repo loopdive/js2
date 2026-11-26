@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import type { IrUnitInventory, IrUnitRecord } from "../../shared/contracts/ir-unit-inventory.js";
 import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type {
@@ -18,18 +19,22 @@ export function preparedIrProgramOwner(
   const source = input.inventory.allUnits.find((record) => record.id === unitId);
   const ownerId = derived?.terminalOwnerId ?? source?.terminalOwnerId ?? unitId;
   const owner = input.inventory.terminalUnits.find((record) => record.id === ownerId);
-  if (!owner) return undefined;
-  const sourceRecord = input.inventory.sources.find((record) => record.id === owner.sourceId);
+  return owner && unitOwner(input.inventory, owner);
+}
+
+/** `unit` itself as a diagnostic owner: its id, source file and declaration position. */
+export function unitOwner(inventory: IrUnitInventory, unit: IrUnitRecord): PreparedIrProgramOwner | undefined {
+  const sourceRecord = inventory.sources.find((record) => record.id === unit.sourceId);
   if (!sourceRecord) return undefined;
   return Object.freeze({
-    unitId: owner.id,
+    unitId: unit.id,
     sourceFile: sourceRecord.sourceKey,
     location: Object.freeze({
-      sourceId: owner.sourceId,
-      line: owner.line,
-      column: owner.column,
-      declarationStart: owner.declarationStart,
-      declarationEnd: owner.declarationEnd,
+      sourceId: unit.sourceId,
+      line: unit.line,
+      column: unit.column,
+      declarationStart: unit.declarationStart,
+      declarationEnd: unit.declarationEnd,
     }),
   });
 }
@@ -47,6 +52,11 @@ export function locatedFailure(
       `prepared producer cannot locate ${unitId}: ${failure.detail}`,
     );
   }
+  return failureAt(owner, failure);
+}
+
+/** `failure` as a refusal owned by `owner`. */
+export function failureAt(owner: PreparedIrProgramOwner, failure: IrPreparationFailure): PreparedIrProgramFailure {
   // Error instances/callbacks must not escape into the serializable diagnostic contract.
   const { cause: _cause, ...diagnostic } = failure;
   return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });

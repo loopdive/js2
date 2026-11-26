@@ -41,6 +41,7 @@ import {
 } from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
+import { classDefinitionExpressions } from "./class-definition-expressions.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import type {
   IrSourceKind,
@@ -469,16 +470,12 @@ function hasStaticModifier(node: ts.Node): boolean {
   return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Static) !== 0;
 }
 
-function hasDeclareModifier(node: ts.Node): boolean {
+export function hasDeclareModifier(node: ts.Node): boolean {
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
     const modifiers = (current as { modifiers?: readonly ts.Node[] }).modifiers;
     if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
   }
   return node.getSourceFile().isDeclarationFile;
-}
-
-function decoratorExpressions(node: ts.Node): readonly ts.Expression[] {
-  return ts.canHaveDecorators(node) ? (ts.getDecorators(node)?.map((decorator) => decorator.expression) ?? []) : [];
 }
 
 /**
@@ -1057,22 +1054,7 @@ class SourceInventoryBuilder {
     const fieldCallInventoryCandidate = directNestedClass && isNestedOrdinaryClassFieldCallInventoryCandidate(node);
     const fieldCallTerminalMembers: IrNestedClassFieldCallTerminalCandidate[] = [];
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
-    const definitionExpressions: ts.Expression[] = [...decoratorExpressions(node)];
-    for (const clause of node.heritageClauses ?? []) {
-      for (const heritageType of clause.types) definitionExpressions.push(heritageType.expression);
-    }
-    for (const member of node.members) {
-      definitionExpressions.push(...decoratorExpressions(member));
-      if (
-        ts.isConstructorDeclaration(member) ||
-        ts.isMethodDeclaration(member) ||
-        ts.isGetAccessorDeclaration(member) ||
-        ts.isSetAccessorDeclaration(member)
-      ) {
-        for (const parameter of member.parameters) definitionExpressions.push(...decoratorExpressions(parameter));
-      }
-      if (member.name && ts.isComputedPropertyName(member.name)) definitionExpressions.push(member.name.expression);
-    }
+    const definitionExpressions = classDefinitionExpressions(node).map((entry) => entry.expression);
     const scanDefinitionExpressions = (terminalOwnerId: IrUnitId | null): void => {
       for (const expression of definitionExpressions) this.scanNode(expression, classRecord.id, terminalOwnerId);
     };

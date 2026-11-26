@@ -48,6 +48,7 @@ import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { locatedFailure } from "./program/owner.js";
+import { preparedSelectRefusal } from "./prepared-select-refusals.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -1544,10 +1545,9 @@ export function prepareIrProgramSources(
   });
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
-  // (#7446) Inventory select-stage refusals hold on the Prepared path too; refuse before any body is lowered.
-  const refused = inventory.terminalUnits.find((unit) => unit.directFailure !== undefined);
-  if (refused) return locatedFailure({ inventory, derivedUnits: [] }, refused.id, refused.directFailure!);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
+  const refused = preparedSelectRefusal(inventory, identity, sourceFiles);
+  if (refused) return refused;
   const sourceMapCatalog =
     sourceMapRequest === undefined
       ? undefined

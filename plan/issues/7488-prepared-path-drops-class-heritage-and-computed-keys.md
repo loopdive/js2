@@ -1,10 +1,11 @@
 ---
 id: 7488
 title: "Prepared path drops an unreferenced top-level class's extends expression and computed field keys"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 feasibility: medium
@@ -147,17 +148,29 @@ Census of the 969 test262 files with a top-level class that has a heritage claus
 decorator (11), `scripts/ir-census/prepared-census.mts --harness real` (standalone), before = PR 7440 head `3d70c9c8`
 (main `c3b7be66` + #7446), 2026-11-26:
 
-| Prepared verdict | before | after (derived) |
+| Prepared verdict | before | after (measured on the implementation) |
 | --- | ---: | ---: |
 | pass | 7 | 0 |
 | fail | 6 | 0 |
 | named refusal | 909 | 922 |
 | skip (negative / async) | 47 | 47 |
 
-The after-state is derived: the refusal runs before any other producer step, so every compiled row whose class
-evaluates code becomes a `class-definition-evaluation` refusal. None of the 13 compiled rows relies only on a literal
-computed key. It is re-measured on the implementation. Because the rule runs first, many of the 909 rows refused today
-change their first refusal label to the new code; the PR reports a before/after label histogram, not only verdicts.
+First refusal label of the refused rows, before → after:
+
+| Label | before | after |
+| --- | ---: | ---: |
+| `class-definition-evaluation` | 0 | 861 |
+| `type-resolution-unsupported` | 792 | 41 |
+| `body-shape-rejected` | 60 | 0 |
+| `unknown-class-construction` | 33 | 0 |
+| frontend (syntax / early error) | 15 | 15 |
+| `static-class-initialization` | 5 | 5 |
+| `method-call-unsupported` | 2 | 0 |
+| `module-init-legacy-coupling` | 1 | 0 |
+| `nullish-value-unsupported` | 1 | 0 |
+
+The after column is measured on the implementation (same census, same files); it equals the state derived in the
+plan. Because the rule runs first, 861 rows refused today now report `class-definition-evaluation` first.
 
 - **fail → refusal: 6** (`annexB/built-ins/RegExp/legacy-accessors/*/this-subclass-constructor.js`): abort traps
   today, not wrong values.
