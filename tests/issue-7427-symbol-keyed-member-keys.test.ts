@@ -4,6 +4,7 @@
 // (`@@1` for `[Symbol.iterator]`), never by TypeScript's escaped `__@iterator@<id>`.
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
+import { TsCheckerOracle } from "../src/checker/oracle.js";
 import { memberKeyForProperty } from "../src/checker/well-known-symbol-keys.js";
 import { getWellKnownSymbolId, resolveWellKnownSymbol } from "../src/codegen/literals.js";
 import { ts } from "../src/frontend/typescript.js";
@@ -17,7 +18,7 @@ function memberKeys(source: string): (string | undefined)[] {
     .flatMap((statement) => [...statement.declarationList.declarations])
     .find((d) => ts.isIdentifier(d.name) && d.name.text === "o")!;
   const type = ast.checker.getTypeAtLocation(declaration.name);
-  return type.getProperties().map((property) => memberKeyForProperty(ast.checker, property));
+  return type.getProperties().map((property) => memberKeyForProperty(new TsCheckerOracle(ast.checker), property));
 }
 
 /** The text of every native string literal in a module's WAT. */

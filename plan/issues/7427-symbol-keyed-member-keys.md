@@ -1,7 +1,8 @@
 ---
 id: 7427
 title: "A built-in member read through its TypeScript symbol is keyed by the escaped name (`__@iterator@<id>`), not the native-prototype key `@@<id>`"
-status: in-progress
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
@@ -13,11 +14,6 @@ task_type: bugfix
 area: codegen
 goal: ir-full-coverage
 related: [7410, 7350]
-# (2026-11-19) The member key needs the checker to resolve `Symbol` in `[Symbol.iterator]` to the compiler
-# library's binding (`memberKeyForProperty` takes a `ts.Symbol`, which the node-keyed oracle cannot express).
-# One `ctx.checker` at the reflective-member site, replacing `sym.getName()`.
-oracle-ratchet-allow:
-  - src/codegen/expressions/calls.ts
 ---
 
 # #7427 — A built-in member read through its TypeScript symbol is keyed by the escaped name
@@ -79,21 +75,18 @@ Standalone test262 before and after, 349 files: every `X.prototype[Symbol.y].cal
 - `String.prototype[Symbol.iterator].call("ab")` now reaches the native `@@1` body: its refusal string is gone
   from the binary. It still throws later, in that body (separate, not investigated).
 
-**Open: bytes.** On the same 349 files, default + standalone, 30 of 681 rows differ between base and branch,
-among them the `built-ins/Date/prototype/Symbol.toPrimitive` rows. Not yet explained. Before the PR opens:
-diff one of those binaries (WAT) base vs branch, and decide whether it is site 1 (a member now resolving to
-`@@3`) or the id-table fold.
+**Bytes.** On the 349 files above (default + standalone), 30 of 681 rows differ between base and branch, all
+from site 1: 13 `built-ins/Date/prototype/Symbol.toPrimitive` files and 2 `String/prototype/Symbol.iterator`
+files, × 2 targets. The id-table fold adds no byte change.
 
-## Suspended Work (2026-11-20, budget window closed)
+- On base, `Date.prototype[Symbol.toPrimitive]` is keyed `__@toPrimitive@<id>`, which misses the native
+  table's `@@3` member. The reflective call then falls through to a dynamic `.call` on `undefined`, and the
+  binary carries the TypeError string `Cannot read properties of undefined (reading 'call')`.
+- On the branch, the member resolves to the native Date `@@3` closure, so that path and its string are gone.
+- The String files lose the refusal naming `__@iterator@<id>`.
+- All 15 files pass on both sides; no verdict changes.
 
-- Branch `claude/7427-symbol-keyed-member-keys`, stacked on `claude/7410-well-known-symbol-names` at
-  `805df5008c`, pushed; **no PR yet**. Before opening it, merge #7343's current head into this branch: RV7343
-  changed `functionNameForKey` to take a `TypeOracle`, so `memberKeyForProperty` must follow, and the
-  `calls.ts` oracle grant can then go too.
-- Next steps, in order:
-  1. Merge #7343's head and switch `memberKeyForProperty` to the oracle.
-  2. Explain the 30 differing byte rows above.
-  3. Open the PR with `hold`, base `claude/7410-well-known-symbol-names`, with the table above in the body.
-  4. Message the lead.
-- Scratch data (session scratchpad, not durable): the base and branch hash rows `bb.jsonl` / `bh.jsonl`; the
-  file list is the 349-file set described above.
+**Re-measured on current main `313281866f` (2026-11-26), after merging main.** The same 349 files on
+standalone give 281 pass / 51 fail / 17 skip on main and on the branch, with 0 verdict changes. The byte cause
+above was re-checked on this base: a WAT diff of `Date/prototype/Symbol.toPrimitive/hint-default-first-non-callable.js`
+shows the same `.call`-on-undefined TypeError string present on main and gone on the branch.
