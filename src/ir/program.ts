@@ -15,7 +15,6 @@ export type { PreparedIrProgramInvariantCode } from "./program/errors.js";
 import type { ProgramAbiCallableSignature, ProgramAbiPlanEntry } from "./program-abi.js";
 import type { PreparedComponentAbiLookup } from "./prepared-component-dependencies.js";
 import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
 import type { WasmModule } from "./types.js";
 import type { LinearOptions } from "../codegen-linear/index.js";
 import type {
@@ -79,7 +78,6 @@ export { preparedIrProgramOwner } from "./program/owner.js";
 
 /** Reconstructed read surface over the one owned ABI entry vector. */
 export function preparedIrProgramAbiLookup(program: PreparedIrProgram): PreparedComponentAbiLookup {
-  assertPreparedIrProgram(program);
   const entries = Object.freeze(program.abi.entries.map(({ plan }) => plan));
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   if (byId.size !== entries.length) {

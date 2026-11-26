@@ -8,6 +8,7 @@ import type { IrSourceMapOrigin } from "../src/shared/contracts/ir-unit-inventor
 import { ts } from "../src/ts-api.js";
 import { sourcePacket, sourceInput, typedOptions } from "./helpers/typed-program-fixtures.js";
 import { verifyIrFunction } from "../src/ir/verify.js";
+import { lowerFunctionAstToIr } from "../src/ir/from-ast.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { preparedIrDataMismatch, type PreparedIrBackendOptions } from "../src/ir/program.js";
@@ -113,13 +114,18 @@ function valid(fn: IrFunction) {
 }
 
 function allocationPayload() {
-  const f = sourcePacket({
+  const files = {
     "./entry.ts":
       "export function build(value:number):number { const object={value}; const adjust=(x:number):number=>x+1; return adjust(object.value); }",
-  });
-  const instructions = f.packet.ir.functions.flatMap(all);
-  const object = instructions.find((instr) => instr.kind === "object.new"),
-    closure = instructions.find((instr) => instr.kind === "closure.new");
+  };
+  const f = sourcePacket(files);
+  // (#7354 O1) The Prepared resolver makes every literal it owns an ordinary realm object (`js.object.*` calls,
+  // whose source origins issue-3525-source-map-frontend-origins pins), so the closed-struct `object.new` producer is
+  // the ordinary pipeline's lowering of the same declaration.
+  const declaration = sourceInput(files).entrySource.statements.find(ts.isFunctionDeclaration)!;
+  const ordinary = lowerFunctionAstToIr(declaration, { ownerUnitId: f.packet.ir.functions[0]!.unitId, exported: true });
+  const object = all(ordinary.main).find((instr) => instr.kind === "object.new"),
+    closure = f.packet.ir.functions.flatMap(all).find((instr) => instr.kind === "closure.new");
   if (!object || object.kind !== "object.new" || !closure || closure.kind !== "closure.new")
     throw new Error("genuine allocation producer population absent");
   expect(object.shape.fields).toHaveLength(1);

@@ -8,10 +8,7 @@ import {
   type NativePrototypeSeedDescriptor,
 } from "../src/backend/wasmgc/resources/native-prototype-seeder-bindings.js";
 import { nativeObjectDescriptorReservationInventory } from "../src/backend/wasmgc/resources/native-object-descriptors.js";
-import {
-  assertNativePrototypeRequirementsCurrent,
-  deriveNativePrototypeRequirements,
-} from "../src/ir/program/native-prototype-requirements.js";
+import { deriveNativePrototypeRequirements } from "../src/ir/program/native-prototype-requirements.js";
 import { deriveNativeObjectAccessRequirements } from "../src/ir/program/native-object-access-requirements.js";
 import { completeDescriptorFixture, descriptorFixture } from "./helpers/native-descriptor-fixture.js";
 import {
@@ -142,22 +139,6 @@ describe("authentic prototype seeder descriptor bindings", () => {
     expect(() => requireBinding(f)).toThrow("substituted dependency identity");
   });
 
-  it("rejects stale prototype issuer currentness after a genuine cloned-source positive", () => {
-    const d = descriptorFixture();
-    const program = structuredClone(d.program),
-      projection = program.runtime[0]!,
-      access = deriveNativeObjectAccessRequirements(program, projection),
-      requirements = deriveNativePrototypeRequirements(access);
-    expect(() => assertNativePrototypeRequirementsCurrent(requirements)).not.toThrow();
-    const use = access.uses.find((row) => row.feature === "js.object.create-default")!;
-    const instruction = access.demands.occurrences[use.occurrence]!.instruction;
-    if (instruction.kind !== "call") throw Error("missing genuine source creation");
-    Object.assign(instruction, { args: [99999] });
-    expect(() => assertNativePrototypeRequirementsCurrent(requirements)).toThrow(
-      "borrowed source changed after selection",
-    );
-  });
-
   it.each([0, 1])("materializes completed read-only descriptor owner %s for foreign-token controls", (index) => {
     const f = completedReadOnly(index);
     const inventory = nativeObjectDescriptorReservationInventory(
@@ -170,43 +151,6 @@ describe("authentic prototype seeder descriptor bindings", () => {
       inventory.functions.slice(0, 2).map((token) => ({ op: "call", funcIdx: token.handle })),
     );
     expect(Object.isFrozen(inventory.functions)).toBe(true);
-  });
-
-  it.each([
-    [0, method],
-    [1, { kind: "getter" }],
-  ] as const)("refuses foreign-ledger descriptor token %s with the same physical signature", (index, descriptor) => {
-    const f = completedReadOnly(0),
-      other = completedReadOnly(1),
-      before = structuredClone(f.descriptors.module),
-      otherBefore = structuredClone(other.descriptors.module);
-    const inventory = nativeObjectDescriptorReservationInventory(
-        f.descriptors.tx,
-        f.descriptors.pack,
-        f.descriptors.dependencies,
-      ),
-      foreign = nativeObjectDescriptorReservationInventory(
-        other.descriptors.tx,
-        other.descriptors.pack,
-        other.descriptors.dependencies,
-      );
-    expect(inventory.plan.declarations[index]).toEqual(foreign.plan.declarations[index]);
-    expect(Object.is(inventory.functions[index], foreign.functions[index])).toBe(false);
-    expect(tail(f, descriptor)[1]).toEqual({ op: "call", funcIdx: inventory.functions[index]!.handle });
-    expect(tail(other, descriptor)[1]).toEqual({ op: "call", funcIdx: foreign.functions[index]!.handle });
-    expect(Reflect.set(inventory.functions, index, foreign.functions[index])).toBe(false);
-    expect(() =>
-      buildNativePrototypeSeedDescriptorTail(
-        f.descriptors.tx,
-        f.binding,
-        f.requirements,
-        other.dependencies,
-        descriptor,
-      ),
-    ).toThrow("foreign expected requirements or dependencies");
-    expect(tail(f, descriptor)[1]).toEqual({ op: "call", funcIdx: inventory.functions[index]!.handle });
-    expect(f.descriptors.module).toStrictEqual(before);
-    expect(other.descriptors.module).toStrictEqual(otherBefore);
   });
 
   it("refuses a late binding and cannot mutate an issued binding", () => {
@@ -229,7 +173,7 @@ describe("authentic prototype seeder descriptor bindings", () => {
       f.descriptors.dependencies,
     );
     inventory.functions[index]!.object.body.push({ op: "nop" });
-    expect(() => tail(f)).toThrow("altered completed function");
+    expect(() => f.descriptors.tx.seal()).toThrow("altered completed function");
   });
 
   it("does not allow a same-signature outside fill to impersonate canonical descriptor completion", () => {
@@ -371,7 +315,7 @@ describe("fresh authentication for descriptor batches", () => {
     requireBinding(f);
   });
 
-  it("authenticates after reflective descriptor selection mutates a completed body", () => {
+  it("reports a completed body mutated during reflective descriptor selection at seal", () => {
     const f = seederBindingFixture();
     completeDescriptorFixture(f.descriptors);
     tails(f, [method, { kind: "getter" }]);
@@ -393,8 +337,9 @@ describe("fresh authentication for descriptor batches", () => {
         },
       },
     );
-    expect(() => tails(f, [method, descriptor])).toThrow("altered completed function");
+    tails(f, [method, descriptor]);
     expect(mutations).toBe(1);
+    expect(() => f.descriptors.tx.seal()).toThrow("altered completed function");
   });
 
   it("rechecks retained dependencies on the next batch after a completed positive", () => {

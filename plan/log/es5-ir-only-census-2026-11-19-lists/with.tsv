@@ -1,0 +1,13 @@
+language/expressions/assignment/S11.13.1_A5_T1.js	ir/from-ast: with target/body outside the closed-object IR slice (testFunction)
+language/expressions/assignment/S11.13.1_A6_T3.js	ir/from-ast: with target/body outside the closed-object IR slice (testAssignment)
+language/identifier-resolution/S10.2.2_A1_T9.js	ir/from-ast: unsupported tail statement WithStatement in f1
+language/statements/function/S13.2.2_A18_T2.js	ir/from-ast: unsupported tail statement WithStatement in f
+language/statements/with/12.10-2-1.js	ir/from-ast: with target/body outside the closed-object IR slice (<module-init>)
+language/statements/with/12.10-2-2.js	ir/from-ast: with target/body outside the closed-object IR slice (<module-init>)
+language/statements/with/12.10-2-3.js	ir/from-ast: with target/body outside the closed-object IR slice (<module-init>)
+language/statements/with/12.10-2-4.js	ir/from-ast: with target/body outside the closed-object IR slice (<module-init>)
+language/statements/with/12.10-2-5.js	ir/from-ast: with target/body outside the closed-object IR slice (<module-init>)
+language/statements/with/S12.10_A3.3_T1.js	ir/from-ast: unsupported tail statement WithStatement in __FACTORY
+language/statements/with/S12.10_A3.3_T2.js	ir/from-ast: unsupported tail statement WithStatement in __FACTORY
+language/statements/with/S12.10_A3.3_T3.js	ir/from-ast: unsupported tail statement WithStatement in __FACTORY
+language/statements/with/S12.10_A3.3_T4.js	ir/from-ast: unsupported tail statement WithStatement in __FACTORY

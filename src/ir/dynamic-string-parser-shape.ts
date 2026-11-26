@@ -56,14 +56,24 @@ export function isExactDynamicStringReplaceNumberParser(declaration: ts.Function
   const replaceCall = parseFloatCall.arguments[0]!;
   return (
     ts.isCallExpression(replaceCall) &&
-    ts.isPropertyAccessExpression(replaceCall.expression) &&
-    replaceCall.expression.name.text === "replace" &&
+    isUnderscoreStripReplace(replaceCall) &&
     ts.isIdentifier(replaceCall.expression.expression) &&
-    replaceCall.expression.expression.text === stringName &&
-    replaceCall.arguments.length === 2 &&
-    replaceCall.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
-    replaceCall.arguments[0]!.getText() === "/_/g" &&
-    ts.isStringLiteralLike(replaceCall.arguments[1]!) &&
-    replaceCall.arguments[1]!.text === ""
+    replaceCall.expression.expression.text === stringName
+  );
+}
+
+/** `<recv>.replace(/_/g, "")`: the one regular-expression replace the string-number parser arms admit. */
+export function isUnderscoreStripReplace(
+  call: ts.CallExpression,
+): call is ts.CallExpression & { readonly expression: ts.PropertyAccessExpression } {
+  const [pattern, replacement] = call.arguments;
+  return (
+    ts.isPropertyAccessExpression(call.expression) &&
+    call.expression.name.text === "replace" &&
+    call.arguments.length === 2 &&
+    pattern!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
+    pattern!.getText() === "/_/g" &&
+    ts.isStringLiteralLike(replacement!) &&
+    replacement.text === ""
   );
 }

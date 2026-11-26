@@ -43,6 +43,8 @@ export interface NativeInvocationSubstrateDependencies {
   readonly vectors: NativeVectorTypeReservations;
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly strings: NativeStringLiteralReservations;
+  /** (#7354 G1) Where the realm holds the Error family, the kernel's error creation its TypeError delegates to. */
+  readonly errorCreate?: FunctionReservation;
 }
 export interface NativeInvocationSubstratePlan {
   readonly key: string;
@@ -132,7 +134,7 @@ export function declareNativeInvocationSubstrateResources(
   });
 }
 function dependencies(tx: PhysicalModuleReservations, input: NativeInvocationSubstrateDependencies) {
-  const d = record(input, roles) as unknown as NativeInvocationSubstrateDependencies;
+  const d = record(input, [...roles, "errorCreate"], roles) as unknown as NativeInvocationSubstrateDependencies;
   requireNativeVectorTypeReservations(tx, d.vectors, d.vectorPlan);
   const name = requireNativeStringLiteral(tx, d.strings, "TypeError");
   return { d, name };
@@ -172,7 +174,11 @@ export function reserveNativeInvocationSubstrateResources(
     { vectorBase: d.vectors.base ?? base! },
     plan.argumentPlan,
   );
-  const errorDependencies = Object.freeze({ strings: d.strings, typeErrorTag: -11 });
+  const errorDependencies = Object.freeze({
+    strings: d.strings,
+    typeErrorTag: -11,
+    ...(d.errorCreate ? { create: d.errorCreate } : {}),
+  });
   const errors = reserveNativeErrorResources(tx, plan.errorRequirements, errorDependencies);
   const pack = Object.freeze({
     arguments: args,
@@ -200,7 +206,11 @@ function current(tx: PhysicalModuleReservations, pack: NativeInvocationSubstrate
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied substrate owner");
   const { d, name } = dependencies(tx, owner.sourceDependencies);
-  if (roles.some((role) => d[role] !== owner.dependencies[role]) || name !== owner.name)
+  if (
+    roles.some((role) => d[role] !== owner.dependencies[role]) ||
+    d.errorCreate !== owner.dependencies.errorCreate ||
+    name !== owner.name
+  )
     fail("substituted dependency identity");
   const plan = declareNativeInvocationSubstrateResources(
     owner.requirements,

@@ -26,6 +26,7 @@
 // slice cannot name to an exact physical symbol is left exactly as the base
 // tree leaves it, and no ABI binding is minted for it.
 
+import { irValueTypes } from "./analysis/value-types.js";
 import {
   exactPreparedDynamicHelperRef,
   isDynamicInstruction,
@@ -116,25 +117,6 @@ const TAG_TEST_HELPERS: ReadonlyMap<number, PreparedDynamicHelperName> = new Map
   [JS_TAG_IDS.Function, "__typeof_function"],
 ] as const);
 
-/** Value → IrType for one body, the same population `valueTypesOf` visits. */
-function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
-  const types = new Map<IrValueId, IrType>();
-  for (const param of fn.params) types.set(param.value, param.type);
-  for (const value of fn.asyncPlan?.values ?? []) types.set(value.value, value.type);
-  for (const block of fn.blocks) {
-    block.blockArgs.forEach((value, index) => {
-      const type = block.blockArgTypes[index];
-      if (type) types.set(value, type);
-    });
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        if (nested.result !== null && nested.resultType !== null) types.set(nested.result, nested.resultType);
-      });
-    }
-  }
-  return types;
-}
-
 /** Does this body carry the dynamic surface at all (type OR instruction)? */
 function carriesDynamicSurface(fn: IrFunction, types: ReadonlyMap<IrValueId, IrType>): boolean {
   if (fn.params.some((param) => param.type.kind === "dynamic")) return true;
@@ -181,7 +163,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           )
             functionObjects = true;
         });
-    const types = valueTypesOf(entry.fn);
+    const types = irValueTypes(entry.fn);
     const planned = new Map<IrInstr, readonly IrFuncRef[]>();
     let nameable = true;
     const bindExact = (

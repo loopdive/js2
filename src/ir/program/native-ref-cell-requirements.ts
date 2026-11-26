@@ -3,7 +3,7 @@
 import type { AllocSiteId, IrFunction, IrType, IrValueId } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { ValType } from "../../wasm/model/instructions.js";
-import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
+import { preparedAllocationSites } from "./prepared-allocations.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
 import type { NativeStringValueDemands } from "./native-string-value-demands.js";
 import { preparedIrDataMismatch } from "./data.js";
@@ -43,7 +43,7 @@ export function collectNativeRefCellRequirements(demands: NativeStringValueDeman
   const refCells: NativeRefCellDescription[] = [],
     refCellAllocations: NativeRefCellAllocation[] = [];
   const gaps: { unitId: IrUnitId; detail: string }[] = [];
-  const registry = AllocSiteRegistry.fromSnapshot(demands.allocations);
+  const registry = preparedAllocationSites(demands.allocations);
   const typeMaps = new Map<IrFunction, ReturnType<typeof nativeAsyncCallableValueTypes>>();
   const owners = new Map<AllocSiteId, IrUnitId>();
   const sites = new Set<string>();

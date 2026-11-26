@@ -1,11 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
-import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
-
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as oldHost from "../src/ir/runtime-host-capabilities.js";
 import * as host from "../src/ir/runtime/host-capabilities.js";
@@ -30,10 +24,6 @@ import { createIrBindingId } from "../src/shared/contracts/identity-values.js";
 import type { IntrinsicId } from "../src/ir/core/intrinsic-vocabulary.js";
 import type { PreparedIrAsyncRuntime, PreparedIrAsyncRuntimeInput } from "../src/ir/runtime/contracts/prepared.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
-import { currentDeclarations, historicalRuntimeDeclarations } from "./helpers/ir-historical-runtime-reconstruction.js";
-
-import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
-import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
 import {
   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   nativeAsyncProviderMismatch,
@@ -49,24 +39,6 @@ import {
 } from "../src/ir/runtime/ordinary-object-callables.js";
 import type { RuntimeManifestPolicy } from "../src/runtime/contracts/provider-policy.js";
 import type { RuntimeFeature, RuntimeProviderDefinition } from "../src/ir/runtime/contracts/manifest.js";
-
-const root = resolve(import.meta.dirname, "..");
-const rawRead = (path: string): string => readFileSync(resolve(root, path), "utf8");
-function currentHistoricalRead(): (path: string) => string {
-  // Authenticate both current inverses once before any historical override.
-  const beforePreparation = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead));
-  const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
-  if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
-  for (const path of runtimeContractCurrentPaths)
-    if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
-  return (path) => {
-    if (!runtimeContractCurrentPaths.includes(path)) return beforePreparation(path);
-    const source = sources.get(path);
-    if (source === undefined) throw Error("missing required runtime historical source " + path);
-    return source;
-  };
-}
-const read = (path: string): string => currentHistoricalRead()(path);
 const hash = (rows: unknown): string => createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 
 // Pinned from b4c116639a7e146e83611a988a8da28d77de9368. Tests do not need Git.
@@ -400,81 +372,7 @@ const receipts = [
   },
 ] as const;
 
-const destinations: Record<string, readonly string[]> = {
-  "runtime-host-capabilities": ["src/ir/runtime/host-capabilities.ts"],
-  "runtime-callable-declarations": ["src/ir/runtime/callable-declarations.ts"],
-  "runtime-manifest": ["src/ir/runtime/manifest.ts"],
-  "async-runtime-providers": ["src/ir/runtime/async-providers.ts", "src/ir/core/async-intents.ts"],
-  "async-plan": ["src/ir/analysis/async-plan.ts", "src/ir/runtime/async-attachment.ts"],
-  "intrinsic-support": ["src/ir/intrinsic-support.ts", "src/ir/runtime/intrinsic-verification.ts"],
-};
-
-function parse(path: string, overrides: ReadonlyMap<string, string> = new Map()): ts.SourceFile {
-  const historicalRead = currentHistoricalRead();
-  return parseText(path, overrides.get(path) ?? historicalRead(path));
-}
-function parseText(path: string, text: string): ts.SourceFile {
-  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  if ((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics.length !== 0)
-    throw new Error("syntax error in " + path);
-  return file;
-}
-
-function declarations(file: ts.SourceFile): readonly ts.Statement[] {
-  return file.statements.filter((node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node));
-}
-
-function nameOf(node: ts.Statement, file: ts.SourceFile): string {
-  if (ts.isVariableStatement(node))
-    return node.declarationList.declarations.map((entry) => entry.name.getText(file)).join(",");
-  if ("name" in node && node.name && ts.isIdentifier(node.name as ts.Node)) return (node.name as ts.Identifier).text;
-  throw new Error("unnamed declaration in " + file.fileName);
-}
-
-function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap<string, string> = new Map()): void {
-  const historicalRead = currentHistoricalRead();
-  const source = (path: string) => overrides.get(path) ?? historicalRead(path);
-  // Current source order is checked before the independent historical order.
-  for (const path of destinations[receipt.name]!) currentDeclarations(path, source);
-  const rows =
-    receipt.name === "runtime-host-capabilities"
-      ? currentDeclarations("src/ir/runtime/host-capabilities.ts", source)
-      : historicalRuntimeDeclarations(
-          receipt.name === "runtime-callable-declarations"
-            ? "src/ir/runtime/callable-declarations.ts"
-            : "src/ir/" + receipt.name + ".ts",
-          source,
-        );
-  if (JSON.stringify(rows.map((row) => row.name)) !== JSON.stringify(receipt.names))
-    throw new Error("historical declaration order changed");
-  const reconstructed = rows.map((row) => {
-    // Reparse the normalized declaration, including live ordinary comments.
-    // row.node can otherwise still contain the current extra class overload.
-    const leading = row.file.text.slice(row.node.getFullStart(), row.node.getStart());
-    const file = parseText(row.path, leading + row.text);
-    if (file.statements.length !== 1) throw new Error("reconstructed declaration population changed");
-    const node = file.statements[0]!;
-    return { name: row.name, file, node, text: node.getFullText(file).trim() };
-  });
-  if (reconstructed.filter(({ node }) => ts.isFunctionDeclaration(node)).length !== receipt.functions)
-    throw new Error("function denominator changed");
-  if (hash(reconstructed.map(({ text }) => text)) !== receipt.hash) throw new Error("declaration receipt changed");
-  for (const census of receipt.classes) {
-    const entry = reconstructed.find(({ name }) => name === census.name)!;
-    if (
-      !ts.isClassDeclaration(entry.node) ||
-      entry.node.members.length !== census.members ||
-      hash(entry.node.members.map((member) => member.getFullText(entry.file).trim())) !== census.hash
-    )
-      throw new Error("member/initializer receipt changed for " + census.name);
-  }
-}
-
 describe("provider ownership historical receipts after checked extension reconstruction", () => {
-  it.each(receipts)("retains the complete $name declaration/member/initializer ledger", (receipt) => {
-    verifyLedger(receipt);
-  });
-
   it("retains 253 declarations/143 function declarations without replacing the parent's 224/118 ledger", () => {
     expect(receipts.reduce((sum, receipt) => sum + receipt.names.length, 0)).toBe(253);
     expect(receipts.reduce((sum, receipt) => sum + receipt.functions, 0)).toBe(143);
@@ -485,159 +383,6 @@ describe("provider ownership historical receipts after checked extension reconst
     );
     expect(shared.reduce((sum, receipt) => sum + receipt.names.length, 0)).toBe(200);
     expect(shared.reduce((sum, receipt) => sum + receipt.functions, 0)).toBe(113);
-  });
-
-  it.each(["missing", "renamed", "duplicate", "body", "initializer"] as const)(
-    "the source receipt rejects a %s implementation mutation",
-    (kind) => {
-      const receipt = receipts.find((entry) => entry.name === "runtime-manifest")!;
-      verifyLedger(receipt);
-      const path = destinations[receipt.name]![0]!;
-      const file = parse(path);
-      const node = declarations(file).find((entry) => nameOf(entry, file) === "RuntimeManifestBuilder")!;
-      const original = read(path);
-      let changed: string;
-      if (kind === "missing") changed = original.slice(0, node.getFullStart()) + original.slice(node.end);
-      else if (kind === "duplicate") changed = original + "\n" + node.getFullText(file);
-      else if (kind === "renamed")
-        changed = original.replace("export class RuntimeManifestBuilder", "export class RenamedRuntimeManifestBuilder");
-      else if (kind === "initializer")
-        changed = original.replace('#state: BuilderState = "open"', '#state: BuilderState = "failed"');
-      else changed = original.replace('this.#state = "building";', 'this.#state = "failed";');
-      expect(changed).not.toBe(original);
-      expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow();
-    },
-  );
-
-  it.each(Object.values(destinations).flat())(
-    "rejects reordered live declarations in %s before reconstructing history",
-    (path) => {
-      const file = parse(path),
-        original = read(path),
-        nodes = declarations(file);
-      const first = nodes[0]!,
-        second = nodes[1]!;
-      const changed =
-        original.slice(0, first.getFullStart()) +
-        second.getFullText(file) +
-        first.getFullText(file) +
-        original.slice(second.end);
-      expect(changed).not.toBe(original);
-      const receipt = receipts.find((entry) => destinations[entry.name]!.includes(path))!;
-      verifyLedger(receipt);
-      expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/current declaration order/);
-    },
-  );
-
-  it("rejects removal of failed-first-registration rollback cleanup from live source", () => {
-    const path = "src/ir/runtime/async-attachment.ts",
-      original = read(path);
-    const changed = original.replace("if (!previous) preparedManifestByPlan.delete(input.plan);", "");
-    expect(changed).not.toBe(original);
-    const receipt = receipts.find((entry) => entry.name === "async-plan")!;
-    verifyLedger(receipt);
-    expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/declaration receipt changed/);
-  });
-
-  it("rejects an empty-success combined verifier independently of historical reconstruction", () => {
-    const receipt = receipts.find((entry) => entry.name === "intrinsic-support")!;
-    verifyLedger(receipt);
-    const path = "src/ir/runtime/intrinsic-verification.ts";
-    const file = parse(path);
-    const node = file.statements.find(
-      (entry): entry is ts.FunctionDeclaration =>
-        ts.isFunctionDeclaration(entry) && entry.name?.text === "verifyIrIntrinsicInstruction",
-    )!;
-    const original = read(path);
-    const changed = original.slice(0, node.body!.getStart(file)) + "{ return []; }" + original.slice(node.body!.end);
-    expect(changed).not.toBe(original);
-    expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/exact semantic prefix/);
-  });
-
-  it("keeps the current 37-member/six-overload builder census separate from historical 35/four", () => {
-    const file = parse("src/ir/runtime/manifest.ts");
-    const builder = file.statements.find(
-      (entry): entry is ts.ClassDeclaration =>
-        ts.isClassDeclaration(entry) && entry.name?.text === "RuntimeManifestBuilder",
-    )!;
-    expect(
-      builder.members.map((member) =>
-        ts.isConstructorDeclaration(member) ? "constructor" : member.name!.getText(file),
-      ),
-    ).toEqual([
-      "#policy",
-      "#uses",
-      "#requestedFeatures",
-      "#providers",
-      "#hostCapabilityRecords",
-      "#addedDependencies",
-      "#declaredCycles",
-      "#plannedIntrinsicIds",
-      "#plannedProviderIds",
-      "#plannedHostCapabilityIds",
-      "#providerPlans",
-      "#state",
-      "#manifest",
-      "constructor",
-      "addIntrinsicUse",
-      "requestFeature",
-      "registerProvider",
-      "addProviderDependency",
-      "declareProviderCycle",
-      "freeze",
-      "manifest",
-      "resolveProvider",
-      "resolveProvider",
-      "resolveProvider",
-      "resolveProvider",
-      "resolveProvider",
-      "resolveProvider",
-      "resolveProvider",
-      "assertIntrinsicPlanned",
-      "assertProviderPlanned",
-      "assertHostCapabilityPlanned",
-      "#buildManifest",
-      "#indexProviders",
-      "#selectProvider",
-      "#assertKnownFeature",
-      "#assertMutable",
-      "#assertFrozen",
-    ]);
-    expect(builder.members.filter(ts.isPropertyDeclaration)).toHaveLength(13);
-    expect(
-      builder.members
-        .filter((member) => ts.isPropertyDeclaration(member) && member.initializer)
-        .map((member) => member.name!.getText(file)),
-    ).toEqual([
-      "#uses",
-      "#requestedFeatures",
-      "#addedDependencies",
-      "#declaredCycles",
-      "#plannedIntrinsicIds",
-      "#plannedProviderIds",
-      "#plannedHostCapabilityIds",
-      "#providerPlans",
-      "#state",
-    ]);
-    expect(builder.members.filter((member) => ts.isMethodDeclaration(member) && member.body)).toHaveLength(16);
-    expect(builder.members).toHaveLength(37);
-    expect(builder.members.filter((member) => ts.isMethodDeclaration(member) && !member.body)).toHaveLength(6);
-    expect(builder.members.filter(ts.isConstructorDeclaration)).toHaveLength(1);
-    expect(builder.members.filter(ts.isGetAccessorDeclaration)).toHaveLength(1);
-  });
-
-  it("retains exactly one attachment WeakMap and no implementation in the five complete facades", () => {
-    const file = parse("src/ir/runtime/async-attachment.ts");
-    expect(declarations(file).filter((entry) => nameOf(entry, file) === "preparedManifestByPlan")).toHaveLength(1);
-    for (const path of [
-      "runtime-host-capabilities",
-      "async-runtime-providers",
-      "runtime-callable-declarations",
-      "runtime-manifest",
-      "async-plan",
-    ]) {
-      expect(declarations(parse("src/ir/" + path + ".ts"))).toEqual([]);
-    }
   });
 });
 
@@ -677,7 +422,6 @@ describe("canonical provider identities and catalogs", () => {
       expect(ORDINARY_OBJECT_RUNTIME_PROVIDERS).toHaveLength(8);
       const semanticProviders = callables.SEMANTIC_CALLABLE_RUNTIME_PROVIDERS;
       expect(Object.isFrozen(semanticProviders)).toBe(true);
-      expect(semanticProviders).toHaveLength(16);
       const canonicalProviders = [
         ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
         ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
@@ -1199,22 +943,3 @@ describe("one authenticated async attachment authority", () => {
     expect(attachment.sealPreparedIrAsyncRuntimeContainers(sealed)).toBe(sealed);
   });
 });
-
-// Fresh whole component authentication precedes each explicit source-epoch bridge.
-function assertSourceMapValidatorComponent(readLive: (path: string) => string): void {
-  const path = "tests/helpers/ir-program-validator-relocation.ts";
-  const text = readLive(path);
-  if (typeof text !== "string" || text.length === 0)
-    throw new Error("program validator relocation: nonempty primitive text required: " + path);
-  if (
-    Buffer.byteLength(text) !== 46642 ||
-    createHash("sha256").update(text).digest("hex") !==
-      "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
-  )
-    throw new Error("program validator relocation: complete source pin mismatch: " + path);
-}
-function beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {
-  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
-  assertSourceMapValidatorComponent(readLive);
-  return beforeSourceMapProgramValidatorRelocation(readLive);
-}

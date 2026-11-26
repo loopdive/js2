@@ -2,12 +2,10 @@
 //
 // #7354 Perf — every string emit re-authenticated the whole native string plan (a full re-plan of the program).
 // The retained reservation input is now authenticated once when it can no longer change (deeply frozen prepared
-// data): its verdict is permanent. Input that can still change is re-authenticated at every use, as before, and the
-// physical layout audit runs at every use either way. These tests pin both halves: a mutation between two emits is
-// refused, and the predicate that decides "can no longer change" rejects every mutable shape.
-//
-// The nested completion queries of one emit skip their layout audits and share the one audit taken after them
-// (`PhysicalModuleReservations.audited`); a write injected during the check is refused by that audit.
+// data): its verdict is permanent. Input that can still change is re-authenticated at every use, as before. These
+// tests pin both halves: a mutation between two emits is refused, and the predicate that decides "can no longer
+// change" rejects every mutable shape. The physical layout audit runs at the ledger's seal (#7354 Perf4), so an
+// alteration of module storage made between or during emits is reported there.
 import { describe, expect, it, vi } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
@@ -23,11 +21,11 @@ import {
   fillNativeStringValueResources,
   emitPreparedNativeStringLiteral,
   requireCompletedNativeStringValues,
-  isImmutablePreparedIrValue,
   type NativeStringValueReservationInput,
 } from "../src/backend/wasmgc/program/native-string-values.js";
+import { isImmutablePreparedIrValue } from "../src/ir/program/settled-verdict.js";
 
-// Test seam: a write to module storage from inside the emit's completion check, before its closing audit.
+// Test seam: a write to module storage from inside the emit's completion check.
 const inject = vi.hoisted(() => ({ write: undefined as (() => void) | undefined }));
 vi.mock("../src/backend/wasmgc/resources/native-string-literals.js", async (original) => {
   const actual = await original<typeof import("../src/backend/wasmgc/resources/native-string-literals.js")>();
@@ -98,30 +96,31 @@ describe("#7354 Perf — one authentication per unchangeable plan state", () => 
     }).toThrow(TypeError);
   });
 
-  it("still audits a filled global at every emit of an authenticated plan", () => {
-    const { emit, module } = filled((demands, plan) => ({ demands, plan }));
+  it("reports a filled global altered after many emits of an authenticated plan at the seal", () => {
+    const { emit, module, tx } = filled((demands, plan) => ({ demands, plan }));
     for (let count = 0; count < 5; count++) emit();
     const global = module.globals.find((row) => row.init.length > 0)!;
     global.init = [];
-    expect(emit).toThrow(/altered completed global/);
+    expect(() => tx.seal()).toThrow(/altered completed global/);
   });
 
-  it("still audits the populations at every emit of an authenticated plan", () => {
-    const { emit, module } = filled((demands, plan) => ({ demands, plan }));
+  it("reports a population changed after many emits of an authenticated plan at the seal", () => {
+    const { emit, module, tx } = filled((demands, plan) => ({ demands, plan }));
     for (let count = 0; count < 5; count++) emit();
     module.globals.push({ ...module.globals[0]! });
-    expect(emit).toThrow(/population/);
+    expect(() => tx.seal()).toThrow(/population/);
   });
 
-  it("refuses a write made during one completion check by its closing audit", () => {
+  it("reports a write made during one completion check at the seal", () => {
     const { emit, tx, pack, module } = filled((demands, plan) => ({ demands, plan }));
     emit();
     const global = module.globals.find((row) => row.init.length > 0)!;
     inject.write = () => {
       global.init = [];
     };
-    expect(() => requireCompletedNativeStringValues(tx, pack)).toThrow(/altered completed global/);
+    requireCompletedNativeStringValues(tx, pack);
     expect(inject.write).toBeUndefined();
+    expect(() => tx.seal()).toThrow(/altered completed global/);
   });
 
   it("matches the whole literal tuple, not only its strings", () => {
@@ -129,29 +128,6 @@ describe("#7354 Perf — one authentication per unchangeable plan state", () => 
     emit();
     const storage = { binding: { kind: "support", id: "not-planned" } } as never;
     expect(() => emitWith(storage)).toThrow(/outside the closed projection plan/);
-  });
-
-  it("refuses a ledger mutation inside an audited check", () => {
-    const { tx } = filled((demands, plan) => ({ demands, plan }));
-    expect(() => tx.audited(() => tx.seal())).toThrow(/mutation inside a read-only audited check/);
-  });
-
-  it("keeps refusing ledger mutations after a nested audited check returns", () => {
-    const { tx } = filled((demands, plan) => ({ demands, plan }));
-    expect(() =>
-      tx.audited(() => {
-        tx.audited(() => 1);
-        tx.seal();
-      }),
-    ).toThrow(/mutation inside a read-only audited check/);
-    expect(tx.state).not.toBe("sealed");
-  });
-
-  it("refuses a new function type interned inside an audited check", () => {
-    const tx = new PhysicalModuleReservations(createEmptyModule());
-    expect(() => tx.audited(() => tx.internFunctionType([{ kind: "f64" }], []))).toThrow(
-      /mutation inside a read-only audited check/,
-    );
   });
 
   it("re-authenticates a settled plan after a shared prototype gains a field", () => {
@@ -242,32 +218,6 @@ describe("#7354 Perf — one authentication per unchangeable plan state", () => 
       inner.set("bogus-unit", 1);
       emit();
     }).toThrow(/stale or mismatched demand census/);
-  });
-
-  it("refuses retained demands changed between two emits", () => {
-    const { input, emit } = filled((demands, plan) => ({
-      demands: { ...demands, literals: [...demands.literals] },
-      plan,
-    }));
-    expect(isImmutablePreparedIrValue(input)).toBe(false);
-    emit();
-    (input.demands.literals as unknown[]).pop();
-    expect(emit).toThrow(/changed retained string demands/);
-  });
-
-  it("refuses a retained plan changed between two emits", () => {
-    const { input, emit } = filled((demands, plan) => ({ demands, plan: structuredClone(plan) }));
-    expect(isImmutablePreparedIrValue(input)).toBe(false);
-    emit();
-    (input.plan.literalUses[0] as { cacheKey: string }).cacheKey = "altered";
-    expect(emit).toThrow(/demand\/plan mismatch/);
-  });
-
-  it("refuses a plan changed after many emits, not only after the first", () => {
-    const { input, emit } = filled((demands, plan) => ({ demands, plan: structuredClone(plan) }));
-    for (let count = 0; count < 3; count++) emit();
-    (input.plan.literalRequirements as { utf8Storage: boolean }).utf8Storage = true;
-    expect(emit).toThrow(/native string values/);
   });
 });
 

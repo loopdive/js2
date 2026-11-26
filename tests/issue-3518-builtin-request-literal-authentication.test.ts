@@ -160,7 +160,8 @@ describe.each([
       array = token.object;
     if (array.kind !== "array") throw Error("String data prerequisite is not the expected genuine array");
     array.mutable = !array.mutable;
-    expect(() => requireNativeBuiltinFunctionRequestIssuer(f.tx, pack)).toThrow(
+    // The layout audit runs at the ledger's next phase boundary.
+    expect(() => (phase === "filling" ? f.tx.seal() : f.tx.freezeReservations())).toThrow(
       `physical module reservations: altered type descriptor ${token.key}`,
     );
     expect(f.tx.state).toBe("failed");

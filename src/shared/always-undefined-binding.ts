@@ -18,12 +18,7 @@
 import { GLOBAL_VALUE_NAMES } from "../checker/inhouse-globals.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { isBindingSiteName, stripParens } from "./binding-writes.js";
-import {
-  sourceMayWriteGlobalObject,
-  sourceNamesReflectiveRoute,
-  sourceRunsDynamicCode,
-  sourceWritesMemberNamed,
-} from "./intrinsic-prototype-writes.js";
+import { sourceMayWriteBindingUnseen, sourceMayWriteGlobalObject } from "./intrinsic-prototype-writes.js";
 
 /** `function () {}()`: a call with no arguments of a function expression with no parameters and an empty body. */
 export function isEmptyFunctionCall(expression: ts.Expression): boolean {
@@ -81,13 +76,7 @@ export function isAlwaysUndefinedVar(identifier: ts.Identifier): boolean {
 }
 
 function provingScopes(sourceFile: ts.SourceFile, name: string): ReadonlySet<ts.Node> | undefined {
-  if (
-    sourceRunsDynamicCode(sourceFile) ||
-    sourceNamesReflectiveRoute(sourceFile) ||
-    sourceWritesMemberNamed(sourceFile, name)
-  ) {
-    return undefined;
-  }
+  if (sourceMayWriteBindingUnseen(sourceFile, name)) return undefined;
   const scopes = new Set<ts.Node>();
   let declined = false;
   const visit = (node: ts.Node): void => {

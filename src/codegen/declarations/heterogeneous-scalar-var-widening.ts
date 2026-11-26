@@ -41,6 +41,7 @@
  * name, so a same-named local in an unrelated function cannot force a module
  * global to widen (the #3364 bare-name-keying failure mode).
  */
+import { optionalChainReceiverType } from "../builtin-subclass-receiver.js";
 import type { JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
 import {
@@ -280,9 +281,11 @@ export function methodReceiverStaticType(
   fctx: FunctionContext,
   method: ts.PropertyAccessExpression,
 ): ts.Type {
-  return ctx.oracle.signatureOf(method) === undefined
-    ? memberReceiverStaticType(ctx, fctx, method.expression)
-    : ctx.checker.getTypeAtLocation(method.expression);
+  const receiver =
+    ctx.oracle.signatureOf(method) === undefined
+      ? memberReceiverStaticType(ctx, fctx, method.expression)
+      : ctx.checker.getTypeAtLocation(method.expression);
+  return optionalChainReceiverType(method, receiver);
 }
 
 /**
