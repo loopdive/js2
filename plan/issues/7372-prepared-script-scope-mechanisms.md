@@ -216,7 +216,9 @@ export type UnresolvableName =
 
 // Producer side: pure, backend-independent.
 /** The one rule: a value reference no declaration binds (no checker symbol; not inside `with`; not `arguments`;
- *  not a name the script declares at top level, which guards the checker's lib-merge answer). */
+ *  not a name the script declares at top level, which guards the checker's lib-merge answer; (S19) not a name an
+ *  Annex B block function declares as a script var, `annexBWritesScriptBinding(sourceFile, name)`, whose var home
+ *  exists from instantiation). */
 export function isUnresolvableReference(checker: ts.TypeChecker, node: ts.Identifier): boolean;
 export interface AbsentGlobals {
   /** The program input's rows (value + flag), owned by the script's module-init. */
@@ -246,7 +248,8 @@ export function absentGlobalStorage(b: IrFunctionBuilder, home: AbsentGlobalHome
 //   home: flag := 0, value := undefined, `true`; unbound: `true`.
 //   A sloppy write re-creates; a strict write re-checks the flag after the RHS (stillExists, §9.1.1.4.5).
 // S19 2c: lowerCreateGlobalVarBinding(b, home): void
-//   flag := 1; the value is kept (`undefined` while absent). 2c adds eval-declared names to `collectAbsentGlobals`.
+//   CreateGlobalVarBinding (§9.1.1.4.17): if flag == 0 then { value := undefined; flag := 1 }; a present
+//   property is left as it is. 2c adds eval-declared names to `collectAbsentGlobals`.
 ```
 
 **Where it plugs in.**
@@ -358,13 +361,21 @@ Refusals pinned: two scripts, `[x] = [1]`, `this.x = 1`, `with ({}) { x = 1; }`,
 - from-ast grows by at most +3 lines, or by a granted +8 that the review accepts.
 - An adversarial review with fresh context records its verdict in the PR.
 
-**For S19 to confirm before 2a-2 / 2c.**
+**Agreed with S19 (2026-11-26).**
 
-1. 2a's unbound read would be `byName(F)` → `lowerUnresolvableRead`. That is a home when something writes *F* as an
-   unresolvable reference, and `unbound` otherwise. Is that B2's answer, `typeof F` included?
-2. 2c creates through `lowerCreateGlobalVarBinding(home)` (flag := 1, value kept), with eval-declared names as a
-   second source in `collectAbsentGlobals`. Is that C3?
-3. The home needs a single-source program. Does an eval that A4 compiles keep the program single-source?
+1. 2a's unbound read is `byName(F)` → `lowerUnresolvableRead`: a ReferenceError, and `"undefined"` under `typeof`.
+   It replaces the refusal "is read where no binding of it exists" in `src/ir/annexb-block-function-values.ts`.
+2. **No absent home for an Annex B var.** A name an Annex B block function declares as a script var
+   (`annexBWritesScriptBinding`, `src/shared/annexb-block-functions.ts`, from #7466/#7499) lives in S19's var home
+   from instantiation. `isUnresolvableReference` excludes it, so a write and a read of it never land in two homes.
+   If slice 3 lands before #7499, the exclusion is added by whichever lands second.
+3. 2c's `lowerCreateGlobalVarBinding` is §9.1.1.4.17: `if flag == 0 then { value := undefined; flag := 1 }`. It never
+   keeps a stale value on the absent path; slice 4's delete also clears the value. An eval-created binding is
+   configurable, like an undeclared-assignment property, so one home class serves both.
+4. **Homes are keyed by program, not by source.** An A4-compiled eval makes the program two-source (#7363 Slice A).
+   The Wasm module stays one, so the globals are shared; which module-init stores first is A4's owner's question,
+   raised by S19 once A4's design is fixed. Until then slice 3 refuses a multi-source program by name, as F1b and H
+   do.
 
 ### Slice 4 — `delete` (planned)
 
