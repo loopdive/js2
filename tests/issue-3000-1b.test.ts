@@ -33,7 +33,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // Mirrors website/playground/examples/js/classes.ts's flat `Animal`: a string
 // private field (`#name`) alongside a numeric one (`#age`), get/set accessors
@@ -62,11 +62,18 @@ const ANIMAL = `
 const STRING_MEMBERS = ["Animal_get_name", "Animal_set_name", "Animal_get_age", "Animal_speak"];
 
 describe("#3000 Phase-1b — string-field class gets an IrClassShape (genuine emission)", () => {
-  for (const nativeStrings of [false, true]) {
-    const lane = nativeStrings ? "native/standalone ($AnyString)" : "host (externref)";
+  // The host (externref) string lane (`nativeStrings: false`) was removed by
+  // #6979 S7; both remaining lanes carry `(ref $AnyString)`: the JS target and
+  // the no-host `target: "standalone"` build.
+  for (const standalone of [false, true]) {
+    const lane = standalone ? "standalone ($AnyString)" : "js ($AnyString)";
 
     it(`emits every string-field-class member via IR — ${lane}`, async () => {
-      const r = await compile(ANIMAL, { fileName: "test.ts", experimentalIR: true, nativeStrings });
+      const r = await compile(ANIMAL, {
+        fileName: "test.ts",
+        experimentalIR: true,
+        ...(standalone ? { target: "standalone" as const } : {}),
+      });
       expect(r.success).toBe(true);
       const compiled = new Set(r.irCompiledFuncs ?? []);
       // Every accessor + method genuinely IR-emitted (NOT byte-inert). Without
@@ -84,7 +91,7 @@ describe("#3000 Phase-1b — string-field class gets an IrClassShape (genuine em
   it("string round-trips correctly through the IR-emitted accessors + method", async () => {
     // Getter, setter (string slot), numeric getter, and a private-string read +
     // concat in a method — all IR-emitted — via the production runtime.
-    const exports = await compileAndInstantiate(ANIMAL);
+    const exports = await compileToWasm(ANIMAL);
     expect(String((exports.test as () => unknown)())).toBe("Rex Jr.|Rex Jr. makes a sound|4");
   });
 

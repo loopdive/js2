@@ -13,8 +13,15 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 
-async function run(src: string, fn: string, native: boolean): Promise<number> {
-  const r = await compile(src, { fileName: "test.ts", nativeStrings: native, skipDiagnostics: true });
+// The JS-host string-import lane (`nativeStrings: false`) was removed by #6979
+// S7; the JS target always uses native strings. The second lane is now the
+// no-host `target: "standalone"` build of the same native string path.
+async function run(src: string, fn: string, standalone: boolean): Promise<number> {
+  const r = await compile(src, {
+    fileName: "test.ts",
+    skipDiagnostics: true,
+    ...(standalone ? { target: "standalone" as const } : {}),
+  });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const io = r.importObject;
   const { instance } = await WebAssembly.instantiate(r.binary, io);
@@ -22,12 +29,12 @@ async function run(src: string, fn: string, native: boolean): Promise<number> {
   return (instance.exports as Record<string, () => number>)[fn]!();
 }
 
-// Each case asserts on BOTH backends (jsHost + nativeStrings).
+// Each case asserts on BOTH targets (JS environment + standalone).
 function bothBackends(name: string, src: string, fn: string, expected: number): void {
-  it(`${name} (jsHost)`, async () => {
+  it(`${name} (js)`, async () => {
     expect(await run(src, fn, false)).toBe(expected);
   });
-  it(`${name} (native)`, async () => {
+  it(`${name} (standalone)`, async () => {
     expect(await run(src, fn, true)).toBe(expected);
   });
 }

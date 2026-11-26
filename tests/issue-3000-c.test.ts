@@ -34,7 +34,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // Mirrors website/playground/examples/js/classes.ts's flat `Animal`: a string
 // private field (`#name`) + a numeric one (`#age`), both set in the ctor body.
@@ -59,11 +59,18 @@ const ANIMAL = `
 `;
 
 describe("#3000-C — IR constructor emission (flat classes) — genuine emission", () => {
-  for (const nativeStrings of [false, true]) {
-    const lane = nativeStrings ? "native/standalone ($AnyString)" : "host (externref)";
+  // The host (externref) string lane (`nativeStrings: false`) was removed by
+  // #6979 S7; both remaining lanes carry `(ref $AnyString)`: the JS target and
+  // the no-host `target: "standalone"` build.
+  for (const standalone of [false, true]) {
+    const lane = standalone ? "standalone ($AnyString)" : "js ($AnyString)";
 
     it(`emits ${"Animal_new"} via IR (not byte-inert) — ${lane}`, async () => {
-      const r = await compile(ANIMAL, { fileName: "test.ts", experimentalIR: true, nativeStrings });
+      const r = await compile(ANIMAL, {
+        fileName: "test.ts",
+        experimentalIR: true,
+        ...(standalone ? { target: "standalone" as const } : {}),
+      });
       expect(r.success).toBe(true);
       const compiled = new Set(r.irCompiledFuncs ?? []);
       // THE acceptance criterion: the constructor slot is ACTUALLY patched with
@@ -76,7 +83,7 @@ describe("#3000-C — IR constructor emission (flat classes) — genuine emissio
   }
 
   it("new Animal(...) round-trips field reads correctly through the production runtime", async () => {
-    const exports = await compileAndInstantiate(ANIMAL);
+    const exports = await compileToWasm(ANIMAL);
     expect(String((exports.test as () => unknown)())).toBe("Rex Jr.|Rex Jr. makes a sound|4");
   });
 
@@ -90,7 +97,7 @@ describe("#3000-C — IR constructor emission (flat classes) — genuine emissio
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(new Set(r.irCompiledFuncs ?? []).has("Point_new")).toBe(true);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.test as () => unknown)())).toBe(7);
   });
 
@@ -102,7 +109,7 @@ describe("#3000-C — IR constructor emission (flat classes) — genuine emissio
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(new Set(r.irCompiledFuncs ?? []).has("E_new")).toBe(true);
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.test as () => unknown)())).toBe(42);
   });
 });
@@ -121,7 +128,7 @@ describe("#3000-C — construction-effect guards (reject to legacy, stay correct
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
     expect(new Set(r.irCompiledFuncs ?? []).has("C_new")).toBe(true); // claimed since 6ebd204cbe
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(Number((exports.test as () => unknown)())).toBe(15); // 5 + 10 — initialiser ran
   });
 
