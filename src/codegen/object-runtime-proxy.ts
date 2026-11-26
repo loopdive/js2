@@ -36,6 +36,7 @@ import {
   ensureOwnKeysAllNative,
   installProxyKeyBagGuards,
 } from "./object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
+import { requireHelper } from "./helpers/required-helper.js";
 import { installProxyForwardArms } from "./object-model/proxy-forward-carriers.js"; // (#6651 V1)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
@@ -566,7 +567,6 @@ export function ensureProxyRuntime(
   const invIsTruthyIdx = ctx.funcMap.get("__is_truthy");
   const invIsExtIdx = ctx.funcMap.get("__object_isExtensible");
   const invGetProtoIdx = ctx.funcMap.get("__getPrototypeOf");
-  const invTypeofObjectIdx = ctx.funcMap.get("__typeof_object");
   /** `p.ptarget` as an externref, for a body whose `p` lives in `pLocal`. */
   const targetOf = (pLocal: number): Instr[] => [
     { op: "local.get", index: pLocal },
@@ -660,20 +660,18 @@ export function ensureProxyRuntime(
         );
       } else {
         // §10.5.1 step 8: the trap result must be an Object or null…
-        if (invTypeofObjectIdx !== undefined && typeofFunctionIdx !== undefined) {
-          trapArm.push(
-            { op: "local.get", index: RES },
-            { op: "ref.is_null" },
-            { op: "local.get", index: RES },
-            { op: "call", funcIdx: invTypeofObjectIdx },
-            { op: "i32.or" },
-            { op: "local.get", index: RES },
-            { op: "call", funcIdx: typeofFunctionIdx },
-            { op: "i32.or" },
-            { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: throwInvariant() },
-          );
-        }
+        trapArm.push(
+          { op: "local.get", index: RES },
+          { op: "ref.is_null" },
+          { op: "local.get", index: RES },
+          { op: "call", funcIdx: requireHelper(ctx, "__typeof_object") },
+          { op: "i32.or" },
+          { op: "local.get", index: RES },
+          { op: "call", funcIdx: requireHelper(ctx, "__typeof_function") },
+          { op: "i32.or" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: throwInvariant() },
+        );
         // …and, over a NON-EXTENSIBLE target, must be the target's prototype.
         trapArm.push(
           ...targetOf(2),
@@ -1618,7 +1616,6 @@ export function ensureProxyRuntime(
       .filter((idx): idx is number => idx !== undefined);
     const typeofSymbolIdx = ctx.funcMap.get("__typeof_symbol");
     const symbolTypeIdx = ctx.symbolTypeIdx;
-    const typeofUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
     const requireObject = (local: number): Instr[] => {
       const primitiveTest: Instr[] = [];
       let primitiveCount = 0;
@@ -1650,12 +1647,10 @@ export function ensureProxyRuntime(
           { op: "ref.test", typeIdx: symbolTypeIdx },
         ]);
       }
-      if (typeofUndefinedIdx !== undefined) {
-        appendPrimitiveTest([
-          { op: "local.get", index: local },
-          { op: "call", funcIdx: typeofUndefinedIdx },
-        ]);
-      }
+      appendPrimitiveTest([
+        { op: "local.get", index: local },
+        { op: "call", funcIdx: requireHelper(ctx, "__extern_is_undefined") },
+      ]);
       if (primitiveCount === 0) primitiveTest.push({ op: "i32.const", value: 0 });
       // (#5140) A `$Proxy` carrier IS definitionally an Object, but one of the
       // typeof classifiers above misfires on it, so `new Proxy(new Proxy(t,{}),{})`
