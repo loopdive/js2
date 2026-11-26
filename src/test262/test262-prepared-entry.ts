@@ -359,6 +359,12 @@ function failed(
   results.set(result, { rows: observeResult(result), outcome: diagnostic, frontendFailure });
   return result;
 }
+/** A named refusal of the adapter itself, located at the entry's first line. */
+function adapterRefusal(entryFile: string, code: string, detail: string, message = detail): CompileResult {
+  return failed({ kind: "adapter-unsupported", detail }, [
+    { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
+  ]);
+}
 function present(
   files: Record<string, string>,
   entryFile: string,
@@ -370,43 +376,20 @@ function present(
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
   if (options.backend !== undefined && options.backend !== profile.backend)
-    return failed({ kind: "adapter-unsupported", detail: "explicit backend contradicts resolved target" }, [
-      {
-        severity: "error",
-        code: "prepared-backend-target-mismatch",
-        message: "explicit backend contradicts resolved target",
-        file: entryFile,
-        line: 1,
-        column: 1,
-      },
-    ]);
+    return adapterRefusal(entryFile, "prepared-backend-target-mismatch", "explicit backend contradicts resolved target");
   if (options.runtimeEvalProvider === false)
-    return failed(
-      { kind: "adapter-unsupported", detail: "strict compilation cannot disable demanded runtime eval providers" },
-      [
-        {
-          severity: "error",
-          code: "prepared-runtime-eval-option-unsupported",
-          message: "runtimeEvalProvider:false cannot certify a strict prepared compile",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-runtime-eval-option-unsupported",
+      "strict compilation cannot disable demanded runtime eval providers",
+      "runtimeEvalProvider:false cannot certify a strict prepared compile",
     );
   if (options.define !== undefined)
-    return failed(
-      { kind: "adapter-unsupported", detail: "strict compilation does not rewrite source with define substitutions" },
-      [
-        {
-          severity: "error",
-          code: "prepared-input-transform-unsupported",
-          message: "strict compilation preserves exact source text",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-input-transform-unsupported",
+      "strict compilation does not rewrite source with define substitutions",
+      "strict compilation preserves exact source text",
     );
   const analyze = (graph: Record<string, string>) =>
     analyzeMultiSource(graph, entryFile, undefined, {
@@ -419,18 +402,10 @@ function present(
   const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
   const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
   if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
-    return failed(
-      { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },
-      [
-        {
-          severity: "error",
-          code: "prepared-source-graph-incomplete",
-          message: "frontend did not retain the complete supplied name/text graph",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-source-graph-incomplete",
+      "frontend did not retain the complete supplied name/text graph",
     );
   const supplied = new Map(Object.entries(exactFiles).map(([file, text]) => [normalizeMultiFileName(file), text]));
   const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;

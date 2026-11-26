@@ -182,3 +182,23 @@ to one shared module both pipelines ask, instead of a second copy.
 - The eval test files fail the same set as `origin/main` (46 failures there, pre-existing).
 - Expression-position literal eval still refuses with the generic `direct call to "eval" has no exact AST-site
   plan`; slice 2 gives it the eval label.
+
+## Split of slice A (2026-11-26, lead decision on review RV7432 Q1)
+
+Under the IR rule "no mechanism without a caller", slice A lands in two parts:
+
+- **This PR, byte-identical, no new behaviour:**
+  - The pure eval-source syntax moves out of `src/codegen/expressions/`:
+    - `src/frontend/eval/early-errors.ts`, moved from `codegen/expressions/eval-early-errors.ts`;
+    - `src/frontend/use-strict-directive.ts`, moved from `codegen/helpers/`;
+    - `src/frontend/eval/declaration-names.ts`, the `foldedEvalDeclarationNames` walk taken out of `eval-inline.ts`.
+      Its late-bound registry delegate is deleted, because its callers import it directly and no cycle remains;
+    - `src/frontend/eval/script.ts`, the pure half of `eval-script.ts`: `ParsedEvalScript`, the directive
+      prologue, the PerformEval parse, `foldedEvalStaticSyntaxError` and `EVAL_SOURCE_FILENAME`.
+  - Codegen keeps `parseEvalScript` (the caller's strictness) and the provider rule. The legacy fold and the
+    runtime-eval provider import from the new place.
+  - The strict entry's four repeated adapter refusals become one `adapterRefusal` helper in
+    `src/test262/test262-prepared-entry.ts`.
+- **Next PR:** the A1–A3 mechanism (the called init, the literal eval sources and their relation, script-var homes,
+  source order), together with A4 (the call behind the run-time %eval% identity test) and the RV7432 fixes B1/B2,
+  with its yield measured. Its work in progress is PR #7432 (`claude/prepared-eval-a6`) and `claude/prepared-eval-a7`.
