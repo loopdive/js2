@@ -75,7 +75,7 @@ checker oracle through the symbol, and the in-house oracle through its binder pl
 **Reuses / removes.** One proof instead of an inline raw-checker copy, a missing check in two IR places, and a missing
 check in legacy. No new oracle surface.
 
-**Not in scope.** `src/codegen` has about 20 other syntactic `text === "undefined"` tests (omitted-argument and
+**Not in scope.** `src/codegen` has 88 other syntactic `text === "undefined"` tests (counted on main 1a726b3e) (omitted-argument and
 default-parameter detection, `JSON.stringify` replacer, `parseInt` radix, and others). They decide how an argument is
 treated, not what value a read yields. Their callers can adopt the predicate later; I will list them in the PR.
 
