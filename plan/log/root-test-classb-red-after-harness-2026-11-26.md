@@ -113,10 +113,10 @@ Their tests still fail on main. Each needs a decision before a harness change.
 | `issue-2623-p7-finally-bridge.test.ts` | Same: it hands wrapped `grab2()` results to the raw internal `__closure_arity` export (returns -1, not 2). |
 | `issue-1740.test.ts` | Converts green, but only by dropping the `{ globalSandbox: getTestSandbox() }` runtime option, which the shared helper cannot pass. Not shipped. |
 | `issue-2804.test.ts` | Converts green, but its one `run` serves the host and standalone modes, so the standalone path would change too. Not shipped. |
-| `issue-3000.test.ts` | Converts green, but its comment says it deliberately tests the production `compileAndInstantiate` path. Not shipped. |
-| `issue-3058-host-resizable-ab.test.ts` | Tests the production `compileAndInstantiate` (main-realm TA constructors) and needs the `dynamicCode: "hostEval"` option. |
-| `issue-3118-new-object-primitive.test.ts` | Tests the production path with real host globals (main-realm semantics). |
-| `issue-1667.test.ts` | Tests `compile().importObject` itself, i.e. raw exports through the public API. |
+| `issue-3000.test.ts` | **Tests the raw-export API by design** (lead, 2026-11-26: `compileAndInstantiate` keeps its export shape; JS-host public API, lane sunsetting). Stays as is. |
+| `issue-3058-host-resizable-ab.test.ts` | **Tests the raw-export API by design** (production `compileAndInstantiate`, main-realm TA constructors, `dynamicCode: "hostEval"`). Stays as is. |
+| `issue-3118-new-object-primitive.test.ts` | **Tests the raw-export API by design** (production path, real host globals). Stays as is. |
+| `issue-1667.test.ts` | **Tests the raw-export API by design** (`compile().importObject`). Stays as is. |
 | `issue-6792-domroot-containment.test.ts` | Needs the `{ domRoot }` build option, which the shared helper cannot pass. |
 | `issue-1179-followup.test.ts` | Already uses the wrapped `tests/helpers/compile.ts`, so this is not a harness failure. |
 | `issue-2063-switch-strict-equality.test.ts` | Already uses `assertEquivalent`. The only raw call is standalone (`illegal cast`). |
