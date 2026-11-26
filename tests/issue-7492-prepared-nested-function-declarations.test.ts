@@ -82,7 +82,7 @@ describe("#7492 — shapes left out abort by name", () => {
     [
       "one capturing another",
       "function g(){ function b(){ return 6; } function a(){ return b() + 1; } return a(); } g();",
-      'nested function a captures the closure "b"',
+      'a closure capturing the closure "b" has no native carrier',
     ],
     [
       "one returning another, both named in one statement",

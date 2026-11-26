@@ -1020,6 +1020,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
+  /** (#7547) The backend has no carrier for a closure-typed capture, so a closure capturing one is refused. */
+  refusesClosureCapturedClosure?(): boolean;
   /** (#7354 U) The function's body is the run-time abort (`abort-bodies.ts`); its statements are not lowered. */
   abortedBody?(fn: ts.FunctionLikeDeclaration): boolean;
   /**
@@ -2358,18 +2360,9 @@ function lowerFunctionBody(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   lowerStatementList(stmts, { ...cx, hoistedClosures: placement && { signatures, placement } });
 }
 
-/**
- * Bind the closures of the hoisted declarations placed before `statement`. A closure that captures another closure
- * has no native carrier for that capture yet, so it is refused here, in its enclosing function.
- */
+/** Bind the closures of the hoisted declarations placed before `statement`. */
 function makeHoistedClosures(statement: ts.Statement, cx: LowerCtx): void {
   for (const fn of cx.hoistedClosures?.placement.get(statement) ?? []) {
-    const captured = analyseCaptures(fn, cx).find((capture) => capture.type.kind === "closure");
-    if (captured)
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: nested function ${fn.name!.text} captures the closure "${captured.name}" (${cx.funcName})`,
-      );
     const value = lowerClosureExpressionWithSignature(fn, cx.hoistedClosures!.signatures.get(fn)!, undefined, cx, {
       writtenParameterSlots: true,
       ...cx.resolver?.closureCodeStrictness?.(fn),
@@ -16478,6 +16471,14 @@ function lowerClosureExpressionWithSignature(
     throw new Error(`ir/from-ast: exact closure default-parameter plan diverged (${cx.funcName})`);
   }
   const captures = analyseCaptures(expr, cx, exact?.orderedReadonlyCaptures);
+  const capturedClosure = cx.resolver?.refusesClosureCapturedClosure?.()
+    ? captures.find((capture) => capture.type.kind === "closure")
+    : undefined;
+  if (capturedClosure)
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: a closure capturing the closure "${capturedClosure.name}" has no native carrier (${cx.funcName})`,
+    );
   if (expectedReadonlyCaptures) {
     const actual = new Set(captures.map((capture) => capture.name));
     if (

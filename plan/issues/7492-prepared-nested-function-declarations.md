@@ -82,7 +82,7 @@ The 39 nested-function files, by what else their test body uses: plain 18, `this
    so the later creation is not observable. `placeHoistedClosures` is a pure AST function. from-ast's
    `lowerFunctionBody` (the three body entries: top-level unit, nested lift, closure lift) computes each signature once
    and the placement, and `lowerStatementList` makes the placed closures before each statement. A closure that
-   captures another closure is refused by name when it is made (`makeHoistedClosures`): the native backend has no
+   captures another closure is refused by name when it is made (#7547: `lowerClosureExpressionWithSignature`): the native backend has no
    carrier for a closure-typed capture yet ("closure capture closure needs its actual native carrier owner", a
    program-level refusal on main for function expressions as well). So no declaration's place depends on another's.
 3. **One body-statement dispatcher.** `lowerStatementListPrefix` keeps only what is particular to a statement list:
@@ -142,7 +142,6 @@ Non-blocking follow-ups from the adversarial review (PRV-7492, 2026-11-26):
 - **Dead code after a `return`.** A `return` before the last statement now lowers through `lowerStmt`'s early
   return, so the statements after it are lowered too. An unsupported statement there aborts the function, though
   it never runs: a missed gain, not a wrong value.
-- **`analyseCaptures` runs twice for a hoisted declaration**: once for the closure-capture refusal in
-  `makeHoistedClosures`, once inside `lowerClosureExpressionWithSignature`. Fold the refusal into the shared closure
-  lowering in the follow-up that gives function expressions the native closure-typed capture carrier, or the same
-  refusal.
+- **`analyseCaptures` ran twice for a hoisted declaration**: once for the closure-capture refusal in
+  `makeHoistedClosures`, once inside `lowerClosureExpressionWithSignature`. Done in #7547: the refusal lives in the
+  shared closure lowering, for function expressions too.

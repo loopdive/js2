@@ -5,8 +5,8 @@
 // declaration bound this way has a name nothing else writes, so making it just before the first statement that names
 // it is the same program. Making it at entry would not be: a closure holds the bindings it captures as they are when
 // it is made, and the `var`s above its first use are initialized only by then. A closure that captures another
-// closure is refused when it is made (from-ast's `makeHoistedClosures`), so no declaration's place depends on
-// another's.
+// closure is refused when it is made (from-ast's `lowerClosureExpressionWithSignature`, #7547), so no declaration's
+// place depends on another's.
 
 import { ts } from "../ts-api.js";
 
