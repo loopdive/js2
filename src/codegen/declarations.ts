@@ -190,6 +190,7 @@ import {
 import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
 import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
+import { moduleF64UndefinedSeedGlobals } from "./declarations/module-var-undefined-seed.js"; // (#7366)
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
@@ -5513,9 +5514,10 @@ export function compileDeclarations(
   // This allows function bodies (e.g. test()) to reference module-level closures.
   // (#2931) A reassigned-function live-binding global must be seeded with its
   // closure in __module_init even when the program has no other init statements,
-  // so a read before the reassignment still yields the function.
-  const hasLiveFuncSeeds = (ctx.liveFuncBindingGlobals?.size ?? 0) > 0;
-  const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
+  // so a read before the reassignment still yields the function; likewise an f64 `undefined` seed (#7366).
+  const hasPrologueSeeds =
+    (ctx.liveFuncBindingGlobals?.size ?? 0) > 0 || moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0;
+  const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasPrologueSeeds;
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   const hasAsyncGraphInit =
     ctx.deferTopLevelInit === true && !ctx.wasi && moduleInitHasTopLevelAwait(ctx.moduleInitStatements);
