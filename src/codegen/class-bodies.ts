@@ -2120,7 +2120,7 @@ export function collectClassDeclaration(
         init,
       });
       ctx.staticProps.set(fullName, globalIdx);
-      if (fieldStartsUndefined(ctx, member, wasmType)) noteStaticF64UndefinedSeed(ctx, fullName);
+      if (fieldStartsUndefined(ctx, member, wasmType)) noteStaticF64UndefinedSeed(ctx, fullName, member);
 
       // Store initializer expression for later compilation. (#1395) Carrying
       // `className` lets the init compile loop set `enclosingClassName` +

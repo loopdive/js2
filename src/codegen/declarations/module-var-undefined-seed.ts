@@ -63,6 +63,7 @@
 import { ts } from "../../ts-api.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import type { Instr } from "../../ir/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { forEachScriptVarDeclaration, scriptVarBindingNames } from "../source-scan-predicates.js";
 import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
@@ -123,17 +124,41 @@ export function emitModuleF64UndefinedSeeds(
   }
 }
 
-/** (#7366) `staticProps` keys of the static fields {@link emitModuleF64UndefinedSeeds} seeds, per compile. */
-const staticF64UndefinedSeedKeys = new WeakMap<CodegenContext, Set<string>>();
+/**
+ * (#7366) The static fields {@link emitModuleF64UndefinedSeeds} seeds, per compile: `staticProps` key → declaration.
+ */
+const staticF64UndefinedSeeds = new WeakMap<CodegenContext, Map<string, ts.PropertyDeclaration>>();
 
 /**
  * Record a static field whose f64 global starts as `undefined`. Keyed by its `staticProps` name, not its global
  * index: a late import shifts the index, and `staticProps` is the map that shift keeps current.
  */
-export function noteStaticF64UndefinedSeed(ctx: CodegenContext, staticPropKey: string): void {
-  let keys = staticF64UndefinedSeedKeys.get(ctx);
-  if (keys === undefined) staticF64UndefinedSeedKeys.set(ctx, (keys = new Set()));
-  keys.add(staticPropKey);
+export function noteStaticF64UndefinedSeed(
+  ctx: CodegenContext,
+  staticPropKey: string,
+  declaration: ts.PropertyDeclaration,
+): void {
+  let seeds = staticF64UndefinedSeeds.get(ctx);
+  if (seeds === undefined) staticF64UndefinedSeeds.set(ctx, (seeds = new Map()));
+  seeds.set(staticPropKey, declaration);
+}
+
+/**
+ * (#7464) Re-seed the `undefined` statics of a class declared in a function body. Each evaluation of the declaration
+ * creates a fresh class (§15.7.14 ClassDefinitionEvaluation), but its statics share one global, so the module
+ * prologue's seed alone would let one call see the value an earlier call assigned.
+ */
+export function emitClassStaticF64UndefinedSeeds(
+  ctx: CodegenContext,
+  body: Instr[],
+  decl: ts.ClassLikeDeclaration,
+): void {
+  for (const [staticPropKey, declaration] of staticF64UndefinedSeeds.get(ctx) ?? []) {
+    const globalIdx = ctx.staticProps.get(staticPropKey);
+    if (declaration.parent !== decl || globalIdx === undefined) continue;
+    pushUndefF64(body);
+    body.push({ op: "global.set", index: globalIdx });
+  }
 }
 
 /**
@@ -162,7 +187,7 @@ export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: t
     const type = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
     if (globalIdx !== undefined && type && f64MayHoldUndefined(ctx, name, type)) globals.add(globalIdx);
   }
-  for (const staticPropKey of staticF64UndefinedSeedKeys.get(ctx) ?? []) {
+  for (const staticPropKey of staticF64UndefinedSeeds.get(ctx)?.keys() ?? []) {
     const globalIdx = ctx.staticProps.get(staticPropKey);
     if (globalIdx !== undefined) globals.add(globalIdx);
   }

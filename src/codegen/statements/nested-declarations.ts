@@ -80,6 +80,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { emitClassStaticSidecar } from "../class-static-sidecar.js"; // (#5195 Step 2)
+import { emitClassStaticF64UndefinedSeeds } from "../declarations/module-var-undefined-seed.js"; // (#7464)
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
 import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
@@ -410,6 +411,7 @@ function emitNestedDeclarationStaticInitializers(
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): void {
   if (!ts.isClassDeclaration(decl) || ts.isSourceFile(decl.parent)) return;
+  emitClassStaticF64UndefinedSeeds(ctx, fctx.body, decl);
   for (const entry of ctx.staticInitExprs) {
     if (staticInitOwner(entry) !== decl) continue;
     const savedEnclosing = fctx.enclosingClassName;
@@ -430,9 +432,7 @@ function emitNestedDeclarationStaticInitializers(
       compileExpression(ctx, fctx, entry.initializer, globalDef?.type);
       // Lowering the initializer may add late imports. Consult the mutable
       // collector entry after it runs so this new store uses the shifted index.
-      if (entry.globalIdx !== undefined) {
-        fctx.body.push({ op: "global.set", index: entry.globalIdx });
-      }
+      fctx.body.push({ op: "global.set", index: entry.globalIdx });
     } finally {
       fctx.enclosingClassName = savedEnclosing;
       fctx.isStaticContext = savedIsStatic;

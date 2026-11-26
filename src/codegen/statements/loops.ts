@@ -734,7 +734,14 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
         if (isVar && tryStoreBoxedVarHead(ctx, fctx, name, decl.initializer)) continue; // (#6939) keep the cell
         const varType = ctx.checker.getTypeAtLocation(decl);
-        let wasmType = resolveWasmType(ctx, varType);
+        const existingIdx = fctx.localMap.get(name);
+        const hoistedSlot =
+          isVar && existingIdx !== undefined && existingIdx >= fctx.params.length
+            ? fctx.locals[existingIdx - fctx.params.length]
+            : undefined;
+        // (#7464) A `var` the function hoisted into an externref slot already holds the `undefined` stored at entry
+        // (`hoistVarDeclarations`); retyping that slot to a number would leave the entry store invalid. Keep it.
+        let wasmType = hoistedSlot?.type.kind === "externref" ? hoistedSlot.type : resolveWasmType(ctx, varType);
 
         // Integer loop inference: if this variable is detected as an integer loop
         // counter (e.g. for (let i = 0; i < n; i++)), use i32 instead of f64.
@@ -753,19 +760,9 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
           wasmType = { kind: "i32" };
         }
 
-        // Reuse existing local for var re-declaration
-        const existingIdx = fctx.localMap.get(name);
-        const localIdx =
-          isVar && existingIdx !== undefined && existingIdx >= fctx.params.length
-            ? existingIdx
-            : allocLocal(fctx, name, wasmType);
-        // If reusing a pre-hoisted slot, update the local's type to match
-        if (isVar && existingIdx !== undefined && existingIdx >= fctx.params.length) {
-          const localSlot = fctx.locals[localIdx - fctx.params.length];
-          if (localSlot && !valTypesMatch(wasmType, localSlot.type)) {
-            localSlot.type = wasmType;
-          }
-        }
+        // Reuse existing local for var re-declaration, retyping the pre-hoisted slot to match
+        const localIdx = hoistedSlot ? existingIdx! : allocLocal(fctx, name, wasmType);
+        if (hoistedSlot && !valTypesMatch(wasmType, hoistedSlot.type)) hoistedSlot.type = wasmType;
         if (decl.initializer) {
           if (isI32LoopVar) {
             // Emit i32.const directly for the integer init value
