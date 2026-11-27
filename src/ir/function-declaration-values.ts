@@ -10,8 +10,8 @@
  * The script must be the program's only startup source, whose module-init runs before any code that could read the
  * home (a script that runs first would read the home before its value is stored). (#7363 A3) A called eval source
  * runs only from its site, after that prologue, declares no function and stores into no identifier: a text that does
- * is no site (`eval-literal.ts`), since the write walk below sees only the declaring file. (#7354 H2) The binding is
- * writable (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this
+ * is no site (`literal-dynamic-code.ts`), since the write walk below sees only the declaring file. (#7354 H2) The
+ * binding is writable (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this
  * path), the home is mutable and untagged, and a call of the name reads it: the call planner plans no direct call of a
  * reassigned declaration (`imported-functions.ts`).
  */

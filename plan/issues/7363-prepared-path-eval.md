@@ -797,3 +797,25 @@ The A4/A5 gate moves from lowering to admission, so a site refuses at select and
   - 2 (real only) now read A4 instead of `identifier "globalThis" is not in scope`:
     `S15.3.4.3_A3_T9` and `S15.3.4.4_A3_T9`. Their related site discards its value but the A4 proof fails for the
     program; lowering used to stop at the runtime shim's `globalThis` read first.
+
+### Review RV-PR7502 round 2 (2026-11-27, head `c7b9f256`): one blocker, fixed
+
+- **Block: a dead-code site refused programs that main compiles.** Admission saw every site, so
+  `var v; do { break; v = eval("1"); } while (false);` refused by the A5 label, and the same dead site beside an
+  escaping sloppy `this` by A4's.
+  - A5: `discardsValue` joins the site predicate (`literalEvalText`), so a site whose value is used makes no source
+    and refuses exactly as on main (`direct call to "eval" has no exact AST-site plan` where it is reached). The A5
+    label is gone.
+  - A4: its select-time refusal now falls back to the compile without texts like every other failure, so a dead site
+    compiles as on main; a reached one still answers by A4's name when main's compile refuses too (pinned: two
+    compiles). The early return by code is gone.
+  - Both dead-code programs are pinned to compile and run.
+- **Optional, taken: `discardsValue` recurses.** A comma's right operand and a conditional's arm are discarded when
+  their own expression is (`0, eval("1");`, `c ? eval("1") : 0;`, `void (c ? 0 : eval("1"));` lower and run, as on
+  `cfcee6c6`); a used one and a conditional's condition make no source. The for-incrementor clause stays excluded.
+  Four mutations (site predicate, comma recursion, conditional arm, condition exclusion) each turn a pin red.
+- **Measured** on this head, `npx tsx scripts/ir-census/prepared-census.mts --files <list> --out <fresh> --harness
+  <h> --jobs 3`: the 12 acceptance files pass (real harness). The 118 files: 13 pass, 105 compile errors, 0 fail, in
+  both harnesses (was 12 / 105 / 1). `built-ins/Function/15.3.5.4_2-12gs.js` passes now: its value-using site makes
+  no source. The 72 files at the A5 label now stop where they stopped before A5 existed; the other 45 are unchanged.
+

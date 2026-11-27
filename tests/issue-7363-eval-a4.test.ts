@@ -44,7 +44,7 @@ const options = {
 } as const;
 
 const NOT_PRISTINE = "ir/from-ast: eval literal: the global eval is not pristine (#7363 A4) in <module-init>";
-const A5 = "ir/from-ast: eval literal: its completion value needs #7363 A5 in <module-init>";
+const NO_PROVIDER = "ir/from-ast: eval statement has no eval provider in <module-init>";
 
 type Result = Awaited<ReturnType<typeof compile>>;
 const compiled = (source: string) => compile(source, options as never);
@@ -93,12 +93,13 @@ describe("#7363 A4 — a write of the global eval anywhere refuses the site by n
     expect(run(await compiled('var f = 0;\neval("1");'))).toBe("returned");
   });
 
-  it("refuses a site whose completion value is used by A5's name", async () => {
-    expect(await gaps('var v = eval("1");')).toEqual([A5]);
+  // RV7502 (second round): a site whose value is used makes no source, so it refuses as on main.
+  it("makes no source of a site whose completion value is used", async () => {
+    expect(literalEvalTexts("test.js", 'var v = eval("1");')).toEqual([]);
   });
 });
 
-describe("#7363 A4, A5 — admission decides a site before lowering (RV7502 2)", () => {
+describe("#7363 A4 — admission decides a site before lowering (RV7502 2)", () => {
   // `discardsValue`: each form lowers through from-ast's statement position.
   it.each([
     ["an expression statement", 'eval("1");'],
@@ -107,27 +108,32 @@ describe("#7363 A4, A5 — admission decides a site before lowering (RV7502 2)",
     ["the operand of void", 'void eval("1");'],
     ["a comma's left operand", 'eval("1"), 0;'],
     ["a parenthesized comma's left operand", '((eval("1")), 0);'],
+    ["a discarded comma's right operand", '0, eval("1");'],
+    ["a discarded conditional's arm", 'var c = 1;\nc ? eval("1") : 0;'],
+    ["a voided conditional's arm", 'var c = 0;\nvoid (c ? 0 : eval("1"));'],
   ])("lowers %s", async (_label, source) => {
     expect(run(await compiled(source))).toBe("returned");
   });
 
-  // A comma's right operand and a conditional's arm hand their value on; a for incrementor's comma list is lowered
+  // A used value makes no source (A5's), so the site refuses as on main; a for incrementor's comma list is lowered
   // clause by clause as values.
   it.each([
     ["a var initializer", 'var v = eval("1");'],
-    ["a comma's right operand", '0, eval("1");'],
+    ["a used comma's right operand", 'var v = (0, eval("1"));'],
     ["an argument", 'function f(a) {}\nf(eval("1"));'],
     ["a condition", 'if (eval("1")) {}'],
-    ["a conditional's arm", 'var c = 1;\nc ? eval("1") : 0;'],
+    ["a used conditional's arm", 'var c = 1;\nvar v = c ? eval("1") : 0;'],
+    ["a discarded conditional's condition", 'eval("1") ? 0 : 1;'],
     ["a clause of a for incrementor", 'for (var i = 0; i < 1; eval("1"), i++) {}'],
-  ])("refuses %s by A5's name", async (_label, source) => {
-    expect(await gaps(source)).toEqual([A5]);
+  ])("makes no source of %s", async (_label, source) => {
+    expect(literalEvalTexts("test.js", source)).toEqual([]);
   });
 
-  it("is a select-time refusal of the program, compiled once", async () => {
+  // The refusal is at select, and the program falls back to the compile without texts, main's, which refuses too.
+  it("is a select-time refusal of the program, answered when main's compile refuses too", async () => {
     presentations.count = 0;
     const result = await compiled('var f = 0;\neval("1");\neval = f;');
-    expect(presentations.count).toBe(1);
+    expect(presentations.count).toBe(2);
     expect(requiredPreparedFailure(result)).toMatchObject({
       kind: "unsupported",
       failure: { code: "literal-eval-site-unsupported", stage: "select", detail: NOT_PRISTINE },
@@ -143,7 +149,7 @@ describe("#7363 A4, A5 — admission decides a site before lowering (RV7502 2)",
   ])("makes no source of %s", async (_label, text) => {
     const source = `var o = { p: 1 }, x;\neval(${JSON.stringify(text)});`;
     expect(literalEvalTexts("test.js", source)).toEqual([]);
-    expect(await gaps(source)).toEqual(["ir/from-ast: eval statement has no eval provider in <module-init>"]);
+    expect(await gaps(source)).toEqual([NO_PROVIDER]);
   });
 
   // `1 < !--y` holds none; its store into `y` already makes no source, so the member form is the one that does.
@@ -156,8 +162,15 @@ describe("#7363 A4, A5 — admission decides a site before lowering (RV7502 2)",
     expect(hasHtmlLikeComment(text)).toBe(true);
   });
 
-  it("refuses a site lowering never reaches: admission sees every site", async () => {
-    expect(await gaps('var v;\ndo { break; v = eval("1"); } while (false);')).toEqual([A5]);
+  // RV7502 (second round): a site in dead code refuses nothing that main compiles.
+  it.each([
+    ["a used value", 'var v;\ndo { break; v = eval("1"); } while (false);'],
+    [
+      "a global eval that is not pristine",
+      'function f() { return this; }\nvar h = f;\ndo { break; eval("1"); } while (false);',
+    ],
+  ])("compiles a dead site with %s, as main does", async (_label, source) => {
+    expect(run(await compiled(source))).toBe("returned");
   });
 });
 
