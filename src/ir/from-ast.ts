@@ -932,6 +932,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
   /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
   moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
+  /** (#7557) Module-init installs the realm's built-in caller (`realm-builtin-caller.ts`). */
+  realmBuiltinCaller?(): boolean;
   /**
    * #3791, #7106 lever R — the host-free `.test` / `.exec` bridge, over the
    * in-module carrier helpers' canonical receiver-first externref ABI.

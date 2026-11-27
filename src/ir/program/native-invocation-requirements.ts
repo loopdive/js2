@@ -65,10 +65,18 @@ export interface NativeInvocationRequirements {
    * Not a `use`: no call site of the program binds it.
    */
   readonly realmAccessors?: { readonly units: readonly IrUnitId[] };
+  /**
+   * (#7557) Module-init installs the realm's built-in caller (`js.closure.install-builtin-caller`): the dispatcher's
+   * built-in arm calls it through method 3. Its argument reads are `js.closure.argument` / `argument-count`.
+   */
+  readonly builtinCaller: boolean;
+  readonly argumentReads: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
 }
+/** (#7557) The caller's arity: the built-in, its `this` and its argument vector. */
+export const BUILTIN_CALLER_ARITY = 3;
 const invocationPacks = issuedPacks<NativeInvocationRequirements>(() =>
   fail("unissued or copied invocation requirements"),
 );
@@ -237,6 +245,11 @@ function calculate(
       if (!fn) fail("invocation occurrence has no actual selected owner");
       typeMaps.set(unitId, (types = nativeAsyncCallableValueTypes(fn)));
     }
+    if (kind === "install-builtin-caller" || kind === "argument" || kind === "argument-count") {
+      if (call.args.length !== (kind === "argument" ? 2 : 1)) fail(`canonical ${kind} callable operand count differs`);
+      uses.push({ occurrence, ownerUnitId: unitId, kind });
+      continue;
+    }
     if (call.result === null || !external(call.resultType ?? undefined))
       fail("semantic invocation result is not externref");
     if (kind === "undefined" || kind === "receiver") {
@@ -322,6 +335,7 @@ function calculate(
       callbacks,
     });
   }
+  const builtinCaller = uses.some((use) => use.kind === "install-builtin-caller");
   const dispatch = dispatchPartition(source);
   if (uses.some((use) => use.dynamicCallee)) gaps.push(...dispatch.gaps);
   const getters = objectAccess
@@ -336,10 +350,13 @@ function calculate(
         ...uses.flatMap((use) => (use.arity === undefined ? [] : [use.arity])),
         ...(getters.getterUses.length ? [0] : []),
         ...(realmAccessors ? [0, 1] : []),
+        ...(builtinCaller ? [BUILTIN_CALLER_ARITY] : []),
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
     receiver: uses.some((use) => use.kind === "receiver"),
+    builtinCaller,
+    argumentReads: uses.some((use) => use.kind === "argument" || use.kind === "argument-count"),
     ...(realmAccessors ? { realmAccessors: { units: dispatch.dispatchable } } : {}),
     gaps,
   };

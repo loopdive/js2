@@ -17358,6 +17358,24 @@
       "layer": "foundation"
     },
     {
+      "path": "src/ir/program/dynamic-builtin-call.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/builtin-caller-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/realm-builtin-caller.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Module-init's derived built-in caller (#7557); moves with module-init-chunk-lowering.ts."
+    },
+    {
       "path": "src/runtime/wasmgc/values/realm-array-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"

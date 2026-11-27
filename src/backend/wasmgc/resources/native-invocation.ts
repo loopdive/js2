@@ -8,7 +8,10 @@ import type {
   TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
-import { assertNativeInvocationRequirementsIssued } from "../../../ir/program/native-invocation-requirements.js";
+import {
+  assertNativeInvocationRequirementsIssued,
+  BUILTIN_CALLER_ARITY,
+} from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeObjectAccessRequirements } from "../../../ir/program/native-object-access-requirements.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
@@ -48,6 +51,11 @@ import {
   type NativeClosureMethodEntry,
 } from "../../../runtime/wasmgc/values/closure-method-body.js";
 import { buildNativeClosureVectorApplyDefinition } from "../../../runtime/wasmgc/values/closure-vector-apply-body.js";
+import {
+  buildBuiltinArgumentCountDefinition,
+  buildBuiltinArgumentDefinition,
+  buildInstallBuiltinCallerDefinition,
+} from "../../../runtime/wasmgc/values/builtin-caller-bodies.js";
 import type { ClosureInvocationLayout } from "../../../runtime/wasmgc/values/closure-invocation-types.js";
 import {
   requireNativeBooleanBoxReservations,
@@ -82,6 +90,14 @@ export interface NativeInvocationReservations {
   readonly isUndefined: FunctionReservation;
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
+  /** (#7557) The realm's built-in caller: its global, its install, and its argument reads. */
+  readonly builtinCaller?: BuiltinCallerReservations;
+}
+export interface BuiltinCallerReservations {
+  readonly global: GlobalReservation;
+  readonly install: FunctionReservation;
+  readonly argument?: FunctionReservation;
+  readonly argumentCount?: FunctionReservation;
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
@@ -206,6 +222,8 @@ export function reserveNativeInvocationResources(
     ...(requirements.receiver ? [key("receiver")] : []),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
+    ...(requirements.builtinCaller ? ["builtin-caller", "install-builtin-caller"].map(key) : []),
+    ...(requirements.argumentReads ? ["argument", "argument-count"].map(key) : []),
   ]);
   const substrate =
     borrowedSubstrate.value ??
@@ -255,6 +273,7 @@ export function reserveNativeInvocationResources(
         results: [{ kind: "externref" }],
       })
     : undefined;
+  const builtinCaller = reserveBuiltinCaller(tx, requirements, key);
   const pack = Object.freeze({
     requirements,
     arguments: args,
@@ -265,6 +284,7 @@ export function reserveNativeInvocationResources(
     isUndefined,
     methods,
     ...(applyVector ? { applyVector } : {}),
+    ...(builtinCaller ? { builtinCaller } : {}),
   });
   owners.set(pack, {
     tx,
@@ -283,9 +303,45 @@ export function reserveNativeInvocationResources(
       isUndefined,
       ...methods.map((row) => row.function),
       ...(applyVector ? [applyVector] : []),
+      ...(builtinCaller
+        ? [
+            builtinCaller.install,
+            ...(builtinCaller.argument ? [builtinCaller.argument, builtinCaller.argumentCount!] : []),
+          ]
+        : []),
     ]),
   });
   return pack;
+}
+
+/** (#7557) The built-in caller's global and functions, each only where the program uses it. */
+function reserveBuiltinCaller(
+  tx: PhysicalModuleReservations,
+  requirements: NativeInvocationRequirements,
+  key: (role: string) => string,
+): BuiltinCallerReservations | undefined {
+  if (!requirements.builtinCaller) return undefined;
+  const externref = { kind: "externref" } as const;
+  const reads = requirements.argumentReads
+    ? {
+        argument: tx.reserveFunction(key("argument"), "__builtin_argument", {
+          params: [externref, { kind: "f64" }],
+          results: [externref],
+        }),
+        argumentCount: tx.reserveFunction(key("argument-count"), "__builtin_argument_count", {
+          params: [externref],
+          results: [{ kind: "f64" }],
+        }),
+      }
+    : {};
+  return Object.freeze({
+    global: tx.reserveGlobal(key("builtin-caller"), "__builtin_caller", externref, true),
+    install: tx.reserveFunction(key("install-builtin-caller"), "__install_builtin_caller", {
+      params: [externref],
+      results: [],
+    }),
+    ...reads,
+  });
 }
 
 function requireOwner(tx: PhysicalModuleReservations, pack: NativeInvocationReservations): Owner {
@@ -453,9 +509,11 @@ export function fillNativeInvocationResources(
         ? { kind: "global" as const, index: tx.physicalIndex(literal.global) }
         : { kind: "callable" as const, handle: literal.function.handle },
     ...(builtinMethods || pack.requirements.realmAccessors ? { builtinRootTypeIdx: owner.layout.rootTypeIdx } : {}),
+    ...(pack.builtinCaller ? { builtinCaller: builtinCallerArm(tx, pack) } : {}),
   };
   if (owner.borrowedSubstrate.value === undefined) fillNativeInvocationSubstrateResources(tx, owner.substrate);
   else requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
+  if (pack.builtinCaller) fillBuiltinCaller(tx, pack, pack.builtinCaller, state.undefinedGlobal);
   tx.fillGlobal(pack.globals.currentThis, [{ op: "ref.null.extern" }]);
   tx.fillGlobal(pack.globals.argc, [{ op: "i32.const", value: -1 }]);
   tx.fillGlobal(pack.globals.extras, [{ op: "ref.null", typeIdx: pack.arguments.carrier.typeIndex }]);
@@ -483,6 +541,31 @@ export function fillNativeInvocationResources(
   }
   owner.callables = callables;
   owner.filled = true;
+}
+
+/** (#7557) The dispatcher's built-in arm: the caller's global, its arity's method, the argument vector's layout. */
+function builtinCallerArm(tx: PhysicalModuleReservations, pack: NativeInvocationReservations) {
+  const method = pack.methods.find((row) => row.arity === BUILTIN_CALLER_ARITY);
+  if (!method) fail("built-in caller lost its method");
+  return {
+    global: tx.physicalIndex(pack.builtinCaller!.global),
+    method: method.function.handle,
+    vector: pack.arguments.layout,
+  };
+}
+function fillBuiltinCaller(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  caller: BuiltinCallerReservations,
+  undefinedGlobal: number,
+): void {
+  const global = tx.physicalIndex(caller.global);
+  tx.fillGlobal(caller.global, [{ op: "ref.null.extern" }]);
+  tx.fillFunction(caller.install, buildInstallBuiltinCallerDefinition(global));
+  if (caller.argument) {
+    tx.fillFunction(caller.argument, buildBuiltinArgumentDefinition(pack.arguments.layout, undefinedGlobal));
+    tx.fillFunction(caller.argumentCount!, buildBuiltinArgumentCountDefinition(pack.arguments.layout));
+  }
 }
 
 export function requireCompletedNativeInvocation(

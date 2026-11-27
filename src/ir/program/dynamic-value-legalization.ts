@@ -42,7 +42,8 @@ import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynam
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
 import { arrayLiteral, dynamicRealmConstruction, realmConstructorOf } from "./dynamic-realm-constructors.js";
-import { isArrayLiteralCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
+import { isArrayLiteralCall, realmIntrinsicOfHelper, REALM_BUILTIN_CALL_HELPER } from "./dynamic-realm-calls.js";
+import { dynamicBuiltinCall } from "./dynamic-builtin-call.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -251,6 +252,7 @@ export function legalizeDynamicValues(
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
         if (isArrayLiteralCall(instr)) return arrayLiteral(builders, instr);
+        if (symbol === REALM_BUILTIN_CALL_HELPER) return dynamicBuiltinCall(objectStatics, instr);
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const realmConstructor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
         if (realmConstructor !== undefined)

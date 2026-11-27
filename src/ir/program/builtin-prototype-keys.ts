@@ -11,6 +11,7 @@
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
@@ -94,7 +95,13 @@ export const realmHoldsStatic = (path: string): boolean => NATIVE_VALUE_INTRINSI
  * (#7354 W2) The catalog's wrapper tables, for every IR reader (this module is the IR's one reader of the catalog): the
  * wrapper of each primitive kind, the wrapper constructors in selector order, and `js.object.wrapper-data`'s questions.
  */
-export { NATIVE_WRAPPER_CONSTRUCTORS, REALM_BRAND, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE };
+export {
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
+  REALM_BRAND,
+  WRAPPER_DATA,
+  WRAPPER_OF_PRIMITIVE,
+};
 
 /** (#7354 W2) The wrapper constructors' catalog ids, in selector order. */
 export const WRAPPER_IDS: readonly string[] = NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`);

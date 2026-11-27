@@ -18,6 +18,7 @@ import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { IrFunctionBuilder } from "./builder.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
 import { emitFunctionDeclarationValues, type FunctionDeclarationValue } from "./function-declaration-values.js";
+import { emitRealmBuiltinCaller } from "./realm-builtin-caller.js";
 import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
@@ -46,6 +47,8 @@ export interface ModuleInitChunkHost {
   readonly resolver?: {
     moduleInitChunkName?(preferred: string): string;
     moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
+    /** (#7557) The realm may hold built-ins the program calls through values: install the realm's caller. */
+    realmBuiltinCaller?(): boolean;
   };
 }
 
@@ -60,6 +63,7 @@ export function lowerModuleInitStatements<C extends ModuleInitChunkHost>(
   lowerStatement: (statement: ts.Statement, cx: C) => void,
 ): void {
   emitFunctionDeclarationValues(cx, cx.resolver?.moduleInitFunctionValues?.() ?? []);
+  if (cx.resolver?.realmBuiltinCaller?.() === true) emitRealmBuiltinCaller(cx);
   const chunks = planModuleInitChunks(statements.map((node) => ({ node })));
   if (chunks.length <= 1) {
     for (const statement of statements) lowerStatement(statement, cx);
