@@ -359,7 +359,7 @@ import {
   moduleInitContainsNestedVar,
   type ScriptVarModel,
 } from "../shared/var-declaration-lists.js";
-import { emitLogicalSelect } from "./logical-select.js";
+import { emitLogicalSelect, literalLogicalTruth } from "./logical-select.js";
 import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
@@ -15687,10 +15687,8 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
  *   - `a && b` → if `a` is truthy yield `b`, else yield `a` (the falsy value).
  *   - `a || b` → if `a` is truthy yield `a`, else yield `b`.
  *
- * We keep the existing IR scope (both operands `i32`/bool); anything else
- * throws clean fallback to legacy, exactly as the old `requireI32` did. The
- * right operand is lowered into its own body buffer (only the taken branch
- * runs it) and the two arms are combined with a structured `IrInstrIf`.
+ * Keep a common operand representation where possible. A mixed value join
+ * boxes its operands. The right operand runs only in its selected branch.
  */
 function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
@@ -15698,93 +15696,39 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
-  // (#7106 item 1) A nested logical operand (`a && a.x || b`) must keep its
-  // VALUE form outside a boolean position (the `i32` hint: an `if` condition, a
-  // boolean return): an `i32` hint would ToBoolean it and the outer selection
-  // would lose the carrier. (#7354) The same holds for the right operand.
   const booleanPosition = hint !== undefined && asVal(hint)?.kind === "i32";
-  const operandHint = (operand: ts.Expression): IrType => {
-    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
-    const nestedLogical =
-      ts.isBinaryExpression(operand) &&
-      (operand.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-        operand.operatorToken.kind === ts.SyntaxKind.BarBarToken);
-    return hint?.kind === "dynamic" || (nestedLogical && !booleanPosition) ? irDynamic() : irVal({ kind: "i32" });
-  };
-  const rawLhs = lowerExpr(expr.left, cx, operandHint(expr.left));
-  const lhsType = cx.builder.typeOf(rawLhs);
-  // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: §13.13.1 — evaluate the
-  // left carrier once, ToBoolean it, and select it or the (boxed) right
-  // operand. Only a boolean position keeps the ToBoolean'd `i32` form below.
-  // The selector admits only a dynamic-parameter left operand with a dynamic
-  // or boxable right operand.
-  if (lhsType.kind === "dynamic" && !booleanPosition) {
-    const cond = cx.builder.emitDynTruthy(rawLhs);
-    const skippedScope = new Map(cx.scope);
-    const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
-    let rhs!: IrValueId;
-    const rhsBody = cx.builder.collectBodyInstrs(() => {
-      rhs = logicalOperandCarrier(lowerExpr(expr.right, rhsCx, irDynamic()), expr.right, "right", opName, cx);
-    });
-    joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
-    return emitLogicalSelect(cx.builder, isAnd, { cond, lhs: rawLhs, rhsBody, rhs }, irDynamic());
-  }
-  const lhs =
-    lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
-  if (lhs === null) {
+  const truth = (value: IrValueId, operand: ts.Expression, ctx: LowerCtx): IrValueId =>
+    lowerToBooleanForCondition(value, operand, ctx) ??
     demoteToLegacy(
       "logical-value-unsupported",
-      `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
+      `ir/from-ast: operator '${opName}' cannot test this operand in ${cx.funcName}`,
     );
+  const constant = literalLogicalTruth(peelParensExpr(expr.left));
+  if (constant !== undefined) {
+    const arm = constant === isAnd ? expr.right : expr.left;
+    const value = lowerExpr(arm, cx, irDynamic());
+    return booleanPosition ? truth(value, arm, cx) : value;
   }
-
-  const resultType: IrType = irVal({ kind: "i32" });
-
-  // Lower the right operand into its own buffer so it executes only on the
-  // branch that needs it.
+  const lhs = lowerExpr(expr.left, cx, irDynamic());
+  const lhsType = cx.builder.typeOf(lhs);
+  const cond = truth(lhs, expr.left, cx);
   const skippedScope = new Map(cx.scope);
-  const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
+  const rhsCx = { ...cx, scope: new Map(skippedScope) };
   let rhs!: IrValueId;
+  let mixed = false;
   const rhsBody = cx.builder.collectBodyInstrs(() => {
-    const rawRhs = lowerExpr(expr.right, rhsCx, operandHint(expr.right));
-    const rhsType = cx.builder.typeOf(rawRhs);
-    if (rhsType.kind === "dynamic") {
-      // (#7354) As a VALUE, `bool && dyn` is the right operand itself, not its truth.
-      rhs = booleanPosition ? cx.builder.emitDynTruthy(rawRhs) : rawRhs;
-    } else if (asVal(rhsType)?.kind === "i32") {
-      rhs = rawRhs;
-    } else if (lhsType.kind === "dynamic" && boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx) !== null) {
-      // (#7106 S3b) `if (dyn || "")`: a boxable concrete right operand in a
-      // boolean position is ToBoolean'd through its dynamic carrier, exactly
-      // as the value form selects it.
-      rhs = cx.builder.emitDynTruthy(boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx)!);
-    } else {
-      demoteToLegacy(
-        "logical-value-unsupported",
-        `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
-      );
+    rhs = lowerExpr(expr.right, rhsCx, irDynamic());
+    const rhsType = cx.builder.typeOf(rhs);
+    if (booleanPosition) rhs = truth(rhs, expr.right, rhsCx);
+    else if (!irTypeEquals(lhsType, rhsType) || irTypeIsBoolean(lhsType) !== irTypeIsBoolean(rhsType)) {
+      mixed = true;
+      rhs = logicalOperandCarrier(rhs, expr.right, "right", opName, rhsCx);
     }
   });
   joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
-  // (#7354) `bool && dyn` as a VALUE: the left operand, when it decides, is
-  // yielded in the carrier too (only a boolean position reaches here with a
-  // dynamic left operand, so `lhs` is the typed left value).
-  if (cx.builder.typeOf(rhs).kind === "dynamic") {
-    const boxedLhs = logicalOperandCarrier(lhs, expr.left, "left", opName, cx);
-    return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs: boxedLhs, rhsBody, rhs }, irDynamic());
-  }
-  if (asVal(cx.builder.typeOf(rhs))?.kind !== "i32") {
-    demoteToLegacy(
-      "logical-value-unsupported",
-      `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
-    );
-  }
-
-  // A value join preserves the Boolean brand only when both actual operands
-  // carry it. Native integer operands retain the existing unbranded result.
-  const joinedType =
-    irTypeIsBoolean(cx.builder.typeOf(lhs)) && irTypeIsBoolean(cx.builder.typeOf(rhs)) ? irBool() : resultType;
-  return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs, rhsBody, rhs }, joinedType);
+  const selectedLhs = booleanPosition ? cond : mixed ? logicalOperandCarrier(lhs, expr.left, "left", opName, cx) : lhs;
+  const resultType = booleanPosition ? irBool() : mixed ? irDynamic() : lhsType;
+  return emitLogicalSelect(cx.builder, isAnd, { cond, lhs: selectedLhs, rhsBody, rhs }, resultType);
 }
 
 /** An `&&` / `||` operand in the dynamic carrier (boxed when typed), or a refusal by name. */
