@@ -1,0 +1,5 @@
+{
+  "note": "#7551: the ES edition measured on the IR path on every merge to main, and the shard count for it. Changing the edition is this one reviewed line.",
+  "edition": "ES5",
+  "chunks": 8
+}

@@ -1,17 +1,26 @@
 name: Test262 Sharded
 
 on:
-  # (#4153) The shard matrix does NOT run at PR time. `test262-shard`'s `if:`
-  # admits only `push` and `workflow_dispatch`; the merged-state matrix
-  # `test262-shard-mg` is `merge_group`-only. So on a `pull_request` the two
+  # (#4153, #7551) test262 does NOT run at PR time: on a `pull_request` the two
   # REQUIRED contexts published from this workflow — `merge shard reports` and
-  # `check for test262 regressions` — green-SKIP with `SHARDS_RAN: false`, and
-  # JS-host Test262 is retired: `HOST_RAN=false` in every context, and the
-  # retained `regression-gate` check no-ops. A green PR-level test262
-  # check is therefore NOT conformance evidence; the real regression, trap
-  # (#3189) and standalone-floor gates run in the `merge_group` re-validation
-  # on the merged state, which is why `auto-park` (#2547) exists and why a
-  # fully-green PR can still be parked.
+  # `check for test262 regressions` — green-skip, and JS-host Test262 is
+  # retired (`HOST_RAN=false` everywhere; `regression-gate` no-ops). A green
+  # PR-level test262 check is therefore NOT conformance evidence.
+  #
+  # (#7551) Cadence since 2026-11-26:
+  #   merge_group → the IR path, CURRENT ES EDITION only
+  #     (scripts/test262-current-edition.json); `merge shard reports` fails on
+  #     a per-test pass → not-pass against the base commit's IR measurement,
+  #     and auto-park parks the PR with the regressed tests listed.
+  #   push        → nothing when the queue measured that SHA; a direct push
+  #     runs the same edition measurement.
+  #   schedule (WEEKLY) / dispatch → the full legacy matrix with its gates
+  #     (high-water floor, edition ratchet, #1897) and baseline promotion, plus
+  #     the full-corpus IR measurement. Legacy and other-edition regressions
+  #     are detected there, AFTER the fact, not blocked.
+  # Rollback (gate only): restore this file and the gate tests from the last
+  # Part A commit 27a77da585 — exact command in docs/ci-policy.md ("The
+  # merge-queue test262 gate"); a plain revert of the Part B commits conflicts.
   #
   # This comment previously claimed "full 57-shard test262 runs at PR-time AND
   # in merge_group", describing the pre-#2519 serial-queue model. It outlived
@@ -46,6 +55,12 @@ on:
       - "scripts/compiler-inputs-hash.mjs"
       - "scripts/quickjs-artifact/**"
       - "scripts/generate-editions.ts"
+      # The per-merge IR measurement's edition scope (#7551).
+      - "scripts/test262-edition-scope.ts"
+      - "scripts/test262-current-edition.json"
+      - "scripts/test262-edition-reclassified.json"
+      - "scripts/lib/gh-api-retry.mjs"
+      - "scripts/lib/regression-annotation.mjs"
       # Part of the merge_group gating logic (it decides which manifest
       # changes the matcher never sees), so a change to it must be validated
       # by exactly what it might skip.
@@ -53,6 +68,7 @@ on:
       - "scripts/test262-worker.mjs"
       - "tests/test262-chunk*.test.ts"
       - "tests/test262-runner.ts"
+      - "tests/test262-categories.ts"
       - "tests/test262-scope-classification.test.ts"
       - "tests/test262-shared.ts"
       # Weight maps change shard ASSIGNMENT (which tests share a fork/chunk),
@@ -66,9 +82,17 @@ on:
     branches: [main]
     types: [checks_requested]
   schedule:
-    - cron: "23 2 * * *"
+    # (#7551, owner decision 2026-11-26) The FULL run is WEEKLY: Sunday 02:23
+    # UTC, the lowest-traffic slot for the merge queue. GitHub fires scheduled
+    # runs late under load: the former daily 02:23 cron started 09:07–12:40
+    # UTC on 2026-11-12..26 (6.7–10.3 h late), so expect it around midday.
+    - cron: "23 2 * * 0"
   workflow_dispatch:
     inputs:
+      full_run:
+        description: "(#7551) Run exactly what the weekly schedule runs: the legacy matrix with its gates and baseline promotion, AND the full-corpus IR measurement. Required green before a release. Do not combine with compiler_path_measurement (IR only)."
+        type: boolean
+        default: false
       compiler_path_measurement:
         description: "Measure the full corpus through IR standalone, separately from legacy regression baselines."
         type: boolean
@@ -632,43 +656,25 @@ jobs:
   # test262-shard's push arm), where the downstream jobs run under `always()`.
   mg-artifact-probe:
     name: probe merge_group baseline artifact
-    if: |
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      github.event_name == 'workflow_dispatch'
+    # (#7551) The queue no longer runs the legacy matrix, so no
+    # `test262-group-<sha>` artifact is produced and push no longer promotes.
+    # The probe stays on the two events that still run the legacy matrix
+    # (schedule, dispatch), where it always answers MISS, because
+    # `test262-shard` and `promote-baseline` gate on its success.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # actions:read — query the artifacts REST API of THIS repo (a cross-run
-    # read), same permission the #1956 predecessor-group step already uses.
-    permissions:
-      contents: read
-      actions: read
     outputs:
       hit: ${{ steps.probe.outputs.hit }}
     steps:
+      # The #3448 HIT path (reuse the merge group's legacy artifact on push) is
+      # gone with the queue's legacy matrix; schedule and dispatch always run a
+      # fresh matrix, so the answer is always MISS. The job stays because
+      # `test262-shard`, the providers and `promote-baseline` gate on it.
       - name: Probe for test262-group-<sha> artifact
         id: probe
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -uo pipefail
-          # workflow_dispatch (manual rerun) must ALWAYS run a fresh full matrix
-          # — that is the entire point of a manual rerun — so never short-circuit
-          # it via an artifact, even if a same-SHA group artifact still exists.
-          if [ "${{ github.event_name }}" != "push" ]; then
-            echo "hit=false" >> "$GITHUB_OUTPUT"
-            echo "Non-push event (${{ github.event_name }}) — forcing MISS, full matrix runs."
-            exit 0
-          fi
-          ART_NAME="test262-group-${{ github.sha }}"
-          # Pick the newest non-expired artifact with this exact name.
-          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
-            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' 2>/dev/null || echo "")
-          if [ -n "$ART_ID" ]; then
-            echo "hit=true" >> "$GITHUB_OUTPUT"
-            echo "HIT: ${ART_NAME} (id=${ART_ID}) present — promote-baseline will reuse it; skipping the 114-job test262-shard matrix."
-          else
-            echo "hit=false" >> "$GITHUB_OUTPUT"
-            echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
-          fi
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+          echo "${{ github.event_name }}: always MISS since #7551 — the full matrix runs."
 
   # #2928 E7 / #4013 / #4242 P1-S2 — build the SELECTED standalone eval
   # provider ONCE, canary-verify it, and distribute it to every standalone
@@ -685,11 +691,12 @@ jobs:
     # read EMPTY — every step guard below is `run_standalone != 'false'`, which
     # an empty value satisfies, so a schedule run builds the provider. No
     # standalone shard runs on `schedule`; the provider is for native-first.
+    # (#7551) The legacy standalone matrix now runs only on schedule and
+    # dispatch — the merge queue and push measure the IR current edition, which
+    # links no provider — so the merge_group and push arms are gone.
     if: |
       always() &&
       (
-        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
-        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
         github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
@@ -819,11 +826,10 @@ jobs:
     # `schedule` the `changes` job is skipped, so its outputs read empty —
     # `run_host != 'false'` holds and the host provider is built, which is the
     # correct answer for a host-only lane.
+    # (#7551) Schedule and dispatch only, like `runtime-eval-provider`.
     if: |
       always() &&
       (
-        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
-        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
         github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
@@ -1898,154 +1904,126 @@ jobs:
           retention-days: 30
 
   compiler-path-measurement-plan:
-    name: select full-corpus IR standalone measurement
-    # Every merge to main is measured, as the legacy lane is: a shard takes
-    # about 80 s because a file the IR does not fully lower is refused at
-    # compile time, so the whole matrix costs about 2 runner-hours. The daily
-    # schedule covers days without a test262-relevant push.
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: select IR standalone measurement scope
+    # #7551 — two scopes, one job graph:
+    #   merge_group (the queue's gate) and push (a merge the queue did not
+    #     measure: a direct push) → the CURRENT ES edition only
+    #     (scripts/test262-current-edition.json: edition + shard count), diffed
+    #     per test against the nearest earlier IR measurement; uploaded as
+    #     `test262-ir-standalone-edition-measurement`. A queue run measures the
+    #     exact tree that lands, so the push after it reuses that artifact and
+    #     runs nothing.
+    #   schedule (weekly) / workflow_dispatch → the full corpus, 102 shards
+    #     (~300 runner-min: a shard takes ~2 min because a file the IR does not
+    #     fully lower is refused at compile time); uploaded as
+    #     `test262-ir-standalone-measurement`, the only artifact the site reads.
+    # The distinct artifact names are what keep an edition run from ever being
+    # read as a whole-corpus measurement.
+    needs: [changes]
+    # always(): `changes` does not run on schedule.
+    if: |
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       run: ${{ steps.plan.outputs.run }}
+      scope: ${{ steps.plan.outputs.scope }}
+      edition: ${{ steps.plan.outputs.edition }}
+      chunks: ${{ steps.plan.outputs.chunks }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      max_parallel: ${{ steps.plan.outputs.max_parallel }}
+      artifact: ${{ steps.plan.outputs.artifact }}
     steps:
+      - name: Read the current-edition config
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/test262-current-edition.json
+          sparse-checkout-cone-mode: false
+      - name: Did the merge queue already measure this commit?
+        id: probe
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The edition artifact name the plan below assigns.
+          ART_NAME: test262-ir-standalone-edition-measurement
+        run: |
+          # A miss (or an API error) measures again: running twice is cheap, not measuring is not.
+          FOUND=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_sha == \"${GITHUB_SHA}\")] | length" \
+            2>/dev/null || echo 0)
+          echo "measured=$([ "${FOUND:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Select automatic or explicit measurement
         id: plan
         env:
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
           MEASUREMENT: ${{ inputs.compiler_path_measurement }}
+          FULL_RUN: ${{ inputs.full_run }}
           COMPILER_PATH: ${{ inputs.compiler_path }}
           MEASUREMENT_TARGET: ${{ inputs.measurement_target }}
+          RUN_SHARDS: ${{ needs.changes.outputs.run_shards }}
+          QUEUE_MEASURED: ${{ steps.probe.outputs.measured }}
         run: |
+          export CURRENT_EDITION="$(cat scripts/test262-current-edition.json)"
           node --input-type=module <<'NODE'
           // IR_MEASUREMENT_PLAN_START
           const scheduled = process.env.EVENT_NAME === 'schedule';
-          const merged = process.env.EVENT_NAME === 'push' && process.env.ACTOR !== 'github-actions[bot]';
-          const manual = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.MEASUREMENT === 'true';
+          // A queue group that cannot move test262 (proven by `changes`) measures nothing.
+          const queued = process.env.EVENT_NAME === 'merge_group' && process.env.RUN_SHARDS !== 'false';
+          const merged = process.env.EVENT_NAME === 'push' && process.env.ACTOR !== 'github-actions[bot]' &&
+            process.env.QUEUE_MEASURED !== 'true';
+          // A full_run dispatch measures what the weekly schedule does (the legacy jobs key on
+          // !compiler_path_measurement, so they run too); compiler_path_measurement alone is IR only.
+          const fullRun = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.FULL_RUN === 'true';
+          if (fullRun && process.env.MEASUREMENT === 'true')
+            throw new Error('full_run already includes the full IR measurement; compiler_path_measurement would skip the legacy matrix');
+          const manual = process.env.EVENT_NAME === 'workflow_dispatch' && (process.env.MEASUREMENT === 'true' || fullRun);
           if (manual && (process.env.COMPILER_PATH !== 'ir' || process.env.MEASUREMENT_TARGET !== 'standalone'))
             throw new Error('Only IR standalone is supported; JS Host results are historical');
-          const run = scheduled || merged || manual;
-          const cells = run ? [{ compilerPath: 'ir', target: 'standalone', chunks: 102 }] : [];
+          const run = scheduled || queued || merged || manual;
+          const current = JSON.parse(process.env.CURRENT_EDITION);
+          const perMerge = queued || merged;
+          if (perMerge && !(typeof current.edition === 'string' && Number.isInteger(current.chunks) && current.chunks > 0))
+            throw new Error('scripts/test262-current-edition.json needs an edition and a positive chunk count');
+          const scope = perMerge ? 'edition' : 'full';
+          const chunks = scope === 'edition' ? current.chunks : 102;
+          const edition = scope === 'edition' ? current.edition : '';
+          const artifact = scope === 'edition' ? 'test262-ir-standalone-edition-measurement' : 'test262-ir-standalone-measurement';
+          const cells = run ? [{ compilerPath: 'ir', target: 'standalone', scope, edition, chunks }] : [];
           console.log(JSON.stringify({ run, cells, promotion: false }));
+          const matrix = JSON.stringify(Array.from({ length: chunks }, (_, i) => i + 1));
+          // The weekly full run shares ~120 runners with the legacy matrix (also 40) and the queue;
+          // the per-merge edition run is small and on the critical path, so it is never throttled.
+          const maxParallel = scope === 'full' ? 40 : chunks;
           const { appendFileSync } = await import('node:fs');
-          appendFileSync(process.env.GITHUB_OUTPUT, `run=${run}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            `run=${run}\nscope=${scope}\nedition=${edition}\nchunks=${chunks}\nmatrix=${matrix}\nmax_parallel=${maxParallel}\nartifact=${artifact}\n`);
           // IR_MEASUREMENT_PLAN_END
           NODE
 
   test262-ir-measurement-shard:
     name: test262 IR standalone measurement shard ${{ matrix.chunk }}
     needs: [compiler-path-measurement-plan]
-    if: needs.compiler-path-measurement-plan.outputs.run == 'true'
+    # (#7551) `!cancelled()` + explicit results: `changes` (an ancestor of the
+    # plan) does not run on schedule, and GitHub propagates a skipped ancestor
+    # through the plan's always() into any dependant without a status function
+    # (the #3611 hazard) — the weekly full run would be skipped silently.
+    if: |
+      !cancelled() &&
+      needs.compiler-path-measurement-plan.result == 'success' &&
+      needs.compiler-path-measurement-plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      # Full scope: 40 (see the plan); edition scope: all chunks at once.
+      max-parallel: ${{ fromJSON(needs.compiler-path-measurement-plan.outputs.max_parallel) }}
       matrix:
-        chunk:
-          [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            24,
-            25,
-            26,
-            27,
-            28,
-            29,
-            30,
-            31,
-            32,
-            33,
-            34,
-            35,
-            36,
-            37,
-            38,
-            39,
-            40,
-            41,
-            42,
-            43,
-            44,
-            45,
-            46,
-            47,
-            48,
-            49,
-            50,
-            51,
-            52,
-            53,
-            54,
-            55,
-            56,
-            57,
-            58,
-            59,
-            60,
-            61,
-            62,
-            63,
-            64,
-            65,
-            66,
-            67,
-            68,
-            69,
-            70,
-            71,
-            72,
-            73,
-            74,
-            75,
-            76,
-            77,
-            78,
-            79,
-            80,
-            81,
-            82,
-            83,
-            84,
-            85,
-            86,
-            87,
-            88,
-            89,
-            90,
-            91,
-            92,
-            93,
-            94,
-            95,
-            96,
-            97,
-            98,
-            99,
-            100,
-            101,
-            102,
-          ]
+        chunk: ${{ fromJSON(needs.compiler-path-measurement-plan.outputs.matrix) }}
         target:
           - name: standalone
             test262_target: standalone
@@ -2058,7 +2036,7 @@ jobs:
       TEST262_COMPILER_PATH: ir
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
-      TEST262_CHUNK_TOTAL: "102"
+      TEST262_CHUNK_TOTAL: ${{ needs.compiler-path-measurement-plan.outputs.chunks }}
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ github.run_attempt }}-ir-standalone-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
@@ -2066,7 +2044,7 @@ jobs:
       JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
       TEST262_IT_TIMEOUT_MS: ${{ matrix.target.test262_target == 'standalone' && '300000' || '' }}
       TEST262_FULL_RUNTIME_EVAL: ""
-      TEST262_PATH_FILTER: "" # Full corpus, never a PR scope.
+      TEST262_PATH_FILTER: "" # Never a PR scope; the edition scope uses the exact file list below.
       JS2WASM_TEMPORAL_CACHE: ""
 
     steps:
@@ -2088,6 +2066,15 @@ jobs:
             --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*
+
+      - name: Select the current edition's tests (#7551)
+        # The runner filters discovery before it partitions, so the plan's
+        # chunk count splits exactly this list.
+        if: needs.compiler-path-measurement-plan.outputs.scope == 'edition'
+        run: |
+          node --experimental-strip-types scripts/test262-edition-scope.ts paths \
+            --test262 test262 --out "$RUNNER_TEMP/edition-paths.txt"
+          echo "TEST262_PATH_FILTER_FILE=$RUNNER_TEMP/edition-paths.txt" >> "$GITHUB_ENV"
 
       - name: Run shard
         run: |
@@ -2142,12 +2129,28 @@ jobs:
   merge-ir-measurement:
     name: merge complete IR standalone measurement
     needs: [compiler-path-measurement-plan, test262-ir-measurement-shard]
-    if: needs.compiler-path-measurement-plan.outputs.run == 'true'
+    # (#7551) Same status function as the shards. Every shard must succeed: a
+    # shard's infrastructure failure skips this job (the failed shard job is
+    # what auto-park judges) instead of failing validation here.
+    if: |
+      !cancelled() &&
+      needs.compiler-path-measurement-plan.result == 'success' &&
+      needs.test262-ir-measurement-shard.result == 'success' &&
+      needs.compiler-path-measurement-plan.outputs.run == 'true'
     runs-on: ubuntu-latest
+    # actions:read — the edition scope lists and downloads earlier IR
+    # measurement artifacts (cross-run) for its per-test baseline.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SCOPE: ${{ needs.compiler-path-measurement-plan.outputs.scope }}
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          # The edition baseline is searched on the first-parent lineage.
+          fetch-depth: ${{ needs.compiler-path-measurement-plan.outputs.scope == 'edition' && 30 || 1 }}
       - uses: ./.github/actions/setup-node-pnpm
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v7
@@ -2155,20 +2158,74 @@ jobs:
           pattern: test262-measurement-ir-standalone-shard-*
           path: ir-shards
           merge-multiple: true
-      - name: Validate all 102 shards before reporting any verdict
+      - name: Validate every planned shard before reporting any verdict
+        env:
+          EXPECTED_SHARDS: ${{ needs.compiler-path-measurement-plan.outputs.chunks }}
         run: |
           mkdir -p ir-measurement/ir/runs
           cat ir-shards/test262-measurement-ir-standalone-results-*.jsonl > ir-measurement/results.jsonl
           # The validator takes one --manifest per shard file (as the other
-          # lanes pass them); a single file holding an array of all 102 reads
-          # as one malformed manifest and fails every run.
+          # lanes pass them); a single file holding an array of all of them
+          # reads as one malformed manifest and fails every run.
           manifests=()
           for manifest in ir-shards/*.complete.json; do
             manifests+=(--manifest "$manifest")
           done
+          # Edition scope: the registered set must be EXACTLY the edition's
+          # file list, so a narrowed discovery cannot shrink the run unnoticed.
+          expected=()
+          if [ "$SCOPE" = edition ]; then
+            node --experimental-strip-types scripts/test262-edition-scope.ts paths \
+              --test262 test262 --out "$RUNNER_TEMP/edition-paths.txt"
+            expected+=(--expected-paths-file "$RUNNER_TEMP/edition-paths.txt")
+          fi
           node scripts/validate-test262-completeness.mjs --input ir-measurement/results.jsonl \
-            "${manifests[@]}" --expected-shards 102
+            "${manifests[@]}" --expected-shards "$EXPECTED_SHARDS" "${expected[@]}"
+      - name: Record the measurement's scope (#7551)
+        # Read back by a later edition run that picks this one as its baseline.
+        env:
+          EDITION: ${{ needs.compiler-path-measurement-plan.outputs.edition }}
+          SOURCE_SHA: ${{ github.sha }}
+          EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
+        run: |
+          # Same revision read as the regression gate's (#1081): the submodule pin, never the outer HEAD.
+          TEST262_SHA=$(git submodule status test262 | awk '{print $1}' | tr -d '+-') node --input-type=module -e "
+            import { writeFileSync } from 'node:fs';
+            const { SCOPE: scope, EDITION: edition, SOURCE_SHA: sourceSha, TEST262_SHA: test262Sha, EVAL_ENGINE: evalEngine } = process.env;
+            writeFileSync('ir-measurement/scope.json', JSON.stringify({ scope, ...(edition ? { edition } : {}), sourceSha, test262Sha, evalEngine }, null, 2));"
+      # Named "Download …" on purpose: auto-park classifies a failure here as
+      # infra (the verdict never ran) and lets the queue retry instead of parking.
+      - name: Download the nearest earlier IR measurement (#7551)
+        if: env.SCOPE == 'edition'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # merge_group: the commit the group was built on — the predecessor
+          # group's head or the main tip (#1956), so the diff is this group's
+          # own delta. push: the parent, since this commit's own artifact is
+          # the one being made.
+          FROM: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'HEAD^' }}
+        run: |
+          node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline \
+            --from "$FROM" --meta ir-measurement/scope.json --dest ir-baseline
+      - name: Report the edition against that baseline (#7551)
+        id: edition_report
+        if: env.SCOPE == 'edition'
+        run: |
+          set +e
+          node --experimental-strip-types scripts/test262-edition-scope.ts report \
+            --results ir-measurement/results.jsonl --meta ir-measurement/scope.json --test262 test262 \
+            --baseline-dir ir-baseline --summary ir-measurement/edition-report.md --json ir-measurement/edition-report.json
+          code=$?
+          # 3 = regression found (the script writes its JSON report first); any
+          # other non-zero is a crash and must never read as a regression.
+          verdict=ok
+          if [ "$code" = 3 ] && [ -s ir-measurement/edition-report.json ]; then verdict=regression
+          elif [ "$code" != 0 ]; then verdict=crashed; fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          cat ir-measurement/edition-report.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Build requested IR report including compiler failures
+        if: env.SCOPE == 'full'
         env:
           INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
         run: |
@@ -2180,6 +2237,7 @@ jobs:
             --output ir-measurement/test262-standalone-ir-report.json --compiler-path ir \
             --target standalone --baseline-sha "${{ github.sha }}" --max-unclassified-root-causes "$failure_ceiling" "${proposals[@]}"
       - name: Classify the IR results by ES edition
+        if: env.SCOPE == 'full'
         # The regular lane's own generators, over the IR rows: an output named
         # `test262-editions.json` also writes the category and per-file edition
         # maps beside it. Raw (unlabelled) output stays out of the artifact; the
@@ -2195,6 +2253,7 @@ jobs:
               --standalone-editions ir-editions-raw/test262-editions.json --sha "${{ github.sha }}" \
             || echo "::warning::IR edition buckets failed; the IR view will show editions as unmeasured"
       - name: Record separate status and run history
+        if: env.SCOPE == 'full'
         env:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -2243,21 +2302,39 @@ jobs:
           NODE
       - uses: actions/upload-artifact@v6
         with:
-          name: test262-ir-standalone-measurement
+          # Distinct names per scope (#7551): the site reads only the full one.
+          name: ${{ needs.compiler-path-measurement-plan.outputs.artifact }}
           path: ir-measurement
           if-no-files-found: error
-          # The daily run carries the 90-day history; per-merge runs only keep the site current.
-          retention-days: ${{ github.event_name == 'push' && 14 || 90 }}
+          # The weekly full run carries the 90-day history; per-merge edition runs only serve as baselines.
+          retention-days: ${{ env.SCOPE == 'edition' && 14 || 90 }}
+          # A re-run of failed jobs re-uploads under the same name.
+          overwrite: true
+      - name: Fail on an edition regression (#7551)
+        # After the upload, so a regressed main commit is still the next run's baseline.
+        if: env.SCOPE == 'edition' && steps.edition_report.outputs.verdict == 'regression'
+        env:
+          EDITION: ${{ needs.compiler-path-measurement-plan.outputs.edition }}
+        run: |
+          echo "::error::$EDITION tests went pass -> not pass on the IR path — the job summary lists them"
+          exit 1
+      # The "[infra]" suffix is what auto-park keys on: a crashed report is no
+      # verdict, so the queue retries instead of parking the PR.
+      - name: Edition report did not complete (#7551) [infra]
+        if: env.SCOPE == 'edition' && steps.edition_report.outputs.verdict == 'crashed'
+        env:
+          REPORT_EXIT: ${{ steps.edition_report.outputs.exit }}
+        run: |
+          echo "::error::the edition report crashed (exit $REPORT_EXIT) — infrastructure, not a regression; see its step log"
+          exit 1
 
   test262-shard:
     # Heavy 102-shard standalone test262 (#2519) fires ONLY for baseline/manual contexts
-    # — NOT on every PR:
-    #   push to main → baseline update.
+    # — NOT on every PR and (#7551) NOT on every merge:
+    #   schedule (weekly) → the legacy-lane audit + baseline update.
     #   workflow_dispatch → manual reruns.
-    # merge_group (the authoritative pre-merge gate, where the PR has reached
-    # the front of the queue and main-drift regressions on the merged state
-    # get caught) now runs the SEPARATE, consolidated `test262-shard-mg` job
-    # below instead of this one — see #3431.
+    # The merge queue gates on the IR current edition instead (#7551); the
+    # consolidated `test262-shard-mg` job below is retired.
     # Deliberately NOT on pull_request: the heavy matrix used to run twice per
     # PR (once at PR-time, once in merge_group), doubling the most expensive CI
     # cost and adding to the event volume that can soft-throttle merge_group
@@ -2273,16 +2350,25 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # the same 102 standalone shards for push baseline updates and manual reruns.
     needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline]
-    # #3448 — the push arm is now AND-ed with a MISS on the merge_group
-    # baseline-artifact probe: on a HIT the merge_group already produced the
-    # standalone JSONL for this exact SHA, so this 102-job matrix is SKIPPED and
-    # promote-baseline reuses that artifact. workflow_dispatch always runs the
-    # full matrix (the probe forces hit=false there). Both `changes` and
-    # `mg-artifact-probe` run+succeed on push and workflow_dispatch, so the
-    # implicit `success()` over `needs` holds for both arms.
+    # (#7551) The legacy lane runs ONCE A WEEK (schedule) and on dispatch, no
+    # longer per merge: the merge queue gates on the IR current edition, and
+    # this run is the after-the-fact audit plus baseline promotion for
+    # everything else. `changes` does not run on schedule, hence a status
+    # function (!cancelled(), so a cancelled run stops) and the explicit
+    # results of the jobs that do run.
+    #
+    # max-parallel 40: the weekly run starts this matrix and the full IR one
+    # (also 40) together; 80 of the ~120 runners leaves room for the merge
+    # queue's own 8-shard IR gate instead of stalling it for hours (set on the
+    # matrix's `strategy` below).
     if: |
-      ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
-      (github.event_name == 'workflow_dispatch' && !inputs.compiler_path_measurement)
+      !cancelled() &&
+      needs.mg-artifact-probe.result == 'success' &&
+      needs.runtime-eval-provider.result == 'success' &&
+      needs.temporal-provider.result == 'success' &&
+      needs.admit-measurement-baseline.result == 'success' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && !inputs.compiler_path_measurement))
     # Runs in PARALLEL with `gate` — both are independently required by the
     # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
     # so PRs still can't merge unless both pass, but they don't block each
@@ -2303,6 +2389,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      max-parallel: 40
       matrix:
         # The existing 102-shard budget now belongs entirely to standalone.
         chunk:
@@ -2632,13 +2719,12 @@ jobs:
     # ancestor through the otherwise-successful provider job and silently
     # skips this entire matrix. Pin both direct dependencies to success so a
     # real provider/detection failure still blocks the required aggregate.
-    if: |
-      always() &&
-      github.event_name == 'merge_group' &&
-      needs.changes.result == 'success' &&
-      needs.runtime-eval-provider.result == 'success' &&
-      needs.temporal-provider.result == 'success' &&
-      needs.changes.outputs.run_shards == 'true'
+    #
+    # (#7551) Retired from the queue: `merge_group` gates on the IR current
+    # edition (`test262-ir-measurement-shard`, `merge complete IR standalone
+    # measurement`), and the legacy lane runs weekly (`test262-shard` on
+    # schedule). Rollback: docs/ci-policy.md ("The merge-queue test262 gate").
+    if: false
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
     # Same 40-min timeout as `test262-shard` (25 → 40 for the #4157 defaults
@@ -2864,19 +2950,31 @@ jobs:
     # this required check for a change that provably could not affect it.
     # Both flags are 'true' whenever a lane genuinely ran, so a full two-lane
     # run behaves exactly as before.
+    #
+    # (#7551) WHAT THIS CHECK GATES, PER EVENT:
+    #   pull_request → green no-op (unchanged).
+    #   merge_group  → the IR current-edition gate: green when the group cannot
+    #                  move test262, otherwise exactly the result of `merge
+    #                  complete IR standalone measurement` (a per-test pass →
+    #                  not-pass in the current edition fails it). The legacy
+    #                  matrix no longer runs in the queue.
+    #   schedule / workflow_dispatch → the legacy lane's gates on the weekly
+    #                  full matrix (high-water floor, edition ratchet, #1897);
+    #                  a breach fails the scheduled run and names the commit
+    #                  range since the last green weekly run. Detected after the
+    #                  fact, not blocked.
+    #   push → not run (no legacy shards on push any more).
     if: |
-      always() && github.event_name != 'schedule' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
+      always() && github.event_name != 'push' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement)
     name: merge shard reports
-    # #3448 — mg-artifact-probe added so SHARD_SKIP_OK can green-skip the
-    # push:main HIT path (the matrix is skipped; promote-baseline sources the
-    # baseline from the merge_group artifact instead). This job already runs
-    # under `always()`, so the probe being skipped on pull_request/merge_group
-    # cannot force-skip it, and its empty output leaves SHARD_SKIP_OK unchanged
-    # in those contexts.
-    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline]
+    needs:
+      [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline, merge-ir-measurement]
     runs-on: ubuntu-latest
+    # actions:read — the weekly-breach summary looks up the last green scheduled run.
+    permissions:
+      contents: read
+      actions: read
     env:
       # 'true' when EITHER the static (test262-shard) or consolidated
       # (test262-shard-mg, #3431) matrix actually executed and produced
@@ -2885,13 +2983,9 @@ jobs:
       # can be 'success' in any real run; 'false' on the merge_group skip
       # path (no test262-relevant change).
       SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
-      # Green-skip when shards legitimately did not run: a merge_group with no
-      # test262-relevant change, OR any pull_request (heavy shards are
-      # merge_group-only under the #2519 slim-down), OR a push:main HIT where
-      # the merge_group's own baseline artifact is reused (#3448 — the matrix is
-      # skipped and promote-baseline sources the JSONLs from that artifact, so
-      # there are no shards to merge here and this required check green-skips).
-      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request' || (github.event_name == 'push' && needs.mg-artifact-probe.outputs.hit == 'true')) && 'true' || 'false' }}
+      # Legacy shards legitimately do not run on pull_request or (#7551) in the
+      # merge queue; there the IR current-edition gate step below decides.
+      SHARD_SKIP_OK: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'true' || 'false' }}
       # Per-lane variants of SHARDS_RAN. A merge_group whose queued change
       # cannot move one lane schedules no shards for it, so that lane has no
       # artifacts to merge and no report to gate — its steps must skip rather
@@ -2910,25 +3004,30 @@ jobs:
           exit 1
 
       - name: No-op pass (shards intentionally skipped)
-        if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true'
+        if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true' && github.event_name == 'pull_request'
         run: |
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo "-> merge_group queued only non-test262-relevant changes"
-            echo "   (changes.run_shards=='false'); the capacity-sized 102-job matrix (#3431,"
-            echo "   test262-shard-mg) was intentionally skipped. Reporting 'merge shard"
-            echo "   reports' green."
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            echo "-> push:main HIT (#3448): the merge_group that just landed already"
-            echo "   published its merged JSONLs as test262-group-${{ github.sha }}. The"
-            echo "   114-job test262-shard rerun was skipped; promote-baseline reuses that"
-            echo "   artifact. Reporting 'merge shard reports' green."
-          else
-            echo "-> pull_request: heavy test262 shards are merge_group-only under the"
-            echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
-            echo "   (typecheck + lint) validated this PR; the capacity-sized 106-job matrix"
-            echo "   (#3431, test262-shard-mg) runs in the merge_group when the PR reaches"
-            echo "   the front of the queue."
+          echo "-> pull_request: test262 does not run at PR-time (#2519). The cheap gate"
+          echo "   (typecheck + lint) validated this PR; the merge queue runs the IR"
+          echo "   current-edition gate (#7551) when the PR reaches the front of the queue."
+
+      - name: IR current-edition gate (#7551)
+        # The merge queue's test262 verdict. The regressed tests are listed in
+        # the summary of `merge complete IR standalone measurement` and in the
+        # auto-park comment.
+        if: github.event_name == 'merge_group'
+        env:
+          RUN_SHARDS: ${{ needs.changes.outputs.run_shards }}
+          IR_RESULT: ${{ needs.merge-ir-measurement.result }}
+        run: |
+          if [ "$RUN_SHARDS" = "false" ]; then
+            echo "-> the queued group cannot move test262 (changes.run_shards=='false'); nothing to measure."
+            exit 0
           fi
+          if [ "$IR_RESULT" != "success" ]; then
+            echo "::error::IR current-edition measurement result: '${IR_RESULT}'. A test of the current edition that passed on the base commit does not pass on the merged state, or the measurement did not complete — see 'merge complete IR standalone measurement'."
+            exit 1
+          fi
+          echo "-> IR current-edition measurement passed: no test of the current edition went pass -> not pass against the base commit (or no comparable baseline existed, which its summary says)."
 
       - name: Checkout
         if: env.SHARDS_RAN == 'true'
@@ -3324,6 +3423,7 @@ jobs:
       # this step from vetoing a deliberate re-baseline the script approved
       # (pre-#3303 it re-derived net from the raw count and disagreed).
       - name: Standalone regression guard (#1897)
+        id: standalone_guard
         if: env.STANDALONE_RAN == 'true'
         env:
           STANDALONE_REGRESSION_TOLERANCE: "15"
@@ -3503,57 +3603,14 @@ jobs:
             exit 1
           fi
 
-      # #1668 — HARD stale-baseline guard. The catastrophic guard above (and the
-      # full regression gate) are only as trustworthy as the baseline they
-      # diff against. The baseline is refreshed per-merge by the promote-baseline
-      # job → js2wasm-baselines repo. If that pipeline ever silently breaks, the
-      # baseline falls behind relevant main changes and the gates go blind to
-      # new regressions (they'd compare against an ancient state). This fails
-      # the REQUIRED check when the baseline's recorded main-sha is too far
-      # behind main HEAD for test262-relevant source/config paths.
-      #
-      # Important: baseline-refresh commits also advance main, often with
-      # [skip ci], and must not count as drift. Count only commits whose file
-      # list matches scripts/test262-paths-match.sh; that preserves the hard
-      # stale-baseline signal while ignoring generated baseline/doc churn.
-      - name: Stale-baseline guard (#1668)
-        if: env.SHARDS_RAN == 'true'
-        env:
-          MAX_BASELINE_COMMITS_BEHIND: "50"
-        run: |
-          if [ ! -d /tmp/cat-baselines ]; then
-            echo "::warning::baselines clone missing — skipping stale-baseline guard."
-            exit 0
-          fi
-          # Baseline commit subject: "chore(test262): refresh baseline — N/T pass (<main-sha>)"
-          BSHA=$(git -C /tmp/cat-baselines log -1 --format=%s | grep -oE '[0-9a-f]{7,40}' | tail -1)
-          if [ -z "$BSHA" ]; then
-            echo "::warning::could not parse baseline main-sha from commit subject — skipping stale-baseline guard."
-            exit 0
-          fi
-          # blob:none — the drift count below only needs commits + trees
-          # (rev-list + diff-tree --name-only), so don't download 200 commits
-          # worth of blobs into this depth-1 checkout (~30s saved).
-          git fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
-          COMMITS=$(git rev-list "${BSHA}..origin/main" 2>/dev/null || true)
-          TOTAL_BEHIND=0
-          BEHIND=0
-          for sha in $COMMITS; do
-            TOTAL_BEHIND=$((TOTAL_BEHIND + 1))
-            CHANGED=$(git diff-tree --no-commit-id --name-only -r "$sha")
-            if [ "$(printf '%s\n' "$CHANGED" | bash scripts/test262-paths-match.sh)" = "true" ]; then
-              BEHIND=$((BEHIND + 1))
-            fi
-          done
-          if [ "$TOTAL_BEHIND" -ge 200 ] && ! git cat-file -e "${BSHA}^{commit}" 2>/dev/null; then
-            echo "::error::could not find baseline main-sha ${BSHA} in fetched history; cannot evaluate stale-baseline guard."
-            exit 1
-          fi
-          echo "Baseline main-sha ${BSHA} is ${BEHIND} test262-relevant commit(s) behind origin/main (${TOTAL_BEHIND} total commits, max ${MAX_BASELINE_COMMITS_BEHIND})."
-          if [ "$BEHIND" -gt "$MAX_BASELINE_COMMITS_BEHIND" ]; then
-            echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} test262-relevant commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
-            exit 1
-          fi
+      # (#7551) The #1668 stale-baseline guard (fail when the promoted baseline
+      # is > 50 test262-relevant commits behind main) is gone. It now only ran
+      # on the weekly legacy run, where a week of merges always exceeds it
+      # (24 h windows found in the #7551 review: 65/202, 45/146, 29/97
+      # relevant/total commits) and a
+      # failure skips promotion, so every later run would fail the same
+      # way. A promotion that stops landing is caught by the floor-AGE alert
+      # (baseline-floor-staleness-alert.yml), which does not lock itself.
 
       # (#6461) Deferred failure for the #2097 standalone high-water floor.
       #
@@ -3605,27 +3662,38 @@ jobs:
             merged-reports/**
           if-no-files-found: warn
 
-      # #1956 — publish this group's merged JSONLs keyed by the GROUP HEAD
-      # SHA. The merge queue builds groups incrementally, so the NEXT queued
-      # group's head commit has THIS group's head as its first parent — its
-      # regression-gate can therefore download this artifact and diff against
-      # its exact predecessor, isolating only its own PR's delta (no cross-PR
-      # drift, no ALLGREEN masking once the queue batches >1). 3-day
-      # retention comfortably covers queue lifetimes; an expired/missing
-      # artifact just falls back to the runs-cache / latest-main baseline.
-      #
-      # Only measured standalone rows belong in this artifact. The push
-      # consumer validates them and fetches the frozen host snapshot separately
-      # for legacy publishing mirrors, keeping its original SHA and timestamp.
-      - name: Publish group results for predecessor diffing (#1956)
-        if: env.STANDALONE_RAN == 'true' && github.event_name == 'merge_group'
-        uses: actions/upload-artifact@v6
-        with:
-          retention-days: 3
-          name: test262-group-${{ github.event.merge_group.head_sha }}
-          path: |
-            merged-reports/test262-standalone-results-merged.jsonl
-          if-no-files-found: error
+      # (#7551) The legacy lane is no longer a merge gate, so a breach found by
+      # the weekly run is AFTER THE FACT: name what landed since the last green
+      # weekly run, so it can be attributed without a bisect. The regressed
+      # tests themselves are listed by the guard steps above.
+      - name: Name the commits since the last green full run (#7551)
+        # Only when a verdict step failed: a cancelled or infrastructure-failed
+        # run is not "a regression". A full run is the weekly schedule run or a
+        # `full_run` dispatch (e.g. before a release); both count as "the last
+        # green full run" (scripts/test262-last-full-run.mjs).
+        if: |
+          always() && env.STANDALONE_RAN == 'true' &&
+          (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_run)) &&
+          (steps.standalone_highwater.outcome == 'failure' || steps.edition_ratchet.outcome == 'failure' ||
+           steps.standalone_guard.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV=$(node scripts/test262-last-full-run.mjs | awk '{print $1}' || true)
+          {
+            echo "## Full test262 run found a regression (#7551)"
+            echo ""
+            echo "The merge queue gates only on the IR current edition, so this was not blocked at merge time."
+            if [ -z "$PREV" ]; then
+              echo "No earlier green full run was found; inspect the history before \`${GITHUB_SHA}\`."
+            else
+              echo "Merged since the last green full run (\`${PREV}\` .. \`${GITHUB_SHA}\`):"
+              echo ""
+              gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_SHA}" \
+                --jq '.commits[] | select(.parents | length > 1) | "- \(.sha[0:10]) \(.commit.message | split("\n")[0])"' \
+                || echo "(the compare API failed; see the commit history)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   regression-gate:
     # Runs after merge-report in all gate-relevant contexts and compares the
@@ -4468,12 +4536,17 @@ jobs:
     # is that function — it re-enables the job while (unlike bare `always()`)
     # still honouring cancellation, and the explicit `needs.*.result` checks
     # below restore the failure semantics the implicit `success()` provided.
+    #
+    # (#7551) Promotion moved from push to the WEEKLY schedule (and dispatch):
+    # the legacy matrix no longer runs per merge, so the baseline, the landing
+    # page numbers and `runs/index.json` are as of the last green weekly run.
+    # `merge-report` must succeed first, so a breached floor is never banked.
     if: |
       !cancelled() &&
       github.repository == 'loopdive/js2' &&
       needs.merge-report.result == 'success' &&
       needs.mg-artifact-probe.result == 'success' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
