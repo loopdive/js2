@@ -265,6 +265,9 @@ let pool: CompilerPool | null = null;
 // MAX_RETRIES * RETRY_TIMEOUT_MS of wall time.
 const MAX_RETRIES_PER_SHARD = 10;
 const RETRY_TIMEOUT_MS = 10_000;
+// #7537 — the per-compile ceiling. Only the single-worker re-check of a watched
+// compile_timeout raises it (scripts/test262-recheck.sh); shard runs keep 30 s.
+const COMPILE_TIMEOUT_MS = Number(process.env.TEST262_COMPILE_TIMEOUT_MS) || 30_000;
 let retriesUsed = 0;
 let poisonRetriesUsed = 0;
 // Mutex (serial Promise chain) — only one retry runs at a time so retries
@@ -1338,7 +1341,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   ...nativeHarnessOpts,
                   ...linkedHarnessOpts,
                 },
-                30_000,
+                COMPILE_TIMEOUT_MS,
               );
 
             let r = await runHarnessSource(compileSource, relPath);

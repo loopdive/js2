@@ -1,0 +1,58 @@
+name: Set up a test262 runner
+description: >-
+  (#7537) Everything after the checkout that a test262 shard, or the single-worker
+  re-check of its rows, needs before it runs: Node and pnpm, the dependencies, the
+  compiler and runtime bundles, and — only when asked — the runtime-eval and
+  Temporal provider artifacts built earlier in the same run. The checkout stays
+  with each caller: a local action resolves only after the repository is checked
+  out, and each caller sets its own checkout options.
+
+inputs:
+  providers:
+    description: >-
+      "true" to download and verify the runtime-eval and Temporal providers (the
+      legacy lane). The IR lane measures without them, and they are not built in
+      merge_group, so its callers pass "false".
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node and pnpm (cached)
+      uses: ./.github/actions/setup-node-pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build compiler bundles
+      shell: bash
+      run: |
+        pnpm run build:compiler-bundle
+        ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
+          --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen \
+          --external:typescript7 --external:typescript7/*
+
+    - name: Download compiled Temporal provider (#5353)
+      if: inputs.providers == 'true'
+      uses: actions/download-artifact@v7
+      with:
+        name: temporal-provider-${{ github.run_id }}
+        path: .test262-cache/temporal
+
+    - name: Download selected runtime-eval provider (#2928/#4242)
+      if: inputs.providers == 'true'
+      uses: actions/download-artifact@v7
+      with:
+        name: runtime-eval-provider-${{ github.run_id }}
+        path: .test262-cache
+
+    - name: Verify shared runtime-eval provider cache (#2928/#4242)
+      if: inputs.providers == 'true'
+      shell: bash
+      run: |
+        case "$JS2WASM_EVAL_ENGINE" in
+          interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
+          quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
+          *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
+        esac

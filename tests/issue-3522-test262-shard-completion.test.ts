@@ -37,8 +37,13 @@ describe("#3522 Test262 shard completion evidence", () => {
     const dynamic = readFileSync(resolve(ROOT, "tests/test262-chunk-dynamic.test.ts"), "utf8");
     expect(dynamic).toContain("process.env.TEST262_CHUNK_INDEX");
     expect(dynamic).toContain("process.env.TEST262_CHUNK_TOTAL");
+    // (#7537) The sharded workflow's total comes from the plan: 16 shards of the
+    // completed editions on push, 102 of the full corpus on schedule/dispatch.
+    expect(job(sharded, "test262-shard")).toContain(
+      "TEST262_CHUNK_TOTAL: ${{ needs.compiler-path-measurement-plan.outputs.legacy_chunks }}",
+    );
+    expect(job(refresh, "test262-shard")).toContain('TEST262_CHUNK_TOTAL: "102"');
     for (const workflowJob of [job(sharded, "test262-shard"), job(refresh, "test262-shard")]) {
-      expect(workflowJob).toContain('TEST262_CHUNK_TOTAL: "102"');
       expect(workflowJob).toContain("export TEST262_CHUNK_INDEX=$(( ${{ matrix.chunk }} - 1 ))");
       expect(workflowJob).toContain("run tests/test262-chunk-dynamic.test.ts");
       expect(workflowJob).not.toContain("TEST262_TOTAL_CHUNKS");
