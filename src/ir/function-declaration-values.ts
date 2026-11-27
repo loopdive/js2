@@ -35,7 +35,6 @@ import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
-import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
@@ -51,29 +50,6 @@ export function isFunctionLocalDeclaration(node: ts.Node): node is ts.FunctionDe
 /** The body of the function `node` is declared in, if any. */
 export function enclosingFunctionBody(node: ts.Node): ts.Node | undefined {
   return (ts.findAncestor(node.parent, ts.isFunctionLike) as ts.FunctionLikeDeclaration | undefined)?.body;
-}
-
-/**
- * (#7354 L0c) The `var` declarations of a function body that its function-local declarations read or write. from-ast
- * hoists them with the functions, as cells of the carrier, so the provenance counts them as the dynamic value. A
- * `let`/`const` is not hoisted: it keeps its TDZ, and a declaration that reads it before its binding refuses.
- */
-export function localDeclarationCaptures(body: ts.Block, checker: ts.TypeChecker): ReadonlySet<ts.VariableDeclaration> {
-  const found = new Set<ts.VariableDeclaration>();
-  const visit = (node: ts.Node): void => {
-    const declaration = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node)?.valueDeclaration : undefined;
-    if (
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      ts.isVariableDeclarationList(declaration.parent) &&
-      isVarDeclarationList(declaration.parent) &&
-      enclosingFunctionBody(declaration) === body
-    )
-      found.add(declaration);
-    ts.forEachChild(node, visit);
-  };
-  for (const statement of body.statements) if (isFunctionLocalDeclaration(statement)) visit(statement.body!);
-  return found;
 }
 
 /**

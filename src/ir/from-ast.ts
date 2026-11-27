@@ -192,9 +192,9 @@ import { describeIrType } from "./describe-ir-type.js";
 import {
   enclosingFunctionBody,
   isFunctionLocalDeclaration,
-  localDeclarationCaptures,
   type FunctionDeclarationValue,
 } from "./function-declaration-values.js";
+import { annexBApplies, blockFunctionScope, hoistedBodyNames } from "./function-hoisting.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -2357,13 +2357,20 @@ function terminateTailFallOut(cx: LowerCtx): void {
 
 function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): void {
   // (#7354 L0b) An EmptyStatement completes empty (§14.4); on the Prepared lane it neither lowers nor is the tail.
-  // (L0c) A function declaration in a function body with the lane's all-dynamic contract is hoisted there before the
-  // statements run (§10.2.11 step 36); an annotated one keeps the nested-function lowering.
+  // (L0c) A function body binds its hoisted names and declarations before its statements run (§10.2.11).
   const lane = functionObjects.onPreparedDynamicLane(cx.resolver);
-  const hoisted = lane ? hoistFunctionDeclarations(statements, cx) : new Set<ts.Statement>();
-  const stmts = lane
-    ? statements.filter((statement) => !ts.isEmptyStatement(statement) && !hoisted.has(statement))
-    : statements;
+  const body = statements[0]?.parent;
+  const hoisted =
+    lane && body !== undefined && body === enclosingFunctionBody(body)
+      ? hoistFunctionBody(body as ts.Block, cx)
+      : new Set<ts.Statement>();
+  lowerStatementSequence(
+    lane ? statements.filter((statement) => !ts.isEmptyStatement(statement) && !hoisted.has(statement)) : statements,
+    cx,
+  );
+}
+
+function lowerStatementSequence(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
     // #7104 — an empty dynamic-return body returns the carrier's undefined.
     if (cx.returnType?.kind === "dynamic") {
@@ -2409,29 +2416,73 @@ function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): 
 }
 
 /**
- * (#7354 L0c) The function declarations of `statements` with the all-dynamic contract, hoisted. Each name, and each
- * `var` of the function body a declaration reads or writes, is first bound to a cell of the carrier (`undefined`), so
- * the functions capture the cell and a sibling or the function itself is read at call time; then each cell gets its
- * function value, in source order, so a later declaration of the same name wins.
+ * (#7354 L0c) A function body's entry on the Prepared lane: each name it binds at entry (`hoistedBodyNames`) and each
+ * top-level declaration with the all-dynamic contract holds the carrier's `undefined`, in a cell where a function
+ * captures it (so it reads a sibling, itself or a `var` at call time) or else a slot; then the declarations get their
+ * values in source order, so a later one of the same name wins. Answers the declarations, whose statements need no
+ * more lowering.
  */
-function hoistFunctionDeclarations(statements: readonly ts.Statement[], cx: LowerCtx): ReadonlySet<ts.Statement> {
-  const declarations = statements.filter(
+function hoistFunctionBody(body: ts.Block, cx: LowerCtx): ReadonlySet<ts.Statement> {
+  const declarations = body.statements.filter(
     (s): s is ts.FunctionDeclaration =>
       isFunctionLocalDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined,
   );
-  const body = declarations[0]?.parent;
-  if (body === undefined) return new Set();
-  if (declarations.some((d) => cx.scope.has(d.name!.text)))
+  const parameters = new Set(
+    (body.parent as ts.FunctionLikeDeclaration).parameters.flatMap((p) => [...collectPatternBindingNames(p.name)]),
+  );
+  if (declarations.some((d) => parameters.has(d.name!.text)))
     demoteToLegacy(
       "body-shape-rejected",
       `ir/from-ast: function declaration shares a parameter's name in ${cx.funcName}`,
     );
-  const captured = ts.isBlock(body) ? [...localDeclarationCaptures(body, cx.checker!)] : [];
-  const names = [...declarations.map((d) => d.name!.text), ...captured.map((d) => (d.name as ts.Identifier).text)];
-  for (const name of new Set(names.filter((n) => !cx.scope.has(n)))) {
-    const cell = cx.builder.emitRefCellNew(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined), irDynamic());
-    cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: irDynamic() }, hoisted: body });
+  const names = new Map([
+    ...hoistedBodyNames(body, cx.checker!),
+    ...declarations.map((d) => [d.name!.text, "cell"] as const),
+  ]);
+  for (const [name, storage] of names) {
+    if (parameters.has(name)) continue;
+    if (storage === "cell") bindHoistedCell(name, body, undefined, cx);
+    else bindUndefinedDynamicSlot(name, (initialize) => initialize(), cx, body);
   }
+  assignFunctionValues(declarations, cx);
+  return new Set(declarations);
+}
+
+/**
+ * (#7354 L0c) A block's entry on the Prepared lane (its statements, or a case block's clauses together): each function
+ * declaration is a fresh cell of the block shadowing the outer name, valued like a body's. An Annex B one (B.3.3.1)
+ * records its function's var cell, which its evaluation assigns (`lowerBlockFunctionEvaluation`). A block function of
+ * global code, or one whose var cell a catch parameter of the name shadows, refuses.
+ */
+function hoistBlockFunctions(statements: readonly ts.Statement[], cx: LowerCtx): void {
+  if (!functionObjects.onPreparedDynamicLane(cx.resolver)) return;
+  const declarations = statements.filter(ts.isFunctionDeclaration);
+  for (const declaration of declarations) {
+    const name = declaration.name!.text;
+    const body = enclosingFunctionBody(declaration);
+    if (body === undefined || cx.resolver?.dynamicClosureSignature?.(declaration) === undefined)
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: block function ${name} is not hoisted in ${cx.funcName}`);
+    const outer = cx.scope.get(name);
+    // A sloppy block may repeat a function (B.3.3.4): the name is bound once.
+    if (outer?.kind === "local" && outer.hoisted === blockFunctionScope(declaration)) continue;
+    let varCell: IrValueId | undefined;
+    if (annexBApplies(declaration)) {
+      if (outer?.kind !== "local" || outer.hoisted !== body)
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: the var binding of block function ${name} is shadowed`);
+      varCell = outer.value;
+    }
+    bindHoistedCell(name, blockFunctionScope(declaration), varCell, cx);
+  }
+  assignFunctionValues(declarations, cx);
+}
+
+function bindHoistedCell(name: string, hoisted: ts.Node, annexB: IrValueId | undefined, cx: LowerCtx): void {
+  const cell = cx.builder.emitRefCellNew(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined), irDynamic());
+  const type: IrType = { kind: "boxed", inner: irDynamic() };
+  cx.scope.set(name, { kind: "local", value: cell, type, hoisted, ...(annexB === undefined ? {} : { annexB }) });
+}
+
+function assignFunctionValues(declarations: readonly ts.FunctionDeclaration[], cx: LowerCtx): void {
   for (const declaration of declarations) {
     const value = functionObjects.functionObjectDynamicValue(
       lowerDynamicClosure(declaration, cx)!,
@@ -2440,7 +2491,25 @@ function hoistFunctionDeclarations(statements: readonly ts.Statement[], cx: Lowe
     );
     cx.builder.emitRefCellSet((cx.scope.get(declaration.name!.text) as { readonly value: IrValueId }).value, value);
   }
-  return new Set(declarations);
+}
+
+/**
+ * (#7354 L0c) Evaluating a block function declaration: an Annex B one copies its block cell into its function's var
+ * cell (B.3.3.1 b.ii); any other does nothing. An `if` arm is a block of its own (B.3.4); a function statement anywhere
+ * else (a constructor body, global code) is not hoisted and refuses.
+ */
+function lowerBlockFunctionEvaluation(declaration: ts.FunctionDeclaration, cx: LowerCtx): void {
+  const binding = cx.scope.get(declaration.name!.text);
+  if (binding?.kind === "local" && binding.hoisted === blockFunctionScope(declaration)) {
+    if (binding.annexB !== undefined)
+      cx.builder.emitRefCellSet(binding.annexB, cx.builder.emitRefCellGet(binding.value, irDynamic()));
+  } else if (ts.isIfStatement(declaration.parent))
+    lowerBlockStatements([declaration], { ...cx, scope: new Map(cx.scope) });
+  else
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: unsupported body statement FunctionDeclaration in ${cx.funcName}`,
+    );
 }
 
 /**
@@ -2472,6 +2541,14 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
   const s = stmts[i]!;
   if (ts.isVariableStatement(s)) {
     lowerVarDecl(s, cx);
+    return false;
+  }
+  // (#7354 L0c) On the Prepared lane a block, and a block function's evaluation, are body statements.
+  if (
+    functionObjects.onPreparedDynamicLane(cx.resolver) &&
+    (ts.isBlock(s) || (ts.isFunctionDeclaration(s) && s.parent !== enclosingFunctionBody(s)))
+  ) {
+    lowerStmt(s, cx);
     return false;
   }
   // Slice 3 (#1169c): nested function declaration. Adds a
@@ -2699,7 +2776,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
     lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
 
     cx.builder.openReservedBlock(elseId);
-    lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
+    lowerStatementSequence(rest, { ...cx, scope: new Map(cx.scope) });
     return true;
   }
   demoteToLegacy(
@@ -2934,6 +3011,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   if (ts.isBlock(stmt)) {
     // Fork scope — declarations inside the block stay local to this arm.
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
+    hoistBlockFunctions(stmt.statements, childCx);
     lowerStatementList(stmt.statements, childCx);
     return;
   }
@@ -3061,6 +3139,16 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     terminateTailFallOut(cx);
     return;
   }
+  // (#7354 L0c) A block function's evaluation ending a block of a function whose fall-out returns.
+  if (
+    ts.isFunctionDeclaration(stmt) &&
+    functionObjects.onPreparedDynamicLane(cx.resolver) &&
+    (cx.returnType === null || cx.returnType.kind === "dynamic")
+  ) {
+    lowerStmt(stmt, cx);
+    terminateTailFallOut(cx);
+    return;
+  }
   demoteToLegacy(
     "body-shape-rejected",
     `ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
@@ -3104,10 +3192,12 @@ type ScopeBinding =
       type: IrType;
       stringEncoding?: Encoding;
       /**
-       * (#7354 L0c) A cell bound at entry to this function body for a hoisted function or `var`: a `var` declaration
-       * of the name in that function is a write.
+       * (#7354 L0c) A cell bound at entry to this function body for a hoisted function or `var` (a `var` declaration
+       * of the name in that function is a write), or to this block for a block function.
        */
       hoisted?: ts.Node;
+      /** (#7354 L0c) The var cell an Annex B block function's evaluation assigns (B.3.3.1). */
+      annexB?: IrValueId;
     }
   | {
       /**
@@ -3187,6 +3277,8 @@ type ScopeBinding =
        */
       i32Storage?: true;
       stringEncoding?: Encoding;
+      /** (#7354 L0c) As a `local`'s: a hoisted `var` no function captures. */
+      hoisted?: ts.Node;
     };
 
 /**
@@ -4517,7 +4609,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const name = d.name.text;
   const hoisted = cx.scope.get(name);
   if (
-    hoisted?.kind === "local" &&
+    (hoisted?.kind === "local" || hoisted?.kind === "slot") &&
     hoisted.hoisted === enclosingFunctionBody(d) &&
     ts.isVariableDeclarationList(d.parent) &&
     isVarDeclarationList(d.parent)
@@ -4864,18 +4956,31 @@ function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst:
     cx.scope.set(name, { kind: "local", value: cx.builder.emitDynUndefined(), type: irDynamic() });
     return;
   }
+  bindUndefinedDynamicSlot(
+    name,
+    (initialize) => (isInLoopOfOwnFunction(d) ? cx.builder.emitAtBlockHead(initialize) : initialize()),
+    cx,
+  );
+}
+
+/** A slot of the dynamic value bound to `name`, `undefined` where `place` emits its first write. */
+function bindUndefinedDynamicSlot(
+  name: string,
+  place: (initialize: () => void) => void,
+  cx: LowerCtx,
+  hoisted?: ts.Node,
+): void {
   const representation = resolveMutableLocalRepresentation(irDynamic(), true, cx);
   if (!representation)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: dynamic var '${name}' has no slot (${cx.funcName})`);
   const slotIndex = cx.builder.declareSlot(name, representation.storageType);
-  const initialize = () => cx.builder.emitSlotWrite(slotIndex, cx.builder.emitDynUndefined());
-  if (isInLoopOfOwnFunction(d)) cx.builder.emitAtBlockHead(initialize);
-  else initialize();
+  place(() => cx.builder.emitSlotWrite(slotIndex, cx.builder.emitDynUndefined()));
   cx.scope.set(name, {
     kind: "slot",
     slotIndex,
     type: representation.bindingType,
     ...(representation.asType ? { asType: representation.asType } : {}),
+    ...(hoisted ? { hoisted } : {}),
   });
 }
 
@@ -12714,8 +12819,12 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
   if (ts.isEmptyStatement(stmt) && functionObjects.onPreparedDynamicLane(cx.resolver)) return;
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
-    lowerBodyStatements(stmt.statements, childCx);
+    lowerBlockStatements(stmt.statements, childCx);
     joinScopeStringEncodingFacts(cx.scope, [childCx.scope]);
+    return;
+  }
+  if (ts.isFunctionDeclaration(stmt) && functionObjects.onPreparedDynamicLane(cx.resolver)) {
+    lowerBlockFunctionEvaluation(stmt, cx);
     return;
   }
   if (ts.isVariableStatement(stmt)) {
@@ -12857,6 +12966,12 @@ function lowerBodyStatements(statements: readonly ts.Statement[], cx: LowerCtx):
   }
 }
 
+/** A block's statements, its functions bound at its entry (`hoistBlockFunctions`). */
+function lowerBlockStatements(statements: readonly ts.Statement[], cx: LowerCtx): void {
+  hoistBlockFunctions(statements, cx);
+  lowerBodyStatements(statements, cx);
+}
+
 /**
  * #4206 first IR slice: a closed inline object literal plus an ordinary
  * synchronous function expression. Each literal field becomes a `withField`
@@ -12889,7 +13004,7 @@ function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
       type: field.type,
     });
   }
-  lowerBodyStatements(stmt.statement.statements, bodyCx);
+  lowerBlockStatements(stmt.statement.statements, bodyCx);
 }
 
 /**
@@ -13062,6 +13177,10 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     breakTargetLabel: breakLabel,
     pendingLoopLabel: undefined,
   };
+  hoistBlockFunctions(
+    clauses.flatMap((clause) => [...clause.statements]),
+    switchCx,
+  );
   const tests: (number | null)[] = [];
   const bodies: (readonly IrInstr[])[] = [];
   for (let k = 0; k < clauses.length; k++) {
@@ -17092,7 +17211,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
   // ── Try body ────────────────────────────────────────────────────────
   const tryScope = new Map(cx.scope);
   const tryCx: LowerCtx = { ...cx, scope: tryScope, noEarlyReturn: regionBarsEarlyReturn };
-  const tryBody = cx.builder.collectBodyInstrs(() => lowerBodyStatements(stmt.tryBlock.statements, tryCx));
+  const tryBody = cx.builder.collectBodyInstrs(() => lowerBlockStatements(stmt.tryBlock.statements, tryCx));
 
   // ── Catch handler ───────────────────────────────────────────────────
   let catchClause: { payloadSlot: number; body: readonly IrInstr[] } | undefined;
@@ -17126,7 +17245,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
     }
     const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: regionBarsEarlyReturn };
     const catchBody = cx.builder.collectBodyInstrs(() =>
-      lowerBodyStatements(stmt.catchClause!.block.statements, catchCx),
+      lowerBlockStatements(stmt.catchClause!.block.statements, catchCx),
     );
     // Include writes on catch paths that throw before normal completion;
     // those paths still enter `finally` and must not retain narrower facts.
@@ -17147,7 +17266,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
   if (stmt.finallyBlock) {
     const finallyScope = new Map(joinedTryScope);
     const finallyCx: LowerCtx = { ...cx, scope: finallyScope, noEarlyReturn: true };
-    finallyBody = cx.builder.collectBodyInstrs(() => lowerBodyStatements(stmt.finallyBlock!.statements, finallyCx));
+    finallyBody = cx.builder.collectBodyInstrs(() => lowerBlockStatements(stmt.finallyBlock!.statements, finallyCx));
     continuationScope = finallyScope;
   }
 
