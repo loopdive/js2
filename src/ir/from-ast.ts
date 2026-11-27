@@ -10393,7 +10393,7 @@ function emitStringRelational(
     throw new Error(`ir/from-ast: string compare produced void result (${cx.funcName})`);
   }
   const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
-  return cx.builder.emitBinary(foldOp, sign, zero, irVal({ kind: "i32" }));
+  return cx.builder.emitBinary(foldOp, sign, zero, IR_BOOL);
 }
 
 function lowerStringMethodCall(
@@ -16273,7 +16273,7 @@ function tryLowerDynamicRelational(
       return null;
   }
   if (lt.kind === "dynamic" && rt.kind === "dynamic") {
-    const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], irVal({ kind: "i32" }));
+    const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], IR_BOOL);
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: dynamic relational helper ${runtimeName} produced no result in ${cx.funcName}`);
@@ -16284,7 +16284,7 @@ function tryLowerDynamicRelational(
   if (lf === null) return null;
   const rf = relOperandToF64(rhs, rt, cx);
   if (rf === null) return null;
-  return cx.builder.emitBinary(binop, lf, rf, irVal({ kind: "i32" }));
+  return cx.builder.emitBinary(binop, lf, rf, IR_BOOL);
 }
 
 /**
