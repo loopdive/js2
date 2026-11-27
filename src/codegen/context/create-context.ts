@@ -457,6 +457,7 @@ export function createCodegenContext(
     // (#2796) Diff-test-harness fidelity — export __module_init + skip the wasm
     // start section so the host runs top-level code after setExports.
     deferTopLevelInit: options?.deferTopLevelInit ?? false,
+    exceptionKindExport: options?.exceptionKindExport ?? false,
     // #682/#4397 — native RegExp engine hook. Standalone and native-first JS
     // enable the reduced literal-substring backend; WASI retains its existing
     // narrowed refusals. Broader QuickJS libregexp ABI linking remains the

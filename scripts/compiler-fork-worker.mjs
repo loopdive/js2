@@ -51,6 +51,8 @@ function createFreshCompiler() {
       // right after `setExports` — the #2796 diff-test model. This fork
       // worker is host-lane only (it never receives a `target`).
       deferTopLevelInit: true,
+      // (#7453) wasm-exec-worker's runtime-negative verdict reads a thrown payload's kind.
+      exceptionKindExport: true,
     });
   } catch (e) {
     incrementalCompiler = null;
@@ -85,6 +87,7 @@ process.on("message", async (msg) => {
             // (#3049 C1) See createFreshCompiler — host lane defers top-level
             // init; wasm-exec-worker calls __module_init() after setExports.
             deferTopLevelInit: true,
+            exceptionKindExport: true,
           });
       const compileMs = performance.now() - start;
 

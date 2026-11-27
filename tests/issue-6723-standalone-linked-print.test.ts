@@ -9,7 +9,7 @@
 // exports are host-bridge exports, which standalone STRIPS unless the compile
 // asks for `hostBridge: "always"` — and the worker's linked compile sites
 // (provider + body) did not, unlike every other worker compile site
-// (`HARNESS_HOST_BRIDGE`). So the marker was written to a sink with no reader
+// (`HARNESS_INSPECTION`). So the marker was written to a sink with no reader
 // and 18 of the P0 sample's async rows reported "async completion marker not
 // observed". The fix is the option; this file pins both halves: with it the
 // marker and a plain `print` are observed, without it the provider publishes no

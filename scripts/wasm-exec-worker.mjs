@@ -5,9 +5,10 @@
  * synchronous Wasm blocks the event loop.
  *
  * Protocol:
- *   Parent posts: { binary: Uint8Array, imports: ImportDescriptor[], stringPool: string[], isRuntimeNegative: boolean }
+ *   Parent posts: { binary: Uint8Array, imports: ImportDescriptor[], stringPool: string[], isRuntimeNegative: boolean,
+ *                   expectedErrorType?: string }
  *   Worker posts: { ok: true, ret: number } | { ok: true, runtimeNegativePass: true }
- *                 | { ok: false, error: string, isException: boolean, exceptionPayload: string|null }
+ *                 | { ok: false, error: string, isException: boolean }
  *                 | { ok: false, error: string, noTestExport: true }
  *                 | { ok: false, error: string, instantiateError: true }
  */
@@ -16,58 +17,30 @@ import { readFileSync } from "node:fs";
 import { buildImports } from "./runtime-bundle.mjs";
 // (#6779) test262 rows keep the explicit `hostEval` dynamic-code policy.
 import { TEST262_DYNAMIC_CODE_POLICY } from "./test262-import-object.mjs";
+// (#7459) The one reader and the one runtime-negative rule every test262 lane uses.
+import { readThrownValue } from "./lib/wasm-exn-render.mjs";
+import { runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
 
 // Suppress unhandled Promise rejections — Promise tests create async
 // operations that reject after the test function returns. Without this,
 // the rejection propagates and crashes the parent's IPC channel.
 process.on("unhandledRejection", () => {});
 
-/**
- * Extract a human-readable message from a Wasm runtime error. Returns
- * { message, stack } so the caller can forward both over IPC. If
- * `instance` is null, skips tag-based payload lookup.
- */
-function extractWasmExceptionInfo(err, instance) {
-  if (err instanceof WebAssembly.Exception) {
-    let payload = null;
-    if (instance) {
-      try {
-        const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-        if (tag) payload = err.getArg(tag, 0);
-      } catch {}
-    }
-    if (payload instanceof Error) {
-      const message = payload.message ?? String(payload);
-      return { message, stack: payload.stack ?? message };
-    }
-    if (payload != null) {
-      const message = String(payload);
-      return { message, stack: message };
-    }
-    return {
-      message: instance ? "TypeError (null/undefined access)" : "wasm exception during module init",
-      stack: null,
-    };
-  }
-  if (err instanceof Error) {
-    let message = err.message ?? String(err);
-    const stack = err.stack ?? message;
-    if (/illegal cast|null|unreachable|out of bounds/.test(message)) {
-      const funcMatch = stack.match(/at (\w+) \(wasm:/);
-      if (funcMatch) message = `${message} [in ${funcMatch[1]}()]`;
-    }
-    return { message, stack };
-  }
-  const s = String(err);
-  return { message: s, stack: s };
-}
-
 parentPort.on("message", async (msg) => {
-  const { id, imports, stringPool, isRuntimeNegative } = msg;
+  const { id, imports, stringPool, isRuntimeNegative, expectedErrorType } = msg;
   // Read binary from disk (cachePath) or use inline binary — avoids
   // copying large Uint8Arrays through the fork's heap on cache hits.
   let binary = msg.cachePath ? readFileSync(msg.cachePath) : msg.binary;
   const reply = (data) => parentPort.postMessage({ id, ...data });
+  // A throw passes a runtime-negative test only when it is of the expected kind; otherwise it is the failure.
+  const replyThrown = (err, thrownBy, extra = {}) => {
+    const thrown = readThrownValue(err, { instance: thrownBy });
+    if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, thrown, { expectedErrorType, prepared: false })) {
+      reply({ ok: true, runtimeNegativePass: true });
+      return;
+    }
+    reply({ ok: false, error: thrown.text, isException: true, ...extra });
+  };
 
   let instance;
   try {
@@ -87,18 +60,7 @@ parentPort.on("message", async (msg) => {
         });
         return;
       }
-      if (isRuntimeNegative) {
-        reply({ ok: true, runtimeNegativePass: true });
-        return;
-      }
-      const info = extractWasmExceptionInfo(err, null);
-      reply({
-        ok: false,
-        error: info.message,
-        isException: true,
-        instantiateError: true,
-        exceptionPayload: info.stack,
-      });
+      replyThrown(err, undefined, { instantiateError: true });
       return;
     }
 
@@ -120,17 +82,7 @@ parentPort.on("message", async (msg) => {
       try {
         moduleInit();
       } catch (initErr) {
-        if (isRuntimeNegative) {
-          reply({ ok: true, runtimeNegativePass: true });
-          return;
-        }
-        const info = extractWasmExceptionInfo(initErr, instance);
-        reply({
-          ok: false,
-          error: info.message,
-          isException: true,
-          exceptionPayload: info.stack,
-        });
+        replyThrown(initErr, instance);
         return;
       }
     }
@@ -167,37 +119,19 @@ parentPort.on("message", async (msg) => {
         reply({ ok: true, ret });
       }
     } catch (execErr) {
-      if (isRuntimeNegative) {
-        // Expected a runtime error and got one — pass
-        reply({ ok: true, runtimeNegativePass: true });
-        return;
-      }
-
-      const info = extractWasmExceptionInfo(execErr, instance);
-      reply({
-        ok: false,
-        error: info.message,
-        isException: true,
-        exceptionPayload: info.stack,
-      });
+      replyThrown(execErr, instance);
     }
   } catch (outerErr) {
     // #1221: A WebAssembly.Exception escaping the inner tries (e.g. thrown
     // from `restoreBuiltins` walking a poisoned Symbol.iterator, or a
     // microtask resumed at an `await` boundary) is a runtime throw — not a
-    // compile/link failure. Stringify via extractWasmExceptionInfo so the
-    // harness records a useful runtime fail instead of compile_error
+    // compile/link failure. Read it like any other throw so the harness
+    // records a useful runtime fail instead of compile_error
     // (instantiateError:true) with text "[object WebAssembly.Exception]".
     // The inner instantiate catch was fixed in #1155 — this closes the
-    // outer-catch leak that was missed.
+    // outer-catch leak that was missed. It is never a runtime-negative pass.
     if (outerErr instanceof WebAssembly.Exception) {
-      const info = extractWasmExceptionInfo(outerErr, instance ?? null);
-      reply({
-        ok: false,
-        error: info.message,
-        isException: true,
-        exceptionPayload: info.stack,
-      });
+      reply({ ok: false, error: readThrownValue(outerErr, { instance }).text, isException: true });
     } else {
       reply({
         ok: false,

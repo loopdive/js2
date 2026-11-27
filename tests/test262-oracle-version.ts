@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 17;
+export const ORACLE_VERSION = 18;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -424,6 +424,15 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
     note:
       "#7354 X: a runtime negative matches on the error kind its one reader read (name or constructor name), " +
       "never on message text or on the label written for a thrown value that could not be read.",
+  },
+  {
+    version: 18,
+    note:
+      "#7453/#7459: a host-opaque thrown payload's kind is the module's own `__exn_render_kind` answer (an Error " +
+      "object's name or the object's constructor name; the harness compiles with `exceptionKindExport`), never its rendered " +
+      "text split at ': ', so `throw \"TypeError: x\"` and an object whose toString returns that text have no kind. " +
+      "The rule has no any-throw escape any more: the worker's exported-test() arm and scripts/wasm-exec-worker.mjs " +
+      "ask it too. Measured on the 40 runtime negatives + a 40-probe matrix: only probe rows flip (pass -> fail).",
   },
 ];
 
