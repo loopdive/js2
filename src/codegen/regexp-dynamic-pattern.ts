@@ -42,7 +42,7 @@ import {
   RE_FLAG_U,
   RE_FLAG_V,
   RE_FLAG_Y,
-} from "./regex/bytecode.js";
+} from "../regexp-compiler/bytecode.js";
 
 /** Token kinds, packed into bits 0..3 of the decoder's result. */
 export const TOKEN_UNSUPPORTED = 0;

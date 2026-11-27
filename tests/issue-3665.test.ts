@@ -3,8 +3,8 @@
  * #3665 — Unicode 17 properties of strings and finite v-set algebra.
  */
 import { describe, expect, it } from "vitest";
-import { parseFlags } from "../src/codegen/regex/bytecode.js";
-import { compilePattern } from "../src/codegen/regex/compile.js";
+import { parseFlags } from "../src/regexp-compiler/bytecode.js";
+import { compilePattern } from "../src/regexp-compiler/compile.js";
 import { search } from "../src/codegen/regex/vm.js";
 import { compile } from "../src/index.js";
 

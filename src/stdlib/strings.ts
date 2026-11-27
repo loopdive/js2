@@ -87,7 +87,7 @@ const WS_END_CALLEE: [string, Sig] = ["__str_ws_end", { params: [STR, F64, F64],
 /**
  * §22.1.3.32 TrimString whitespace class (#1963): WhiteSpace + LineTerminator.
  * Mirrors the deleted hand `__str_isWhitespace` OR-chain (and the regex `\s`
- * SPACE table in src/codegen/regex/parse.ts): 0x09-0x0D, 0x20, 0xA0, 0x1680,
+ * SPACE table in src/regexp-compiler/parse.ts): 0x09-0x0D, 0x20, 0xA0, 0x1680,
  * 0x2000-0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF.
  */
 const IS_WS_SOURCE = `

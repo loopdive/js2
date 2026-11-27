@@ -6,7 +6,7 @@
  * `number[]` program at compile time (TypeScript), then interprets it at run
  * time with a single hand-authored Wasm backtracking VM (`__regex_run`). The
  * program is a Pike/Thompson-style instruction stream with explicit
- * backtracking ops; see `src/codegen/regex/compile.ts` for the emitter and
+ * backtracking ops; see `src/regexp-compiler/compile.ts` for the emitter and
  * `src/runtime/wasmgc/values/regexp-vm-bodies.ts` for the VM.
  *
  * Each instruction is a fixed-width record of 3 i32 slots: `[op, a, b]`. A

@@ -276,8 +276,8 @@ describe("#6978 regexp accelerator", () => {
     const owner = {};
     const exec = resolveRegExpHostImport("__regexp_host_exec", owner)!;
     expect(exec({}, {}, 0, 3, 0, 0)).toBe(-1);
-    // Flag bits mirror src/codegen/regex/bytecode.ts RE_FLAG_*; g/y/d never reach the host program.
-    const bytecode = await import("../src/codegen/regex/bytecode.js");
+    // Flag bits mirror src/regexp-compiler/bytecode.ts RE_FLAG_*; g/y/d never reach the host program.
+    const bytecode = await import("../src/regexp-compiler/bytecode.js");
     expect(hostRegExpMatchFlags(bytecode.RE_FLAG_I | bytecode.RE_FLAG_M | bytecode.RE_FLAG_G)).toBe("im");
     expect(
       hostRegExpMatchFlags(bytecode.RE_FLAG_S | bytecode.RE_FLAG_U | bytecode.RE_FLAG_Y | bytecode.RE_FLAG_D),

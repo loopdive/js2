@@ -10,7 +10,7 @@
  * through `__regexp_host_capture(slot)`, unmatched / scratch slots read -1).
  */
 
-// Flag bits of `$NativeRegExp.flags` (src/codegen/regex/bytecode.ts RE_FLAG_*);
+// Flag bits of `$NativeRegExp.flags` (src/regexp-compiler/bytecode.ts RE_FLAG_*);
 // only the bits that change what a pattern matches are forwarded. g/y/d are
 // supplied per search (start index + sticky), so they never come from here.
 const MATCH_FLAG_BITS: ReadonlyArray<readonly [number, string]> = [

@@ -2,7 +2,7 @@
 /**
  * #6677 — the recursive-descent PARSER of the runtime RegExp compiler, as Wasm.
  *
- * A line-for-line port of the grammar in `regex/parse.ts` (ES2024 §22.2.1 +
+ * A line-for-line port of the grammar in `regexp-compiler/parse.ts` (ES2024 §22.2.1 +
  * Annex B.1.2) that builds the flat AST described in `env.ts`. Differences
  * from the compile-time parser are deliberate and all on the refusing side:
  * anything whose answer depends on Unicode data the runtime does not carry
@@ -85,7 +85,7 @@ import {
   type X,
 } from "./dsl.js";
 import { isAsciiLetter, isDigit, kindOf, peek, peekAt, syntax, unsupported } from "./core.js";
-import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../regex/bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../../regexp-compiler/bytecode.js";
 
 const ch = (s: string): number => s.charCodeAt(0);
 const is = (v: X, ...chars: string[]): X => anyOf(...chars.map((s) => eq(v, c(ch(s)))));

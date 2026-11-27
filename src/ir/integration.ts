@@ -219,8 +219,8 @@ import { STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER } from "./regexp-runtime-con
 import {
   ensureIrRegExpLiteralHelper,
   ensureStandaloneRegExpCarrierToStringHelper,
-  standaloneStaticRegExpCompiles,
 } from "../codegen/regexp-standalone.js";
+import { staticRegExpPairCompiles } from "../regexp-compiler/static-pair.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
@@ -2600,7 +2600,7 @@ export function compileIrPathFunctions(
       ...makeIrCheckerSelectionOptions(ctx.checker),
       jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
       classifyArrayElementFamily,
-      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
+      nativeRegExpCompiles: staticRegExpPairCompiles, // (#7106 lever R)
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -7212,7 +7212,7 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
-    nativeRegExpCompiles: standaloneStaticRegExpCompiles,
+    nativeRegExpCompiles: staticRegExpPairCompiles,
     isNativeRegExpReceiver(receiver: ts.Expression) {
       return (
         supportsBackendCapability("native-regexp") &&

@@ -22,7 +22,7 @@
  * modifier groups `(?ims-ims:…)` are a pure compile-time flag-scope: the
  * emitter's i/m/s state nests with the group.
  */
-import { INSTR_WIDTH, ReOp } from "../../runtime/contracts/regexp-bytecode.js";
+import { INSTR_WIDTH, ReOp } from "../runtime/contracts/regexp-bytecode.js";
 import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V, type CompiledRegex } from "./bytecode.js";
 import { parsePattern, type ParsedRegex, type ReNode } from "./parse.js";
 import { foldCharUnitsLegacy, foldClassRangesLegacy, unitsToRanges } from "./casefold.js";

@@ -2,7 +2,7 @@
 /**
  * #6677 — the bytecode EMITTER of the runtime RegExp compiler, as Wasm.
  *
- * A port of `regex/compile.ts` `Emitter.compileNode` over the flat AST: the
+ * A port of `regexp-compiler/compile.ts` `Emitter.compileNode` over the flat AST: the
  * same Thompson/backtracking lowering (SPLIT/JMP), the same PROGRESS guards
  * for nullable loops (#1959), CLEAR at iteration heads (#1960), lookaround
  * sub-programs appended after MATCH (#1911, lookbehind bodies emitted
@@ -12,7 +12,7 @@
  * speed optimisation and is not reproduced.)
  */
 import { ReOp } from "../../runtime/contracts/regexp-bytecode.js";
-import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../regex/bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S } from "../../regexp-compiler/bytecode.js";
 import {
   ERR_UNSUPPORTED,
   F_CI,

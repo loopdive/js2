@@ -37,7 +37,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { hostRegExpRegisterInstrs } from "../helpers/host-regexp-search.js";
 import { nativeStringType } from "../native-strings.js";
 import { ReOp } from "../../runtime/contracts/regexp-bytecode.js";
-import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V } from "../regex/bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V } from "../../regexp-compiler/bytecode.js";
 import { addFuncType } from "../registry/types.js";
 import { defineCoreHelpers } from "./core.js";
 import {

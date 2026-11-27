@@ -1656,24 +1656,6 @@ export function ensureRegexMatchAllArrays(ctx: CodegenContext): number {
   return funcIdx;
 }
 
-/** Build inline instructions that materialize a `number[]` as a fixed
- *  `array i32` on the stack (used for prog + classTable literals). */
-export function i32ArrayLiteralInstrs(ctx: CodegenContext, values: number[]): Instr[] {
-  const i32Arr = regexI32ArrayType(ctx);
-  const instrs: Instr[] = [];
-  for (const v of values) instrs.push({ op: "i32.const", value: v | 0 });
-  // array.new_fixed requires at least the length operand; empty arrays use
-  // array.new_default(0).
-  if (values.length === 0) {
-    return [
-      { op: "i32.const", value: 0 },
-      { op: "array.new_default", typeIdx: i32Arr },
-    ];
-  }
-  instrs.push({ op: "array.new_fixed", typeIdx: i32Arr, length: values.length });
-  return instrs;
-}
-
 /**
  * Emit `__regex_get_substitution(subject, slen, nGroups, caps, repl)
  * -> ref $AnyString` (#1913).
@@ -2425,7 +2407,7 @@ export function ensureRegexFlagsStr(ctx: CodegenContext): number {
   const N = 2; // i32 — appended count
 
   // Spec getter order (§22.2.6.4): hasIndices, global, ignoreCase, multiline,
-  // dotAll, unicode, unicodeSets, sticky. Bit values from regex/bytecode.ts.
+  // dotAll, unicode, unicodeSets, sticky. Bit values from regexp-compiler/bytecode.ts.
   const SPEC_ORDER: Array<[bit: number, codeUnit: number]> = [
     [64 /* RE_FLAG_D */, 0x64], // d
     [1 /* RE_FLAG_G */, 0x67], // g

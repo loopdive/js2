@@ -17,7 +17,7 @@ export type RegExpBuildCapability = Extract<IrBackendTargetCapability, "native-r
 /** The lane's answers; an unanswered question (absent, or not `true`) builds nothing. */
 export interface RegExpBuildAnswers {
   supportsBackendCapability?(capability: RegExpBuildCapability): boolean;
-  /** Whether the in-module engine compiles the pair (`standaloneStaticRegExpCompiles`). */
+  /** Whether the in-module engine compiles the pair (`staticRegExpPairCompiles`). */
   nativeRegExpCompiles?(pattern: string, flags: string): boolean;
   isLibOnlyBinding?(node: ts.Identifier): boolean;
 }
