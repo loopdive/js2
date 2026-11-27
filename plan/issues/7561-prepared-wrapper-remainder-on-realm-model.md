@@ -1,7 +1,8 @@
 ---
 id: 7561
 title: "Prepared path: wrapper objects and reachable wrapper prototypes on main's realm model (W2's remainder)"
-status: in-progress
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-27
 updated: 2026-11-27
@@ -302,3 +303,90 @@ Where the two plans differ, #7350 wins, with the owner's decisions 2 and 3 above
 - `String.prototype` has its own `length` 0 (#7350 PRV-B3bc B2), as a catalog row property, not via StringCreate:
   the realm's prototype objects are seeded from the catalog.
 
+
+## Pins moved from the #7350 suites (each against #7350 B3b-1's target structure)
+
+On the unmodified slice head `1b5f25e4d6` 13 assertions of the two #7350 suites failed. Each one names the shape this
+slice changes; none is a regression of main's model:
+
+| suite | assertion(s) | why it moves | now |
+| --- | --- | --- | --- |
+| B3a | 6 refusals: `String.prototype`, `Number.prototype`, `new String`, `new Number`, `new Boolean`, `Object.getOwnPropertyDescriptor(String, "prototype")` | the slice builds them | node agreements with wrong twins in `tests/issue-7561-wrappers.test.ts` (rows "the prototypes …", "typeof, truthiness …"; B3a's own `Object.getOwnPropertyDescriptor(Number, "MAX_VALUE")` row stays) |
+| B3b-0 | `heldWith` of a prototype and of each method (3) | #7350 condition 2: per-member pin, so each member is held on its own (`heldWith` = its own id) | asserted as the member's own id |
+| B3b-0 | "no member is native yet" (3) | B3b-1 target structure: `NATIVE_MEMBERS` gains `valueOf` / `toString` of the three prototypes; `modelledRow` models the prototype rows | only those two are native per family; the prototype row is modelled |
+| B3b-0 | `identityOnly` lists; String.prototype's `length` filtered out; criterion 9's hand lists (1 test) | decision 3 keeps `identityOnly` and adds `prototype`; PRV-B3bc B2 gives `String.prototype` its own `length` 0 as a catalog property; B3b-1 replaces `NUMBER_PROTOTYPE` / `STRING_PROTOTYPE` by `realmStringKeys` | `identityOnly` ends with `prototype`; `length` is a catalog key; criterion 9 compares the reachable keys with the host's own |
+
+`issue-7354-m-prototype-premise` loses its three wrapper-prototype rows (now obtainable) and `issue-7354-o2-object-values`
+gains the `wrappers` field of `ProgramObjects`. All five root test files pass alone.
+
+## Session 2 (2026-11-27, after a container restart)
+
+- Kept the predecessor's uncommitted pin moves (above) after reading each against #7350's plan text.
+- Fixed a run-time abort found by probe: `Object.getOwnPropertyDescriptor(new String("abc"), "length")` aborted
+  because the boxed constant key reached the String-object index guard without its carrier
+  (`constantArgumentOf`). Now answers node's descriptor; a constant or computed index key still aborts.
+- Import cycles: the slice's first commit added two `ir -> runtime` value edges (`dynamic-builtin-methods.ts`,
+  `dynamic-object-tag.ts` importing `WRAPPER_DATA` from the catalog; gate 10 → 12). Both now read it through
+  `builtin-prototype-keys.ts`, the IR's existing catalog reader: back to 10, no grant.
+- `abortsAtRunTime` (tests/helpers) takes node's runner: it ran the program in the vitest worker's own realm, so a
+  program writing `Number.isNaN` replaced the compiler's own `Number.isNaN` and its own compile threw (the same
+  happens on the merge base under vitest, never in a clean process). Wrapper tests pass `freshRealmOut`.
+- Fresh wrapper operands of `+` (`new Boolean(true) + 1`): on this base they refuse at the `+` proof; they work once
+  #7516 (L0b) is on main (the other lane's report, both modes). This slice does not touch `operand-admissibility.ts`.
+  `S11.6.1_A3.1_T1.1` / `T2.1` on this head alone: compile error at `true + 1` (`boolean/number`), #7516's rule.
+- The `js.object.is-constructor` contract is the other lane's (on a branch merging this one); this slice adds no
+  constructibility check.
+
+## Result
+
+Built: behaviour rows 3, 7, 8, 9 (`length`), 12 (without `Object`), 13, 14, 15, 16 of the table; decisions 1–5 as
+written above. Code: `native-realm-catalog.ts` (`wrapperRows` complete, per-member `heldWith`, `prototype` in
+`identityOnly`), the two contracts `js.object.create-wrapper` / `js.object.wrapper-data`, thisXValue in
+`primitive-wrapper-bodies.ts`, the backend owners live only where a wrapper family is held, one method-by-identity
+table (`dynamic-builtin-methods.ts`: `identityTest`, `wrapperMethodTest`, `builtinMethodChain`) used by P1's call and
+by OrdinaryToPrimitive, `dynamic-object-tag.ts`, and the primitive read through a held prototype.
+
+| row | before (main) | after |
+| --- | --- | --- |
+| 3 `X.prototype`, `constructor`, descriptor | refuses by name | agrees with node where the program obtains it; through a variable (`var S = String; S.prototype` with no wrapper in the program) still aborts |
+| 7 `new X(v)`: typeof, truthiness, `valueOf` / `toString` | refuses | agrees |
+| 8 ToPrimitive (`+`, `*`, `String(w)`, `Number(w)`), overrides on the prototype (direct, alias, parameter) and on the instance, both answering objects (TypeError), a method moved across families (TypeError) | refuses | agrees; a fresh `new X(v)` written directly as a `+` operand refuses at the `+` proof here and works once #7516 lands |
+| 9 String wrapper `length` and its descriptor | refuses | agrees; index keys, own-key queries with a possible index key, a String wrapper as a properties map: run-time abort (decision 4) |
+| 12 `instanceof`, `isPrototypeOf` | refuses | agrees (`Object` parts stay with item 2) |
+| 13 tags, `w.constructor` | refuses | agrees |
+| 14 wrong receiver through a method call | refuses | catchable TypeError, agrees; through `.call` it aborts (main's `.call` arm) |
+| 15 a wrapper as an ordinary object | refuses | agrees |
+| 16 prototype writes read through a primitive and a wrapper | refuses | agrees |
+| 18 statics as values (`String.fromCharCode`) | refuses by name | unchanged |
+| 19 `var C = String; new C("a")` | aborts | unchanged |
+| 20 `toString(16)` | refuses at `new Number` | aborts |
+| 21, 22 (`var String`; loose equality) | refuses | unchanged |
+| 2, 10 (`Object` as a value, `Object(v)`) | refuses | unchanged (item 2) |
+| `Number.isNaN = f` / `var N = Number; N.isNaN = f` | refuses / aborts | unchanged (decision 3) |
+| comparisons `<` / `>` of wrappers, `switch`, wrapper as a computed member key, for-of / for-in / JSON of a wrapper | refuses (other gaps) | unchanged |
+
+Probes against node in a fresh realm (about 80, each right answer with a wrong twin): right 42, refused 29, aborted 10,
+wrong 0, invalid 0, compile exceptions 0. The probes found one abort that should answer
+(`getOwnPropertyDescriptor(new String("abc"), "length")`), fixed in session 2.
+
+Measurements (load 3–5 from other agents, so times are noisy):
+
+- Prelude (`test262-fyi-runtime.js` + `assert.js` + `sta.js` + `assert.sameValue(1, 1)`): 81,432 → 79,368 bytes
+  (−2,064), median of 3 compiles 9.7 s → 6.9 s. A program that creates one wrapper: 103,452 bytes, 13.4 s.
+- Ordinary pipeline: 32 programs (the emit-identity corpus plus 30 small ones, 8 of them naming wrappers) × 4 targets,
+  128 / 128 identical sha256.
+- Prepared bytes: `check:prepared-bytes` rows 0–9, 200–209, 400–409, 600–609, 790–799 (50 of 804): identical.
+- test262 ES5 `built-ins/{String,Number,Boolean}` (887 files; 677 without includes or `Array` / `Function` /
+  `Object` / `eval` / `RegExp` / `Date` / `Math`; every 4th of those, 110 run on both sides): pass 9 → 20,
+  fail 8 → 40, compile error 93 → 50; no pass lost; every fail on both sides is a run-time abort (mostly a
+  String method other than `valueOf` / `toString` called on a held prototype, B3d). Head first stops: run-time abort
+  37, RegExp literal 7, `String.fromCharCode` 5, `delete` 5, loose equality 4.
+- The 411-row ES5 sample: only `mw-00` rows 1–44 were run (load and time): identical on both sides
+  (pass 7, fail 6, compile error 31).
+- `src/ir/from-ast.ts`: 17,396 lines before and after.
+- Size: about 1,460 changed source lines (+1,157 / −303 under `src/`), above the ~1,200 guideline; not split
+  because slice 1 was already one reviewed shape when it was measured.
+
+For the array slice (A1a): `holdsFamily` / `realmFamilies`, `ProgramObjects.wrappers`, the method-by-identity table,
+`WRAPPER_DATA` / `WRAPPER_OF_PRIMITIVE` in `builtin-prototype-keys.ts`, `dynamic-object-tag.ts`, and the extensible
+`$Object` root declared where a wrapper family is held.
