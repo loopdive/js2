@@ -93,10 +93,11 @@ describe("#7354 F1 — the function kind", () => {
 
   it.each([
     // (#7354 F1b) A function value is the realm's object now: only the keys its built-in prototypes hold refuse.
+    // (#7489) The realm holds `call` and `apply`; `bind` still refuses.
     [
       "a member read of a Function.prototype key",
-      "function g() {} var k = g.call;",
-      "member read 'call' of a function needs Function.prototype's properties",
+      "function g() {} var k = g.bind;",
+      "member read 'bind' of a function needs Function.prototype's properties",
     ],
     // (#7354 H2) The write of the inherited accessor refuses at its own site.
     [

@@ -12,7 +12,7 @@ import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from 
 import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
-import { realmCall } from "./dynamic-realm-calls.js";
+import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
@@ -30,6 +30,19 @@ import {
 
 /** The dynamic value's carrier, the native externref. */
 export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
+
+/**
+ * (#7354, #7489) A chain arm that throws a TypeError with `message`; `answer` is the arm's value into `result`, which no
+ * code reads (`undefined` unless given): the one throwing arm every legalization module writes.
+ */
+export function throwingArm(
+  b: Omit<TypeErrorBuilders, "carrier"> & Pick<ChainBuilders, "intrinsic">,
+  instr: IrInstr,
+  message: string,
+  answer: (result: IrValueId) => IrInstr = (r) => b.intrinsic(instr, "js.value.undefined", [], r),
+): (result: IrValueId) => IrInstr[] {
+  return (result) => typeErrorThen({ ...b, carrier: CARRIER }, message, answer(result));
+}
 
 /** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
 export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({

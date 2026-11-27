@@ -70,7 +70,7 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.error-to-string": declaration("js.object.error-to-string", [EXTERNAL], [EXTERNAL]),
   // (#7354 F1b) A source function object's own properties, once, right after its closure is created: `length`,
   // `name` (a native string) and, for a constructor (the Boolean), `prototype` (`source-function-object-bodies.ts`).
-  "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN], []),
+  "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN, BOOLEAN], []),
   // (#7354 C2) Whether the second value is on the first's [[Prototype]] chain (OrdinaryHasInstance's walk).
   "js.object.inherits": declaration("js.object.inherits", [EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7354 O1) The realm's half of the `Object` statics, after the caller's kind tests and ToPropertyKey: an object

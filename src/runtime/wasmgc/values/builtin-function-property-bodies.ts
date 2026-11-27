@@ -122,7 +122,14 @@ export function buildBuiltinFunctionEntryGet(
         { op: "if", blockType: empty, then: [n(1), ...builtinUndefined(d), { op: "return" }] },
         ...(d.accessorCalls
           ? [n(1), ...buildAccessorCall(d, d.accessorCalls, getter, receiver, []), { op: "return" } as Instr]
-          : builtinGetterCall(d, getter, receiver)),
+          : builtinAccessorCall(
+              d,
+              getter,
+              receiver,
+              undefined,
+              [n(3), ...builtinUndefined(d), { op: "return" }],
+              (call) => [n(1), ...call, { op: "return" }],
+            )),
       ],
     },
     n(1),
@@ -130,29 +137,46 @@ export function buildBuiltinFunctionEntryGet(
     { op: "extern.convert_any" },
   ];
 }
+/** The kernel operands {@link builtinAccessorCall} reads. */
+type BuiltinAccessorCallOperands = Pick<
+  BuiltinFunctionPropertyOperands,
+  "match" | "entries" | "newVector" | "push" | "vectorTypeIdx" | "callVector"
+>;
 /**
- * Without `accessorCalls` the program holds no source closure that can be an accessor half: a getter is a built-in,
- * called by the kernel; anything else is status 3.
+ * Without `accessorCalls` the program holds no source closure that can be an accessor half: `callee` (a local) is a
+ * built-in, called by the kernel with `receiver` and, for a setter, the `value` local (pushed through the `vector`
+ * local), its result passed to `then`; anything else runs `other`, which must not fall through. (#7489) A getter and a
+ * setter share it: %Function.prototype%'s `caller` / `arguments` halves are %ThrowTypeError%.
  */
-function builtinGetterCall(d: BuiltinFunctionPropertyOperands, getter: number, receiver: number): Instr[] {
+export function builtinAccessorCall(
+  d: BuiltinAccessorCallOperands,
+  callee: number,
+  receiver: number,
+  value: { readonly local: number; readonly vector: number } | undefined,
+  other: readonly Instr[],
+  then: (call: Instr[]) => Instr[],
+): Instr[] {
+  const list: Instr[] = value
+    ? [call(d.newVector), set(value.vector), get(value.vector), get(value.local), call(d.push), get(value.vector)]
+    : [call(d.newVector)];
   return [
-    get(getter),
+    get(callee),
     call(d.match),
     { op: "i32.eqz" },
-    get(getter),
+    get(callee),
     call(d.match),
     n(sourceClosureOrdinal(d)),
     { op: "i32.eq" },
     { op: "i32.or" },
-    { op: "if", blockType: empty, then: [n(3), ...builtinUndefined(d), { op: "return" }] },
-    n(1),
-    get(getter),
-    get(receiver),
-    call(d.newVector),
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-    call(d.callVector),
-    { op: "return" },
+    { op: "if", blockType: empty, then: [...other] },
+    ...then([
+      get(callee),
+      get(receiver),
+      ...list,
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: d.vectorTypeIdx },
+      call(d.callVector),
+    ]),
   ];
 }
 /** Presence is returned independently from data undefined/null and absent accessor halves. */

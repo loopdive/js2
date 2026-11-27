@@ -483,6 +483,7 @@ function operands(
     createNull: dd.storage.createNull.handle,
     boxNumber: values.functions.boxNumber.handle,
     defineDataBody: owner.descriptorInventory.functions[0]!.handle,
+    defineAccessorBody: owner.descriptorInventory.functions[1]!.handle,
     defineAttributes: owner.dependencies.descriptors.defineAttributes.handle,
     typeError: dd.errors.newTypeError.handle,
     createWithPrototype: dd.storage.createWithPrototype.handle,

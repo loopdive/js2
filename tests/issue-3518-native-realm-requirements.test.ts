@@ -75,6 +75,9 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%Object.prototype.hasOwnProperty%",
       "%Object.prototype.isPrototypeOf%",
       "%Object.prototype.propertyIsEnumerable%",
+      // (#7489) the Function.prototype methods the realm holds as function objects
+      "%Function.prototype.apply%",
+      "%Function.prototype.call%",
       // (#7354 G1) the Error family: the constructors and Error.prototype.toString
       "%Error%",
       "%Error.prototype.toString%",

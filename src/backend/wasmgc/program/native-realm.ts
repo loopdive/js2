@@ -9,6 +9,7 @@ import {
   heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS, realmMethodId } from "../../../runtime/contracts/native-realm-catalog.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
 import { deriveNativeStringOutputRequirements } from "../../../ir/program/native-string-output-requirements.js";
 import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
@@ -145,6 +146,11 @@ import {
   requireCompletedNativeSourceObjects,
   type NativeSourceObjectFeature,
 } from "../resources/native-source-objects.js";
+
+/** (#7354 P1) The catalog ids of the Object.prototype methods the realm populates. */
+const OBJECT_PROTOTYPE_METHOD_IDS: readonly string[] = NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) =>
+  realmMethodId("Object.prototype", name),
+);
 
 function fail(detail: string): never {
   throw Error("native realm composition: " + detail);
@@ -297,22 +303,34 @@ function beginRealm(
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
   const catalog = requirements.description.catalog;
+  const heldRows = heldCatalogRows(requirements.description);
+  // (#7489) The realm's entry or object for a catalog id: a bootstrap function's entry is named by its behavior.
+  const entryOf = (id: string): string | undefined => {
+    if (catalog.bootstrap.includes(id))
+      return catalog.intrinsics.find((row) => row.id === id)?.callable?.implementation;
+    return requirements.description.intrinsics.includes(id) || heldRows.some((row) => row.id === id && !row.callable)
+      ? id
+      : undefined;
+  };
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
     const row = catalog.intrinsics.find((row) => row.id === id),
       call = row?.callable;
+    // An Object.prototype method is seeded on the realm's Object.prototype by its entry; (#7489) every other one by
+    // its holder's catalog row (`familyProperties`).
     const behavior =
       index < catalog.bootstrap.length
         ? call?.implementation
-        : row?.heldWith !== undefined
-          ? "native"
-          : "object-prototype-method";
+        : OBJECT_PROTOTYPE_METHOD_IDS.includes(id)
+          ? "object-prototype-method"
+          : "native";
     const supported =
       index < catalog.bootstrap.length
         ? behavior === "function-prototype" || behavior === "throw-type-error"
         : call?.implementation === "native";
     if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
     const entry = behavior as NativeBuiltinFunctionBehavior;
+    const properties = familyProperties(row, entryOf, requirements.description.restrictedFunctionAccessors);
     return {
       id: index < catalog.bootstrap.length ? entry : id,
       behavior: entry,
@@ -329,12 +347,12 @@ function beginRealm(
             : row.prototype!,
       constructible: row.constructible,
       aliases: row.aliases,
-      ...(entry === "native" ? { properties: familyProperties(row) } : {}),
+      ...(properties.length > 0 ? { properties } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, ...familyObjects(heldCatalogRows(requirements.description)) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(heldRows, entryOf) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,

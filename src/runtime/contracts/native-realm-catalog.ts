@@ -143,6 +143,17 @@ export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
   "propertyIsEnumerable",
 ] as const);
 export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
+/**
+ * (#7489) The Function.prototype methods the realm populates: each is a built-in function object on the realm's
+ * Function.prototype, and the Prepared path writes its algorithm where a call reads it (`dynamic-prototype-methods.ts`).
+ */
+const NATIVE_FUNCTION_PROTOTYPE_METHODS = Object.freeze(["apply", "call"] as const);
+export type NativeFunctionPrototypeMethod = (typeof NATIVE_FUNCTION_PROTOTYPE_METHODS)[number];
+/** (#7354 P1, #7489) The prototype methods the realm populates, by the prototype that holds them. */
+export const NATIVE_PROTOTYPE_METHODS = Object.freeze({
+  "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
+  "Function.prototype": NATIVE_FUNCTION_PROTOTYPE_METHODS,
+});
 /** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
 export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "Error",
@@ -157,7 +168,7 @@ export type NativeErrorConstructor = (typeof NATIVE_ERROR_CONSTRUCTORS)[number];
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
-  "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
+  ...NATIVE_PROTOTYPE_METHODS,
   "Error.prototype": ["toString"],
 };
 const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
@@ -207,10 +218,13 @@ const methodProperties = (parent: string, rows: readonly Method[]) =>
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
 /**
  * (#7354 G1) The function values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)`
- * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`.
+ * numbers them: the native prototype methods ((#7489) Object.prototype's, then Function.prototype's), the Error
+ * constructors, `Error.prototype.toString`.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
-  ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
+  ...Object.entries(NATIVE_PROTOTYPE_METHODS).flatMap(([parent, names]) =>
+    names.map((name) => realmMethodId(parent, name)),
+  ),
   ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
   realmMethodId("Error.prototype", errorToString[0]),
 ]);

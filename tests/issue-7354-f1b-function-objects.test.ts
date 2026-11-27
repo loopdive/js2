@@ -74,10 +74,11 @@ describe("#7354 F1b — function objects", () => {
   );
 
   it.each([
+    // (#7489) The realm holds `call` and `apply`; `bind` still refuses.
     [
       "a Function.prototype key",
-      "function a() {} var c = a.call;",
-      "member read 'call' of a function needs Function.prototype's properties",
+      "function a() {} var c = a.bind;",
+      "member read 'bind' of a function needs Function.prototype's properties",
     ],
     [
       "an Object.prototype key the realm does not hold",

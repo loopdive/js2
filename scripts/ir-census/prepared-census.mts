@@ -18,6 +18,9 @@
  *   `crash`.
  * - A compiled file is run: instantiate, then `__module_init`. Returning is
  *   `pass`, throwing `fail`. Async tests are compiled but not run (`compiled`).
+ * - A run that throws records the innermost three Wasm frames (`frames`) and, where one of them is an abort body
+ *   (#7354 U, `requiredPreparedAbortBodies`), that body's refusal (`abort`). Every row of a compiled file also lists the
+ *   refusals of all its abort bodies (`aborts`), so a file's other blockers are visible before they trap.
  * - Negative tests are skipped: a compile failure is their expected outcome,
  *   so they say nothing about the path.
  * - `--tree <dir>` measures another checkout, as in census.mts.
@@ -152,6 +155,12 @@ function gapRow(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>,
   };
 }
 
+/** The names of the innermost three Wasm frames of a trap's stack (V8 names a frame `at <name> (wasm://…)`). */
+function wasmFrames(error: unknown): string[] {
+  const stack = error instanceof Error ? (error.stack ?? "") : "";
+  return [...stack.matchAll(/^\s*at (\S+) \(wasm:/gm)].slice(0, 3).map((match) => match[1]!);
+}
+
 async function measureFile(tools: Toolchain, file: string, standIn: boolean): Promise<object> {
   const abs = join(tools.tree, "test262/test", file);
   const source = readFileSync(abs, "utf8");
@@ -168,13 +177,17 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
   if (!tools.entry.requiredPreparedEmission(result) || !result.success) {
     return { file, status: "compile_error", ...flags, ...gapRow(tools, result, assembly) };
   }
-  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags };
+  const aborts = tools.entry.requiredPreparedAbortBodies(result) ?? [];
+  const details = aborts.map((row) => row.detail);
+  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags, aborts: details };
   try {
     const { instance } = tools.runtime.instantiatePreparedArtifact(result);
     (instance.exports.__module_init as (() => void) | undefined)?.();
-    return { file, status: "pass", ...flags };
+    return { file, status: "pass", ...flags, aborts: details };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error) };
+    const frames = wasmFrames(error);
+    const abort = aborts.find((row) => frames.includes(row.name));
+    return { file, status: "fail", ...flags, detail: errorText(error), frames, abort: abort?.detail, aborts: details };
   }
 }
 

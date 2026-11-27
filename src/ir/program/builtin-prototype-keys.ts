@@ -15,6 +15,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   realmMethodId,
+  type NativeFunctionPrototypeMethod,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
@@ -52,6 +53,10 @@ export function nativeObjectStatic(
  */
 export const nativeObjectPrototypeMethod = (name: string): NativeObjectPrototypeMethod | undefined =>
   nativeLength("Object.prototype", name) === undefined ? undefined : (name as NativeObjectPrototypeMethod);
+
+/** (#7489) `name` when the catalog marks `%Function.prototype.<name>%` native (`call`, `apply`). */
+export const nativeFunctionPrototypeMethod = (name: string): NativeFunctionPrototypeMethod | undefined =>
+  nativeLength("Function.prototype", name) === undefined ? undefined : (name as NativeFunctionPrototypeMethod);
 
 /** (#7354 P1) The catalog id of the native Object.prototype method `name`. */
 export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): string =>
@@ -101,10 +106,18 @@ const accessorKeys = (...intrinsicIds: readonly string[]): ReadonlySet<string> =
 export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%");
 
 /**
- * (#7354 G1) The accessor keys `Function.prototype` adds on a function's chain: `caller` and `arguments`, whose
- * setter is %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties).
+ * (#7354 G1, #7489) The accessor keys `Function.prototype` adds on a function's chain, `caller` and `arguments`, whose
+ * getter and setter are %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties). The realm's Function.prototype
+ * holds both, and a sloppy plain function owns a `caller` (`null`, `js.object.init-function`).
  */
-export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
+const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
+
+/**
+ * (#7489) What an access of a function's `arguments` lacks: a sloppy function's own `arguments` is V8's live arguments
+ * object, which no Prepared function owns, so the realm's accessor would answer a sloppy function with a TypeError.
+ */
+export const functionOwnKeyGap = (name: string): string | undefined =>
+  name === "arguments" ? "a sloppy function's own arguments object" : undefined;
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [
@@ -158,18 +171,21 @@ const STRING_PROTOTYPE = [
   "trimRight",
 ];
 
+/** (#7354 P1, #7489) The keys the catalog gives the prototype `parent` that the realm's does not hold as a method. */
+const unpopulatedKeys = (parent: string): string[] =>
+  [...realmStringKeys(`%${parent}%`)].filter((key) => nativeLength(parent, key) === undefined);
+
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */
-const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
-  [...OBJECT_PROTOTYPE_KEYS].filter((key) => nativeObjectPrototypeMethod(key) === undefined),
-);
+const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(unpopulatedKeys("Object.prototype"));
 
 /**
- * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype: every key the
- * catalog gives them but `length` and `name`, which every function value owns from its creation.
+ * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype that the realm
+ * does not hold: every key the catalog gives them but `length` and `name`, which every function value owns from its
+ * creation, and (#7489) Function.prototype's accessors and native methods, which the realm holds.
  */
 const FUNCTION_REACHABLE_KEYS = new Set(
-  [...realmStringKeys("%Function.prototype%"), ...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter(
-    (key) => key !== "length" && key !== "name",
+  [...unpopulatedKeys("Function.prototype"), ...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter(
+    (key) => key !== "length" && key !== "name" && !FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(key),
   ),
 );
 
