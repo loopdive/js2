@@ -13,7 +13,7 @@ function readRepo(path: string): string {
 function standaloneGuardBlock(): string {
   const workflow = readRepo(".github/workflows/test262-sharded.yml");
   const start = workflow.indexOf("- name: Standalone regression guard (#1897)");
-  const end = workflow.indexOf("- name: Stale-baseline guard (#1668)", start);
+  const end = workflow.indexOf("- name: Compile-time regression guard", start);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
   return workflow.slice(start, end);
@@ -28,11 +28,13 @@ describe("#1897 standalone test262 merge gate", () => {
     const workflow = readRepo(".github/workflows/test262-sharded.yml");
     const standaloneReport = workflow.indexOf("- name: Build merged standalone test262 report");
     const standaloneGuard = workflow.indexOf("- name: Standalone regression guard (#1897)");
-    const staleGuard = workflow.indexOf("- name: Stale-baseline guard (#1668)");
-
     expect(standaloneReport).toBeGreaterThanOrEqual(0);
     expect(standaloneGuard).toBeGreaterThan(standaloneReport);
-    expect(staleGuard).toBeGreaterThan(standaloneGuard);
+    // (#7551) The commit-count stale-baseline guard locked the scheduled run red
+    // (a day of merges exceeds it, and a failure skips promotion); the floor
+    // AGE alert covers a promotion that stops landing.
+    expect(workflow).not.toContain("- name: Stale-baseline guard (#1668)");
+    expect(workflow).not.toContain("MAX_BASELINE_COMMITS_BEHIND");
 
     const mergeReportJob = workflow.slice(workflow.indexOf("merge-report:"), workflow.indexOf("  regression-gate:"));
     expect(mergeReportJob).toContain("name: merge shard reports");
@@ -75,7 +77,7 @@ describe("#1897 standalone test262 merge gate", () => {
     const branchProtection = readRepo("scripts/enable-branch-protection.sh");
 
     expect(policy).toContain("Standalone regression guard (#1897)");
-    expect(policy).toContain("no branch-protection change is needed");
+    expect(policy).toMatch(/no branch-protection change\s+is needed/);
     // Pre-existing prose drift: the script's #1897 note now reads "needed NO
     // separate entry here and NO ruleset re-apply". Assert the CLAIM (no extra
     // required-check entry, no re-apply) rather than one exact sentence, so a

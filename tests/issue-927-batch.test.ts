@@ -1,11 +1,23 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { readFileSync } from "fs";
+import { fileURLToPath } from "node:url";
 import { parseMeta, wrapTest } from "./test262-runner.ts";
 import { buildImports } from "../src/runtime.ts";
 
-// Read the list of currently failing negative tests from latest test262 run
-const lines = readFileSync("/tmp/current-neg-failures.txt", "utf-8").trim().split("\n");
+// The negative test262 tests that still compiled and instantiated (error "expected parse/early <Error> but compiled
+// and instantiated successfully") in the earliest baseline snapshot that survives: loopdive/js2wasm-baselines
+// 63c403d (test262-current.jsonl, 2026-04-25). The original April list (/tmp/current-neg-failures.txt, made by hand
+// for #927 on ~2026-04-03, 840 tests) is lost; this list was regenerated from that snapshot on 2026-11-26 with:
+//   git -C js2wasm-baselines show 63c403d:test262-current.jsonl | node -e 'const rows = require("fs")
+//     .readFileSync(0, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) =>
+//     /expected parse\/early \w+ but compiled and instantiated/.test(r.error ?? ""));
+//     console.log(rows.map((r) => r.file).sort().join("\n"))'
+// That gives 165 tests: the ones #927 had not yet fixed by 2026-04-25, a harder subset than the original 840.
+const lines = readFileSync(new URL("./fixtures/issue-927-negative-failures-2026-04-25.txt", import.meta.url), "utf-8")
+  .trim()
+  .split("\n");
+const TEST262_DIR = fileURLToPath(new URL("../test262/", import.meta.url));
 
 describe("Issue #927 batch test — negative test rejection rate", () => {
   it("should reject negative tests (matching vitest runner behavior)", async () => {
@@ -15,7 +27,7 @@ describe("Issue #927 batch test — negative test rejection rate", () => {
     const acceptedTests: string[] = [];
 
     for (const rel of lines) {
-      const fullPath = "/workspace/test262/" + rel;
+      const fullPath = TEST262_DIR + rel;
       try {
         const src = readFileSync(fullPath, "utf-8");
         const meta = parseMeta(src);
