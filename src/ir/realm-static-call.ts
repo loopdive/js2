@@ -135,14 +135,40 @@ const DESCRIPTOR_DEPTH: Readonly<Record<NativeObjectStatic, readonly number[]>> 
 };
 
 /** (#7564) `Math.<method>(…)` off the unchanged global `Math`, whose intrinsic converts each argument (ToNumber). */
-function pristineMathCall(call: ts.CallExpression, isPristineGlobal: (identifier: ts.Identifier) => boolean) {
+function realmMathPlan(call: ts.CallExpression, isPristineGlobal: (identifier: ts.Identifier) => boolean) {
   const callee = call.expression;
-  return (
-    ts.isPropertyAccessExpression(callee) &&
-    ts.isIdentifier(callee.expression) &&
-    callee.expression.text === "Math" &&
-    isPristineGlobal(callee.expression) &&
-    Object.hasOwn(IR_MATH_METHOD_TABLE, callee.name.text)
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    !ts.isIdentifier(callee.expression) ||
+    callee.expression.text !== "Math" ||
+    !isPristineGlobal(callee.expression) ||
+    call.questionDotToken ||
+    callee.questionDotToken ||
+    call.arguments.some(ts.isSpreadElement) ||
+    !Object.hasOwn(IR_MATH_METHOD_TABLE, callee.name.text)
+  )
+    return undefined;
+  const plan = IR_MATH_METHOD_TABLE[callee.name.text]!;
+  return call.arguments.length === plan.arity || plan.intrinsic === "math.min" || plan.intrinsic === "math.max"
+    ? plan
+    : undefined;
+}
+
+/** Evaluate all arguments before ToNumber, including arguments after a NaN. */
+export function lowerRealmMathCall(call: ts.CallExpression, host: FunctionObjectLoweringHost): IrValueId | undefined {
+  const plan = realmMathPlan(call, host.isPristineGlobal);
+  if (!plan) return undefined;
+  const args = call.arguments
+    .map((arg) => host.lowerExpression(arg))
+    .map((v, i) => realmToNumber(v, call.arguments[i]!, host));
+  const position = call.getSourceFile().getLineAndCharacterOfPosition(call.getStart());
+  const emit = (values: IrValueId[]) =>
+    host.builder.emitIntrinsic(plan.intrinsic, values, { line: position.line + 1, column: position.character });
+  if (args.length === plan.arity) return emit(args);
+  if (args.length) return args.reduce((a, b) => emit([a, b]));
+  return host.builder.emitConst(
+    { kind: "f64", value: plan.intrinsic === "math.min" ? Infinity : -Infinity },
+    irVal({ kind: "f64" }),
   );
 }
 
@@ -173,7 +199,7 @@ export function realmBuiltinOperand(
   if (!ts.isCallExpression(call)) return false;
   const name = nativeObjectStaticCall(call, isPristineGlobal)?.name;
   const index = call.arguments.indexOf(operand);
-  if (index >= 0 && pristineMathCall(call, isPristineGlobal)) return true;
+  if (index >= 0 && realmMathPlan(call, isPristineGlobal)) return true;
   return name !== undefined && index >= 0 && depth <= (DESCRIPTOR_DEPTH[name][index] ?? 0);
 }
 
