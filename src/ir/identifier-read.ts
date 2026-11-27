@@ -6,9 +6,10 @@
  * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. Pure: it emits nothing.
  */
 import ts from "typescript";
-import { checkerOracleOf, type TypeOracle } from "../checker/oracle.js";
+import type { TypeOracle } from "../checker/oracle.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { isGlobalUndefinedIdentifier } from "./analysis/operand-admissibility.js";
+import { checkerOracleOf } from "./module-bindings.js";
 import { errorConstructorId } from "./program/builtin-prototype-keys.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";

@@ -667,6 +667,8 @@ export {
 } from "./module-binding-value-kinds.js";
 // (#7108) Re-exported so the codegen driver reaches it over its existing edge to this module.
 export { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
+// (#7439) Re-exported so identifier-read.ts reaches the per-checker oracle over this module's existing ir -> checker edge.
+export { checkerOracleOf } from "../checker/oracle.js";
 
 /** A module binding's declaration: a top-level identifier declaration or (#7106 S5) a script `var` leaf. */
 export type IrModuleBindingDeclaration = ts.VariableDeclaration | ts.BindingElement;

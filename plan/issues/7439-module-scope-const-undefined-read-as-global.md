@@ -12,6 +12,10 @@ task_type: bug
 area: ir
 goal: core-semantics
 related: [7380, 7104, 7106, 7514, 7515]
+# (2026-11-27) +2: the `checkerOracleOf` re-export and its reason, so identifier-read.ts reaches the per-checker
+# oracle over module-bindings.ts's existing ir -> checker edge instead of opening its own (import-cycles ratchet).
+loc-budget-allow:
+  - src/ir/module-bindings.ts
 ---
 
 # #7439 — module-scope `const undefined` is ignored
