@@ -1,7 +1,8 @@
 ---
 id: 7616
 title: "The site shows a current IR test262 pass rate: the current edition after every merge, the full corpus daily"
-status: in-progress
+status: done
+completed: 2026-11-27
 created: 2026-11-27
 updated: 2026-11-27
 assignee: ttraenkler/site-ir-rate
@@ -102,3 +103,45 @@ did not land is accepted (or even downloaded); an edition measurement older
 than the full run overrides it; a wrong-edition, wrong-commit, non-IR or
 inconsistent artifact is accepted; a failed producer job is accepted; an
 edition-only point is drawn at a cumulative scope it does not cover.
+
+## Result (2026-11-27)
+
+Implemented as planned (commit 381af36a5e).
+
+- **Daily.** `test262-sharded.yml` cron `23 2 * * *`. Corrected every
+  statement of the weekly cadence that is now false: test262-sharded,
+  baseline-floor-staleness-alert, refresh-baseline, retry-test262-baseline,
+  `scripts/check-baseline-floor-staleness.mjs`, `scripts/test262-last-full-run.mjs`,
+  the queue's edition summary text (`scripts/test262-edition-scope.ts`),
+  `docs/ci-policy.md`, `docs/releasing.md`, CLAUDE.md, test names, and a
+  "superseded" note in #7551's file.
+- **Not changed, deliberately:** the floor-staleness threshold stays 192 h. It
+  was derived for the weekly cadence; with daily runs it cannot false-alarm,
+  but it now alerts only after about a week of missed promotions. Tightening
+  it (~24 h + 3.6 h jitter + ~4 h run time) is a separate owner decision.
+- **Site.** `deploy-pages.yml` runs `scripts/test262-ir-site-measurements.mjs`.
+  With no retained valid edition artifact its output is the same as the
+  former inline step (the previous tests pass unchanged apart from the
+  fixtures now naming the run's commit).
+- **Tests.** `scripts/test262-ir-pages-artifacts.test.mjs` (69 pass) adds:
+  landed newer edition run replaces the row with its own commit/date and the
+  envelope and full-corpus score keep the full run's identity; a group that
+  never landed is neither shown nor downloaded; an older edition run never
+  overrides (but stays in the history); the newest landed commit wins over
+  upload order; ten wrong-edition / wrong-commit / non-IR / pre-#7616 /
+  inconsistent artifacts are refused with a warning; a failed producer job is
+  refused; no edition row without a measured full run; newest per day.
+  `tests/issue-7616-ir-edition-trend.test.ts`: an edition-only point is drawn
+  only at its own scope. Each guard was removed once and the matching test
+  failed (landed filter, newer-than-full check, configured-edition and commit
+  checks, position ordering, the trend guard).
+- **Pre-existing, unrelated failures** seen while checking neighbours (fail
+  identically with the base `report.html`):
+  `tests/issue-4362-test262-paths-compact.test.ts` (5) and
+  `tests/report-error-patterns-edition-scope.test.ts` (1).
+- **Not verifiable offline** (artifact download is blocked here): the first
+  deploy after merge. The edition artifacts retained today carry no
+  `compilerPath` in `scope.json`, so they are refused with a warning. This
+  PR's own merge group already writes the new `scope.json`, so its edition
+  row can appear on the deploy after it lands, once that group's run has
+  completed (otherwise on the next deploy).
