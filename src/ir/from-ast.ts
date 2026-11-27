@@ -116,7 +116,7 @@ import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-objec
 import {
   constantMemberRead,
   lowerRealmConversionCall,
-  realmToNumber,
+  lowerRealmMathCall,
   tryLowerRealmStaticCall,
 } from "./realm-static-call.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -9806,19 +9806,18 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // value binding); the selector proof is rechecked so divergence fails with a clear error.
   if (receiverIdentifier?.text === "Math" && isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)) {
     const plan = IR_MATH_METHOD_TABLE[methodName];
-    if (plan !== undefined && expr.arguments.length === plan.arity) {
-      // (#7564) On the realm's lane every argument is evaluated, then each is converted in order (ToNumber).
-      const host = functionObjectLoweringHost(cx);
-      const realm = host.createsFunctionObjects();
-      const values = expr.arguments.map((argExpr) => {
-        if (realm) return host.lowerExpression(argExpr);
+    const host = functionObjectLoweringHost(cx);
+    if (host.createsFunctionObjects()) {
+      const value = lowerRealmMathCall(expr, host);
+      if (value !== undefined) return value;
+    } else if (plan !== undefined && expr.arguments.length === plan.arity) {
+      const args = expr.arguments.map((argExpr) => {
         const arg = lowerExpr(argExpr, cx, irVal({ kind: "f64" }));
         const argType = cx.builder.typeOf(arg);
         if (argType.kind === "val" && argType.val.kind === "f64") return arg;
         const detail = `Math.${methodName} arg must be f64, got ${describeIrType(argType)} (${cx.funcName})`;
         return demoteToLegacy("method-call-unsupported", `ir/from-ast: ${detail}`);
       });
-      const args = realm ? values.map((arg, index) => realmToNumber(arg, expr.arguments[index]!, host)) : values;
       const position = expr.getSourceFile().getLineAndCharacterOfPosition(expr.getStart());
       return cx.builder.emitIntrinsic(plan.intrinsic, args, { line: position.line + 1, column: position.character });
     }

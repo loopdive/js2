@@ -36,6 +36,18 @@ const calls = (members: readonly string[], inputs: string, vars: readonly string
     .join("\n");
 
 const PROGRAMS: readonly (readonly [string, string])[] = [
+  [
+    "variadic extrema",
+    `${ADD}
+add(Math.max()); add(Math.min()); add(Math.min("-0")); add(Math.max(-0,-0,0)); add(Math.min(0,0,-0));
+add(Math.max(1,6,3,2)); add(Math.min(1,6,-3,2)); add(Math.max(1,NaN,3));`,
+  ],
+  [
+    "variadic evaluation and conversion order",
+    `var out="";
+function arg(n){out=out+n;return {valueOf:function(){out=out+n;return n;}};}
+Math.max(arg("a"),arg("b"),arg("c"));`,
+  ],
   ["unary members on edge inputs", `${ADD}\nvar x;\n${calls(UNARY, UNARY_INPUTS, ["x"])}`],
   ["binary members on edge inputs", `${ADD}\nvar a, b;\n${calls(BINARY, BINARY_INPUTS, ["a", "b"])}`],
   [
@@ -83,8 +95,6 @@ describe("#7564 — Math members without a node-exact Prepared lowering refuse",
     ["Math.exp", "var r = Math.exp(1);"],
     ["Math.round", "var r = Math.round(1.5);"],
     ["Math.random", "var r = Math.random();"],
-    ["Math.max with three arguments", "var r = Math.max(1, 2, 3);"],
-    ["Math.max without arguments", "var r = Math.max();"],
     ["a constant", "var r = Math.PI;"],
     ["Math as a value", "var m = Math; var r = m.abs(-1);"],
   ])("%s", { timeout: SLOW }, async (_name, source) => {
