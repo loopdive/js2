@@ -4915,6 +4915,13 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
     );
   }
   if (binding.tdzGlobalRef && binding.omitTdzReadCheck !== true) {
+    // (#7354 L0c) The Prepared lane has no TDZ ReferenceError to throw (no runtime constructor, no carrier kind for
+    // a catch): the function refuses, not the whole program.
+    if (functionObjects.onPreparedDynamicLane(cx.resolver))
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: TDZ check of '${name}' has no Prepared throw in ${cx.funcName}`,
+      );
     const tdz = cx.builder.emitGlobalGet(binding.tdzGlobalRef, irVal({ kind: "i32" }));
     const cond = cx.builder.emitUnary("i32.eqz", tdz, irVal({ kind: "i32" }));
     const thenBody = cx.builder.collectBodyInstrs(() => {
@@ -5340,7 +5347,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       // produce an IR value. The callable form is handled by `lowerCall`.
       demoteToLegacy(
         "body-shape-rejected",
-        `ir/from-ast: bare reference to nested function "${expr.text}" not in slice 3 (${cx.funcName})`,
+        `ir/from-ast: nested function "${expr.text}" read as a value; only its call is lowered (${cx.funcName})`,
       );
     }
     // Slice 3 (#1169c): refcell-typed bindings need a deref on read.
@@ -6845,14 +6852,15 @@ function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: Lower
 }
 
 /**
- * A read of `node` lowers to the dynamic value: a dynamic local, slot or module global in scope, (#7106 Stage 4) a
- * `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic global out of scope.
+ * A read of `node` lowers to the dynamic value: a dynamic local (or, #7354 L0c, a cell of it), slot or module global
+ * in scope, (#7106 Stage 4) a `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic
+ * global out of scope.
  */
 function bindingHoldsDynamic(node: ts.Identifier | ts.ThisExpression, cx: LowerCtx): boolean {
   const binding = cx.scope.get(ts.isIdentifier(node) ? node.text : "this");
-  if (binding?.kind === "local" || binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
-  if (binding?.kind === "slot") return (binding.asType ?? binding.type).kind === "dynamic";
-  return binding === undefined && ts.isIdentifier(node) && functionObjects.readsDynamicGlobal(node, cx.resolver);
+  if (binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
+  if (binding !== undefined) return heldType(binding)?.kind === "dynamic";
+  return ts.isIdentifier(node) && functionObjects.readsDynamicGlobal(node, cx.resolver);
 }
 
 /**
@@ -13695,9 +13703,13 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
     if (ts.isConditionalExpression(e)) return isDynamicConditionalValueShape(e);
     // (#7354 L0c) On the Prepared lane a call through a binding of the dynamic value (a function declaration's cell)
     // answers the dynamic value, whatever the checker infers for its result.
-    const callee =
-      ts.isCallExpression(e) && ts.isIdentifier(e.expression) ? cx.scope.get(e.expression.text) : undefined;
-    if (callee && functionObjects.onPreparedDynamicLane(cx.resolver)) return heldType(callee)?.kind === "dynamic";
+    if (
+      ts.isCallExpression(e) &&
+      ts.isIdentifier(e.expression) &&
+      cx.scope.has(e.expression.text) &&
+      functionObjects.onPreparedDynamicLane(cx.resolver)
+    )
+      return bindingHoldsDynamic(e.expression, cx);
     return ts.isIdentifier(e) && bindingHoldsDynamic(e, cx);
   };
   const isDynamicConditionalValueShape = (e: ts.ConditionalExpression): boolean => {

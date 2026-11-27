@@ -246,7 +246,7 @@ export function analyseClosureCaptures(
       // A slot, a nested function's name or another non-local binding has no capture field.
       demoteToLegacy(
         "body-shape-rejected",
-        `ir/from-ast: closure inside ${host.funcName} captures non-local binding "${name}" — not in slice 3`,
+        `ir/from-ast: closure inside ${host.funcName} captures non-local binding "${name}": a slot or nested function has no capture field`,
       );
     }
     // If the local is already a refcell (a sibling closure boxed it),

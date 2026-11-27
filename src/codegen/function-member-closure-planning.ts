@@ -182,7 +182,7 @@ function openBodyKey(
 /**
  * (#7195) A `var` / `let` / `const` (or destructured / catch) binding outside
  * every function: a closure inside `<module-init>` cannot capture it ("captures
- * non-local binding … not in slice 3"), so reading or writing one would
+ * non-local binding …"), so reading or writing one would
  * withdraw after the claim. Function declarations are not bindings here, and a
  * lib global (`undefined`, `NaN`) is not in the source.
  */
