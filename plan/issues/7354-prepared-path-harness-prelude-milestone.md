@@ -7570,3 +7570,7 @@ Also: `tests/issue-7354-t-truthiness-null.test.ts`'s wrapper ToPrimitive case (r
   arm's "MECHANISM ONLY … unreached" comment and its dead `key !== null` test are gone.
 - `abortsAtRunTime` (test helper) runs node in a fresh realm, so a program that writes a built-in leaves the test
   context's untouched; its 19 users pass.
+
+## Slice A1b
+
+Tracked in its own issue, #7557 (`plan/issues/7557-prepared-builtins-callable-through-values.md`).
