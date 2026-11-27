@@ -35,6 +35,7 @@ import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind, type ProgramFamilies } from "./dynamic-value-kinds.js";
 import type { ConvertingBuilders } from "./dynamic-value-chains.js";
 import { functionChainAnswer } from "./dynamic-realm-constructors.js";
+import { ownMiss } from "./dynamic-object-statics.js";
 
 export type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
@@ -119,17 +120,25 @@ const constant =
  * §20.1.3.2 / §20.1.3.4: ToPropertyKey(V) first, then ToObject(this value) and its own property `P` (enumerable too
  * for `propertyIsEnumerable`). An ordinary object's or a function's own properties are the kernel's; a number's or a
  * Boolean's wrapper owns none; a string's own `length` and indices need the String exotic the realm lacks: the run-time
- * abort.
+ * abort. (#7557) A `false` on an object the realm holds without all its properties is that abort too (`ownMiss`).
  */
 function ownProperty(b: ConvertingBuilders, call: BuiltinCall, enumerable: boolean, result: IrValueId): IrInstr[] {
   const { instr, receiver } = call;
   const argument = call.argument(0);
   const [text, key] = [b.fresh(), b.fresh()];
+  const hasOwn = (r: IrValueId): IrInstr[] => {
+    const has = b.fresh();
+    const answer = (s: IrValueId) => [b.intrinsic(instr, "js.boolean.box", [has], s)];
+    return [
+      ...b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), has),
+      b.branch(has, answer, (s) => ownMiss(b, instr, receiver, answer, s), r, CARRIER),
+    ];
+  };
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_ACCESS_ARM[kind]) {
       case "object":
       case "function":
-        return boxed(b, instr, (s) => b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), s), r);
+        return hasOwn(r);
       case "type-error":
         return toObjectError(b, r);
       default:

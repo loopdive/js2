@@ -26,9 +26,8 @@ import {
   buildSourceObjectHasDefinition,
   buildSourceObjectIntrinsicDefinition,
   buildSourceObjectIsIntrinsicDefinition,
-  buildSourceObjectIsConstructorDefinition,
+  buildSourceObjectIsOneOfDefinition,
   buildSourceObjectHasOwnDefinition,
-  partialObjectMiss,
   sourceObjectCreate,
   type SourceObjectCreateOperands,
   type SourceObjectDefinition,
@@ -175,12 +174,28 @@ function heldNonConstructors(kernel: NativeSourceObjectDependencies["kernel"]): 
       : [[{ op: "call", funcIdx: entry.getter.handle } as Instr]],
   );
 }
-/**
- * (#7557) {@link partialObjectMiss} of the object in local 0: the realm's objects that lack a catalog property, each as
- * its externref. Object.prototype always does (its `toString`, `valueOf`).
- */
-function ownMiss(tx: PhysicalModuleReservations, kernel: NativeSourceObjectDependencies["kernel"]): Instr[] {
+/** The realm's objects by id, each as its externref: Object.prototype, and the families' objects it holds. */
+function realmObjects(tx: PhysicalModuleReservations, kernel: NativeSourceObjectDependencies["kernel"]) {
   const d = nativeBuiltinFunctionOperands(tx, kernel);
+  return new Map<string, readonly Instr[]>([
+    ["%Object.prototype%", [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }]],
+    ...d.objects.map(({ id, global }): [string, readonly Instr[]] => [
+      id,
+      [
+        { op: "call", funcIdx: d.initializer },
+        { op: "global.get", index: global },
+      ],
+    ]),
+  ]);
+}
+/**
+ * (#7557) The objects the realm holds without every property the catalog gives them (`lacksCatalogProperty`), each as
+ * its externref: Object.prototype always (its `toString`, `valueOf`).
+ */
+function partialObjects(
+  tx: PhysicalModuleReservations,
+  kernel: NativeSourceObjectDependencies["kernel"],
+): readonly (readonly Instr[])[] {
   const { intrinsics, objects = [] } = kernel.requests.requirements;
   const catalogRow = (aliases: readonly string[]) =>
     NATIVE_REALM_CATALOG.intrinsics.find((row) => aliases.includes(row.id))!;
@@ -190,18 +205,11 @@ function ownMiss(tx: PhysicalModuleReservations, kernel: NativeSourceObjectDepen
       ? [[{ op: "call", funcIdx: entry.getter.handle } as Instr]]
       : [];
   });
+  const byId = realmObjects(tx, kernel);
   const families = objects.flatMap(({ id, properties }) =>
-    lacksCatalogProperty(catalogRow([id]), properties)
-      ? [
-          [
-            { op: "call", funcIdx: d.initializer },
-            { op: "global.get", index: d.objects.find((object) => object.id === id)!.global },
-          ] as Instr[],
-        ]
-      : [],
+    lacksCatalogProperty(catalogRow([id]), properties) ? [byId.get(id)!] : [],
   );
-  const objectPrototype: Instr[] = [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }];
-  return partialObjectMiss(0, [objectPrototype, ...entries, ...families], d.sameValue);
+  return [byId.get("%Object.prototype%")!, ...entries, ...families];
 }
 /** Creation's operands: a program creates a wrapper only of a family the realm then holds (`create-wrapper`'s selector). */
 function wrapperCreateOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
@@ -387,23 +395,12 @@ const ROWS = {
         objectStaticOperands(dependencies, tx),
         sourceObjectCreate(createOperands(dependencies)),
         dependencies.descriptors.defineData.handle,
-        ownMiss(tx, dependencies.kernel),
       ),
   },
   "js.object.intrinsic": {
     signature: { params: [I32], results: [EXTERNREF] },
     body: ({ kernel }, tx) => {
-      const d = nativeBuiltinFunctionOperands(tx, kernel);
-      const objects = new Map<string, readonly Instr[]>([
-        ["%Object.prototype%", [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }]],
-        ...d.objects.map(({ id, global }): [string, readonly Instr[]] => [
-          id,
-          [
-            { op: "call", funcIdx: d.initializer },
-            { op: "global.get", index: global },
-          ],
-        ]),
-      ]);
+      const objects = realmObjects(tx, kernel);
       const functions = new Map(heldFunctionIntrinsics(tx, kernel).map((row) => [row.selector, row.value]));
       return buildSourceObjectIntrinsicDefinition({
         values: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) => {
@@ -421,11 +418,19 @@ const ROWS = {
         sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
       }),
   },
-  "js.object.is-constructor": {
+  "js.object.is-non-constructor": {
     signature: { params: [EXTERNREF], results: [I32] },
     body: ({ kernel }, tx) =>
-      buildSourceObjectIsConstructorDefinition({
-        methods: heldNonConstructors(kernel),
+      buildSourceObjectIsOneOfDefinition({
+        values: heldNonConstructors(kernel),
+        sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
+      }),
+  },
+  "js.object.is-partial": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: ({ kernel }, tx) =>
+      buildSourceObjectIsOneOfDefinition({
+        values: partialObjects(tx, kernel),
         sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
       }),
   },
@@ -453,11 +458,10 @@ const ROWS = {
   "js.object.create-array": { binds: ({ arrays }) => arrays!.create },
   "js.object.has-own": {
     signature: { params: [EXTERNREF, EXTERNREF, I32], results: [I32] },
-    body: ({ layouts, kernel }, tx) =>
+    body: ({ layouts, kernel }) =>
       buildSourceObjectHasOwnDefinition({
         entryTypeIdx: layouts.propEntry.typeIndex,
         findOwn: kernel.functions.findOwn.handle,
-        miss: ownMiss(tx, kernel),
       }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;

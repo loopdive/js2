@@ -98,8 +98,8 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
  * Object.prototype; the body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`)
  * replaces the new object.
  *
- * IsConstructor is the function-kind test, then the realm's (`js.object.is-constructor`): every source function value
- * on this lane is a constructor (a declaration or a function expression; arrows, methods, accessors, generators and
+ * IsConstructor is the function-kind test, then the realm's (`js.object.is-non-constructor`): every source function
+ * value on this lane is a constructor (a declaration or a function expression; arrows, methods, accessors, generators and
  * async functions carry no all-dynamic signature, so F2's dispatchability rule refuses any program that could call one
  * through a value), and (#7557) a built-in method the realm holds is not, so it never reaches the dispatcher, whose
  * built-in arm would run its [[Call]]. A built-in constructor does reach that arm, and the built-in caller has no rung
@@ -148,10 +148,10 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
     ];
   };
   const construct = (r: IrValueId): IrInstr[] => {
-    const isConstructor = b.fresh();
+    const method = b.fresh();
     return [
-      realmCall("js.object.is-constructor", [callee], isConstructor),
-      b.branch(isConstructor, ordinary, notConstructor, r, CARRIER),
+      realmCall("js.object.is-non-constructor", [callee], method),
+      b.branch(method, notConstructor, ordinary, r, CARRIER),
     ];
   };
   return [

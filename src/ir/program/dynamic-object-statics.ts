@@ -24,6 +24,24 @@ export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undef
 type Call = Extract<IrInstr, { kind: "call" }>;
 type Arm = (result: IrValueId) => IrInstr[];
 
+/**
+ * (#7557) An own-property miss on the object `object`, answered by `miss`: the run-time abort where the realm holds
+ * `object` without every property the catalog gives it (`js.object.is-partial`), as the miss may be one of those.
+ */
+export function ownMiss(
+  b: ConvertingBuilders,
+  instr: IrInstr,
+  object: IrValueId,
+  miss: Arm,
+  result: IrValueId,
+): IrInstr[] {
+  const partial = b.fresh();
+  return [
+    realmCall("js.object.is-partial", [object], partial),
+    b.branch(partial, (r) => b.abort(instr, r), miss, result, CARRIER),
+  ];
+}
+
 /** The kinds the kernel's own-property roles serve: an ordinary object and a function object. */
 const served = (kind: CarrierKind): boolean =>
   MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function";
@@ -85,7 +103,16 @@ export function dynamicObjectStatic(b: ConvertingBuilders, instr: Call, name: Na
     case "getOwnPropertyDescriptor":
       return byKind(
         first,
-        (r) => withKey(second, (key) => [realmCall("js.object.own-descriptor", [first, key], r)]),
+        (r) =>
+          withKey(second, (key) => {
+            const [descriptor, absent] = [b.fresh(), b.fresh()];
+            const answer = (s: IrValueId) => [carried(descriptor, s)];
+            return [
+              realmCall("js.object.own-descriptor", [first, key], descriptor),
+              ...b.anyKind(instr, ["undefined"], descriptor, absent),
+              b.branch(absent, (s) => ownMiss(b, instr, first, answer, s), answer, r, CARRIER),
+            ];
+          }),
         (kind, r) =>
           nullish(kind)
             ? throwing("Cannot convert undefined or null to object", r)
