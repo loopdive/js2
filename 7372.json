@@ -1,10 +1,11 @@
 {
   "id": "7372",
   "assignee": "ttraenkler/c-lead",
-  "requested_by": "ttraenkler/c-lead",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "claude/7354-script-scope",
   "claimed_at": "2026-11-19T14:55:26Z",
-  "updated_at": "2026-11-19T14:55:26Z",
-  "write_id": "12299-xcl3wzgk"
+  "updated_at": "2026-11-27T21:44:50Z",
+  "write_id": "13497-5o2dftb4",
+  "released_at": "2026-11-27T21:44:50Z"
 }
