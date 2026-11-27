@@ -6,7 +6,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { i32LiteralValue, peelExpr } from "./analysis/i32-slots.js";
-import { isIrBitwiseOperatorToken } from "./i32-pure-bitwise.js";
+import { isBitwiseOperator } from "./analysis/operand-admissibility.js";
 
 function isPureDenseFillRhs(expr: ts.Expression, arrayName: string): boolean {
   if (ts.isParenthesizedExpression(expr)) return isPureDenseFillRhs(expr.expression, arrayName);
@@ -144,7 +144,7 @@ export function denseFillPlanForLoop(loop: ts.ForStatement): DenseFillPlan | nul
  */
 export function isNestedBitwiseResult(e: ts.Expression): boolean {
   const inner = peelExpr(e);
-  return ts.isBinaryExpression(inner) && isIrBitwiseOperatorToken(inner.operatorToken.kind);
+  return ts.isBinaryExpression(inner) && isBitwiseOperator(inner.operatorToken.kind);
 }
 
 export interface DenseArrayReductionPlan {

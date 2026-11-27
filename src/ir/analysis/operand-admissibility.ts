@@ -296,7 +296,7 @@ export function isNumericReaderOperator(op: ts.SyntaxKind): boolean {
   return isRelationalOperator(op) || isNumericArithmeticOperator(op) || isBitwiseOperator(op);
 }
 
-function isBitwiseOperator(op: ts.SyntaxKind): boolean {
+export function isBitwiseOperator(op: ts.SyntaxKind): boolean {
   return (
     op === ts.SyntaxKind.AmpersandToken ||
     op === ts.SyntaxKind.BarToken ||
