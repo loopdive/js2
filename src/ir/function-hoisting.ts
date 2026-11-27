@@ -33,10 +33,9 @@ export function hoistedBodyNames(body: ts.Block, checker: ts.TypeChecker): Reado
       if (inDeclaration) readByDeclaration.add(symbol);
       if (inFunction) captured.add(symbol);
     }
-    if (isBodyVar(node, body)) {
-      const own = checker.getSymbolAtLocation(node.name)!;
-      declarations.set(own, [...(declarations.get(own) ?? []), node]);
-    }
+    // The checker gives a `var` in a `with` body no symbol: it keeps its own lowering.
+    const own = isBodyVar(node, body) ? checker.getSymbolAtLocation(node.name) : undefined;
+    if (own !== undefined) declarations.set(own, [...(declarations.get(own) ?? []), node as ts.VariableDeclaration]);
     if (ts.isFunctionDeclaration(node) && enclosingFunctionBody(node) === body && annexBApplies(node))
       names.set(node.name!.text, "cell");
     ts.forEachChild(node, (child) =>
