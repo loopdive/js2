@@ -257,7 +257,7 @@ test("workflow keeps fatal pins, exact per-file flags/heaps, isolated checkout, 
   assert.match(gate, /needs: \[changes, issue-tests-pinned, issue-tests-select, issue-tests-changed\]/);
   assert.match(
     gate,
-    /if: always\(\) && \(needs\.changes\.result != 'success' \|\| needs\.changes\.outputs\.code != 'false'\)/,
+    /if: always\(\) && needs\.changes\.result != 'skipped' && \(needs\.changes\.result != 'success' \|\| needs\.changes\.outputs\.code != 'false'\)/,
   );
 });
 

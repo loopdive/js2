@@ -161,7 +161,15 @@ describe("#6799 .husky/pre-push wiring", () => {
     expect(hook).not.toContain("run_format_watchdog");
     // The history comment may name the old message; no code path may print it.
     expect(hook).not.toMatch(/echo[^\n]*TIMED OUT/);
-    expect(hook).not.toMatch(/-eq 124/);
+    const formatSection = hook.slice(hook.indexOf("(3b) prettier"), hook.indexOf("(3c)"));
+    expect(formatSection).not.toMatch(/timeout|124/);
+  });
+
+  it("(#7557) the changed-root-test bound fails the push, it never skips", () => {
+    const roots = hook.slice(hook.indexOf("(6c)"));
+    expect(roots).toContain("timeout 1200 pnpm run -s test:changed-root");
+    const onTimeout = roots.slice(roots.indexOf("-eq 124"), roots.indexOf("\nfi", roots.indexOf("-eq 124")));
+    expect(onTimeout).toContain("exit 1");
   });
 
   it("never commits and never advises bypassing hooks", () => {

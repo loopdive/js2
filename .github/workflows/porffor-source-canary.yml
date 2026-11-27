@@ -4,7 +4,9 @@ name: Optional Porffor source canary
 # not a branch-protection context. Ordinary CI remains submodule-free.
 on:
   workflow_dispatch:
-  pull_request:
+  # (#7557) Post-merge on push to main, not on PRs: the merge queue is the
+  # only pre-merge gate.
+  push:
     branches: [main]
     paths:
       - "src/ir/**"

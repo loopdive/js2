@@ -9,6 +9,10 @@
 #      change-scoped ratchets and issue integrity — the checks CI's `quality`
 #      lane would otherwise reject a full cycle later.
 #
+#   3. (#7557) what the pull request no longer runs: the size budgets, the
+#      issue-id gates against main and open PRs, and the root test files the
+#      push adds or modifies, each alone. The merge queue is the only CI gate.
+#
 # This hook never commits. It used to auto-commit a benchmark refresh when a
 # `v*` tag was pushed and a conformance-number sync, both with the hook-bypass
 # flag (#6799) — and a commit made inside pre-push is not even part of the push
@@ -324,3 +328,68 @@ if command -v node > /dev/null 2>&1 && [ -d plan/issues ]; then
   fi
   echo "Pre-push: issue integrity OK."
 fi
+
+# ---------- (6) what the PR no longer runs (#7557) -----------------------
+#
+# The merge queue is the only authoritative gate; on a pull request almost
+# nothing runs (docs/ci-policy.md §3). These are the PR-time checks that moved
+# here, so a broken push is still caught before it costs a queue run. Forks
+# without the hook get the same checks in the queue.
+
+# (6a) size gates. pre-commit runs them too, but a merge commit or a commit
+# made without the hook never passes through pre-commit.
+echo "Pre-push: LOC + function budgets ..."
+if ! pnpm run -s check:loc-budget || ! pnpm run -s check:func-budget; then
+  echo ""
+  echo "PRE-PUSH BLOCKED: size budget exceeded. Split the growth, or grant it in"
+  echo "this change's own plan/issues/*.md frontmatter (loc-budget-allow: / func-budget-allow:)."
+  exit 1
+fi
+
+# (6b) issue ids against main and against other open PRs. These were
+# PR-only steps of `quality` (#2531, #2530, #3598). The open-PR scan needs the
+# network and fails open; the queue's duplicate-id gate stays the backstop.
+if [ -d plan/issues ]; then
+  main_ref=""
+  for ref in upstream/main origin/main; do
+    if git rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1; then
+      main_ref="$ref"
+      break
+    fi
+  done
+  if [ -n "$main_ref" ]; then
+    echo "Pre-push: issue ids vs $main_ref and open PRs ..."
+    if ! GATE_BASE="$main_ref" pnpm run -s check:issue-ids:against-main ||
+      ! node scripts/check-merged-issue-integrity.mjs "$main_ref" HEAD ||
+      ! GATE_BASE="$main_ref" pnpm run -s check:issue-ids:against-open-prs; then
+      echo ""
+      echo "PRE-PUSH BLOCKED: issue-id collision. Allocate ids with"
+      echo "node scripts/claim-issue.mjs --allocate, never by hand."
+      exit 1
+    fi
+  fi
+fi
+
+# (6c) the root test files this push adds or modifies, each alone, via the
+# same selector the merge queue's `quality` job uses (stops at the first
+# failure). Bounded at 20 minutes: running out of time FAILS the push, it is
+# never a skip. Run `pnpm run test:changed-root` by hand to see the slow file.
+echo "Pre-push: changed root test files ..."
+if command -v timeout > /dev/null 2>&1; then
+  timeout 1200 pnpm run -s test:changed-root
+else
+  pnpm run -s test:changed-root
+fi
+roots_rc=$?
+if [ "$roots_rc" -eq 124 ]; then
+  echo ""
+  echo "PRE-PUSH BLOCKED: changed root tests did not finish within 20 minutes."
+  echo "That is a failure, not a skip: the merge queue runs the same files."
+  exit 1
+fi
+if [ "$roots_rc" -ne 0 ]; then
+  echo ""
+  echo "PRE-PUSH BLOCKED: a changed root test file failed (see above)."
+  exit 1
+fi
+echo "Pre-push: changed root test files OK."

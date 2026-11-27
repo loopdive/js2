@@ -27,13 +27,12 @@ name: Cross-backend parity (advisory)
 
 on:
   # Advisory compile-and-diff harness — only meaningful when compiler/test/build
-  # source changes. Docs/planning-only PRs (.claude/**, plan/**, docs/**, *.md)
-  # cannot change codegen, so skip the matrix there (#2239 follow-up: a docs-only
-  # PR was burning the full differential harness). NOT a required check, so a
-  # skipped run never blocks merge.
-  pull_request:
+  # source changes. (#7557) Post-merge detector on push to main only: the merge
+  # queue is the only pre-merge gate, and a non-required check could not block
+  # a merge from there either.
+  push:
     branches: [main]
-    paths: &code-paths
+    paths:
       - "src/**"
       - "tests/**"
       - "scripts/**"
@@ -42,9 +41,6 @@ on:
       - "tsconfig*.json"
       - "vitest.config.ts"
       - ".github/workflows/cross-backend-parity.yml"
-  push:
-    branches: [main]
-    paths: *code-paths
 
 permissions:
   contents: read

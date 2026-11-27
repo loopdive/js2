@@ -765,7 +765,9 @@ describe("QuickJS default-readiness CI wiring", () => {
   });
 
   it("provisions submodules and runs all QuickJS engine suites in the scheduled lane", () => {
-    expect(scheduled).toMatch(/pull_request:\n\s+paths:/);
+    // (#7557) post-merge on push to main, no longer on pull requests.
+    expect(scheduled).toMatch(/push:\n\s+branches: \[main\]\n\s+paths:/);
+    expect(scheduled).not.toMatch(/pull_request:/);
     for (const path of [
       "scripts/quickjs-eval-provider.mjs",
       "scripts/runtime-eval-provider.mjs",

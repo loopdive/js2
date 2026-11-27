@@ -1,7 +1,8 @@
 ---
 id: 7557
 title: "Merge queue is the only authoritative gate: almost nothing runs on pull_request, pre-push runs the changed root tests"
-status: in-progress
+status: done
+completed: 2026-11-27
 created: 2026-11-27
 updated: 2026-11-27
 assignee: ttraenkler/ci-slim
@@ -94,10 +95,11 @@ run on the merged tree).
 ### One mechanism
 
 `ci.yml`'s two root jobs, `changes` and `quality`, get the same job-level
-condition, written once as a YAML anchor and referenced by alias:
+condition (literal, not a YAML anchor, so the text-reading workflow tests
+see the expression itself):
 
 ```yaml
-if: &not-on-pr github.event_name != 'pull_request'
+if: github.event_name != 'pull_request'
 ```
 
 Every other job in `ci.yml` needs `changes`, so on a PR it is skipped by the
@@ -127,7 +129,7 @@ contexts designed no-ops; the stub covers path-excluded PRs).
 | quality step merged-main issue integrity (#2530) | moves to pre-push | redundant in merge_group by construction |
 | cross-backend-parity, native-messaging-smoke | PR trigger removed, push trigger kept | post-merge detector; 0 failures in 150 PR runs |
 | landing-four-lane-backend, porffor-direct-ab, porffor-source-canary, quickjs-wasi-artifact | `pull_request` → `push: main` (same paths) | post-merge detector instead of pre-merge. A non-required workflow in merge_group would not block either, so push is equivalent to adding it there |
-| issue-tests.yml | PR trigger removed | push + 6-hourly schedule already run it; seed-mode detector |
+| issue-tests.yml | **kept** (PR trigger on its own 5 machinery files only) | 6 runs in 41 days; its read-only PR path is the only safe pre-merge proof of a detector change — a `workflow_dispatch` run writes the baseline back |
 
 Format check is not added to the quick test: pre-commit's lint-staged and the
 pre-push changed-files prettier gate cover it, and `quality` checks the whole
@@ -174,7 +176,7 @@ One `git revert` of the implementation commit.
 
 ### Quality criterion
 
-One mechanism (`&not-on-pr` anchor on the two root jobs; everything else via
+One mechanism (the same `if:` on the two root jobs; everything else via
 the `needs` cascade); no copied job bodies; no step left that can never run
 (the PR-only `quality` steps are moved, not left dead).
 
@@ -186,3 +188,28 @@ the `needs` cascade); no copied job bodies; no step left that can never run
   the quick test runs; in `merge_group` no required context is skipped.
 - Every root test that reads `.github/workflows/*.yml` run alone.
 - The pre-push hook run for real on this branch.
+
+## Results (2026-11-27)
+
+- Runner-minutes per PR push: ~540 before (ci.yml 535, the rest ~3) → ~2
+  after (cla-check 0.3, cheap gate 1.2 or the stub 0.4, `ci.yml` all
+  `skipped`). Jobs that really execute per PR: ~30 before (ci.yml alone runs
+  8 + 8 shards plus up to 15 changed-file jobs) → 2–3 after.
+- Pre-push, measured on the 4-core box at load ~5.9: size budgets 2 s,
+  issue-id gates 18 s (the open-PR scan degrades and passes when GraphQL is
+  unreachable, as designed), changed root tests ~49 s per file (5 files from
+  PR #7507 run alone: 244 s).
+- Tests: the extended `tests/issue-7551-job-skip-propagation.test.ts` (24
+  pass) and every test that reads a workflow or `.husky/pre-push` (54 files),
+  each run alone. Updated for this change: `issue-4242-eval-engine-parity`
+  (QuickJS lane now on push), `scripts/select-changed-issue-tests.test.mjs`
+  (`issue-tests` aggregator condition), `tests/hooks/pre-push-format-gate`
+  (the no-watchdog rule now scopes to the format gate; the root-test bound
+  must fail, never skip). Five failures are pre-existing and touch no file
+  this change edits: `issue-3344`, `issue-3426`,
+  `issue-3451-linked-harness-lane`, `dogfood/npm-compat-upstream-sources`,
+  and `issue-4130-npm-compat-promotion-fast-path` (reproduced with main's
+  `ci.yml` restored).
+- Only the PR's own run can prove that the PR-level contexts really publish
+  as `skipped`/green within minutes and that the next `merge_group` run is
+  complete (`quality` including the changed-root step).

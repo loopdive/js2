@@ -3,9 +3,9 @@
 # (#4238/#4245/#4307).
 #
 # NON-REQUIRED: it is not in the branch-protection ruleset (docs/ci-policy.md §7
-# stays at six required checks). Pull requests that touch the QuickJS artifact,
+# stays at six required checks). Pushes to main that touch the QuickJS artifact,
 # provider, membrane, parity gate, or this workflow get semantic coverage; the
-# path filter keeps unrelated PRs free of this long build. Manual dispatch plus
+# path filter keeps unrelated merges free of this long build. Manual dispatch plus
 # a weekly cron remain the artifact and semantic anti-rot floor.
 #
 # Modelled on the `runtime-eval-provider` job in test262-sharded.yml (#4013):
@@ -26,7 +26,10 @@
 name: quickjs-wasi-artifact
 
 on:
-  pull_request:
+  # (#7557) Post-merge on push to main, not on PRs: the merge queue is the only
+  # pre-merge gate.
+  push:
+    branches: [main]
     paths:
       - ".github/workflows/quickjs-wasi-artifact.yml"
       - ".github/workflows/test262-sharded.yml"

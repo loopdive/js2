@@ -14,13 +14,19 @@
 // false / unknown for inputs and job outputs), a job without a status function
 // is skipped when a need may not have run, and any job that can run while one
 // of its transitive ancestors may be skipped must carry a status function.
+//
+// #7557 reuses the same model for the six REQUIRED contexts across every
+// workflow that produces one: on a pull request each must still publish a
+// check run (only cla-check and the cheap gate really run), and in the merge
+// queue none of them may be skipped.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const WORKFLOW = readFileSync(join(process.cwd(), ".github/workflows/test262-sharded.yml"), "utf8");
+const read = (file: string) => readFileSync(join(process.cwd(), ".github/workflows", file), "utf8");
+const WORKFLOW = read("test262-sharded.yml");
 const EVENTS = ["schedule", "workflow_dispatch", "push", "merge_group", "pull_request"] as const;
-type Event = (typeof EVENTS)[number];
+type Event = (typeof EVENTS)[number] | "pull_request_target";
 
 /**
  * Jobs whose ancestors are skipped only together with the job itself, through
@@ -33,6 +39,8 @@ const CORRELATED: Record<string, string> = {
 
 interface Job {
   name: string;
+  /** The check-run name: the job's `name:`, else its id. */
+  display: string;
   needs: string[];
   condition: string;
 }
@@ -47,9 +55,11 @@ function parseJobs(text: string): Job[] {
     let end = i + 1;
     while (end < lines.length && !/^ {2}[a-z0-9-]+:$/.test(lines[end]!)) end++;
     const block = lines.slice(i + 1, end);
-    const job: Job = { name: header[1]!, needs: [], condition: "" };
+    const job: Job = { name: header[1]!, display: header[1]!, needs: [], condition: "" };
     for (let k = 0; k < block.length; k++) {
       const line = block[k]!;
+      const display = /^ {4}name:\s*(.*)$/.exec(line);
+      if (display) job.display = display[1]!.trim().replace(/^"(.*)"$/, "$1");
       const needs = /^ {4}needs:\s*(.*)$/.exec(line);
       if (needs) {
         let value = needs[1]!.trim();
@@ -157,6 +167,9 @@ function runStates(jobs: Job[], event: Event): Map<string, RunState> {
         const s = state(result[1]!);
         return s === "run" ? "success" : s === "skipped" ? "skipped" : U;
       }
+      // A skipped job's outputs are empty strings.
+      const output = /^needs\.([a-z0-9-]+)\.outputs\./.exec(id);
+      if (output && state(output[1]!) === "skipped") return "";
       return U; // inputs, vars, job outputs, event payload
     };
     let s: RunState;
@@ -239,5 +252,105 @@ describe("#7551 skip propagation in test262-sharded.yml", () => {
       "test262-ir-measurement-shard",
       "merge-ir-measurement",
     ]);
+  });
+});
+/** Top-level trigger keys of a workflow, each with whether it carries a `paths:` filter. */
+function triggers(text: string): Map<string, { paths: boolean }> {
+  const lines = text.slice(text.indexOf("\non:\n") + 5, text.indexOf("\njobs:\n")).split("\n");
+  const out = new Map<string, { paths: boolean }>();
+  let current: string | undefined;
+  for (const line of lines) {
+    const key = /^ {2}([a-z_]+):/.exec(line);
+    if (key) out.set((current = key[1]!), { paths: false });
+    else if (current && /^ {4}paths:/.test(line)) out.get(current)!.paths = true;
+    else if (/^\S/.test(line)) break; // the next top-level key ends `on:`
+  }
+  return out;
+}
+
+// The ruleset's six contexts (docs/ci-policy.md §7) and every workflow that may publish each.
+const PRODUCERS: Record<string, string[]> = {
+  "cheap gate (main-ancestor + lint)": ["test262-sharded.yml", "test262-pr-stub.yml"],
+  "merge shard reports": ["test262-sharded.yml", "test262-pr-stub.yml"],
+  "check for test262 regressions": ["test262-sharded.yml", "test262-pr-stub.yml"],
+  quality: ["ci.yml"],
+  "equivalence-gate": ["ci.yml"],
+  "cla-check": ["cla-check.yml"],
+};
+
+interface Production {
+  file: string;
+  state: RunState;
+  pathFiltered: boolean;
+}
+
+/** How each producer of `context` behaves on `event` (absent: the workflow does not trigger). */
+function productions(
+  event: "pull_request" | "merge_group",
+  context: string,
+  mutate = (_file: string, jobs: Job[]) => jobs,
+): Production[] {
+  const out: Production[] = [];
+  for (const file of PRODUCERS[context]!) {
+    const text = read(file);
+    const on = triggers(text);
+    const trigger = event === "pull_request" && !on.has(event) ? "pull_request_target" : event;
+    if (!on.has(trigger)) continue;
+    const jobs = mutate(file, parseJobs(text));
+    const job = jobs.find((j) => j.display === context);
+    if (!job) continue;
+    out.push({
+      file,
+      state: runStates(jobs, trigger).get(job.name)!,
+      pathFiltered: on.get(trigger)!.paths,
+    });
+  }
+  return out;
+}
+
+describe("#7557 required contexts: slim pull request, full merge queue", () => {
+  it("parses the six contexts and their producers (guards the model from passing vacuously)", () => {
+    for (const context of Object.keys(PRODUCERS))
+      expect(productions("merge_group", context).length, context).toBeGreaterThan(0);
+    expect(triggers(read("test262-sharded.yml")).get("pull_request")).toEqual({
+      paths: true,
+    });
+    expect(triggers(read("test262-pr-stub.yml")).get("pull_request")).toEqual({
+      paths: false,
+    });
+  });
+
+  for (const context of Object.keys(PRODUCERS)) {
+    it(`pull_request: "${context}" always publishes a check run`, () => {
+      // A path-filtered workflow publishes nothing when its paths miss, so at
+      // least one producer must trigger on every pull request.
+      expect(productions("pull_request", context).some((p) => !p.pathFiltered)).toBe(true);
+    });
+    it(`merge_group: "${context}" is never skipped`, () => {
+      const prods = productions("merge_group", context);
+      expect(prods.length).toBeGreaterThan(0);
+      for (const p of prods) expect(p.state, p.file).not.toBe("skipped");
+    });
+  }
+
+  it("pull_request: quality and equivalence-gate are skipped; the quick test and cla-check run", () => {
+    expect(productions("pull_request", "quality").map((p) => p.state)).toEqual(["skipped"]);
+    expect(productions("pull_request", "equivalence-gate").map((p) => p.state)).toEqual(["skipped"]);
+    const cheap = productions("pull_request", "cheap gate (main-ancestor + lint)");
+    expect(cheap.find((p) => p.file === "test262-sharded.yml")!.state).toBe("run");
+    expect(productions("pull_request", "cla-check").map((p) => p.state)).toEqual(["run"]);
+  });
+
+  it("pull_request: nothing else in ci.yml runs", () => {
+    const states = runStates(parseJobs(read("ci.yml")), "pull_request");
+    expect([...states].filter(([, s]) => s !== "skipped")).toEqual([]);
+  });
+
+  it("the model has teeth: a PR-only quality condition is flagged in the merge queue", () => {
+    const prOnly = (file: string, jobs: Job[]) =>
+      file === "ci.yml"
+        ? jobs.map((j) => (j.name === "quality" ? { ...j, condition: "github.event_name == 'pull_request'" } : j))
+        : jobs;
+    expect(productions("merge_group", "quality", prOnly).map((p) => p.state)).toEqual(["skipped"]);
   });
 });
