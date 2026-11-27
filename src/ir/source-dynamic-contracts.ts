@@ -43,7 +43,7 @@ import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import { realmBuiltinOperand, type RealmGlobals } from "./realm-static-call.js";
-import { builtinMembersFold, pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
+import { foldsBuiltinMember, pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -324,8 +324,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly createsFunctionObjects?: () => boolean;
     /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
     readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
-    /** (#7350) `builtinMembersFold`: the escape rule, a fold of the identifier's writable members reads the built-in. */
-    readonly foldsBuiltinMembers?: (identifier: ts.Identifier) => boolean;
+    /** (#7350) `foldsBuiltinMember`: the member rule, a fold of `X.k` (the identifier is `X`) reads the built-in. */
+    readonly foldsBuiltinMember?: (identifier: ts.Identifier) => boolean;
     /**
      * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
@@ -429,7 +429,7 @@ export function programDynamicContracts(
           dynamicCompoundMemberWrites: () => true,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
-          foldsBuiltinMembers: builtinMembersFold(checker, sourceFiles),
+          foldsBuiltinMember: foldsBuiltinMember(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
           dynamicForInPlan: () => FOR_IN_PLAN,
         }
@@ -640,7 +640,7 @@ function legalizeSourceDynamicValues(
       owners.aborted,
       {
         isPristineGlobal: pristineBuiltinGlobal(checker, sourceFiles),
-        foldsMembers: builtinMembersFold(checker, sourceFiles),
+        foldsBuiltinMember: foldsBuiltinMember(checker, sourceFiles),
       },
       converts,
     );

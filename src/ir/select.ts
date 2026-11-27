@@ -136,7 +136,6 @@ import * as objectStatics from "./object-statics.js";
 import {
   isAffineThreeDeepElementAccess,
   isLegacyOnlyVecKey,
-  identifierIsValueReference,
   isFunctionObjectReceiver,
   functionObjectReadLocals,
   isFunctionObjectStoredValue,
@@ -191,7 +190,7 @@ import {
   isIrModuleReferenceValueKind,
   isStatementDynamicModuleCall,
 } from "./module-bindings.js";
-import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
+import { isNonReferenceName, isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -1990,7 +1989,7 @@ function collectDirectOnlyFunctionDeclarations(
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
       const declaration = declarations.get(node.text);
-      if (declaration && node !== declaration.name && identifierIsValueReference(node)) {
+      if (declaration && node !== declaration.name && !isNonReferenceName(node)) {
         const directCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
         // (#7106 item 1) `compareArray.format = …` / `compareArray.format(x)`:
         // the function is the HOST of a member access, not a value handed to
@@ -11194,7 +11193,7 @@ function directObjectMethodReceiverUsesAreStable(receiver: DirectObjectMethodRec
   const visit = (node: ts.Node): void => {
     if (!stable) return;
     if (ts.isIdentifier(node) && node !== bindingName && node.text === bindingName.text) {
-      if (!identifierIsValueReference(node)) return;
+      if (isNonReferenceName(node)) return;
       const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
       if (!declaration) {
         stable = false;
@@ -11261,7 +11260,7 @@ function directDestructuredObjectMethodReceiverUsesAreStable(
       node !== rootName &&
       node !== aliasName &&
       (node.text === rootName.text || node.text === aliasName.text) &&
-      identifierIsValueReference(node)
+      !isNonReferenceName(node)
     ) {
       if (ts.isBindingElement(node.parent) && node.parent.propertyName === node) return;
       const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
@@ -11325,7 +11324,7 @@ function methodValueAliasChainHasOnlyBoundedDirectCalls(seed: ts.VariableDeclara
     changed = false;
     const collectAliases = (node: ts.Node): void => {
       if (proofFailed) return;
-      if (ts.isIdentifier(node) && declarationNames.has(node.text) && identifierIsValueReference(node)) {
+      if (ts.isIdentifier(node) && declarationNames.has(node.text) && !isNonReferenceName(node)) {
         const source = currentModuleBindingResolver?.localValueDeclaration(node);
         if (!source) {
           proofFailed = true;
@@ -11358,7 +11357,7 @@ function methodValueAliasChainHasOnlyBoundedDirectCalls(seed: ts.VariableDeclara
   let accepted = true;
   const validateUses = (node: ts.Node): void => {
     if (!accepted) return;
-    if (ts.isIdentifier(node) && declarationNames.has(node.text) && identifierIsValueReference(node)) {
+    if (ts.isIdentifier(node) && declarationNames.has(node.text) && !isNonReferenceName(node)) {
       const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
       if (!declaration) {
         accepted = false;
@@ -11429,7 +11428,7 @@ function capturingClosureHasOnlyOuterDirectCalls(capturedOwner: ts.Node, outerOw
       ts.isIdentifier(node) &&
       node !== declarationName &&
       node.text === declarationName.text &&
-      identifierIsValueReference(node)
+      !isNonReferenceName(node)
     ) {
       if (ts.isBindingElement(node.parent) && node.parent.propertyName === node) return;
       const resolved = currentModuleBindingResolver?.localValueDeclaration(node);
@@ -11565,7 +11564,7 @@ function exactImmediateCallableConsumerPass(
       ts.isIdentifier(node) &&
       node !== consumerDeclaration.name &&
       node.text === consumerName &&
-      identifierIsValueReference(node)
+      !isNonReferenceName(node)
     ) {
       const resolved = currentModuleBindingResolver?.localValueDeclaration(node);
       if (!resolved) {

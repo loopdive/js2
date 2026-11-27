@@ -1553,3 +1553,54 @@ All three are measured on the branch.
   fails 14 rows on base and head alike (ordinary pipeline, unrelated).
 - Gates exit 0: loc, func (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet, dead exports,
   typecheck, import cycles, compiler boundaries (`--base HEAD^1` and `--base origin/main`).
+
+**After review RV-PR7549** (2026-11-27, on `795a5945fe`; #7502 not yet merged, so no merge of main here):
+
+- *1, BLOCK, the escape rule was unsound: fixed.* "No reference of `X` escapes" did not stop a write of `X.k` by a
+  route that never spells `X`: `X.prototype.constructor`, an instance's `constructor`, `this` in a method or getter `X`
+  inherits from `Function.prototype` / `Object.prototype`, an `export { X }`. The rule is now the *member rule*: `X.k`
+  folds when `X` is pristine, no reference of `X` escapes, **and no write in the program may store or define the key
+  `k` on a realm object** (new module `src/ir/realm-member-writes.ts`). A write is a store target `o.k` / `o["k"]`
+  (assignment, compound, `++` / `--`, `delete`, destructuring, for-in / for-of) or a key writer called as a member
+  (`defineProperty`, `defineProperties`, `assign`, `__defineGetter__`, `__defineSetter__`; keys from its literal
+  operands). A computed key, any other mention of a key writer, `with` and a reference to `Reflect` write every key.
+  A write reaches no realm object only when its receiver is a fresh value (a literal, a function or class expression)
+  or a name every binding of which holds one, that nothing assigns and that no reaching write names as a key (a
+  top-level binding is a global-object property); the largest such set is found by dropping names until none is
+  written. The key is what makes it cheap: the harness writes `this.message`, `assert.throws`, … but never a folded
+  key. The routes a)–d) and their twins are pinned (`facts` rows: 26 stop the fold, 7 keep it); the doc of
+  `foldsBuiltinMember` states the guarantee. The name rule is kept beside it: dropping it would widen folds and change
+  bytes, a separate change.
+- *2, BLOCK, duplicated predicate: folded.* `isNonReferenceName` now lives in `src/shared/binding-writes.ts` with
+  closure-signature-flow's explicit parent-kind list (one guard added: a node without a parent is a reference). It
+  replaces closure-signature-flow's copy, builtin-global-binding's (which matched an export specifier and a binding
+  element's key by `name` / `propertyName`, finding 1d), function-local-var's `isIdentifierReference`,
+  select-expression-structure's `identifierIsValueReference` (7 uses in `select.ts`) and source-plain-objects'
+  `isMemberName`. The twins' differences were not deliberate: each list was a subset of the others (getter, setter,
+  property-declaration, qualified-name and enum-member names; labels and declaration names in source-plain-objects,
+  whose `familyRead` already excluded them through `isPristineGlobal`). Bytes unchanged (below).
+- *3, nit, four names: fixed.* One name, `foldsBuiltinMember`, for the export, the facts field, the resolver hook,
+  the contracts field, the host field and the realm-static-call parameters. It is singular now that the fact is per
+  member.
+- *4, nit, `binds` rebuilt per call: fixed.* `isLib` and `binds` are built once per predicate.
+- *Test changes outside this issue.* Three `#7354 O2` ToPropertyDescriptor rows used a `logged(d, k, v)` helper that
+  defines a computed key on a parameter; that may write any key on any object, so no `Object` static folds beside it.
+  The helper is now an object literal of logging getters (same read order checked). `#7354 O1` (13) used
+  `defineProperties(n, n)` with `n` from `Object.create` (not a fresh value to the scan); its map is now `5`, which
+  likewise defines nothing. `Object.create(…)` as a fresh value was left out: it needs the member rule's own answer for
+  `Object.create` (a fixed point over two facts) for one test row.
+
+**Measured after the review** (base `795a5945fe`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804 identical (744 bytes, 59 refused, 1 threw); the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline: the 110 files of slice 1 plus 70 with getters, setters, labels or a declaration named `Symbol`
+  (the folded predicate's differences), `assert.js` + `sta.js`, default and standalone: 360 / 360 identical.
+- Census (`--harness real`): carriers 229 → 229, o411 83 → 83; 0 gained, 0 lost, 0 new crashes, no row changes.
+  `S8.5_A9.js` keeps passing: `Number.NaN` is a constant and folds on the pristine answer.
+- Tests: slice 1's test (98), B3a's, B3b-0's, the 7 B3a pin files and the folded predicate's callers'
+  (closure signatures, function-local var, G1, O1, O2, O2b, #7564 Math, #7118): 22 files, 781 tests pass.
+- Gates exit 0: loc, func, coercion sites, oracle ratchet, dead exports, typecheck, import cycles, compiler boundaries
+  (`--base HEAD^1` and `--base origin/main`; `realm-member-writes.ts` classified beside `builtin-global-binding.ts`).
+  With `LOC_GATE_BASE=origin/main` (`ad10f474ca`) func passes and loc fails only on `src/ir/program-physical-plan.ts`
+  (+1), which this branch does not touch: main has moved past the base.

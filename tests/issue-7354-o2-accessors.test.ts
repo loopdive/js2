@@ -26,8 +26,14 @@ const T =
 const grow = (target: string, value: string) =>
   Array.from({ length: 50 }, (_, index) => `${target}.k${index} = ${value};`).join(" ");
 /** A descriptor object `d` whose fields are getters that log their own name. */
-const LOGGED =
-  "var log = ''; function logged(d, k, v){ Object.defineProperty(d, k, {enumerable: true, get: function(){ log = log + k + ','; return v; }}); }";
+/**
+ * An object literal whose fields are getters that log their key, in `fields`' order, after `var log = '';`. (#7350
+ * review RV-PR7549) A literal, not a `logged(d, k, v)` helper that defines a computed key on a parameter: such a
+ * helper may write any key on any object, a realm constructor's among them, so no `Object` static folds beside it.
+ */
+const logged = (fields: readonly (readonly [string, string])[]): string =>
+  `{${fields.map(([key, value]) => `get ${key}(){ log = log + '${key},'; return ${value}; }`).join(", ")}}`;
+const LOG = "var log = '';";
 
 describe("#7354 O2 — the getter's receiver", () => {
   it.each([
@@ -208,19 +214,37 @@ describe("#7354 O2 — ToPropertyDescriptor reads each field once, in order", ()
   it.each([
     [
       "enumerable, configurable, value, writable, then get, set",
-      `${LOGGED} var d = {}; logged(d, 'writable', true); logged(d, 'value', 1); logged(d, 'configurable', true); logged(d, 'enumerable', true);` +
-        " var e = {}; logged(e, 'set', undefined); logged(e, 'get', function(){ return 2; }); var o = {};" +
+      `${LOG} var d = ${logged([
+        ["writable", "true"],
+        ["value", "1"],
+        ["configurable", "true"],
+        ["enumerable", "true"],
+      ])};` +
+        ` var e = ${logged([
+          ["set", "undefined"],
+          ["get", "function(){ return 2; }"],
+        ])}; var o = {};` +
         " Object.defineProperty(o, 'p', d); Object.defineProperty(o, 'q', e); var out = log + String(o.p) + String(o.q);",
     ],
     [
       "a get that is no function throws when get is processed, before set is read",
-      `${T} ${LOGGED} var d = {}; logged(d, 'set', undefined); logged(d, 'get', 5); logged(d, 'configurable', true); var o = {};` +
+      `${T} ${LOG} var d = ${logged([
+        ["set", "undefined"],
+        ["get", "5"],
+        ["configurable", "true"],
+      ])}; var o = {};` +
         " var out = t(function(){ Object.defineProperty(o, 'p', d); }) + log + String(o.hasOwnProperty('p'));",
     ],
     [
       "a set that is no function; get and value together",
-      `${T} ${LOGGED} var d = {}; logged(d, 'set', 'no'); logged(d, 'get', function(){}); var e = {}; logged(e, 'get', function(){});` +
-        " logged(e, 'value', 1); var o = {}; var out = t(function(){ Object.defineProperty(o, 'p', d); }) + t(function(){" +
+      `${T} ${LOG} var d = ${logged([
+        ["set", "'no'"],
+        ["get", "function(){}"],
+      ])};` +
+        ` var e = ${logged([
+          ["get", "function(){}"],
+          ["value", "1"],
+        ])}; var o = {}; var out = t(function(){ Object.defineProperty(o, 'p', d); }) + t(function(){` +
         " Object.defineProperty(o, 'q', e); }) + log + String(o.hasOwnProperty('p'));",
     ],
     [

@@ -8,12 +8,18 @@
  * `Object = …`, a compound assignment, `++` / `--`, a destructuring target, or a write through a global-object alias
  * (`globalThis.Object = …`).
  * The one answer for "this is the global `Object`" of the native statics' call form and of the flow rule beside it.
- * (#7350) Its second answer is the escape rule ({@link builtinMembersFold}): whether a fold of a writable member of
+ * (#7350) Its second answer is the member rule ({@link foldsBuiltinMember}): whether a fold of a writable member of
  * the name still reads the built-in's.
  */
 import { ts } from "../ts-api.js";
 import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
-import { occurrenceIsWriteTarget, outermostParenthesized, skipOuterExpressions } from "../shared/binding-writes.js";
+import {
+  isNonReferenceName,
+  occurrenceIsWriteTarget,
+  outermostParenthesized,
+  skipOuterExpressions,
+} from "../shared/binding-writes.js";
+import { isFreshValue, memberWrites, realmWrittenKeys, type MemberWrite } from "./realm-member-writes.js";
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
@@ -44,30 +50,16 @@ function targetNames(written: ts.Expression, into: Set<string>): void {
 }
 
 /** The names a binding pattern or name declares. */
-function boundNames(name: ts.BindingName, into: Set<string>): void {
-  if (ts.isIdentifier(name)) into.add(name.text);
-  else for (const element of name.elements) if (!ts.isOmittedExpression(element)) boundNames(element.name, into);
+function boundNames(name: ts.BindingName, bind: (name: string) => void): void {
+  if (ts.isIdentifier(name)) bind(name.text);
+  else for (const element of name.elements) if (!ts.isOmittedExpression(element)) boundNames(element.name, bind);
 }
-
-/**
- * `node` names a member, a declaration or a label (`o.X`, `{ X: 1 }`, `var { X: y } = o`, `X:`), not a value: every
- * `name` but a shorthand property's (`{ X }` reads `X`).
- */
-function isNonReferenceName(node: ts.Identifier): boolean {
-  if (ts.isShorthandPropertyAssignment(node.parent)) return false;
-  const parent = node.parent as { readonly name?: ts.Node; readonly propertyName?: ts.Node; readonly label?: ts.Node };
-  return parent.name === node || parent.propertyName === node || parent.label === node;
-}
-
-/** Members whose call defines a property on its receiver (Annex B.2.2.2-3). */
-const DEFINING_MEMBERS = new Set(["__defineGetter__", "__defineSetter__"]);
 
 /**
  * (#7350) `reference`, a reference to a name, keeps the value inside the name: it is a callee (`X(v)`, `new X(v)`), the
- * object of a member read that is no store target and defines nothing (`X.k`, `X.k(…)`; not `X.k = …`, `X.k++`,
- * `delete X.k`, `[X.k] = …`, `for (X.k in o)`, `X.__defineGetter__(…)`), a `typeof` operand or the right side of
- * `instanceof`. Anything else (an argument, an initializer, an element access, a property value) lets the value
- * escape, and code holding it can change the name's members unseen.
+ * object of a member read that is no store target (`X.k`, `X.k(…)`; not `X.k = …`, `X.k++`, `delete X.k`,
+ * `[X.k] = …`, `for (X.k in o)`), a `typeof` operand or the right side of `instanceof`. Anything else (an argument, an
+ * initializer, an element access, a property value, an export) lets the value escape.
  */
 function keepsValue(reference: ts.Identifier): boolean {
   const use = outermostParenthesized(reference);
@@ -76,49 +68,65 @@ function keepsValue(reference: ts.Identifier): boolean {
     return parent.expression === use;
   if (ts.isBinaryExpression(parent))
     return parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword && parent.right === use;
-  return (
-    ts.isPropertyAccessExpression(parent) && !DEFINING_MEMBERS.has(parent.name.text) && !occurrenceIsWriteTarget(parent)
-  );
+  return ts.isPropertyAccessExpression(parent) && !occurrenceIsWriteTarget(parent);
 }
 
 /**
  * One walk over `sourceFiles`: `taken`, every name they declare (at any level) or assign; (#7350) `escaped`, every
- * name some reference of which lets its value escape ({@link keepsValue}).
+ * name some reference of which lets its value escape ({@link keepsValue}); `writtenKeys`, the keys their writes may
+ * store or define on a realm object (`realmWrittenKeys`), `undefined` for every key.
  */
 function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
   readonly taken: ReadonlySet<string>;
   readonly escaped: ReadonlySet<string>;
+  readonly writtenKeys: ReadonlySet<string> | undefined;
 } {
-  const names = new Set<string>();
+  const declared = new Set<string>();
+  const assigned = new Set<string>();
+  const mayHoldAny = new Set<string>();
   const escaped = new Set<string>();
+  const writes: MemberWrite[] = [];
+  const declare = (name: string, fresh: boolean): void => {
+    declared.add(name);
+    if (!fresh) mayHoldAny.add(name);
+  };
+  const declareAny = (name: string): void => declare(name, false);
   const visit = (node: ts.Node): void => {
     // A type names no value; `extends X` is an expression and is visited.
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
     if (ts.isIdentifier(node) && !isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
+    memberWrites(node, (write) => writes.push(write));
     if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isFunctionExpression(node)) && node.name)
-      names.add(node.name.text);
+      declare(node.name.text, true);
+    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name))
+      declare(node.name.text, node.initializer !== undefined && isFreshValue(node.initializer));
     else if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
-      boundNames(node.name, names);
-    else if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) targetNames(node.left, names);
+      boundNames(node.name, declareAny);
+    else if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) targetNames(node.left, assigned);
     else if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     )
-      targetNames(node.operand, names);
+      targetNames(node.operand, assigned);
     else if (
       (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       !ts.isVariableDeclarationList(node.initializer)
     )
-      targetNames(node.initializer, names);
+      targetNames(node.initializer, assigned);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { taken: names, escaped };
+  const freshNames = new Set([...declared].filter((name) => !mayHoldAny.has(name) && !assigned.has(name)));
+  return {
+    taken: new Set([...declared, ...assigned]),
+    escaped,
+    writtenKeys: realmWrittenKeys(writes, freshNames),
+  };
 }
 
 interface BuiltinGlobalFacts {
   readonly pristine: (identifier: ts.Identifier) => boolean;
-  readonly foldsWritableMembers: (identifier: ts.Identifier) => boolean;
+  readonly foldsBuiltinMember: (identifier: ts.Identifier) => boolean;
 }
 
 const programFacts = new WeakMap<readonly ts.SourceFile[], BuiltinGlobalFacts>();
@@ -126,17 +134,26 @@ const programFacts = new WeakMap<readonly ts.SourceFile[], BuiltinGlobalFacts>()
 /**
  * The facts for the program of `sourceFiles`, built once per source list. An expando statement on the name
  * (`X.k = v;`, `Object.defineProperty(X, "k", d);`) binds nothing, so the name stays pristine
- * (`makeIrAmbientBindingPredicate`'s `"every-but-expando"`); it lets `X` escape, so `X`'s writable members do not fold.
+ * (`makeIrAmbientBindingPredicate`'s `"every-but-expando"`); it lets `X` escape and writes `k`, so `X.k` does not fold.
  */
 function builtinGlobalFacts(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFile[]): BuiltinGlobalFacts {
   const known = programFacts.get(sourceFiles);
   if (known) return known;
   const libOnly = makeIrAmbientBindingPredicate(checker, "every-but-expando");
-  const { taken, escaped } = bindingFacts(sourceFiles);
+  const { taken, escaped, writtenKeys } = bindingFacts(sourceFiles);
   const pristine = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
   const facts: BuiltinGlobalFacts = {
     pristine,
-    foldsWritableMembers: (identifier) => !escaped.has(identifier.text) && pristine(identifier),
+    foldsBuiltinMember: (identifier) => {
+      const member = identifier.parent;
+      return (
+        ts.isPropertyAccessExpression(member) &&
+        member.expression === identifier &&
+        writtenKeys?.has(member.name.text) === false &&
+        !escaped.has(identifier.text) &&
+        pristine(identifier)
+      );
+    },
   };
   programFacts.set(sourceFiles, facts);
   return facts;
@@ -151,18 +168,21 @@ export function pristineBuiltinGlobal(
 }
 
 /**
- * (#7350) The escape rule, for the program of `sourceFiles`: the identifier is pristine and no reference of its name
- * lets the value escape ({@link keepsValue}), so no code can have changed its members and a fold of a writable member
- * (an `Object` static's call form, `Number.isNaN`, a `Math` method, …) reads the built-in. A non-writable,
- * non-configurable constant (`Number.MAX_VALUE`) folds wherever the name is pristine: a write of it fails.
- * Not yet seen: a reference through the global object (`globalThis.Number`) or in code eval or `Function` runs (#7503;
- * both refuse on the Prepared path today).
+ * (#7350) The member rule, for the program of `sourceFiles`: `identifier`, the object of a member access `X.k`, is
+ * pristine, no reference of `X` lets its value escape ({@link keepsValue}), and no write in the sources may store or
+ * define the key `k` on a realm object (`realm-member-writes.ts`): every store, definition or key writer that names
+ * `k`, or names no key it spells, has a receiver that is a fresh value or a name only ever bound to one. That rules
+ * out a write of `X.k` by any route, including the ones that never spell `X` (`X.prototype.constructor`,
+ * `(1).constructor`, `this` in a method `X` inherits, a re-export), so a fold of a writable member (an `Object`
+ * static's call form, `Number.isNaN`, a `Math` method, …) reads the built-in. A non-writable, non-configurable
+ * constant (`Number.MAX_VALUE`) folds wherever the name is pristine: a write of it fails.
+ * Not yet seen: code eval or the `Function` constructor runs (#7503; both refuse on the Prepared path today).
  */
-export function builtinMembersFold(
+export function foldsBuiltinMember(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
 ): (identifier: ts.Identifier) => boolean {
-  return builtinGlobalFacts(checker, sourceFiles).foldsWritableMembers;
+  return builtinGlobalFacts(checker, sourceFiles).foldsBuiltinMember;
 }
 
 /**

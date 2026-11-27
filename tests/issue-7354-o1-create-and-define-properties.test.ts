@@ -29,7 +29,9 @@ describe("#7354 O1 — Object.defineProperties and Object.create", () => {
     [
       // (`Object.create(null)` as a program's only use of `Object` is the bounded #3518 plan's, prepare-object-create.ts.)
       "(13) a program whose only objects come from the native statics",
-      "var n = Object.create(null); Object.defineProperties(n, n); n.v = 3; var out = String(n.v);",
+      // (#7350 review RV-PR7549) The map is a primitive, which has no own keys: a held map (`defineProperties(n, n)`)
+      // on a receiver the source does not show fresh may define any key, so no `Object` static would fold.
+      "var n = Object.create(null); Object.defineProperties(n, 5); n.v = 3; var out = String(n.v);",
     ],
     [
       "(12) only own enumerable properties of the map count; the map may be a function",

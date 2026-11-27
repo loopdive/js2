@@ -2,18 +2,19 @@
 //
 // #7350 slice 1 — an expando statement binds nothing, and the escape rule. In a JavaScript file the binder records
 // `X.k = v;` and `Object.defineProperty(X, "k", d);` as declarations of `X`, merged into the lib symbol; the pristine
-// predicate (`builtin-global-binding.ts`) no longer counts them, so `X` stays the realm's. Its writable members fold
-// only where `X` never escapes as a value: every reference is a callee, a member read, a `typeof` operand or the right
-// side of `instanceof`. A write of a member (any spelling, through any alias) lets `X` escape, so the member is read
-// through the realm or the program refuses by name — never the folded built-in. Number's constants fold whatever `X`
-// does: a write of one fails.
+// predicate (`builtin-global-binding.ts`) no longer counts them, so `X` stays the realm's. A writable member `X.k`
+// folds only where `X` never escapes as a value (every reference is a callee, a member read, a `typeof` operand or the
+// right side of `instanceof`) and no code writes the key `k` on any object (review RV-PR7549: a route that names no
+// `X`, such as `(1).constructor` or `this` in an inherited method, still writes through a spelled key). A write of the
+// member (any spelling, through any alias) stops the fold, so the member is read through the realm or the program
+// refuses by name — never the folded built-in. Number's constants fold whatever `X` does: a write of one fails.
 //
 // Each program computes `out` and is checked against node, with a wrong answer that must throw
 // (tests/helpers/prepared-node-agreement.ts); a refused one is pinned by its refusal, next to a twin without the write
 // whose fold still answers node's value.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
-import { builtinMembersFold, pristineBuiltinGlobal } from "../src/ir/builtin-global-binding.js";
+import { foldsBuiltinMember, pristineBuiltinGlobal } from "../src/ir/builtin-global-binding.js";
 import { ts } from "../src/frontend/typescript.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";
 import {
@@ -35,9 +36,9 @@ const positions = (body: string): readonly (readonly [string, string])[] => [
   ["inside a function", `function run() {\n${body}\nreturn out;\n}\nvar out = run();`],
 ];
 
-/** The two answers for the `name` read by the program's last statement, `name.isNaN(1);`, after `source`. */
-function facts(source: string, name: string): { pristine: boolean; fold: boolean } {
-  const ast = analyzeMultiSource({ "./entry.js": `${source}\n${name}.isNaN(1);` }, "./entry.js", undefined, {
+/** The two answers for the `name` read by the program's last statement, `name.member(1);`, after `source`. */
+function facts(source: string, name: string, member = "isNaN"): { pristine: boolean; fold: boolean } {
+  const ast = analyzeMultiSource({ "./entry.js": `${source}\n${name}.${member}(1);` }, "./entry.js", undefined, {
     allowJs: true,
   });
   const last = ast.entryFile.statements.at(-1) as ts.ExpressionStatement;
@@ -45,7 +46,7 @@ function facts(source: string, name: string): { pristine: boolean; fold: boolean
   const id = callee.expression as ts.Identifier;
   return {
     pristine: pristineBuiltinGlobal(ast.checker, ast.sourceFiles)(id),
-    fold: builtinMembersFold(ast.checker, ast.sourceFiles)(id),
+    fold: foldsBuiltinMember(ast.checker, ast.sourceFiles)(id),
   };
 }
 
@@ -96,6 +97,104 @@ describe("#7350 slice 1 — the pristine and escape facts", () => {
     ["an assignment", "Number = 1;"],
   ])("is no pristine global: %s", (_label, source) => {
     expect(facts(source, "Number")).toEqual({ pristine: false, fold: false });
+  });
+});
+
+// Review RV-PR7549: routes to a realm name that never spell it, each against a twin that writes another key or only
+// reads. `F` is any function value.
+describe("#7350 slice 1 — a write of the key stops the fold, whatever reaches the name", () => {
+  const W = "function () { this.isNaN = 1; }";
+  it.each([
+    ["a: X.prototype.constructor", "Number.prototype.constructor.isNaN = 1;", "Number", "isNaN"],
+    ["a: a held prototype's constructor", "var P = Number.prototype; P.constructor.isNaN = 1;", "Number", "isNaN"],
+    ["b: a number's constructor", "(1).constructor.isNaN = 1;", "Number", "isNaN"],
+    ["b: an object's constructor", "({}).constructor.keys = 1;", "Object", "keys"],
+    ["b: a string's constructor", "''.constructor.fromCharCode = 1;", "String", "fromCharCode"],
+    ["b: a boolean's constructor", "true.constructor.k = 1;", "Boolean", "k"],
+    ["b: an error's constructor", "new Error().constructor.k = 1;", "Error", "k"],
+    ["b: getPrototypeOf(1).constructor", "Object.getPrototypeOf(1).constructor.isNaN = 1;", "Number", "isNaN"],
+    ["c: this of a Function.prototype method", `Function.prototype.m = ${W}; Number.m();`, "Number", "isNaN"],
+    [
+      "c: this of an Object.prototype getter",
+      `Object.defineProperty(Object.prototype, "g", {get: ${W}}); Number.g;`,
+      "Number",
+      "isNaN",
+    ],
+    [
+      "c: this of an Object.prototype method on Math",
+      "Object.prototype.m = function () { this.abs = 1; }; Math.m();",
+      "Math",
+      "abs",
+    ],
+    ["d: an export", "export { Number };", "Number", "isNaN"],
+    ["a computed key", 'var k = "isNaN"; (1).constructor[k] = 1;', "Number", "isNaN"],
+    ["a with statement", "with ((1).constructor) isNaN = 1;", "Number", "isNaN"],
+    ["Reflect", 'Reflect.set((1).constructor, "isNaN", 1);', "Number", "isNaN"],
+    [
+      "a held defineProperty",
+      'var d = Object.defineProperty; d((1).constructor, "isNaN", {value: 1});',
+      "Number",
+      "isNaN",
+    ],
+    [
+      "defineProperty by a computed key",
+      'var k = "isNaN"; Object.defineProperty((1).constructor, k, {});',
+      "Number",
+      "isNaN",
+    ],
+    ["assign", "Object.assign((1).constructor, {isNaN: 1});", "Number", "isNaN"],
+    ["assign of a held source", "var s = {isNaN: 1}; Object.assign((1).constructor, s);", "Number", "isNaN"],
+    ["defineProperties", "Object.defineProperties((1).constructor, {isNaN: {value: 1}});", "Number", "isNaN"],
+    [
+      "__defineGetter__ through .call",
+      'Object.prototype.__defineGetter__.call((1).constructor, "isNaN", function () {});',
+      "Number",
+      "isNaN",
+    ],
+    ["a fresh name assigned", "var o = {}; o = (1).constructor; o.isNaN = 1;", "Number", "isNaN"],
+    [
+      "a fresh name rebound through the global object",
+      'var o = {}; Object.defineProperty(this, "o", {value: (1).constructor}); o.isNaN = 1;',
+      "Number",
+      "isNaN",
+    ],
+    ["a computed key on this", 'var o = {}; var k = "o"; this[k] = (1).constructor; o.isNaN = 1;', "Number", "isNaN"],
+    ["a parameter receiver", "function f(o) { o.isNaN = 1; } f((1).constructor);", "Number", "isNaN"],
+    ["a fresh name and a binding of it that is not", "var o = {}; function g(o) { o.isNaN = 1; }", "Number", "isNaN"],
+  ])("%s stops the fold", (_label, source, name, member) => {
+    expect(facts(source, name, member)).toEqual({ pristine: true, fold: false });
+  });
+
+  it.each([
+    ["a: a read of X.prototype.constructor's member", "var v = Number.prototype.constructor.isNaN;", "Number", "isNaN"],
+    ["b: another key through a constructor", "(1).constructor.k = 1; ({}).constructor.j = 1;", "Number", "isNaN"],
+    [
+      "c: a method that only reads this",
+      "Function.prototype.m = function () { return this.isNaN; }; Number.m();",
+      "Number",
+      "isNaN",
+    ],
+    ["d: an export of another name", "var x = 1; export { x };", "Number", "isNaN"],
+    [
+      "a literal key of another name",
+      '(1).constructor["k"] = 1; Object.defineProperty({}, "a", {value: 1});',
+      "Number",
+      "isNaN",
+    ],
+    [
+      "assign of other literal keys",
+      "Object.assign({}, {a: 1}); Object.defineProperties({}, {b: {value: 1}});",
+      "Number",
+      "isNaN",
+    ],
+    [
+      "writes of any key on fresh objects",
+      'var k = "isNaN"; var o = {}; var a = []; o[k] = 1; a[k] = 1; Object.defineProperty(o, k, {}); Object.assign(o, a); o.o = 1;',
+      "Number",
+      "isNaN",
+    ],
+  ])("%s keeps the fold", (_label, source, name, member) => {
+    expect(facts(source, name, member)).toEqual({ pristine: true, fold: true });
   });
 });
 

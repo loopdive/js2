@@ -494,6 +494,9 @@ export function makeIrAmbientBindingPredicate(
   checker: ts.TypeChecker,
   quantifier: "some" | "every" | "every-but-expando" | "no-user" = "some",
 ): (node: ts.Identifier) => boolean {
+  const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
+  const expando = quantifier === "every-but-expando";
+  const binds = (d: ts.Declaration) => !isLib(d) && !(expando && isJsPropertyDeclarationTarget(d));
   return (node) => {
     try {
       const symbol = checker.getSymbolAtLocation(node);
@@ -501,10 +504,7 @@ export function makeIrAmbientBindingPredicate(
       const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
         (declaration): declaration is ts.Declaration => declaration !== undefined,
       );
-      const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
       if (quantifier === "some") return declarations.some(isLib);
-      const binds = (d: ts.Declaration) =>
-        !isLib(d) && !(quantifier === "every-but-expando" && isJsPropertyDeclarationTarget(d));
       return (quantifier === "no-user" || declarations.some(isLib)) && !declarations.some(binds);
     } catch {
       return false;
