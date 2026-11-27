@@ -126,7 +126,7 @@ export function literalEvalSiteRefusal(
  * needs: its call returns nothing (A5 gives it a value). A for head's expressions are values, and so is each clause of
  * an incrementor's comma list (`lowerForUpdateExpr` splits it before `lowerDiscardedExpression` could see the comma).
  */
-export function discardsValue(expression: ts.Expression): boolean {
+function discardsValue(expression: ts.Expression): boolean {
   let node = expression;
   while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
   const parent = node.parent;
