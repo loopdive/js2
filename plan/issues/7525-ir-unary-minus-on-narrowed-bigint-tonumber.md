@@ -21,6 +21,9 @@ loc-budget-allow:
   - src/ir/select.ts
   - src/ir/integration.ts
   - src/codegen/index.ts
+  # (2026-11-27) +27: `bigIntOperandOption` moved here from bigint-operand-refusal.ts (net 0 across the two), so
+  # the checker value import rides module-bindings.ts's existing ir->checker and codegen->ir edges (import-cycles).
+  - src/ir/module-bindings.ts
 func-budget-allow:
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExprInner
@@ -122,6 +125,10 @@ byte-identical. The real fix — ToNumeric dynamic ops that let the IR claim the
   in `module-bindings.ts`: one concern (the refusal), and the four wiring sites (both selector planners, the builder
   resolver, the Prepared resolver in `program-source-units.ts`) then need one spread line each, where a
   `module-bindings.ts` predicate needed a conditional object at each.
+- (2026-11-27, quality fix) The checker-backed option builder `bigIntOperandOption` then moved to
+  `module-bindings.ts`, beside `makeIrCheckerSelectionOptions`: in its own file it opened a new `ir -> checker` and
+  `codegen -> ir` two-way edge (import-cycles ratchet). `bigint-operand-refusal.ts` keeps the checker-free selector
+  and builder halves.
 - The rule is shared as `isBigIntUnsafeDynamicOperator(op)` (every typed binary operator but strict equality); the
   builder also refuses at `lowerCompoundAssignment`'s dynamic arms (`*=`, `+=`, `-=`, `<<=`, …; RV7497).
 - A selector decline carries `operand-coercion-unsupported` (latched by `capabilityNo`), not the generic

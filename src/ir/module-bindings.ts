@@ -5,7 +5,7 @@
 // fallback gate can import it without pulling in codegen/index.ts.
 
 import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
-import { isExternalDeclaredClass } from "../checker/type-mapper.js";
+import { isExternalDeclaredClass, typeHasBigIntMember } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { dynamicCallArgumentAdmissible, type OperandFamily } from "./analysis/operand-admissibility.js";
@@ -24,6 +24,7 @@ import {
 } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
 import type { IrSelectionOptions } from "./select.js";
+import type { BigIntOperandPredicate } from "./bigint-operand-refusal.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
@@ -653,6 +654,32 @@ export function makeIrCheckerSelectionOptions(
     numberLiteralTypeValue: makeIrNumberLiteralTypeValue(checker),
     isGlobalBinding: makeIrAmbientBindingPredicate(checker, "no-user"),
   };
+}
+
+const bigIntOperandPredicates = new WeakMap<ts.TypeChecker, BigIntOperandPredicate>();
+
+/**
+ * (#7525) The `isBigIntOperand` selection and builder option: set on a host-free lane only, so a JavaScript-environment
+ * unit is selected exactly as before. One predicate per checker, so the selector and the builder ask the same one. Not
+ * part of `makeIrCheckerSelectionOptions`, which also feeds the JavaScript-environment planners.
+ */
+export function bigIntOperandOption(
+  checker: ts.TypeChecker,
+  hostFree: boolean,
+): { isBigIntOperand?: BigIntOperandPredicate } {
+  if (!hostFree) return {};
+  let predicate = bigIntOperandPredicates.get(checker);
+  if (predicate === undefined) {
+    predicate = (expr) => {
+      try {
+        return typeHasBigIntMember(checker.getTypeAtLocation(expr));
+      } catch {
+        return false;
+      }
+    };
+    bigIntOperandPredicates.set(checker, predicate);
+  }
+  return { isBigIntOperand: predicate };
 }
 
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;

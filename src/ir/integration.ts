@@ -346,8 +346,8 @@ import {
 export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resolution.js";
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
-import { bigIntOperandOption } from "./bigint-operand-refusal.js";
 import {
+  bigIntOperandOption,
   makeIrCheckerSelectionOptions,
   makeIrModuleBindingResolver,
   makeIrRegExpExpressionPredicate,

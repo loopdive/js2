@@ -188,7 +188,6 @@ import {
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import { makeIrPromiseDelayResolver } from "../ir/promise-delay.js";
-import { bigIntOperandOption } from "../ir/bigint-operand-refusal.js";
 import { containsStringBuilderLoopShape } from "../ir/string-builder-shape.js";
 import {
   buildIrPromiseDelayLoweringPlans,
@@ -196,6 +195,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
+  bigIntOperandOption,
   makeIrArrayElementFamilyClassifier,
   makeIrCheckerSelectionOptions,
   makeIrLocalClassExpressionResolver,
