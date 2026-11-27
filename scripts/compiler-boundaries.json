@@ -17430,6 +17430,14 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/prepared-array-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7579",
+      "nextBoundary": "Source lowering of an array literal on the Prepared path through the function-object host; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/shared/contracts/descriptor-word.ts",
       "state": "clean",
       "layer": "foundation"
