@@ -335,6 +335,14 @@ export function enqueueEligibility({ checks, requiredNames, isDraft, labels = []
   // queue builds its merge group against main and re-validates there.
   return { eligible: true, reason: "real-signals-green", checks: verdict };
 }
+/** A failed re-read leaves the answer UNKNOWN: that one PR is skipped, the sweep goes on. */
+export function rereadMergeable(readPr) {
+  try {
+    return readPr().mergeable;
+  } catch {
+    return "UNKNOWN";
+  }
+}
 /**
  * (#7553) `mergeable` from a list query is computed lazily: after every push to
  * main GitHub answers UNKNOWN for most PRs and only starts the computation.
@@ -1305,7 +1313,7 @@ function runSweep() {
       labels: pr.labels,
       mergeable: settledMergeable(
         pr.mergeable,
-        () => freshPrForEnqueue(pr.number).mergeable,
+        () => rereadMergeable(() => freshPrForEnqueue(pr.number)),
         () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, MERGEABLE_SETTLE_MS),
       ),
     });

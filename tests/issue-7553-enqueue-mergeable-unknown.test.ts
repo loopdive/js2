@@ -2,7 +2,7 @@
 // asked again instead of being skipped until some later sweep gets lucky.
 
 import { describe, expect, it } from "vitest";
-import { enqueueEligibility, settledMergeable } from "../scripts/enqueue-green-prs.mjs";
+import { enqueueEligibility, rereadMergeable, settledMergeable } from "../scripts/enqueue-green-prs.mjs";
 
 function rereads(answers: string[]) {
   const calls = { reread: 0, pause: 0 };
@@ -44,5 +44,13 @@ describe("#7553 mergeable UNKNOWN is re-read", () => {
       ).toBe(known);
       expect(asked.n).toBe(0);
     }
+  });
+
+  it("treats a failed re-read as still UNKNOWN instead of ending the sweep", () => {
+    const failing = () => {
+      throw new Error("gh: HTTP 502");
+    };
+    expect(rereadMergeable(failing)).toBe("UNKNOWN");
+    expect(rereadMergeable(() => ({ mergeable: "MERGEABLE" }))).toBe("MERGEABLE");
   });
 });
