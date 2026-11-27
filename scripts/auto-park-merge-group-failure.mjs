@@ -39,7 +39,6 @@
 
 import { execFileSync } from "node:child_process";
 import { enforceQueueHold } from "./enforce-pr-queue-hold.mjs";
-import { addLabel, commentOnce } from "./lib/pr-label-comment.mjs";
 import { REGRESSION_ANNOTATION_TITLE } from "./lib/regression-annotation.mjs";
 
 const REPO = process.env.GH_REPO || "loopdive/js2wasm";
@@ -423,13 +422,18 @@ async function park(prNumber, failedDetails, runUrl, groupPrs = [prNumber]) {
     console.log(`auto-park: #${prNumber} hold confirmed and queue entry absent.`);
     return;
   }
-  // Add the hold label (shared with the #7537 alarm; see memory
-  // project_merge_queue_dup_issue_id_churn for why it is the REST endpoint).
-  try {
-    addLabel(gh, REPO, prNumber, HOLD_LABEL);
-  } catch (e) {
-    throw new Error(`hold label failed: ${String(e.stderr || e.message || e).slice(0, 160)}`);
-  }
+  // Add the hold label. REST API (not `gh pr edit --add-label`, which has hit a
+  // Projects-classic error on this repo — see memory
+  // project_merge_queue_dup_issue_id_churn).
+  const label = ghMaybe([
+    "api",
+    "-X",
+    "POST",
+    `repos/${REPO}/issues/${prNumber}/labels`,
+    "-f",
+    `labels[]=${HOLD_LABEL}`,
+  ]);
+  if (!label.ok) throw new Error(`hold label failed: ${(label.stderr || "").slice(0, 160)}`);
   await enforceParkedPullRequest(prNumber);
   // #3914 — when the group held more than one PR, the failure is attributable
   // to the GROUP, not to this PR specifically. Say so, and name the co-members
@@ -440,7 +444,8 @@ async function park(prNumber, failedDetails, runUrl, groupPrs = [prNumber]) {
       ? `\n**This was a batched merge group** (${groupPrs.map((n) => `#${n}`).join(", ")}). The failure is attributed to the group as a whole — any member could be the cause, so all of them are parked. Re-enqueue them ONE AT A TIME to attribute the failure before removing \`${HOLD_LABEL}\` from the rest.\n`
       : "";
   // Post one idempotent comment, guarded by the HTML marker.
-  const body = `auto-parked: failed required CI in the merge_group — a real test262/quality regression only surfaces on the merged state, so this PR cycles forever in the queue otherwise (#2547). Fix the failure and remove the \`${HOLD_LABEL}\` label to re-enqueue.
+  const body = `${MARKER}
+auto-parked: failed required CI in the merge_group — a real test262/quality regression only surfaces on the merged state, so this PR cycles forever in the queue otherwise (#2547). Fix the failure and remove the \`${HOLD_LABEL}\` label to re-enqueue.
 ${batchNote}
 Failed checks:
 ${renderFailureLines(failedDetails)}
@@ -448,17 +453,11 @@ ${renderFailureLines(failedDetails)}
 Run: ${runUrl}
 
 <sub>The failing STEP is named above (#3597). If it is a setup/infra step rather than a verdict step, the verdict never ran and this park may be spurious — confirm against the run before removing \`${HOLD_LABEL}\`.</sub>`;
-  let commented = false;
-  try {
-    commented = commentOnce(gh, REPO, prNumber, MARKER, body);
-  } catch (e) {
-    console.error(
-      `  comment error: ${String(e.stderr || e.message || e)
-        .split("\n")[0]
-        .slice(0, 160)}`,
-    );
-  }
-  console.log(`auto-park: parked #${prNumber} (comment=${commented}) — failed: ${failedJobs.join(", ")}`);
+  const comment = ghMaybe(["pr", "comment", String(prNumber), "--repo", REPO, "--body", body]);
+  console.log(
+    `auto-park: parked #${prNumber} (label=${label.ok} comment=${comment.ok}) — failed: ${failedJobs.join(", ")}`,
+  );
+  if (!comment.ok) console.error(`  comment error: ${(comment.stderr || "").split("\n")[0].slice(0, 160)}`);
 }
 
 // --- self-check (no network) ------------------------------------------------

@@ -242,8 +242,10 @@
     const reason = await irStatus(base, mode);
     if (!reason) return;
     if (documentIr) {
-      write({ ir: false });
-      global.location.reload();
+      // Navigate to the legacy URL itself: a reload after write() would loop
+      // forever if replaceState is unavailable and the URL kept the IR view.
+      const { pathname, search, hash } = global.location;
+      global.location.replace(linkTo(`${pathname}${search}${hash}`, { ir: false }));
       return;
     }
     node.textContent = reason;

@@ -502,7 +502,9 @@ Owner decision, 2026-11-26.
   - A row that never passed is never gated.
 - Every other regression is re-checked once the same way (single worker,
   the shard's env) before it gates; a row that passes was a shard-run flake
-  and is reported as one. `scripts/test262-edition-verdict.sh` runs
+  and is reported as one. At most 50 candidates are re-checked
+  (`RECHECK_MAX_ROWS`); above that the verdict stands as measured, so a real
+  break never holds the queue head for a serial re-check of hundreds of rows. `scripts/test262-edition-verdict.sh` runs
   report → re-check → report for both the queue gate and the push lane.
 - Edition baselines rank ahead of full ones in the window: only an edition
   baseline remembers a passing test that has dropped out of today's edition
@@ -529,6 +531,10 @@ Owner decision, 2026-11-26.
 - Every legacy run uploads `test262-legacy-completed-measurement` (results,
   `scope.json`, `timeout-watch.json`, the edition report), green runs
   included, for 30 days.
+- With no earlier measurement (the first run, an expired artifact, an
+  eval-engine switch), and for any row the earlier one lacks, the completed
+  rule is the baseline: every row passes but the ratchet's reviewed
+  exceptions. A failure is still compared, re-checked and alarmed.
 - The predecessor is the nearest first-parent ancestor with one. While a
   nearer push run is still in flight the check waits, at most 45 min,
   holding its runner. After that it uses the nearest measured commit, which
@@ -539,7 +545,10 @@ Owner decision, 2026-11-26.
     phase 1).
   - Each gets one marker-guarded comment with the rows, the run and the 24 h
     deadline, and #7526 gets one comment per incident
-    (`scripts/test262-post-merge-alarm.mjs`).
+    (`scripts/test262-post-merge-alarm.mjs`). The `post-merge test262 alarm
+    (#7537)` job posts them. It is the only job with write scopes, and it runs
+    no measured code: on a merge group it checks out the base, installs
+    nothing, and never fails the run.
   - A later push that finds only the same rows labels nothing.
 - **Revert:** the author has 24 h from the label for a fix-forward PR. After
   that, if the latest push run on main still fails the rows, the lead opens

@@ -73,6 +73,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { isListedTimeout } from "./lib/test262-timeout-watch.mjs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -669,7 +670,7 @@ function runHostLane(o: {
     if (cur === "pass") continue;
     const row = { file, now: cur };
     if (quarantine.has(file)) t.quarantined.push(row);
-    else if (cur === "compile_timeout") t.timeouts.push(row);
+    else if (isListedTimeout(status, cur)) t.timeouts.push(row);
     else if (excepted.has(file)) t.excepted.push(row);
     else t.flips.push(row);
   }

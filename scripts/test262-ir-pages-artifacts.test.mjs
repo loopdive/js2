@@ -567,8 +567,10 @@ test("IR merge keeps the site-facing reports to the full scope and gates the edi
     /scripts\/test262-edition-verdict\.sh ir-measurement\/results\.jsonl ir-measurement\/scope\.json current \\\s+ir-baseline ir-measurement\/prs\.json ir-measurement/,
   );
   assert.match(report, /GITHUB_STEP_SUMMARY/);
-  // A repeated timeout alarms the PRs it is charged to and never fails the gate.
-  assert.match(step("Alarm the PRs a repeated timeout is charged to (#7537)"), /continue-on-error: true/);
+  // (#7537) The job that runs the measured code holds no write scope; the
+  // separate post-merge-alarm job labels PRs.
+  assert.doesNotMatch(merge, /pull-requests: write|issues: write/);
+  assert.match(merge, /persist-credentials: false/);
   // The failure comes after the upload, so a regressed commit still becomes the next baseline.
   const upload = merge.indexOf("      - uses: actions/upload-artifact@v6");
   const fail = merge.indexOf("      - name: Fail on an edition regression (#7551)");

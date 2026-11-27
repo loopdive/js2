@@ -1,11 +1,12 @@
 name: Set up a test262 runner
 description: >-
-  (#7537) Everything after the checkout that a test262 shard, or the single-worker
-  re-check of its rows, needs before it runs: Node and pnpm, the dependencies, the
-  compiler and runtime bundles, and — only when asked — the runtime-eval and
-  Temporal provider artifacts built earlier in the same run. The checkout stays
-  with each caller: a local action resolves only after the repository is checked
-  out, and each caller sets its own checkout options.
+  (#7537) What a test262 shard, or the single-worker re-check of its rows, needs
+  after Node and pnpm are set up: the dependencies, the compiler and runtime
+  bundles, and — only when asked — the runtime-eval and Temporal provider
+  artifacts built earlier in the same run. The checkout and the
+  setup-node-pnpm call stay with each caller: a local action resolves only after
+  the checkout, and auto-park classifies a failure by its job step's name, so
+  "Setup Node and pnpm (cached)" must stay a step of its own to stay infra.
 
 inputs:
   providers:
@@ -18,9 +19,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Setup Node and pnpm (cached)
-      uses: ./.github/actions/setup-node-pnpm
-
     - name: Install dependencies
       shell: bash
       run: pnpm install --frozen-lockfile

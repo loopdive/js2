@@ -383,7 +383,8 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
       on the PRs where the timeout first appeared (`timeoutWatch` in the
       measurement artifact), naming the current group as a second suspect.
     - Every regression is re-checked once before it gates; one that passes
-      was a shard-run flake. `scripts/test262-edition-verdict.sh` and
+      was a shard-run flake. At most 50 rows are re-checked; above that the
+      verdict stands as measured. `scripts/test262-edition-verdict.sh` and
       `scripts/lib/test262-timeout-watch.mjs`.
   - A crashed report or a failed baseline download is infra: the queue
     retries, nothing is parked.
@@ -403,8 +404,12 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   - Phase 1 is **label and alarm only**. The PR the push merged gets
     `post-merge-regression`. When the push carried several PRs, all of them
     get `post-merge-regression-unattributed`.
-    - One comment on each, and one on #7526.
+    - One comment on each, and one on #7526, posted by the separate
+      `post-merge test262 alarm (#7537)` job (the only job with write scopes;
+      it runs no measured code).
     - A later push that only finds the same rows labels nothing.
+    - With no earlier measurement, the completed rule (every row passes but
+      the ratchet's exceptions) is the baseline, so a failure is still alarmed.
   - **The lead reverts by hand, after 24 h:** the author has 24 h from the
     label for a fix-forward PR. After that, if the latest push run on main
     still fails the rows, the lead opens a plain revert PR through the queue.

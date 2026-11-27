@@ -500,6 +500,55 @@ Where the code differs from the plan text above, and why:
     regression was re-checked, its row was replaced and marked, and the final
     report used the overridden row.
   - No `workflow_dispatch` dry run was made (that needs the lead's approval).
+- **Review fixes (RV-PR7551 on `8b1ee0d4`):**
+  - **Bounded re-check.** At most `RECHECK_MAX_ROWS` = 50 candidates are
+    re-checked. Above that the verdict stands as measured: that many rows is a
+    real break, and a serial re-check would hold the queue head for hours.
+    `merge-ir-measurement` has `timeout-minutes: 60`, `merge-report` 150.
+  - **auto-park unchanged.** `scripts/auto-park-merge-group-failure.mjs` is
+    byte-identical to main. The marker-guarded comment and the label call live
+    in `scripts/test262-post-merge-alarm.mjs`, their only user; the planned
+    shared `scripts/lib/pr-label-comment.mjs` is gone.
+  - **No write token next to measured code.** `merge-report` and
+    `merge-ir-measurement` are read-only and check out with
+    `persist-credentials: false`. The new `post-merge test262 alarm (#7537)`
+    job is the only one with `pull-requests`/`issues: write`. On a merge
+    group it checks out the group's base (main), installs nothing, and every
+    step is `continue-on-error`.
+  - **Infra classification kept.** "Setup Node and pnpm (cached)" is again a
+    step of its own in every caller. The composite starts at
+    `pnpm install`, so a transient setup-node/pnpm failure is still infra to
+    auto-park.
+  - **No baseline is no blind spot.** For the completed editions the
+    completed rule is the baseline (`completedRuleStatuses`). Every row
+    passes except the ratchet's reviewed exceptions, the earlier
+    measurement's own verdicts win where it has them, and a row it lacks
+    counts as passing. So a first run, an expired artifact or an eval-engine
+    switch still compares, re-checks and alarms.
+  - **Daily repeats are alarmed** (`--repeats-only` on the schedule run).
+    The artifact's `timeout-watch.json` now carries `alarmed` (the confirmed
+    repeats) beside `watch`.
+  - **The comment says where it measured.** It says "main, the newest
+    measurement of main" on push, or "a merge group, not main yet".
+  - **One timeout predicate.** `isListedTimeout` in
+    `scripts/lib/test262-timeout-watch.mjs` is used by `classifyRow` and by
+    the ratchet's host-lane timeouts bucket.
+  - **Counts after the override.** The completed-edition steps (with the
+    test262 checkout) moved before "Build merged standalone test262 report".
+    So the #2097 floor, the #1897 guard and promotion read the rows after the
+    override.
+  - **A bug found while there:** the standalone completeness check
+    hard-coded 102 shards, which would fail every 16-shard push run. It now
+    takes the plan's `legacy_chunks` and, on push, the exact
+    completed-edition file list.
+  - **Website nit:** an unavailable IR status now navigates to the `ir=0`
+    URL with `location.replace`, so a failing `replaceState` cannot loop.
+  - **Nit 10:** the alarm's repo default matches auto-park's (`GH_REPO`, set
+    in the job).
+- **Follow-up (review finding 9, not in this PR):** `test262-native-first`,
+  `test262-honest-audit` and `test262-standalone-linked` still write out the
+  install + bundle steps (`test262-sharded.yml`, three copies) instead of
+  `.github/actions/test262-runner-setup`.
 - **Pre-existing failures, untouched:** `tests/issue-1778`, `tests/issue-3344`,
   `tests/issue-3426` (2 tests) and `tests/issue-3451-linked-harness-lane`
   (2 tests) fail on main `4caef358` too.

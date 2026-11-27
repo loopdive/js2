@@ -50,6 +50,7 @@ import {
   type Outcome,
   type WatchEntry,
   RECHECK_COMPILE_TIMEOUT_MS,
+  RECHECK_MAX_ROWS,
   classifyRow,
   nextWatch,
   readWatch,
@@ -109,15 +110,48 @@ export function editionPaths(test262Root: string, year: number): string[] {
  * the edition ratchet's baseline), as years. Read only: main is that file's
  * sole writer.
  */
-export function readCompletedYears(path = RATCHET_BASELINE): number[] {
-  const { editions } = JSON.parse(readFileSync(path, "utf-8"));
-  const years = Object.entries(editions as Record<string, { completed?: boolean; ratcheted?: boolean }>)
+type RatchetEntry = { completed?: boolean; ratcheted?: boolean; exceptions?: { file: string }[] };
+
+function completedEntries(path: string): [number, RatchetEntry][] {
+  const { editions } = JSON.parse(readFileSync(path, "utf-8")) as { editions: Record<string, RatchetEntry> };
+  const entries = Object.entries(editions)
     .filter(([, e]) => e.completed && e.ratcheted)
-    .map(([key]) => Number(key))
-    .sort((a, b) => a - b);
-  if (years.length === 0) throw new Error(`${path}: no completed edition`);
-  return years;
+    .map(([key, e]): [number, RatchetEntry] => [Number(key), e])
+    .sort((a, b) => a[0] - b[0]);
+  if (entries.length === 0) throw new Error(`${path}: no completed edition`);
+  return entries;
 }
+
+export function readCompletedYears(path = RATCHET_BASELINE): number[] {
+  return completedEntries(path).map(([year]) => year);
+}
+
+/** The completed editions' reviewed `exceptions`: rows that may not pass, each with its reason. */
+export function readCompletedExceptions(path = RATCHET_BASELINE): Set<string> {
+  return new Set(completedEntries(path).flatMap(([, e]) => (e.exceptions ?? []).map((x) => x.file)));
+}
+
+/**
+ * #7537: the completed-edition rule as a baseline. Every row of a completed
+ * edition passes, except its reviewed exceptions, so a row the earlier
+ * measurement lacks — or no earlier measurement at all (the first run, an
+ * expired artifact, an eval-engine switch) — is still compared, re-checked and
+ * alarmed instead of only turning the ratchet red. An earlier measurement's
+ * own verdicts win where it has them.
+ */
+export function completedRuleStatuses(
+  paths: ReadonlySet<string>,
+  exceptions: ReadonlySet<string>,
+  measured: StatusMap = new Map(),
+): StatusMap {
+  const out: StatusMap = new Map();
+  for (const file of paths) if (!exceptions.has(file)) out.set(file, "pass");
+  for (const [file, status] of measured) out.set(file, status);
+  return out;
+}
+
+/** The `sourceSha` a baseline built from the completed rule alone carries. */
+export const COMPLETED_RULE_SHA = "completed-rule";
 
 /** The scope a command measures: the IR's current edition, or the legacy lane's completed ones. */
 export interface Scope {
@@ -396,7 +430,11 @@ export function renderSummary(r: Report): string {
   }
   const b = r.baseline;
   const distance = b.distance === undefined ? "" : `, ${b.distance} first-parent commit(s) back`;
-  lines.push(`Compared with the IR measurement of \`${b.sha}\`${b.runId ? ` (run ${b.runId})` : ""}${distance}.`);
+  if (b.sha === COMPLETED_RULE_SHA)
+    lines.push(
+      "No earlier measurement: compared with the completed-edition rule (every row passes but its exceptions).",
+    );
+  else lines.push(`Compared with the measurement of \`${b.sha}\`${b.runId ? ` (run ${b.runId})` : ""}${distance}.`);
   if (b.test262Changed)
     lines.push(`test262 revision changed: \`${b.test262Changed.from}\` → \`${b.test262Changed.to}\`.`);
   lines.push("");
@@ -639,7 +677,8 @@ function readJsonIfPresent(path: string): unknown {
 function cmdReport(args: string[]): void {
   const meta: ScopeMeta = JSON.parse(readFileSync(required(args, "--meta"), "utf-8"));
   const test262 = required(args, "--test262");
-  const paths = new Set(scopePaths(test262, readScope(arg(args, "--editions"))));
+  const editions = arg(args, "--editions");
+  const paths = new Set(scopePaths(test262, readScope(editions)));
   const dir = arg(args, "--baseline-dir");
   let baseline: Parameters<typeof buildReport>[0]["baseline"];
   if (dir && existsSync(join(dir, "results.jsonl")) && existsSync(join(dir, "scope.json"))) {
@@ -651,6 +690,12 @@ function cmdReport(args: string[]): void {
       distance: ref.distance,
       watch: readWatch(readJsonIfPresent(join(dir, "timeout-watch.json"))),
     };
+  }
+  if (editions === "completed") {
+    const exceptions = readCompletedExceptions();
+    baseline = baseline
+      ? { ...baseline, statuses: completedRuleStatuses(paths, exceptions, baseline.statuses) }
+      : { statuses: completedRuleStatuses(paths, exceptions), meta: { ...meta, sourceSha: COMPLETED_RULE_SHA } };
   }
   const rows = readRows(required(args, "--results"));
   const prsPath = arg(args, "--prs");
@@ -664,7 +709,12 @@ function cmdReport(args: string[]): void {
     prs: prsPath ? (JSON.parse(readFileSync(prsPath, "utf-8")) as number[]) : [],
   });
   const watchOut = arg(args, "--watch-out");
-  if (watchOut) writeFileSync(watchOut, JSON.stringify({ watch: report.timeoutWatch }, null, 2) + "\n");
+  // `alarmed`: the confirmed repeats this measurement charged to their origin; they leave the watch list.
+  if (watchOut)
+    writeFileSync(
+      watchOut,
+      JSON.stringify({ watch: report.timeoutWatch, alarmed: report.diff?.confirmedRepeats ?? [] }, null, 2) + "\n",
+    );
   let summary = renderSummary(report);
   // Informational only: building it must never change the verdict or the exit code.
   try {
@@ -707,20 +757,27 @@ export function regressionAnnotation(r: Report): string {
  * #7537: the rows the re-check runs, from a report: watched rows that timed out
  * again (run under the raised compile timeout) and every other regression
  * still present in the run (a row the run dropped cannot be re-checked).
+ * Above `max` rows nothing is re-checked: that many is a real break, and a
+ * serial re-check of it would hold the merge-queue head for hours.
  */
-export function recheckCandidates(r: Pick<Report, "diff">): { watched: string[]; other: string[] } {
-  return {
-    watched: r.diff?.recheck ?? [],
-    other: (r.diff?.regressions ?? []).filter((x) => x.now !== MISSING_STATUS).map((x) => x.file),
-  };
+export function recheckCandidates(
+  r: Pick<Report, "diff">,
+  max = RECHECK_MAX_ROWS,
+): { watched: string[]; other: string[]; overLimit?: number } {
+  const watched = r.diff?.recheck ?? [];
+  const other = (r.diff?.regressions ?? []).filter((x) => x.now !== MISSING_STATUS).map((x) => x.file);
+  const total = watched.length + other.length;
+  return total > max ? { watched: [], other: [], overLimit: total } : { watched, other };
 }
 
 function cmdCandidates(args: string[]): void {
   const report = JSON.parse(readFileSync(required(args, "--report"), "utf-8")) as Report;
-  const { watched, other } = recheckCandidates(report);
+  const { watched, other, overLimit } = recheckCandidates(report);
   writeFileSync(required(args, "--watched"), watched.map((f) => f + "\n").join(""));
   writeFileSync(required(args, "--other"), other.map((f) => f + "\n").join(""));
-  console.log(`re-check candidates: ${watched.length} watched timeout(s), ${other.length} other regression(s)`);
+  if (overLimit !== undefined)
+    console.log(`re-check skipped: ${overLimit} candidates exceed ${RECHECK_MAX_ROWS}; the verdict stands as measured`);
+  else console.log(`re-check candidates: ${watched.length} watched timeout(s), ${other.length} other regression(s)`);
 }
 
 /**

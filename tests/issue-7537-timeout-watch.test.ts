@@ -163,6 +163,18 @@ describe("#7537 re-check plumbing", () => {
     expect(recheckCandidates(report)).toEqual({ watched: [], other: [A] });
   });
 
+  it("above the cap nothing is re-checked: that many rows is a real break, not a flake", () => {
+    const many = Array.from({ length: 51 }, (_, i) => ({ file: `test/f${i}.js`, now: "fail" }));
+    expect(recheckCandidates({ diff: { regressions: many, recheck: [] } as never })).toEqual({
+      watched: [],
+      other: [],
+      overLimit: 51,
+    });
+    expect(recheckCandidates({ diff: { regressions: many.slice(0, 50), recheck: [] } as never }).other).toHaveLength(
+      50,
+    );
+  });
+
   it("a re-checked row replaces the shard row and is marked", () => {
     const rows = overrideRows(
       [

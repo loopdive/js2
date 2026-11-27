@@ -13,6 +13,18 @@
 export const RECHECK_COMPILE_TIMEOUT_MS = 60_000;
 
 /**
+ * Most rows one measurement re-checks. Re-checks run serially on one worker,
+ * so a real break of many rows would otherwise hold the merge-queue head for
+ * hours; above this many candidates the verdict stands without a re-check.
+ */
+export const RECHECK_MAX_ROWS = 50;
+
+/** A passing row that now stops at compile_timeout: listed, never gated on first sight. */
+export function isListedTimeout(was, now) {
+  return was === "pass" && now === "compile_timeout";
+}
+
+/**
  * @typedef {{ file: string, firstSeenSha: string, prs: number[] }} WatchEntry
  * @typedef {"pass" | "improvement" | "unchanged" | "listed" | "recheck" | "resolved" | "flake" | "regression" | "confirmedRepeat"} Outcome
  */
@@ -35,7 +47,7 @@ export function classifyRow(was, watched, now, rechecked) {
   if (!watched && was !== "pass") return now === "pass" ? "improvement" : "unchanged";
   // A re-checked row that passes was a flake of the shard run, watched or not.
   if (now === "pass") return rechecked ? "flake" : watched ? "resolved" : "pass";
-  if (!watched) return now === "compile_timeout" ? "listed" : "regression";
+  if (!watched) return isListedTimeout(was, now) ? "listed" : "regression";
   // The timeout already hid this row's result where it first appeared, so a
   // failure now cannot be told apart from the original change: it is a repeat.
   if (now === "compile_timeout" && !rechecked) return "recheck";

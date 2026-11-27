@@ -71,7 +71,6 @@ on:
       - "scripts/test262-edition-verdict.sh"
       - "scripts/test262-post-merge-alarm.mjs"
       - "scripts/lib/test262-timeout-watch.mjs"
-      - "scripts/lib/pr-label-comment.mjs"
       - ".github/actions/test262-runner-setup/action.yml"
       - "scripts/lib/gh-api-retry.mjs"
       - "scripts/lib/regression-annotation.mjs"
@@ -2095,6 +2094,9 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
       # (#7537) Shared with the legacy shards and both re-checks; the IR lane
       # links no provider, and none is built in merge_group.
       - name: Set up the test262 runner
@@ -2178,10 +2180,9 @@ jobs:
     permissions:
       contents: read
       actions: read
-      # (#7537) A confirmed repeated timeout labels and comments on the PRs
-      # where it first appeared (scripts/test262-post-merge-alarm.mjs).
-      pull-requests: write
-      issues: write
+    # (#7537) Bounded: the re-check is capped (RECHECK_MAX_ROWS), but it runs
+    # serially at the head of the merge queue.
+    timeout-minutes: 60
     env:
       SCOPE: ${{ needs.compiler-path-measurement-plan.outputs.scope }}
     steps:
@@ -2190,6 +2191,9 @@ jobs:
           submodules: recursive
           # The edition baseline is searched on the first-parent lineage.
           fetch-depth: ${{ needs.compiler-path-measurement-plan.outputs.scope == 'edition' && 30 || 1 }}
+          # (#7537) This job runs the measured code; keep no token in .git.
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-pnpm
       # (#7537) The bundles are for the re-check; the IR lane links no provider.
       - uses: ./.github/actions/test262-runner-setup
         with:
@@ -2372,17 +2376,6 @@ jobs:
           retention-days: ${{ env.SCOPE == 'edition' && 14 || 90 }}
           # A re-run of failed jobs re-uploads under the same name.
           overwrite: true
-      - name: Alarm the PRs a repeated timeout is charged to (#7537)
-        # Never parks this group: the repeat belongs to the PRs where the
-        # timeout first appeared, which merged already. An alarm that cannot be
-        # posted must not fail the gate either.
-        if: env.SCOPE == 'edition' && (steps.edition_report.outputs.verdict == 'ok' || steps.edition_report.outputs.verdict == 'regression')
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node scripts/test262-post-merge-alarm.mjs alarm --report ir-measurement/edition-report.json --lane ir \
-            --prs ir-measurement/prs.json --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       - name: Fail on an edition regression (#7551)
         # After the upload, so a regressed main commit is still the next run's baseline.
         if: env.SCOPE == 'edition' && steps.edition_report.outputs.verdict == 'regression'
@@ -2581,6 +2574,9 @@ jobs:
       # wasm/meta result cache is disabled in the runner (tests/test262-shared.ts
       # passes empty wasmPath/metaPath to the fork pool). Re-add one together
       # with that cache if it is ever re-enabled.
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
       - name: Set up the test262 runner
         uses: ./.github/actions/test262-runner-setup
         with:
@@ -2933,13 +2929,13 @@ jobs:
     runs-on: ubuntu-latest
     # actions:read — the breach summary looks up the last green full run, and
     # the completed-edition check downloads earlier measurements (cross-run).
-    # (#7537) pull-requests/issues: write — the post-merge alarm labels and
-    # comments on the PRs a completed-edition failure is charged to.
+    # (#7537) No write scope: this job runs the measured code; the alarm that
+    # labels PRs is the separate `post-merge-alarm` job.
     permissions:
       contents: read
       actions: read
-      pull-requests: write
-      issues: write
+    # (#7537) Bounded: the predecessor wait (≤ 45 min) plus a capped re-check.
+    timeout-minutes: 150
     env:
       # (#7537) `completed` on push (the completed editions only), `full` on
       # schedule and dispatch. The gates that need whole-corpus counts run only
@@ -3014,6 +3010,12 @@ jobs:
           # (#7537) 30: the completed-edition check walks the first-parent
           # lineage for its predecessor measurement.
           fetch-depth: 30
+          # (#7537) This job runs the measured code; keep no token in .git.
+          persist-credentials: false
+
+      - name: Setup Node and pnpm (cached)
+        if: env.SHARDS_RAN == 'true'
+        uses: ./.github/actions/setup-node-pnpm
 
       # (#7537) The bundles and providers serve the completed-edition re-check.
       - name: Set up the test262 runner
@@ -3057,6 +3059,10 @@ jobs:
           find shard-artifacts/test262-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
 
+      - name: Check out test262 for the edition classifier
+        if: env.STANDALONE_RAN == 'true' || env.HOST_RAN == 'true'
+        run: git submodule update --init --depth 1 test262
+
       - name: Validate merged JS-host Test262 verdict completeness (#5215)
         if: env.HOST_RAN == 'true'
         env:
@@ -3076,16 +3082,89 @@ jobs:
       - name: Validate merged standalone Test262 verdict completeness (#5215)
         if: env.STANDALONE_RAN == 'true'
         env:
-          # Every authoritative producer uses the same 102-way partition.
-          EXPECTED_SHARDS: "102"
+          # (#7537) The plan's partition: 102 shards of the full corpus, or the
+          # completed editions' 16 on push.
+          EXPECTED_SHARDS: ${{ needs.compiler-path-measurement-plan.outputs.legacy_chunks }}
         run: |
           mapfile -d '' manifests < <(find shard-artifacts/test262-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
           manifest_args=()
           for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          # A narrowed discovery cannot shrink the completed-edition run unnoticed.
+          expected=()
+          if [ "$LEGACY_SCOPE" = completed ]; then
+            node --experimental-strip-types scripts/test262-edition-scope.ts paths --editions completed \
+              --test262 test262 --out "$RUNNER_TEMP/completed-paths.txt"
+            expected+=(--expected-paths-file "$RUNNER_TEMP/completed-paths.txt")
+          fi
           node scripts/validate-test262-completeness.mjs \
             --input merged-reports/test262-standalone-results-merged.jsonl \
             --expected-shards "$EXPECTED_SHARDS" \
-            "${manifest_args[@]}"
+            "${manifest_args[@]}" "${expected[@]}"
+
+      # (#7537) The completed editions, test by test, against the nearest
+      # earlier legacy measurement on the first-parent lineage. Every regression
+      # still in the run, and every watched compile_timeout that repeated, is
+      # re-checked once and its row replaced in the merged JSONL BEFORE the
+      # merged report is built and before any gate reads either, so a shard-run
+      # flake cannot turn main red, and the full run's floor, #1897 guard and
+      # promoted JSONL all see the same rows.
+      - name: Record the completed-edition measurement's scope (#7537)
+        if: env.STANDALONE_RAN == 'true'
+        env:
+          EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
+        run: |
+          mkdir -p legacy-measurement
+          scope=full
+          if [ "$LEGACY_SCOPE" = completed ]; then scope=edition; fi
+          node --experimental-strip-types scripts/test262-edition-scope.ts meta --scope "$scope" --editions completed \
+            --source-sha "$GITHUB_SHA" --test262-sha "$(git submodule status test262 | awk '{print $1}' | tr -d '+-')" \
+            --eval-engine "$EVAL_ENGINE" --out legacy-measurement/scope.json
+      # Named "Download …": a failure here is infra, never a verdict.
+      - name: Download the nearest earlier completed-edition measurement (#7537)
+        if: env.STANDALONE_RAN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # On push, wait (at most 45 min, holding this runner) for a nearer
+          # push run still in flight rather than compare across it.
+          wait=()
+          if [ "$LEGACY_SCOPE" = completed ]; then wait+=(--wait-minutes 45); fi
+          node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline \
+            --artifact test262-legacy-completed-measurement --from HEAD^ \
+            --meta legacy-measurement/scope.json --dest legacy-baseline "${wait[@]}"
+      - name: The PRs this run covers (#7537)
+        if: env.STANDALONE_RAN == 'true'
+        run: |
+          # From the measured predecessor: a fallback past an unfinished run
+          # widens this range, and more than one PR is labelled unattributed.
+          from=$(node -p "require('./legacy-baseline/baseline-ref.json').sha" 2>/dev/null || echo HEAD^)
+          node scripts/test262-post-merge-alarm.mjs pr-set --from "$from" --to HEAD --out legacy-measurement/prs.json
+      - name: Completed editions against that measurement, re-checking what it would act on (#7537)
+        id: completed_report
+        if: env.STANDALONE_RAN == 'true'
+        env:
+          # The single-worker re-check must judge rows exactly as `test262-shard`
+          # does: these are that job's verdict-affecting env values; keep them
+          # in step with it.
+          TEST262_TARGET: standalone
+          TEST262_ORACLE_MODE: linked
+          TEST262_IT_TIMEOUT_MS: "300000"
+          TEST262_FULL_RUNTIME_EVAL: "1"
+          TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
+          JS2WASM_IR_FIRST: ${{ github.event_name == 'workflow_dispatch' && inputs.ir_first && '1' || '' }}
+          JS2WASM_FNCTOR_LAYOUT_EMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.layout_emit && '1' || '' }}
+          JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+          VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+          TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
+        run: |
+          set +e
+          scripts/test262-edition-verdict.sh merged-reports/test262-standalone-results-merged.jsonl \
+            legacy-measurement/scope.json completed legacy-baseline legacy-measurement/prs.json legacy-measurement
+          code=$?
+          cat legacy-measurement/edition-report.md >> "$GITHUB_STEP_SUMMARY" || true
+          # 0 and 3 are verdicts (the ratchet below turns 3 into red); others are crashes.
+          if [ "$code" != 0 ] && [ "$code" != 3 ]; then exit "$code"; fi
+          cp merged-reports/test262-standalone-results-merged.jsonl legacy-measurement/results.jsonl
 
       - name: Build merged JS-host test262 report
         if: env.HOST_RAN == 'true'
@@ -3180,73 +3259,6 @@ jobs:
       # refuses to run without the checkout; this fetches the pinned commit only.
       # (#6786) The js-host completed-edition gate further down classifies rows
       # the same way, so a host-only merge_group needs the checkout too.
-      - name: Check out test262 for the edition classifier
-        if: env.STANDALONE_RAN == 'true' || env.HOST_RAN == 'true'
-        run: git submodule update --init --depth 1 test262
-
-      # (#7537) The completed editions, test by test, against the nearest
-      # earlier legacy measurement on the first-parent lineage. Every regression
-      # still in the run, and every watched compile_timeout that repeated, is
-      # re-checked once and its row replaced in the merged JSONL BEFORE the
-      # ratchet below reads it, so a shard-run flake cannot turn main red.
-      - name: Record the completed-edition measurement's scope (#7537)
-        if: env.STANDALONE_RAN == 'true'
-        env:
-          EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
-        run: |
-          mkdir -p legacy-measurement
-          scope=full
-          if [ "$LEGACY_SCOPE" = completed ]; then scope=edition; fi
-          node --experimental-strip-types scripts/test262-edition-scope.ts meta --scope "$scope" --editions completed \
-            --source-sha "$GITHUB_SHA" --test262-sha "$(git submodule status test262 | awk '{print $1}' | tr -d '+-')" \
-            --eval-engine "$EVAL_ENGINE" --out legacy-measurement/scope.json
-      # Named "Download …": a failure here is infra, never a verdict.
-      - name: Download the nearest earlier completed-edition measurement (#7537)
-        if: env.STANDALONE_RAN == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # On push, wait (at most 45 min, holding this runner) for a nearer
-          # push run still in flight rather than compare across it.
-          wait=()
-          if [ "$LEGACY_SCOPE" = completed ]; then wait+=(--wait-minutes 45); fi
-          node --experimental-strip-types scripts/test262-edition-scope.ts fetch-baseline \
-            --artifact test262-legacy-completed-measurement --from HEAD^ \
-            --meta legacy-measurement/scope.json --dest legacy-baseline "${wait[@]}"
-      - name: The PRs this run covers (#7537)
-        if: env.STANDALONE_RAN == 'true'
-        run: |
-          # From the measured predecessor: a fallback past an unfinished run
-          # widens this range, and more than one PR is labelled unattributed.
-          from=$(node -p "require('./legacy-baseline/baseline-ref.json').sha" 2>/dev/null || echo HEAD^)
-          node scripts/test262-post-merge-alarm.mjs pr-set --from "$from" --to HEAD --out legacy-measurement/prs.json
-      - name: Completed editions against that measurement, re-checking what it would act on (#7537)
-        id: completed_report
-        if: env.STANDALONE_RAN == 'true'
-        env:
-          # The single-worker re-check must judge rows exactly as `test262-shard`
-          # does: these are that job's verdict-affecting env values; keep them
-          # in step with it.
-          TEST262_TARGET: standalone
-          TEST262_ORACLE_MODE: linked
-          TEST262_IT_TIMEOUT_MS: "300000"
-          TEST262_FULL_RUNTIME_EVAL: "1"
-          TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
-          JS2WASM_IR_FIRST: ${{ github.event_name == 'workflow_dispatch' && inputs.ir_first && '1' || '' }}
-          JS2WASM_FNCTOR_LAYOUT_EMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.layout_emit && '1' || '' }}
-          JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
-          VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
-          TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
-        run: |
-          set +e
-          scripts/test262-edition-verdict.sh merged-reports/test262-standalone-results-merged.jsonl \
-            legacy-measurement/scope.json completed legacy-baseline legacy-measurement/prs.json legacy-measurement
-          code=$?
-          cat legacy-measurement/edition-report.md >> "$GITHUB_STEP_SUMMARY" || true
-          # 0 and 3 are verdicts (the ratchet below turns 3 into red); others are crashes.
-          if [ "$code" != 0 ] && [ "$code" != 3 ]; then exit "$code"; fi
-          cp merged-reports/test262-standalone-results-merged.jsonl legacy-measurement/results.jsonl
-
       # Besides the per-edition floors, an edition marked `completed` in the
       # baseline (it reached 100 %) is zero-tolerance: every one of its rows in
       # the merged run must pass, whether or not a compare baseline is on disk.
@@ -3703,18 +3715,6 @@ jobs:
           retention-days: 30
           overwrite: true
 
-      # (#7537 phase 1) Label and alarm only; the lead reverts by hand after 24 h.
-      # A push only: a full run's regression is named by the commit-range step.
-      # An alarm that cannot be posted must not hide the verdict.
-      - name: Alarm the PRs a completed-edition failure is charged to (#7537)
-        if: always() && github.event_name == 'push' && steps.completed_report.outcome == 'success'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node scripts/test262-post-merge-alarm.mjs alarm --report legacy-measurement/edition-report.json --lane legacy \
-            --prs legacy-measurement/prs.json --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
       - name: Upload merged reports
         if: always() && env.SHARDS_RAN == 'true'
         uses: actions/upload-artifact@v6
@@ -3757,6 +3757,78 @@ jobs:
                 || echo "(the compare API failed; see the commit history)"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # (#7537 phase 1) Label and alarm only; the lead reverts by hand after 24 h.
+  # The ONLY job with write scopes, and it runs no code under measurement: on a
+  # merge group it checks out the group's base (main), never the queued PR, and
+  # it installs nothing. Every step is continue-on-error, so an alarm that
+  # cannot be posted never fails a run or parks a group.
+  post-merge-alarm:
+    name: post-merge test262 alarm (#7537)
+    needs: [compiler-path-measurement-plan, merge-ir-measurement, merge-report]
+    if: |
+      always() && github.repository == 'loopdive/js2' &&
+      (github.event_name == 'merge_group' || github.event_name == 'schedule' ||
+       (github.event_name == 'push' && github.actor != 'github-actions[bot]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts
+      # A confirmed repeated IR timeout: charged to the PRs where it first
+      # appeared, never to the group being measured (which is not parked for it).
+      - name: Download the IR current-edition measurement
+        id: ir
+        if: |
+          needs.compiler-path-measurement-plan.outputs.scope == 'edition' &&
+          (github.event_name == 'merge_group' || github.event_name == 'push') &&
+          (needs.merge-ir-measurement.result == 'success' || needs.merge-ir-measurement.result == 'failure')
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: test262-ir-standalone-edition-measurement
+          path: ir-measurement
+      - name: Alarm the PRs a repeated IR timeout is charged to
+        if: steps.ir.outcome == 'success'
+        continue-on-error: true
+        env:
+          MEASURED_ON: ${{ github.event_name == 'merge_group' && 'merge-group' || 'main' }}
+        run: |
+          node scripts/test262-post-merge-alarm.mjs alarm --report ir-measurement/edition-report.json --lane ir \
+            --prs ir-measurement/prs.json --run-url "$RUN_URL" --measured-on "$MEASURED_ON"
+      # A completed-edition failure on push is charged to the push's PRs; the
+      # daily run raises only confirmed repeats (its new failures span a day of
+      # merges, and its summary names that commit range).
+      - name: Download the completed-edition measurement
+        id: legacy
+        if: |
+          (github.event_name == 'push' || github.event_name == 'schedule') &&
+          (needs.merge-report.result == 'success' || needs.merge-report.result == 'failure')
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: test262-legacy-completed-measurement
+          path: legacy-measurement
+      - name: Alarm the PRs a completed-edition failure is charged to
+        if: steps.legacy.outcome == 'success'
+        continue-on-error: true
+        env:
+          REPEATS_ONLY: ${{ github.event_name == 'schedule' && '--repeats-only' || '' }}
+        run: |
+          node scripts/test262-post-merge-alarm.mjs alarm --report legacy-measurement/edition-report.json --lane legacy \
+            --prs legacy-measurement/prs.json --run-url "$RUN_URL" --measured-on main $REPEATS_ONLY
 
   regression-gate:
     # Runs after merge-report in all gate-relevant contexts and compares the

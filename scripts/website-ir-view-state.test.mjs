@@ -28,6 +28,10 @@ function page(query = "", hash = "") {
     reload() {
       reloads++;
     },
+    replace(next) {
+      url = new URL(next, url);
+      reloads++;
+    },
   };
   const window = {
     location,
@@ -113,6 +117,11 @@ describe("website IR data selection", () => {
 
   it("reloads an IR document with an unavailable status as the legacy view", async () => {
     const view = page("?edition=ES5");
+    // Even when replaceState is unavailable, the navigation itself carries ir=0,
+    // so the legacy document cannot reload back into the IR view.
+    view.window.history.replaceState = () => {
+      throw new Error("SecurityError");
+    };
     view.window.fetch = unavailableStatus("Placeholder");
     const node = { hidden: true, textContent: "" };
     await view.state.applyIrStatus("./benchmarks/results", "standalone", node);

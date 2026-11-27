@@ -39,6 +39,8 @@ rechecks=()
 recheck() { # <path-list> <label> <override-flag> [compile-timeout-ms]
   [ -s "$1" ] || return 0
   local prefix="test262-recheck-$2" status=0
+  # The runner appends to its results file; start from an empty one.
+  rm -f "benchmarks/results/$prefix-results-$2.jsonl"
   env TEST262_PATH_FILTER_FILE="$1" TEST262_PATH_FILTER="" TEST262_CHUNK_INDEX=0 TEST262_CHUNK_TOTAL=1 \
     COMPILER_POOL_SIZE=1 TEST262_RESULT_PREFIX="$prefix" RUN_TIMESTAMP="$2" \
     ${4:+TEST262_COMPILE_TIMEOUT_MS=$4} \

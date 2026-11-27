@@ -5,17 +5,24 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { addLabel, commentOnce } from "../scripts/lib/pr-label-comment.mjs";
 import { readWatch } from "../scripts/lib/test262-timeout-watch.mjs";
 import {
   LABEL,
   UNATTRIBUTED_LABEL,
+  addLabel,
+  commentOnce,
   incidents,
   labelFor,
   markerFor,
   renderIncident,
 } from "../scripts/test262-post-merge-alarm.mjs";
-import { type ScopeMeta, buildReport, nearerUnfinished } from "../scripts/test262-edition-scope.ts";
+import {
+  COMPLETED_RULE_SHA,
+  type ScopeMeta,
+  buildReport,
+  completedRuleStatuses,
+  nearerUnfinished,
+} from "../scripts/test262-edition-scope.ts";
 
 const A = "test/built-ins/Object/create/15.2.3.5-1-1.js";
 const B = "test/built-ins/Array/prototype/forEach/15.4.4.18-4-1.js";
@@ -95,10 +102,24 @@ describe("#7537 attribution", () => {
       sha: "g2",
       runUrl: "https://run",
       now: new Date("2026-11-27T10:00:00Z"),
+      measuredOn: "merge-group",
     });
     expect(body).toContain("Charged to #7590.");
     expect(body).toContain("Second suspect, not labelled: the change measured now (#7610)");
     expect(body).toContain("2026-11-28T10:00:00Z");
+    // A merge group is not main yet; the comment says so instead of claiming main fails.
+    expect(body).toContain("measured a merge group at `g2`, which is not main yet");
+  });
+
+  it("the daily full run raises only confirmed repeats, never its day-wide new failures", () => {
+    const report = {
+      diff: {
+        regressions: [{ file: A, now: "fail" }],
+        confirmedRepeats: [{ file: B, now: "compile_timeout", origin: { file: B, firstSeenSha: "p1", prs: [7590] } }],
+      },
+    };
+    expect(incidents(report, "legacy", [7600], { repeatsOnly: true }).map((i) => i.kind)).toEqual(["repeat"]);
+    expect(incidents(report, "legacy", [7600]).map((i) => i.kind)).toEqual(["regression", "repeat"]);
   });
 });
 
@@ -128,6 +149,32 @@ describe("#7537 idempotent alarm", () => {
   });
 });
 
+describe("#7537 no earlier measurement: the completed rule is the baseline", () => {
+  it("a first run still finds, re-checks and alarms a completed-edition failure", () => {
+    const paths = new Set([A, B]);
+    const report = buildReport({
+      run: statuses({ [A]: "fail", [B]: "pass" }),
+      meta: meta("c1"),
+      paths,
+      baseline: {
+        statuses: completedRuleStatuses(paths, new Set()),
+        meta: { ...meta("c1"), sourceSha: COMPLETED_RULE_SHA },
+      },
+    });
+    expect(report.diff?.regressions).toEqual([{ file: A, now: "fail" }]);
+    expect(incidents(report, "legacy", [7600])[0].prs).toEqual([7600]);
+  });
+
+  it("a row the earlier measurement lacks counts as passing, but a reviewed exception never does", () => {
+    const paths = new Set([A, B]);
+    const rule = completedRuleStatuses(paths, new Set([B]), statuses({}));
+    expect(rule.get(A)).toBe("pass");
+    expect(rule.has(B)).toBe(false);
+    // The earlier measurement's own verdict wins where it has one.
+    expect(completedRuleStatuses(paths, new Set(), statuses({ [A]: "fail" })).get(A)).toBe("fail");
+  });
+});
+
 describe("#7537 waiting for the predecessor", () => {
   const lineage = ["c3", "c2", "c1"];
   it("waits for a nearer commit whose run is still in flight", () => {
@@ -154,22 +201,38 @@ describe("#7537 workflow wiring of the completed-edition push lane", () => {
     expect(plan).toMatch(/if \[ "\$EVENT_NAME" = push \]; then\n\s+scope=completed/);
   });
 
-  it("merge-report re-checks before the ratchet, which excuses only the listed first timeouts", () => {
+  it("merge-report re-checks before the merged report is built, and the ratchet excuses only listed first timeouts", () => {
     const report = job("merge-report");
     const verdict = report.indexOf(
       "scripts/test262-edition-verdict.sh merged-reports/test262-standalone-results-merged.jsonl",
     );
+    const build = report.indexOf("- name: Build merged standalone test262 report");
     const ratchet = report.indexOf("--listed-timeouts legacy-measurement/edition-report.json");
     expect(verdict).toBeGreaterThan(0);
+    // The floor, the #1897 guard and promotion read the report built after the override.
+    expect(build).toBeGreaterThan(verdict);
     expect(ratchet).toBeGreaterThan(verdict);
+    expect(report).toContain("EXPECTED_SHARDS: ${{ needs.compiler-path-measurement-plan.outputs.legacy_chunks }}");
   });
 
-  it("uploads the measurement every run and alarms on push without ever failing the verdict", () => {
-    const report = job("merge-report");
-    expect(report).toContain("name: test262-legacy-completed-measurement");
-    const alarm = report.slice(report.indexOf("Alarm the PRs a completed-edition failure is charged to (#7537)"));
-    expect(alarm).toMatch(/^[^\n]*\n\s+if: always\(\) && github\.event_name == 'push'/);
-    expect(alarm.slice(0, 400)).toContain("continue-on-error: true");
+  it("uploads the measurement every run; only the separate alarm job can write, and it runs no measured code", () => {
+    expect(job("merge-report")).toContain("name: test262-legacy-completed-measurement");
+    for (const name of ["merge-report", "merge-ir-measurement"]) {
+      expect(job(name), name).not.toMatch(/pull-requests: write|issues: write/);
+      expect(job(name), name).toContain("persist-credentials: false");
+      expect(job(name), name).toMatch(/timeout-minutes: \d+/);
+    }
+    const alarm = job("post-merge-alarm");
+    expect(alarm).toContain("pull-requests: write");
+    expect(alarm).toContain(
+      "ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}",
+    );
+    expect(alarm).not.toMatch(/pnpm install|vitest|test262-runner-setup/);
+    // Every step after the checkout is continue-on-error: an alarm never fails a run.
+    const steps = alarm.split("\n      - ").slice(2);
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) expect(step).toContain("continue-on-error: true");
+    expect(alarm).toContain("--repeats-only");
   });
 
   it("the whole-corpus gates run only under the full scope", () => {
