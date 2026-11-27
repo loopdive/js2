@@ -247,8 +247,8 @@ What landed, and where it departs from the plan:
 - **Slice 2.** `lowerReferencelessDelete` sits before `lowerDynamicDelete` in the one dispatch. It unwraps the
   transparent wrappers (`skipOuterExpressions`: parentheses and TS type wrappers, which JavaScript does not have).
   `arguments` is not a scope binding on this path, so the arm names it: an unshadowed `arguments` inside a non-arrow
-  function is that function's binding. Such a function aborts today at its argument count (`dyn.arguments_length`),
-  which the test pins. `undefined` and `Infinity` refuse with `NaN` (global-object properties, Session B).
+  function is that function's binding. Such a function aborts today at its arguments object (#7562 lowers only
+  `arguments.length`), which the test pins. `undefined` and `Infinity` refuse with `NaN` (global-object properties, Session B).
 - **Not testable today.**
   - `Object.freeze` is not a native static on this path, so the frozen-object case cannot be written.
   - A `with` scope binding never reaches the arm: an object literal lowers as a realm object here, and

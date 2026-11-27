@@ -157,13 +157,13 @@ describe("#7471 slice 2 — delete of a name", () => {
     expect(result.errors.map((error) => error.code)).toContain(1102);
   });
 
-  // `arguments` in a non-arrow function is its own binding, so the delete answers `false`; such a function reads its
-  // argument count at entry, which the Prepared path does not lower yet, so it is that run-time abort, not the delete's.
-  it("answers a function's arguments, the function aborting at its argument count", async () => {
+  // `arguments` in a non-arrow function is its own binding, so the delete answers `false`; the Prepared path lowers only
+  // `arguments.length` of it (#7562), so the function is that run-time abort, not the delete's.
+  it("answers a function's arguments, the function aborting at its arguments object", async () => {
     expect(new Function("function f(a) { return delete arguments; } return f(1);")()).toBe(false);
     expect(
-      await abortBodies('function f(a) { return delete arguments; } var out = "" + f(1);', runnerOptions()),
-    ).toEqual(["f: dynamic operation dyn.arguments_length has no Prepared intrinsic"]);
+      await abortBodies('function f(a) { return delete arguments; } var g = f; var out = "" + g(1);', runnerOptions()),
+    ).toEqual(["f: ir/from-ast: arguments object beyond arguments.length (f)"]);
   });
 
   it.each([
