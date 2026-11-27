@@ -91,10 +91,10 @@ interface Access {
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
-/** (#7561) The string a constant call argument holds: the carrier of a once-boxed constant. */
+/** (#7561) The string a constant call argument holds: a once-boxed constant, or its carrier. */
 export function constantArgumentOf(definitions: ReadonlyMap<IrValueId, IrInstr>, value: IrValueId): string | undefined {
   const definition = definitions.get(value);
-  return definition?.kind === "coerce.to_externref" ? constantKeyOf(definitions, definition.value) : undefined;
+  return constantKeyOf(definitions, definition?.kind === "coerce.to_externref" ? definition.value : value);
 }
 
 /** The string a once-boxed constant `key` holds, if it is one. */
