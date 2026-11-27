@@ -14,6 +14,8 @@ import { compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
+import { ensureBoundaryCallableKind } from "../object-runtime.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType } from "../../checker/type-mapper.js";
 import { coerceType, pushDefaultValue } from "../type-coercion.js";
@@ -820,4 +822,26 @@ export function linkSymbolWrapperPrototype(ctx: CodegenContext, fctx: FunctionCo
   const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
   if (!read || setProtoIdx === undefined) return;
   fctx.body.push(...read, { op: "call", funcIdx: setProtoIdx });
+}
+
+/**
+ * §7.3.14 Call step 2 for a callee the program reads as a value (`[[Get]](recv, name)`) and invokes through
+ * `__apply_closure`. That bridge answers `undefined` for a non-callable instead of throwing, so each such call site
+ * tests IsCallable itself, after the arguments (their side effects stay observable) and before [[Call]].
+ */
+/** Register `__is_callable` before any funcIdx is captured; it is a native union helper, so every module has it. */
+export function registerCalleeCallableGuard(ctx: CodegenContext): void {
+  ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
+  ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+}
+
+/** Throw a TypeError unless the externref in `calleeLocal` is callable; `__is_callable` also rejects a class value. */
+export function emitCalleeCallableGuard(ctx: CodegenContext, fctx: FunctionContext, calleeLocal: number): void {
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", { flush: fctx });
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "call", funcIdx: ctx.funcMap.get("__is_callable")! },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+  );
 }

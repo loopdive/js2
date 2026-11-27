@@ -15,7 +15,7 @@ import {
   isTypedArrayViewProtoName,
 } from "../array-object-proto.js";
 import { tryEnsureNativeProtoBrand } from "../property-access.js";
-import { isGlobalBuiltinIdentifier } from "./calls.js";
+import { isGlobalBuiltinIdentifier } from "./global-builtin-identifier.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";

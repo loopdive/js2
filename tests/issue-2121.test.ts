@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // Run a body that wraps the call in try/catch and reports whether a
 // ReferenceError was thrown — the compiled error model carries a real
@@ -21,9 +22,7 @@ import { compile } from "../src/index.js";
 async function run(src: string, fn: string): Promise<number | string> {
   const r = await compile(src, { fileName: "test.ts", skipDiagnostics: true });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
-  const io = r.importObject;
-  const { instance } = await WebAssembly.instantiate(r.binary, io);
-  (io as { __setExports?: (e: WebAssembly.Exports) => void }).__setExports?.(instance.exports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => number | string>)[fn]!();
 }
 

@@ -311,12 +311,15 @@ export function buildImports(
  * fallback work. Direct `buildImports` callers that skip `setInstance` see
  * `undefined` for opaque WasmGC struct fields, which makes destructuring
  * defaults wrongly fire in the harness even when the real runtime is correct.
+ *
+ * `deps` are the embedder's host values (e.g. a mock `document`), forwarded to
+ * the runtime's `buildImports` exactly as a real embedder passes them.
  */
-export async function instantiateWithRuntime(result: CompileResult) {
+export async function instantiateWithRuntime(result: CompileResult, deps?: Record<string, unknown>) {
   const imports = buildImports(result);
   let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (result.imports && result.imports.length > 0) {
-    const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
+    const runtimeResult = buildRuntimeImports(result.imports, deps, result.stringPool);
     setInstanceFn = runtimeResult.setInstance;
     imports.env = { ...(imports.env as Record<string, Function>), ...runtimeResult.env };
     if (runtimeResult.string_constants) imports.string_constants = runtimeResult.string_constants;
@@ -340,25 +343,7 @@ export async function compileToWasm(source: string) {
   if (!WebAssembly.validate(result.binary)) {
     throw new Error(`Invalid Wasm binary (WebAssembly.validate failed)\nWAT:\n${result.wat}`);
   }
-  // Use the runtime's buildImports for full host import support (iterator protocol, etc.)
-  // Merge with the manual buildImports for wasm:js-string polyfill and string_constants.
-  const manualImports = buildImports(result);
-  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
-  if (result.imports && result.imports.length > 0) {
-    const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setInstanceFn = runtimeResult.setInstance;
-    // Merge: runtime env overrides manual env, keep manual wasm:js-string and string_constants
-    const mergedEnv = { ...(manualImports.env as Record<string, Function>), ...runtimeResult.env };
-    manualImports.env = mergedEnv;
-    // Use runtime string_constants if available
-    if (runtimeResult.string_constants) {
-      manualImports.string_constants = runtimeResult.string_constants;
-    }
-  }
-  const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
-  // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
-  setInstanceFn?.(instance);
-  return jsFacingExports(result, instance);
+  return (await instantiateWithRuntime(result)).exports as Record<string, Function>;
 }
 
 /**

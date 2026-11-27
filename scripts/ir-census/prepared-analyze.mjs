@@ -3,13 +3,19 @@
  * Tables for prepared-census.mts rows.
  *
  *   node scripts/ir-census/prepared-analyze.mjs --rows <prepared.jsonl> [--rows <other.jsonl> …]
+ *                                               [--base <older prepared.jsonl>]
  *
  * For each rows file: outcomes (pass / fail / compile error / crash / skipped),
- * where the first gap lies (harness file, stand-in, test body), the first gaps
- * by detail, and the first gaps of test bodies by mechanism with their slice
- * and issue (prepared-mechanisms.mjs). The Prepared path stops at its first
+ * (#7486) the run-time traps by the abort they were, where the first gap lies
+ * (harness file, stand-in, test body), the first gaps by detail, and the first
+ * gaps of test bodies by mechanism with their slice and issue
+ * (prepared-mechanisms.mjs). The Prepared path stops at its first
  * gap, so every count is a first-gap count: a file is charged to one
  * mechanism, and nothing behind that gap is seen.
+ *
+ * With `--base`, each report starts with the files that pass now and did not
+ * pass in the base run, and those that passed there and no longer do, over the
+ * files both runs measured.
  */
 import { readRows } from "./analyze.mjs";
 import { MECHANISMS, mechanismOf, sourceWithIncludes } from "./prepared-mechanisms.mjs";
@@ -37,6 +43,12 @@ const normalise = (detail = "") =>
     .slice(0, 110)
     .trim();
 
+/** (#7486) The abort a trap was: a run-time abort site's or an abort body's reason, else the frame it fired in. */
+const trapReason = (row) =>
+  row.abort === undefined
+    ? `in ${row.trapFrame}`
+    : `${row.siteFrame === undefined ? "abort body" : "abort site"}: ${normalise(row.abort.detail)}`;
+
 function report(path) {
   const rows = readRows(path);
   const positive = rows.filter((row) => row.status !== "skip");
@@ -46,6 +58,14 @@ function report(path) {
     table(
       ["outcome", "files"],
       [["positive files", positive.length], ...count(positive.map((row) => row.status))].map((r) => r.map(String)),
+    ),
+  );
+  out.push(
+    table(
+      ["#", "run-time trap (normalised)", "files"],
+      count(positive.filter((row) => row.trapFrame !== undefined).map(trapReason))
+        .slice(0, 25)
+        .map(([reason, n], i) => [String(i + 1), `\`${reason}\``, String(n)]),
     ),
   );
   const unmodelled = positive.filter((row) => row.unmodelled).length;
@@ -97,5 +117,40 @@ function report(path) {
   return out.join("\n\n");
 }
 
-const paths = process.argv.flatMap((arg, i) => (process.argv[i - 1] === "--rows" ? [arg] : []));
-console.log(paths.map(report).join("\n\n"));
+/**
+ * Passes gained and lost against an older run. Only files both runs measured
+ * are compared; a file in one run only is listed apart, never as a flip.
+ */
+function passDelta(rows, baseRows) {
+  const base = new Map(baseRows.map((row) => [row.file, row.status === "pass"]));
+  const measured = new Set(rows.map((row) => row.file));
+  const gained = [];
+  const lost = [];
+  for (const row of rows) {
+    if (!base.has(row.file)) continue;
+    const passes = row.status === "pass";
+    if (passes && !base.get(row.file)) gained.push(row.file);
+    if (!passes && base.get(row.file)) lost.push(row.file);
+  }
+  const onlyNow = rows.filter((row) => !base.has(row.file)).length;
+  const onlyBase = baseRows.filter((row) => !measured.has(row.file)).length;
+  const list = (files) =>
+    files
+      .sort()
+      .map((file) => `- \`${file}\``)
+      .join("\n") || "- none";
+  return (
+    `Passes gained (${gained.length}):\n${list(gained)}\n\nPasses lost (${lost.length}):\n${list(lost)}\n\n` +
+    `Not compared: ${onlyNow} files only in this run, ${onlyBase} only in the base run.`
+  );
+}
+
+const argv = process.argv;
+const paths = argv.flatMap((arg, i) => (argv[i - 1] === "--rows" ? [arg] : []));
+const basePath = argv.includes("--base") ? argv[argv.indexOf("--base") + 1] : undefined;
+const baseRows = basePath ? readRows(basePath) : undefined;
+console.log(
+  paths
+    .map((path) => (baseRows ? `${passDelta(readRows(path), baseRows)}\n\n${report(path)}` : report(path)))
+    .join("\n\n"),
+);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #2109 — BigInt mixed loose-equality against a string must use ToNumber
 // (§7.1.4 StringToNumber via `Number()`), NOT `parseFloat`. `parseFloat`
@@ -17,9 +17,7 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { setExports?: (e: object) => void }).setExports?.(instance.exports as object);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as any)[fn](...args);
 }
 

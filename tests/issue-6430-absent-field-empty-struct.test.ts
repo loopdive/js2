@@ -36,7 +36,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { compileProject, type CompileResult } from "../src/index.js";
-import { buildCompiledImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -99,10 +99,7 @@ describe("#6430(b) absent field on a field-less struct", () => {
   it("answers undefined, not the shared getter's f64 miss-default 0", async () => {
     const result = await compileFixture();
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-    const imports = buildCompiledImports(result, {}) as Record<string, unknown> & WebAssembly.Imports;
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    (imports.setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
-    (imports.__setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
+    const instance = await instantiateWithRuntime(result);
     (instance.exports.__module_init as (() => void) | undefined)?.();
     const exports = instance.exports as unknown as Record<string, () => unknown>;
 

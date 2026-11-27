@@ -14,6 +14,7 @@ import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
+import type { RealmFamily } from "./builtin-prototype-keys.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
@@ -29,6 +30,8 @@ export const TYPEOF_NAME = {
   object: "object",
 } as const;
 export type CarrierKind = keyof typeof TYPEOF_NAME;
+/** "a number", "an object": the kind as a refusal names a value of it. */
+export const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
 /** The kinds each `typeof` answer stands for: `TYPEOF_NAME` read backwards. */
 export const KINDS_OF_TYPEOF: ReadonlyMap<string, readonly CarrierKind[]> = new Map(
   [...new Set(Object.values(TYPEOF_NAME))].map((answer) => [
@@ -159,14 +162,14 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
  * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
- * way to `@@toPrimitive` and `@@toStringTag`, and (G1) whether it names an Error constructor (a built-in function
- * value, which makes objects).
+ * way to `@@toPrimitive` and `@@toStringTag`, and (G1, #7350 B3a) the realm constructor families it names as values
+ * (built-in function values; an Error constructor makes objects).
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
-  readonly namesErrors: boolean;
+  readonly realmFamilies: ReadonlySet<RealmFamily>;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -182,26 +185,29 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
   namesSymbol: false,
-  namesErrors: false,
+  realmFamilies: new Set<RealmFamily>(),
 });
 
 /**
- * (#7354 G1) Whether a value of the program may be an error (`realm-family-bodies.ts`): it names an Error constructor
- * or reads a catch binding, the one way a realm error becomes a value. The realm then holds the Error family
- * (`native-realm-requirements.ts`), whose prototypes the program can read and write.
+ * (#7354 G1) Whether a value of the program may be a member of the realm family `family` (`realm-family-bodies.ts`):
+ * it names one of its constructors, or, for the Error family, reads a catch binding, the one way a realm error becomes
+ * a value. The realm then holds the family (`native-realm-requirements.ts`); the Error family's prototypes the program
+ * can read and write.
  */
-export const holdsErrors = (program: LegalizationProgram): boolean => program.catches || program.objects.namesErrors;
+export const holdsFamily = (program: LegalizationProgram, family: RealmFamily): boolean =>
+  (family === "error" && program.catches) || program.objects.realmFamilies.has(family);
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
  * an error, which is an ordinary object, and (F1) the function kind only where it creates function values or (G1) may
- * hold a built-in one (an Error constructor, an error's methods).
+ * hold a built-in one (a realm constructor, an error's methods).
  */
 export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
+  const builtins = holdsFamily(program, "error") || holdsFamily(program, "wrapper");
   return KIND_ORDER.filter(
     (kind) =>
-      (kind !== "object" || program.objects.present || holdsErrors(program)) &&
-      (kind !== "function" || program.objects.functions || holdsErrors(program)),
+      (kind !== "object" || program.objects.present || holdsFamily(program, "error")) &&
+      (kind !== "function" || program.objects.functions || builtins),
   );
 }
 

@@ -157,3 +157,71 @@ export function buildArgumentVectorPushBody({ objVecArrTypeIdx, objVecTypeIdx }:
     { op: "struct.set", typeIdx: objVecTypeIdx, fieldIdx: 0 },
   ];
 }
+
+/** (#7377) The vector's struct and array types, as the realm's operand records name them. */
+export interface ArgumentVectorTypes {
+  readonly vectorTypeIdx: number;
+  readonly vectorArrayTypeIdx: number;
+}
+
+function argumentVector(d: ArgumentVectorTypes, vector: readonly Instr[]): Instr[] {
+  return [...vector, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: d.vectorTypeIdx }];
+}
+
+/** (#7377) The length of the vector whose externref `vector` leaves. */
+export function argumentVectorLength(d: ArgumentVectorTypes, vector: readonly Instr[]): Instr[] {
+  return [...argumentVector(d, vector), { op: "struct.get", typeIdx: d.vectorTypeIdx, fieldIdx: 0 }];
+}
+
+/** (#7377) The element at the i32 `index` leaves of the vector whose externref `vector` leaves. */
+export function argumentVectorElement(
+  d: ArgumentVectorTypes,
+  vector: readonly Instr[],
+  index: readonly Instr[],
+): Instr[] {
+  return [
+    ...argumentVector(d, vector),
+    { op: "struct.get", typeIdx: d.vectorTypeIdx, fieldIdx: 1 },
+    ...index,
+    { op: "array.get", typeIdx: d.vectorArrayTypeIdx },
+  ];
+}
+
+/**
+ * (#7377) `body` at every `step`-th position of a vector, the position in the i32 local `index`. The length is read
+ * before every pass, so `body` may push onto the vector it walks.
+ */
+export function argumentVectorEach(
+  d: ArgumentVectorTypes,
+  vector: readonly Instr[],
+  index: number,
+  step: number,
+  body: readonly Instr[],
+): Instr[] {
+  return [
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index },
+            ...argumentVectorLength(d, vector),
+            { op: "i32.ge_u" },
+            { op: "br_if", depth: 1 },
+            ...body,
+            { op: "local.get", index },
+            { op: "i32.const", value: step },
+            { op: "i32.add" },
+            { op: "local.set", index },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+}

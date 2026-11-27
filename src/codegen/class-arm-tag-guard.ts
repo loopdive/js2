@@ -87,14 +87,16 @@ function mayShareCanonicalLayout(ctx: CodegenContext, a: readonly FieldDef[], b:
   return sameFields(a, b);
 }
 
-/** (#7158 / #7199) Does any OTHER emitted struct possibly share `structName`'s canonical type? */
-function hasLayoutTwin(ctx: CodegenContext, structName: string): boolean {
+/** (#7158 / #7199 / #7453) The OTHER emitted structs that possibly share `structName`'s canonical type, lazily. */
+export function* layoutTwins(ctx: CodegenContext, structName: string): Generator<string> {
   const own = ctx.structFields.get(structName);
-  if (!own) return false;
-  for (const [name, fields] of ctx.structFields) {
-    if (name !== structName && mayShareCanonicalLayout(ctx, own, fields)) return true;
-  }
-  return false;
+  if (!own) return;
+  for (const [name, fields] of ctx.structFields)
+    if (name !== structName && mayShareCanonicalLayout(ctx, own, fields)) yield name;
+}
+
+function hasLayoutTwin(ctx: CodegenContext, structName: string): boolean {
+  return !layoutTwins(ctx, structName).next().done;
 }
 
 /**

@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 C2) The dynamic-value legalization of the three operations a plain function takes part in as an object:
- * `this` (`dyn.current_this`), `new` (`dyn.construct`) and `instanceof` (`dyn.instanceof`). Each is a chain over the
+ * `this` (`dyn.current_this`), `new` (`dyn.construct`) and `instanceof` (`dyn.instanceof`), and (#7562) the count of
+ * its arguments (`dyn.arguments_length`, `dyn.publish_argc`). Each is a chain over the
  * kinds its operands may hold (`dynamic-value-kinds.ts`) around the realm's function objects (`js.object.*`) and the
  * native dispatcher (`js.closure.*`): the dispatcher installs a call's receiver in `__current_this`, pads and drops
  * arguments and throws its TypeError for a value that is no source closure, so [[Construct]] is its call with the new
@@ -10,13 +11,19 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
-import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
+import {
+  IR_CLOSURE_ARGUMENTS_LENGTH,
+  IR_CLOSURE_PUBLISH_ARGC,
+  IR_CLOSURE_RECEIVER,
+  irClosureMethodReference,
+} from "../core/closure-invocation-callables.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
-  holdsErrors,
+  article,
+  holdsFamily,
   isOrdinaryObject,
   type CarrierKind,
   type LegalizationProgram,
@@ -26,9 +33,11 @@ import { functionChainAnswer } from "./dynamic-error-constructors.js";
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
+type ArgumentsCount = Extract<IrInstr, { kind: "dyn.arguments_length" | "dyn.publish_argc" }>;
 
 /** The Boolean carrier `instanceof` and the realm's tests answer with (the chains' `TEST_RESULT` is unbranded). */
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 /**
  * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects
@@ -92,10 +101,40 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
     b.branch(
       cond,
       (r) => [carried(receiver, r)],
-      (r) => b.abort(instr, r),
+      (r) => b.abort(instr, "a sloppy-mode this that is not an object: needs the global object or a wrapper", r),
       instr.result!,
       CARRIER,
     ),
+  ];
+}
+
+/**
+ * (#7562) The dispatcher's count protocol (`__argc`, `__extra_args`) outside it. A function that reads its own
+ * `arguments.length` takes the count at entry; a direct call to one publishes its count, and no extras, first: from-ast
+ * emits that publication at every such call on this path, because a caller the dispatcher entered still has its own
+ * count installed.
+ */
+export function argumentsCount(b: Builders, instr: ArgumentsCount): IrInstr[] {
+  if (instr.kind === "dyn.arguments_length")
+    return [
+      {
+        kind: "call",
+        target: irIntrinsicFuncRef(IR_CLOSURE_ARGUMENTS_LENGTH),
+        args: [],
+        result: instr.result,
+        resultType: instr.resultType,
+      },
+    ];
+  const count = b.fresh();
+  return [
+    { kind: "const", value: { kind: "i32", value: instr.count }, result: count, resultType: I32 },
+    {
+      kind: "call",
+      target: irIntrinsicFuncRef(IR_CLOSURE_PUBLISH_ARGC),
+      args: [count],
+      result: null,
+      resultType: null,
+    },
   ];
 }
 
@@ -106,10 +145,9 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
  * Object.prototype; the body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`)
  * replaces the new object.
  *
- * IsConstructor is the function-kind test: every function value on this lane is a constructor (a declaration or a
- * function expression). Arrows, methods, accessors, generators and async functions carry no all-dynamic signature, so
- * F2's dispatchability rule refuses any program that could call one through a value. The slice that admits the first
- * non-constructor function value adds the test, with a program that reaches it.
+ * IsConstructor is the function-kind test, then (#7354 O2) the function object's own answer
+ * (`js.object.is-constructor`, the bit `init-function` sets from `isConstructorFunction`: an accessor has no
+ * [[Construct]]).
  */
 export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
@@ -120,17 +158,17 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   );
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
-  const isConstructor = holds(b, instr, callee, ["function"]);
+  const isFunction = holds(b, instr, callee, ["function"]);
   // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
   // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
-  const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
+  const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, "new on a built-in function the realm holds", r);
   const construct = (r: IrValueId): IrInstr[] => {
     const [prototype, object, answer] = [b.fresh(), b.fresh(), b.fresh()];
     const link = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.create-with-prototype", [prototype], s)]
         : IS_OBJECT[kind]
-          ? b.abort(instr, s)
+          ? b.abort(instr, `new with a 'prototype' that is ${article(kind)}, not an ordinary object`, s)
           : [realmCall("js.object.create-default", [], s)];
     const isObject = holds(b, instr, answer, b.objects);
     return [
@@ -153,9 +191,16 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
+  const source = (r: IrValueId): IrInstr[] => {
+    const test = b.fresh();
+    return [
+      realmCall("js.object.is-constructor", [callee], test),
+      b.branch(test, construct, notConstructor, r, CARRIER),
+    ];
+  };
   return [
-    ...isConstructor.instrs,
-    b.branch(isConstructor.cond, b.program.objects.functions ? construct : builtin, notConstructor, result, CARRIER),
+    ...isFunction.instrs,
+    b.branch(isFunction.cond, b.program.objects.functions ? source : builtin, notConstructor, result, CARRIER),
   ];
 }
 
@@ -180,7 +225,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
-        : functionChainAnswer(b, instr, holdsErrors(b.program), prototype, (t) => [unread(t)], s, BOOLEAN);
+        : functionChainAnswer(b, instr, holdsFamily(b.program, "error"), prototype, (t) => [unread(t)], s, BOOLEAN);
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,

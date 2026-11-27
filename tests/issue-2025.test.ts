@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // (#2025) Calling an extracted method whose body reads `this`
 // (`const f = a.m; f()`) used to TRAP uncatchably ("dereferencing a null
@@ -12,7 +12,7 @@ import { compileAndInstantiate } from "../src/runtime-instantiate.js";
 // regressed the earlier trampoline-throw attempt #1571).
 
 async function run<T = unknown>(src: string, fn: string): Promise<T> {
-  const exports = (await compileAndInstantiate(src)) as Record<string, () => T>;
+  const exports = (await compileToWasm(src)) as Record<string, () => T>;
   return exports[fn]!();
 }
 

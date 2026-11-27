@@ -1,50 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
-
-const jsStringPolyfill = {
-  concat: (a: string, b: string) => a + b,
-  length: (s: string) => s.length,
-  equals: (a: string, b: string) => (a === b ? 1 : 0),
-  substring: (s: string, start: number, end: number) => s.substring(start, end),
-  charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-};
-
-function buildImports(result: ReturnType<typeof compile>): WebAssembly.Imports {
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_string: () => {},
-    console_log_bool: () => {},
-    __unbox_number: (v: unknown) => Number(v),
-    __box_number: (v: number) => v,
-    __box_boolean: (v: number) => Boolean(v),
-    __unbox_boolean: (v: unknown) => (v ? 1 : 0),
-    __is_truthy: (v: unknown) => (v ? 1 : 0),
-    __extern_get: (obj: any, key: any) => (obj == null ? undefined : obj[key]),
-    __extern_set: (obj: any, key: any, val: any) => {
-      if (obj != null) obj[key] = val;
-    },
-    __extern_length: (obj: any) => (obj == null ? 0 : obj.length),
-    parseFloat: (s: any) => parseFloat(String(s)),
-    number_toString: (v: number) => String(v),
-    string_compare: (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0),
-  };
-
-  return {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  };
-}
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function compileAndRun(source: string): Promise<any> {
-  const result = await compile(source, { filename: "test.ts" });
-  if (!result.success) {
-    throw new Error("Compile error: " + result.errors.map((e) => e.message).join("; "));
-  }
-  const mod = await WebAssembly.compile(result.binary);
-  const instance = await WebAssembly.instantiate(mod, buildImports(result));
-  return (instance.exports as any).test();
+  const exports = await compileToWasm(source);
+  return exports.test!();
 }
 
 describe("Stack balance fixup (#655)", () => {

@@ -63,3 +63,12 @@ The TypeScript parser is lenient — it often accepts syntax that is invalid Jav
 ## Implementation notes
 
 Consider adding a `validateEarlyErrors(sourceFile: ts.SourceFile)` pass in `src/compiler.ts` that runs after TypeScript parsing but before codegen. This centralizes all early error checks and keeps codegen clean.
+
+## Test fixture provenance (2026-11-26)
+
+`tests/issue-927-batch.test.ts` read a hand-made list at `/tmp/current-neg-failures.txt`, which no longer exists
+anywhere, so the test could not run. The list is now regenerated from the earliest baseline snapshot that survives,
+loopdive/js2wasm-baselines `63c403d` (`test262-current.jsonl`, 2026-04-25): the 165 rows whose error matches
+`expected parse/early <Error> but compiled and instantiated`. The original April list (~840 tests) is lost. The
+fixture is `tests/fixtures/issue-927-negative-failures-2026-04-25.txt`, and the test comment records the exact
+command. On main `1a726b3e`, 143/165 are rejected now (threshold ≥ 100 unchanged).

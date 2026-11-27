@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runFn(source: string, exportName: string): Promise<unknown> {
   const result = await compile(source, { fileName: "test.ts" });
@@ -16,12 +16,10 @@ async function runFn(source: string, exportName: string): Promise<unknown> {
     const msgs = result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
     throw new Error(`compile failed:\n${msgs}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  const instance = await instantiateWithRuntime(result);
   // The host-import fallback (`__array_join_any` + `__object_keys`) calls back
   // into Wasm exports through the instance-aware data-struct bridge. Wire the
   // complete instance so both ordinary exports and bridge metadata are live.
-  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[exportName]!();
 }
 

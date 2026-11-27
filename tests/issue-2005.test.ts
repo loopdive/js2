@@ -18,11 +18,11 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 describe("#2005/#2006 template literal span stringification (JS-host)", () => {
   async function run(body: string): Promise<string> {
-    const exports = (await compileAndInstantiate(`export function test(): string { ${body} }`)) as { test(): string };
+    const exports = (await compileToWasm(`export function test(): string { ${body} }`)) as { test(): string };
     return exports.test();
   }
 

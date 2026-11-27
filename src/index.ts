@@ -1009,6 +1009,15 @@ export interface CompileOptions {
    */
   deferTopLevelInit?: boolean;
   /**
+   * (#7453) Harness opt-in, like `hostBridge: "always"`: also export
+   * `__exn_render_kind(payload, slot) -> i32`: the thrown payload's `name`
+   * (slot 0) or `constructor.name` (slot 1), written to the buffer
+   * `__exn_render_char` reads, or -1 when that slot has no string answer. The
+   * test262 runner's runtime-negative verdict reads it. Default false →
+   * byte-identical output.
+   */
+  exceptionKindExport?: boolean;
+  /**
    * #2783 — general `--link <namespace>` dynamic-linking axis (the ONLY
    * link-vs-inline control; the old `linkNodeShims` boolean was removed). Each
    * listed namespace is left as a **link-time import** (satisfied at

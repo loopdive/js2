@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { compileMulti } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("#3995 Hono JavaScript default object parameter", () => {
   it("accepts a narrower caller-supplied property map", async () => {
@@ -22,9 +22,7 @@ describe("#3995 Hono JavaScript default object parameter", () => {
       { allowJs: true, skipSemanticDiagnostics: true },
     );
     expect(result.success).toBe(true);
-    const imports = buildImports(result.imports, undefined, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setExports?.(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports.test as () => string)()).toBe("application/vnd.apple.mpegurl");
   });
 });

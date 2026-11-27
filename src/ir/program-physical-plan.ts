@@ -44,6 +44,7 @@ import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "
 import { preparedIrDataMismatch } from "./program/data.js";
 import {
   assertNativeStringValuePlanIssued,
+  nativePublishedExportNames,
   planNativeStringValuePhysical,
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
@@ -77,7 +78,7 @@ import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import {
   freezePreparedIrValue,
-  preparedIrProgramOwner,
+  locatedFailure,
   PreparedIrProgramInvariantError,
   type PreparedIrAbiEntry,
   type PreparedIrBackendOptions,
@@ -1383,11 +1384,9 @@ export function planPhysicalSetup(
   }
   appendPhysicalImports(hostNumberBoundary?.imports ?? [], importedFunctions);
   appendAsyncPhysicalResources(asyncFrames, importedFunctions, exports);
-  const exportNames = new Set<string>(native?.plan.output?.stdout ? ["__stdout_prepare", "__stdout_char"] : []);
-  for (const exported of exports) {
-    if (exportNames.has(exported.externalName)) gaps.add(`export ${exported.externalName} is declared twice`);
-    exportNames.add(exported.externalName);
-  }
+  const exportNames = new Set<string>(nativePublishedExportNames(nativeStrings));
+  for (const { externalName: name } of exports)
+    if (exportNames.size === exportNames.add(name).size) gaps.add(`export ${name} is declared twice`);
 
   // 3. Bodies may only reference what the plan reserves; exception use is a reserved resource too.
   const reserved = new Set<string>([
@@ -1478,10 +1477,7 @@ export function planPhysicalSetup(
         gaps.rows.length === 1 ? "" : "s"
       }): ${gaps.rows.map((row) => row.detail).join("; ")}`,
     };
-    const owner = preparedIrProgramOwner(program, unitId);
-    if (!owner)
-      throw new PreparedIrProgramInvariantError("invalid-prepared-data", `physical plan cannot locate ${unitId}`);
-    return Object.freeze({ ...failure, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
+    return locatedFailure(program, unitId, failure);
   }
 
   const plan: PhysicalSetupPlan = {

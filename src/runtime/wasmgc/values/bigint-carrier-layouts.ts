@@ -12,6 +12,11 @@ export function buildBigIntLimbsType(): ArrayTypeDef {
   return { kind: "array", name: "$BigIntLimbs", element: { kind: "i32" }, mutable: true };
 }
 
+/** Field indices of `$BigIntWide`, in the order `wideFields` lays them out. */
+export const WIDE_FIELD_VALUE = 0;
+export const WIDE_FIELD_SIGN = 1;
+export const WIDE_FIELD_MAG = 2;
+
 function wideFields<T extends { kind: "ref" }>(magnitude: T) {
   return [
     { name: "value", type: { kind: "i64" as const, bigint: true }, mutable: false },

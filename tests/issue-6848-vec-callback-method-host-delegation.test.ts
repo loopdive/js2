@@ -9,7 +9,7 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { compileProject } from "../src/index.js";
-import { buildCompiledImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENTRY = fileURLToPath(new URL("./fixtures/issue-6848/entry.js", import.meta.url));
 const LANE_SAFE = fileURLToPath(new URL("./fixtures/issue-6848/lane-safe.js", import.meta.url));
@@ -17,10 +17,7 @@ const LANE_SAFE = fileURLToPath(new URL("./fixtures/issue-6848/lane-safe.js", im
 async function compileEntry(entry: string): Promise<{ exports: WebAssembly.Exports; importNames: string[] }> {
   const result = await compileProject(entry, { allowJs: true, skipSemanticDiagnostics: true, target: "gc" });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildCompiledImports(result, {}) as Record<string, unknown> & WebAssembly.Imports;
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports.setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
-  (imports.__setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
+  const instance = await instantiateWithRuntime(result);
   (instance.exports.__module_init as (() => void) | undefined)?.();
   const importNames = ((result.imports ?? []) as readonly { readonly name: string }[]).map((entry) => entry.name);
   return { exports: instance.exports, importNames };

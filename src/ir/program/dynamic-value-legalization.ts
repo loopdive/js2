@@ -36,12 +36,31 @@ import { typeofComparisons } from "./typeof-comparisons.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
-import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
+import {
+  argumentsCount,
+  dynamicConstruct,
+  dynamicCurrentThis,
+  dynamicInstanceOf,
+} from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
-import { dynamicErrorConstruction, errorConstructorOf } from "./dynamic-error-constructors.js";
-import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
-import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
+import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
+import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
+import {
+  realmCall,
+  realmConstructorOf,
+  realmIntrinsicOfHelper,
+  type RealmConstruction,
+} from "./dynamic-realm-calls.js";
+import type { RealmConstructor } from "./builtin-prototype-keys.js";
+import {
+  CARRIER,
+  additionBuilder,
+  chainBuilders,
+  conversionBuilders,
+  knownKinds,
+  type AbortSite,
+} from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
   IS_OBJECT,
@@ -50,7 +69,7 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
-  holdsErrors,
+  holdsFamily,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -84,32 +103,39 @@ function unadmittedValue(
 
 /**
  * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
- * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
+ * registry: (#7354 Str2) ToString's literal arms are string allocation sites. (#7486) `abortSite` mints the id of each
+ * run-time abort site, where the build records them.
  */
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
   program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
+  abortSite: AbortSite = () => undefined,
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
   const definitions = valueDefinitions(fn);
   const admitted = admittedKinds(program);
   const kinds = knownKinds(fn, types, definitions, admitted);
-  const builders = chainBuilders(fn, allocations, kinds, admitted);
+  const builders = chainBuilders(fn, allocations, kinds, admitted, abortSite);
   const { intrinsic, fresh, kindTest, anyKind, text, kindChain } = builders;
-  const errors = holdsErrors(program);
+  const errors = holdsFamily(program, "error");
   const conversions = conversionBuilders(builders, program);
   const { stringOf, toNumber } = conversions;
   const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
-  // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
+  // (#7354 C2) What `this`, `new`, `instanceof` and (#7562) the argument count are written with
+  // (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
   // (#7354 O1, P1, G1) What a recognised `Object` static (`dynamic-object-statics.ts`), a call of a prototype method the
-  // realm holds (`dynamic-prototype-methods.ts`) or of an Error constructor (`dynamic-error-constructors.ts`) is
-  // written with.
-  const objectStatics = { ...builders, stringOf, errors };
+  // realm holds (`dynamic-prototype-methods.ts`) or of a realm constructor (`dynamic-error-constructors.ts`, (#7350
+  // B3a) `dynamic-wrapper-constructors.ts`) is written with.
+  const objectStatics = { ...builders, stringOf, toNumber, errors };
+  const realmConstruction = (instr: RealmConstruction, ctor: RealmConstructor, args: readonly IrValueId[]) =>
+    ctor.family === "error"
+      ? dynamicErrorConstruction(objectStatics, instr, ctor, args)
+      : dynamicWrapperConstruction(objectStatics, instr, ctor, args);
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -238,11 +264,14 @@ export function legalizeDynamicValues(
         return dynamicMemberWrite(memberAccess, instr);
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
+      case "dyn.arguments_length":
+      case "dyn.publish_argc":
+        return argumentsCount(functionOperations, instr);
       case "dyn.construct": {
-        const error = errorConstructorOf(instr.callee, definitions);
-        return error === undefined
+        const ctor = realmConstructorOf(instr.callee, definitions);
+        return ctor === undefined
           ? dynamicConstruct(functionOperations, instr)
-          : dynamicErrorConstruction(objectStatics, instr, error, instr.args);
+          : realmConstruction(instr, ctor, instr.args);
       }
       case "dyn.instanceof":
         return dynamicInstanceOf(functionOperations, instr);
@@ -264,8 +293,8 @@ export function legalizeDynamicValues(
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
-        const error = dispatched ? errorConstructorOf(instr.args[1]!, definitions) : undefined;
-        if (error !== undefined) return dynamicErrorConstruction(objectStatics, instr, error, instr.args.slice(2));
+        const ctor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
+        if (ctor !== undefined) return realmConstruction(instr, ctor, instr.args.slice(2));
         // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
         // (G1) a built-in's run-time abort.
         if (dispatched && !program.objects.functions)

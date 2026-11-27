@@ -20,6 +20,7 @@
 // callers and outranks both heuristics.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * The `(param …)` signature string of `func`. A function that escapes as a
@@ -96,11 +97,8 @@ export function test() {
     const r = await compile(src, { fileName: "t.js" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(r.binary)).toBe(true);
-    const { buildImports } = await import("../src/runtime.js");
-    const imports = buildImports(r.imports, {}, r.stringPool);
-    const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
+    const instance = await instantiateWithRuntime(r);
     const exports = instance.exports as Record<string, () => unknown>;
-    (imports as { setExports?: (e: unknown) => void }).setExports?.(exports);
     expect(exports.test()).toBe("foo:abcd");
   });
 });

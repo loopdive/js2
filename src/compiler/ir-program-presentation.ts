@@ -30,6 +30,7 @@ import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
 import { callableCarried, runtimeCensus, unjoinedSupport, type NativeSetupSlots } from "./prepared-provider-census.js";
 import { physicalCallableMatches } from "./prepared-physical-signature.js";
+import { nativePublishedExportNames } from "../backend/wasmgc/program/native-string-values.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -453,7 +454,7 @@ function checkAbiExports(
   const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
-  const joinedExports = new Set<string>();
+  const joinedExports = new Set<string>(nativePublishedExportNames(emittedPhysicalSetupPlan(emission).nativeStrings));
   // (#7354 D1, H, Str) Internal callables and unexported globals may carry the dynamic externref; callables a string.
   const native = nativeDynamicLane(capture.backend);
   const dynamic = (type: IrType | undefined) => native && type?.kind === "val" && type.val.kind === "externref";
@@ -878,8 +879,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   const physicalExportNames = new Set<string>();
   for (const row of mod.exports) {
     if (row.desc.kind !== "func" && row.desc.kind !== "global") continue;
-    const duplicate = physicalExportNames.has(row.name);
-    physicalExportNames.add(row.name);
+    const duplicate = physicalExportNames.size === physicalExportNames.add(row.name).size;
     if (
       duplicate ||
       (!joinedExports.has(row.name) &&

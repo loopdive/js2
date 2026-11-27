@@ -20,43 +20,23 @@
  * value on a function's chain a program can hold (`F.prototype = Error; TypeError instanceof F`).
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { ERROR_ID, errorConstructorName, errorConstructorSelector } from "./builtin-prototype-keys.js";
+import { ERROR_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
 import type { IrType } from "../core/types.js";
-import { realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
-type Call = Extract<IrInstr, { kind: "call" }>;
-type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
-type ErrorBuilders = ChainBuilders & {
-  readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-};
-
-/** The Error constructor `callee` is (its selector), when its definition is the front end's read of one. */
-export function errorConstructorOf(
-  callee: IrValueId,
-  definitions: ReadonlyMap<IrValueId, IrInstr>,
-): number | undefined {
-  let definition = definitions.get(callee);
-  while (definition?.kind === "coerce.to_externref") definition = definitions.get(definition.value);
-  const id =
-    definition?.kind === "call" && definition.target.binding.kind === "runtime"
-      ? realmIntrinsicOfHelper(definition.target.binding.symbol)
-      : undefined;
-  const selector = id === undefined ? -1 : errorConstructorSelector(id);
-  return selector < 0 ? undefined : selector;
-}
-
-/** `X(message)` / `new X(message)` of the Error constructor `selector`, into the instruction's result. */
+/** `X(message)` / `new X(message)` of the Error constructor `ctor`, into the instruction's result. */
 export function dynamicErrorConstruction(
-  b: ErrorBuilders,
-  instr: Call | Construct,
-  selector: number,
+  b: RealmConstructionBuilders,
+  instr: RealmConstruction,
+  ctor: RealmConstructor<"error">,
   args: readonly IrValueId[],
 ): IrInstr[] {
-  if (args.length > 1) gap(`${errorConstructorName(selector)} with a second argument (options.cause)`);
+  if (args.length > 1) gap(`${ctor.name} with a second argument (options.cause)`);
   const message = args[0];
-  const create = (value: IrValueId, r: IrValueId) => b.selectorCall("js.object.create-error", [value], selector, r);
+  const create = (value: IrValueId, r: IrValueId) =>
+    b.selectorCall("js.object.create-error", [value], ctor.selector, r);
   const none = (r: IrValueId): IrInstr[] => {
     const absent = b.fresh();
     return [
@@ -78,6 +58,9 @@ export function dynamicErrorConstruction(
   ];
 }
 
+/** (#7486) The reason of the walk's run-time abort. */
+const ERROR_WALK = "a function's [[Prototype]] walk for %Error%";
+
 /**
  * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
  * isPrototypeOf's step 3): `no` (false), but where `errors` and `prototype` is `%Error%` the run-time abort, which ends
@@ -97,6 +80,6 @@ export function functionChainAnswer(
   return [
     ...b.realmIntrinsic(ERROR_ID, error),
     b.intrinsic(instr, "js.value.strict_eq", [prototype, error], same),
-    b.branch(same, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no, r, resultType),
+    b.branch(same, (s) => [...b.abort(instr, ERROR_WALK, b.fresh()), ...no(s)], no, r, resultType),
   ];
 }

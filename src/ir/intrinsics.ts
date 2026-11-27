@@ -60,6 +60,7 @@ export {
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   F64_BINARY_INTRINSIC_SIGNATURE,
+  RUN_TIME_ABORT_INTRINSICS,
   isIntrinsicId,
 } from "./core/intrinsics.js";
 export { IntrinsicEffectEvidence, intrinsicEffectEvidence, verifyIntrinsicUse } from "./analysis/intrinsics.js";

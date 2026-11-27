@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * #1306 — `mws[idx](c, next)` on a closure-typed array compiles to `ref.null
@@ -25,8 +25,7 @@ import { buildImports } from "../src/runtime.js";
 async function run(src: string): Promise<{ exports: Record<string, unknown> }> {
   const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   return { exports: instance.exports as Record<string, unknown> };
 }
 

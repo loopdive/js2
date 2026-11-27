@@ -5,7 +5,7 @@
 // fallback gate can import it without pulling in codegen/index.ts.
 
 import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
-import { isExternalDeclaredClass } from "../checker/type-mapper.js";
+import { isExternalDeclaredClass, typeHasBigIntMember } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { dynamicCallArgumentAdmissible, type OperandFamily } from "./analysis/operand-admissibility.js";
@@ -24,6 +24,7 @@ import {
 } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
 import type { IrSelectionOptions } from "./select.js";
+import type { BigIntOperandPredicate } from "./bigint-operand-refusal.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
@@ -39,6 +40,7 @@ import {
   moduleBindingDeclarationOrder,
   moduleBindingLexicalFlags as lexicalFlags,
 } from "./module-init-vars.js";
+import type { ScriptVarModel } from "../shared/var-declaration-lists.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -655,6 +657,32 @@ export function makeIrCheckerSelectionOptions(
   };
 }
 
+const bigIntOperandPredicates = new WeakMap<ts.TypeChecker, BigIntOperandPredicate>();
+
+/**
+ * (#7525) The `isBigIntOperand` selection and builder option: set on a host-free lane only, so a JavaScript-environment
+ * unit is selected exactly as before. One predicate per checker, so the selector and the builder ask the same one. Not
+ * part of `makeIrCheckerSelectionOptions`, which also feeds the JavaScript-environment planners.
+ */
+export function bigIntOperandOption(
+  checker: ts.TypeChecker,
+  hostFree: boolean,
+): { isBigIntOperand?: BigIntOperandPredicate } {
+  if (!hostFree) return {};
+  let predicate = bigIntOperandPredicates.get(checker);
+  if (predicate === undefined) {
+    predicate = (expr) => {
+      try {
+        return typeHasBigIntMember(checker.getTypeAtLocation(expr));
+      } catch {
+        return false;
+      }
+    };
+    bigIntOperandPredicates.set(checker, predicate);
+  }
+  return { isBigIntOperand: predicate };
+}
+
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
 export type IrScriptVarHome = bindingValue.IrScriptVarHome;
 export {
@@ -937,6 +965,8 @@ export interface IrModuleBindingResolverOptions {
    * excluded (the pre-#7105 rule).
    */
   readonly scriptVarHome?: (declaration: IrModuleBindingDeclaration) => IrScriptVarHome | undefined;
+  /** (#7377) Which `var` lists declare script vars (`isModuleInitVarList`): the pipeline's own model. */
+  readonly scriptVarModel: ScriptVarModel;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -1060,31 +1090,39 @@ function scriptVarBehindLibGlobal(
 function isModuleBindingDeclaration(
   candidate: ts.Declaration | undefined,
   sourceFile: ts.SourceFile,
+  model: ScriptVarModel,
 ): candidate is IrModuleBindingDeclaration {
   if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
   const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
-  return declaration !== undefined && ts.isIdentifier(declaration.name) && isModuleInitGlobalDeclaration(declaration);
+  return (
+    declaration !== undefined && ts.isIdentifier(declaration.name) && isModuleInitGlobalDeclaration(declaration, model)
+  );
 }
 
 /**
- * The module-init global declarations `node`'s binding has in its own file, in source order. (#7106, #7372 1b) A
- * script may repeat `var x` (S11.6.1_A2.1_T1's `var x = 1; … var x = 1;`): one binding with one global, the first
- * declaration its canonical identity and each later one a write.
+ * The module-init global declarations `node`'s binding has in its own file under `model`, in source order. (#7106,
+ * #7372 1b) A script may repeat `var x` (S11.6.1_A2.1_T1's `var x = 1; … var x = 1;`): one binding with one global,
+ * the first declaration its canonical identity and each later one a write.
  */
-export function moduleBindingDeclarations(node: ts.Identifier, checker: ts.TypeChecker): IrModuleBindingDeclaration[] {
+export function moduleBindingDeclarations(
+  node: ts.Identifier,
+  checker: ts.TypeChecker,
+  model: ScriptVarModel,
+): IrModuleBindingDeclaration[] {
   const sourceFile = node.getSourceFile();
   const direct = new Set<IrModuleBindingDeclaration>();
   for (const candidate of bindingDeclarationCandidates(node, checker))
-    if (isModuleBindingDeclaration(candidate, sourceFile)) direct.add(candidate);
+    if (isModuleBindingDeclaration(candidate, sourceFile, model)) direct.add(candidate);
   return [...direct].sort((a, b) => a.pos - b.pos);
 }
 
 function uniqueTopLevelVariableDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   allowRedeclaredVar = false,
 ): IrModuleBindingDeclaration | undefined {
-  const ordered = moduleBindingDeclarations(node, checker);
+  const ordered = moduleBindingDeclarations(node, checker, model);
   if (ordered.length === 1) return ordered[0];
   if (!allowRedeclaredVar || ordered.length === 0) return undefined;
   return ordered.some((declaration) => lexicalFlags(declaration) !== 0) ? undefined : ordered[0];
@@ -1093,11 +1131,12 @@ function uniqueTopLevelVariableDeclaration(
 function directTopLevelDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   scriptVar?: Pick<IrModuleBindingResolverOptions, "scriptVarHome">,
 ): IrModuleBindingDeclaration | undefined {
   const sourceFile = node.getSourceFile();
   const script = !ts.isExternalModule(sourceFile);
-  const declaration = uniqueTopLevelVariableDeclaration(node, checker, script);
+  const declaration = uniqueTopLevelVariableDeclaration(node, checker, model, script);
   if (!declaration) return undefined;
   const candidates = bindingDeclarationCandidates(node, checker);
   if (candidates.length === 0) return undefined;
@@ -1135,7 +1174,7 @@ function directTopLevelDeclaration(
   // of the same name still rejects. A JS property declaration on the binding
   // is not a second binding.
   const allDirectVars = [...sameSourceDeclarations].every(
-    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsPropertyDeclarationTarget(candidate),
+    (candidate) => isModuleBindingDeclaration(candidate, sourceFile, model) || isJsPropertyDeclarationTarget(candidate),
   );
   return script && allDirectVars ? declaration : undefined;
 }
@@ -1569,7 +1608,7 @@ function externValueSourceIsProven(
     return externValueSourceIsProven(checker, value.expression, options, seen);
   }
   if (ts.isIdentifier(value)) {
-    if (directTopLevelDeclaration(value, checker)) return true;
+    if (directTopLevelDeclaration(value, checker, options.scriptVarModel)) return true;
     const symbol = checker.getSymbolAtLocation(value);
     const declarations = [symbol?.valueDeclaration, ...(symbol?.declarations ?? [])].filter(
       (declaration): declaration is ts.Declaration => declaration !== undefined,
@@ -1814,6 +1853,7 @@ function writeValueMatches(
 function exactTopLevelVariableDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
 ): ts.VariableDeclaration | undefined {
   const symbol = checker.getSymbolAtLocation(node);
   if (!symbol) return undefined;
@@ -1822,7 +1862,7 @@ function exactTopLevelVariableDeclaration(
   const declarations = new Set(
     candidates.filter(
       (candidate): candidate is ts.VariableDeclaration =>
-        isModuleBindingDeclaration(candidate, sourceFile) && ts.isVariableDeclaration(candidate),
+        isModuleBindingDeclaration(candidate, sourceFile, model) && ts.isVariableDeclaration(candidate),
     ),
   );
   return declarations.size === 1 ? [...declarations][0] : undefined;
@@ -1945,6 +1985,7 @@ function retainedMethodArgumentIsBridgeable(checker: ts.TypeChecker, argument: t
 
 function makeRetainedFunctionMethodPlan(
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   call: ts.CallExpression,
 ): IrRetainedFunctionMethodPlan | undefined {
   if (
@@ -1961,7 +2002,7 @@ function makeRetainedFunctionMethodPlan(
     return undefined;
   }
   const receiver = call.expression.expression;
-  const receiverDeclaration = exactTopLevelVariableDeclaration(receiver, checker);
+  const receiverDeclaration = exactTopLevelVariableDeclaration(receiver, checker, model);
   const receiverTarget = receiverDeclaration?.initializer ? unwrapParens(receiverDeclaration.initializer) : undefined;
   if (
     !receiverDeclaration ||
@@ -2256,6 +2297,7 @@ function makeStableFunctionCallPlan(
 
 function staticStringFromExpression(
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   expression: ts.Expression,
   seen: Set<ts.VariableDeclaration>,
 ): string | undefined {
@@ -2263,23 +2305,24 @@ function staticStringFromExpression(
   if (ts.isStringLiteralLike(value)) return value.text;
   if (ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
   if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = staticStringFromExpression(checker, value.left, new Set(seen));
+    const left = staticStringFromExpression(checker, model, value.left, new Set(seen));
     if (left === undefined) return undefined;
-    const right = staticStringFromExpression(checker, value.right, new Set(seen));
+    const right = staticStringFromExpression(checker, model, value.right, new Set(seen));
     return right === undefined ? undefined : left + right;
   }
   if (!ts.isIdentifier(value)) return undefined;
-  const declaration = exactTopLevelVariableDeclaration(value, checker);
+  const declaration = exactTopLevelVariableDeclaration(value, checker, model);
   if (!declaration?.initializer || seen.has(declaration) || !sourceBindingIsStable(checker, declaration)) {
     return undefined;
   }
   const nextSeen = new Set(seen);
   nextSeen.add(declaration);
-  return staticStringFromExpression(checker, declaration.initializer, nextSeen);
+  return staticStringFromExpression(checker, model, declaration.initializer, nextSeen);
 }
 
 function staticRegExpInitializer(
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   initializer: ts.Expression,
 ): { readonly pattern: string; readonly flags: string } | undefined {
   const value = unwrapParens(initializer);
@@ -2300,16 +2343,20 @@ function staticRegExpInitializer(
   }
   const args = value.arguments ?? [];
   if (args.length < 1 || args.length > 2 || args.some(ts.isSpreadElement)) return undefined;
-  const pattern = staticStringFromExpression(checker, args[0]!, new Set());
+  const pattern = staticStringFromExpression(checker, model, args[0]!, new Set());
   if (pattern === undefined) return undefined;
-  const flags = args[1] === undefined ? "" : staticStringFromExpression(checker, args[1], new Set());
+  const flags = args[1] === undefined ? "" : staticStringFromExpression(checker, model, args[1], new Set());
   if (flags === undefined || flags.includes("g") || flags.includes("y")) return undefined;
   return { pattern, flags };
 }
 
-function makeStaticRegExpTestPlan(checker: ts.TypeChecker, node: ts.Expression): IrStaticRegExpTestPlan | undefined {
+function makeStaticRegExpTestPlan(
+  checker: ts.TypeChecker,
+  model: ScriptVarModel,
+  node: ts.Expression,
+): IrStaticRegExpTestPlan | undefined {
   if (!ts.isIdentifier(node)) return undefined;
-  const declaration = exactTopLevelVariableDeclaration(node, checker);
+  const declaration = exactTopLevelVariableDeclaration(node, checker, model);
   if (
     !declaration?.initializer ||
     !isVarModuleDeclaration(declaration) ||
@@ -2317,16 +2364,17 @@ function makeStaticRegExpTestPlan(checker: ts.TypeChecker, node: ts.Expression):
   ) {
     return undefined;
   }
-  const initializer = staticRegExpInitializer(checker, declaration.initializer);
+  const initializer = staticRegExpInitializer(checker, model, declaration.initializer);
   return initializer ? { declaration, ...initializer } : undefined;
 }
 
 function makeStaticNumericArrayPlan(
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   node: ts.Expression,
 ): IrStaticNumericArrayPlan | undefined {
   if (!ts.isIdentifier(node)) return undefined;
-  const declaration = exactTopLevelVariableDeclaration(node, checker);
+  const declaration = exactTopLevelVariableDeclaration(node, checker, model);
   if (
     !declaration?.initializer ||
     !isVarModuleDeclaration(declaration) ||
@@ -2350,7 +2398,7 @@ export function makeIrLegacyModuleBindingResolver(
   const resolveCapabilityExtern = options.resolveCapabilityExternBinding;
   const stableFunctionCallPlans = new Map<ts.FunctionDeclaration, IrStableFunctionCallPlan | null>();
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
-    const declaration = directTopLevelDeclaration(node, checker, options);
+    const declaration = directTopLevelDeclaration(node, checker, options.scriptVarModel, options);
     if (!declaration) return { kind: "not-direct" };
     const statement = declaration.parent.parent;
     // Ambient declarations establish a real checker identity but allocate no
@@ -2481,7 +2529,7 @@ export function makeIrLegacyModuleBindingResolver(
     inspectDirectBinding,
     isDirectModuleBinding(node: ts.Identifier): boolean {
       try {
-        return directTopLevelDeclaration(node, checker, options) !== undefined;
+        return directTopLevelDeclaration(node, checker, options.scriptVarModel, options) !== undefined;
       } catch {
         return false;
       }
@@ -2599,21 +2647,21 @@ export function makeIrLegacyModuleBindingResolver(
     },
     staticRegExpTestPlan(node: ts.Expression): IrStaticRegExpTestPlan | undefined {
       try {
-        return makeStaticRegExpTestPlan(checker, node);
+        return makeStaticRegExpTestPlan(checker, options.scriptVarModel, node);
       } catch {
         return undefined;
       }
     },
     staticNumericArrayPlan(node: ts.Expression): IrStaticNumericArrayPlan | undefined {
       try {
-        return makeStaticNumericArrayPlan(checker, node);
+        return makeStaticNumericArrayPlan(checker, options.scriptVarModel, node);
       } catch {
         return undefined;
       }
     },
     retainedFunctionMethodPlan(call: ts.CallExpression): IrRetainedFunctionMethodPlan | undefined {
       try {
-        return makeRetainedFunctionMethodPlan(checker, call);
+        return makeRetainedFunctionMethodPlan(checker, options.scriptVarModel, call);
       } catch {
         return undefined;
       }
@@ -2668,7 +2716,7 @@ export function makeIrModuleBindingResolver(
         `module binding source ${sourceFile.fileName} does not resolve back to the exact planning SourceFile`,
       );
     }
-    const declarationOrdinal = moduleBindingDeclarationOrder(sourceFile).indexOf(declaration);
+    const declarationOrdinal = moduleBindingDeclarationOrder(sourceFile, options.scriptVarModel).indexOf(declaration);
     if (declarationOrdinal < 0) {
       return planningInvariant(
         "source-record-mismatch",
@@ -2710,7 +2758,9 @@ export function makeIrModuleBindingResolver(
       boundedTopLevelAccessor &&
       selectedTopLevelAccessorUnitIdsByContext.get(identityContext)?.has(ownerUnitId) === true;
     const declaration =
-      inspected.kind === "unsupported" ? inspected.declaration : uniqueTopLevelVariableDeclaration(node, checker);
+      inspected.kind === "unsupported"
+        ? inspected.declaration
+        : uniqueTopLevelVariableDeclaration(node, checker, options.scriptVarModel);
     if (
       (owner?.containingTerminalOwnerId === undefined &&
         !boundedSelectionCandidate &&

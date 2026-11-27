@@ -9,7 +9,6 @@ import {
   abortsAtRunTime,
   agreesWithNode,
   preparedOptions,
-  refusal,
   runnerOptions,
   yieldToRpc,
 } from "./helpers/prepared-node-agreement.js";
@@ -287,6 +286,40 @@ describe("#7354 O2 — definitions", () => {
   ])("%s", async (_, body) => agrees(body), SLOW);
 });
 
+// An accessor function has no [[Construct]] (§10.2.9 / IsConstructor): `new` on it is a TypeError, raised after
+// EvaluateNew has evaluated the arguments (§13.3.5.1.1).
+describe("#7354 O2 — `new` on an accessor function", () => {
+  const getter = "var o = {get x(){ return 1; }}; var g = Object.getOwnPropertyDescriptor(o, 'x').get;";
+  it.each([
+    ["a getter is a TypeError", `${T} ${getter} var out = t(function(){ return typeof new g(); });`],
+    [
+      "a setter is a TypeError",
+      `${T} var o = {set x(v){}}; var g = Object.getOwnPropertyDescriptor(o, 'x').set;` +
+        " var out = t(function(){ return typeof new g(5); });",
+    ],
+    [
+      "the getter's body never runs",
+      `${T} var n = 0; var o = {get x(){ n = n + 1; return 1; }}; var g = Object.getOwnPropertyDescriptor(o, 'x').get;` +
+        " var out = t(function(){ return typeof new g(); }) + String(n);",
+    ],
+    [
+      "the arguments are evaluated first, in order",
+      `${T} var log = ''; function a(k){ log = log + k; return k; } ${getter}` +
+        " var out = t(function(){ return typeof new g(a('1'), a('2')); }) + log;",
+    ],
+    [
+      "a declaration and a function expression still construct",
+      `${getter} function F(v){ this.v = v; } var G = function(w){ this.w = w; }; var f = new F(3), h = new G(4);` +
+        " var out = String(f.v) + String(h.w) + String(f instanceof F) + String(h instanceof G);",
+    ],
+    [
+      "its prototype is undefined: instanceof and Object.create of it are TypeErrors",
+      `${T} ${getter} var out = String(g.prototype) + t(function(){ return ({}) instanceof g; })` +
+        " + t(function(){ return Object.create(g.prototype); });",
+    ],
+  ])("%s", async (_, body) => agrees(body), SLOW);
+});
+
 describe("#7354 O2 — what stays an abort or a refusal", () => {
   it(
     "a typed closure (not dispatchable) as a descriptor's getter: its call is the abort, not a catchable TypeError",
@@ -317,22 +350,19 @@ describe("#7354 O2 — what stays an abort or a refusal", () => {
       ),
     SLOW,
   );
-  // Compound assignment of a member is slice L0's (one [[Get]], one [[Set]]); pinned here for an accessor member.
+  // (#7354 O7) A compound write of an accessor member: one [[Get]], one [[Set]] (tests/issue-7354-o7-compound-member).
   it(
-    "o.x += v and o.x++ on an accessor: refused at top level",
-    async () => {
-      const setup = "var o = {get x(){ return 1; }, set x(v){}};";
-      expect(await refusal(`${setup} o.x += 1;`, runnerOptions())).toContain(
-        "compound property write on dynamic not in IR scope",
-      );
-      expect(await refusal(`${setup} o.x++;`, runnerOptions())).toContain(
-        "compound property write on dynamic not in IR scope",
-      );
-    },
+    "o.x += v and o.x++ on an accessor: one getter and one setter call each",
+    async () =>
+      agrees(
+        "var c = { s: '' }; var o = {get x(){ c.s += 'g'; return 1; }, set x(v){ c.s += 's' + v; }}; " +
+          "o.x += 1; o.x++; var out = c.s;",
+      ),
     SLOW,
   );
+  // A void function declaration's last statement takes the expression path, which defers a member compound.
   it(
-    "o.x += v on an accessor inside a function: the function's body is the abort",
+    "o.x += v on an accessor as a function declaration's last statement: the function's body is the abort",
     async () => {
       const bodies = await abortBodies("var o = {get x(){ return 1; }, set x(v){}}; function f(q){ q.x += 1; } f(o);");
       expect(bodies.some((row) => row.startsWith("f: "))).toBe(true);

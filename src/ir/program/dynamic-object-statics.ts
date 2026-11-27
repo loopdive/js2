@@ -11,7 +11,7 @@ import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-ca
 import { nativeObjectStatic } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, article, type CarrierKind } from "./dynamic-value-kinds.js";
 
 const HELPER_PREFIX = "__ir_object_static:";
 /** The front end's helper symbol for `Object.<name>`. */
@@ -24,7 +24,7 @@ export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undef
 /** The legalization's builders, with its ToString (`stringOf`, ToPropertyKey here). */
 export type ObjectStaticBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-  /** (#7354 G1) A value may be an error (`holdsErrors`). */
+  /** (#7354 G1) A value may be an error (`holdsFamily`). */
   readonly errors: boolean;
 };
 type Call = Extract<IrInstr, { kind: "call" }>;
@@ -59,6 +59,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
     return [...b.stringOf(instr, value, text), carried(text, key), ...then(key)];
   };
   const nullish = (kind: CarrierKind) => MEMBER_ACCESS_ARM[kind] === "type-error";
+  const ownPropertiesOfString = `Object.${name} of a string: needs the String object's own properties`;
   /**
    * ObjectDefineProperties(object, properties) after ToObject(properties), answering `object`. A number or a Boolean
    * becomes a wrapper without own properties; a string's own index properties need the String object the realm lacks.
@@ -75,7 +76,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
           : nullish(kind)
             ? throwing("Cannot convert undefined or null to object", s)
             : kind === "string"
-              ? b.abort(instr, s)
+              ? b.abort(instr, ownPropertiesOfString, s)
               : [carried(object, s)],
       r,
     );
@@ -95,7 +96,9 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         (kind, r) =>
           nullish(kind)
             ? throwing("Cannot convert undefined or null to object", r)
-            : withKey(second, () => (kind === "string" ? b.abort(instr, r) : [undefinedValue(r)])),
+            : withKey(second, () =>
+                kind === "string" ? b.abort(instr, ownPropertiesOfString, r) : [undefinedValue(r)],
+              ),
         instr.result!,
       );
     case "create":
@@ -114,7 +117,9 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
                 ? realmCall("js.object.create-null", [], object)
                 : undefined;
           if (create) return [create, ...defineAll(object, second, r, "none")];
-          return served(kind) ? b.abort(instr, r) : throwing("Object prototype may only be an Object or null", r);
+          return served(kind)
+            ? b.abort(instr, `Object.create with ${article(kind)} prototype`, r)
+            : throwing("Object prototype may only be an Object or null", r);
         },
         b.kinds.kindsOf(first),
         CARRIER,

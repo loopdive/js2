@@ -8,7 +8,8 @@
 // the prologue seeds, so they need no hoisting support: a nested declaration is
 // a write at its position. Shared by the IR (selection, lowering, binding
 // identity) and by legacy's module-global registration, which hands such a
-// slot to the Program ABI.
+// slot to the Program ABI. (#7377) The Prepared producer also models a
+// script-level for-in head (`ScriptVarModel`).
 
 import { ts } from "../ts-api.js";
 
@@ -18,15 +19,31 @@ export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean 
 }
 
 /**
- * Whether `node` is a modelled `var` list. A list inside a function, a `with`
- * body (its names may resolve to the object), or a `catch` clause whose
- * parameter it re-declares (Annex B.3.5: that `var` writes the parameter) is
- * not, nor is a `for-in` / `for-of` head.
+ * (#7377) Which `var` lists a pipeline's module initializer models as script vars:
+ *
+ * - `"statement-and-for-heads"`: `var` statements and `for (;;)` heads (legacy, the ordinary selector and the
+ *   ordinary integration);
+ * - `"with-for-in-heads"`: also a `for (var k in o)` head with one identifier declaration and no initializer (the
+ *   Prepared producer, whose for-in lowering writes each key into that script var).
+ *
+ * The two answer alike on every list that is not a for-in head. No caller has a default: each names its model.
  */
-export function isModuleInitVarList(node: ts.Node | undefined): boolean {
+export type ScriptVarModel = "statement-and-for-heads" | "with-for-in-heads";
+
+/**
+ * Whether `node` is a modelled `var` list under `model`. A list inside a function, a `with` body (its names may
+ * resolve to the object), or a `catch` clause whose parameter it re-declares (Annex B.3.5: that `var` writes the
+ * parameter) is not, nor is a `for-of` head, nor a `for-in` head outside `"with-for-in-heads"`.
+ */
+export function isModuleInitVarList(node: ts.Node | undefined, model: ScriptVarModel): boolean {
   if (node === undefined || !ts.isVariableDeclarationList(node) || !isVarDeclarationList(node)) return false;
   const owner = node.parent;
-  if (!ts.isVariableStatement(owner) && !(ts.isForStatement(owner) && owner.initializer === node)) return false;
+  if (
+    !ts.isVariableStatement(owner) &&
+    !(ts.isForStatement(owner) && owner.initializer === node) &&
+    !(model === "with-for-in-heads" && isPlainForInHead(owner, node))
+  )
+    return false;
   for (let container: ts.Node = owner.parent; !ts.isSourceFile(container); container = container.parent) {
     if (!SCRIPT_STATEMENT_CONTAINERS.has(container.kind)) return false;
     if (ts.isCatchClause(container) && catchParameterIsRedeclared(container, node)) return false;
@@ -70,12 +87,19 @@ export function isInLoopOfOwnFunction(node: ts.Node): boolean {
   return false;
 }
 
-/** Every modelled `var` list in `statement`, in source order. */
-export function moduleInitVarLists(statement: ts.Statement): ts.VariableDeclarationList[] {
+/** A for-in head that declares one identifier without an initializer: the key is its only write. */
+function isPlainForInHead(owner: ts.Node, list: ts.VariableDeclarationList): boolean {
+  if (!ts.isForInStatement(owner) || owner.initializer !== list || list.declarations.length !== 1) return false;
+  const declaration = list.declarations[0]!;
+  return ts.isIdentifier(declaration.name) && declaration.initializer === undefined;
+}
+
+/** Every modelled `var` list in `statement` under `model`, in source order. */
+export function moduleInitVarLists(statement: ts.Statement, model: ScriptVarModel): ts.VariableDeclarationList[] {
   const lists: ts.VariableDeclarationList[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
-    if (ts.isVariableDeclarationList(node) && isModuleInitVarList(node)) lists.push(node);
+    if (ts.isVariableDeclarationList(node) && isModuleInitVarList(node, model)) lists.push(node);
     node.forEachChild(visit);
   };
   visit(statement);
@@ -116,10 +140,10 @@ function catchParameterIsRedeclared(clause: ts.CatchClause, list: ts.VariableDec
 }
 
 /** A modelled `var` list (`isModuleInitVarList`) has persistent globals; any other `var` still needs hoisting support. */
-export function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
+export function moduleInitContainsNestedVar(statements: readonly ts.Statement[], model: ScriptVarModel): boolean {
   const findVarDecl = (node: ts.Node): boolean => {
     if (
-      isModuleInitVarList(node) ||
+      isModuleInitVarList(node, model) ||
       ts.isFunctionDeclaration(node) ||
       ts.isFunctionExpression(node) ||
       ts.isArrowFunction(node) ||

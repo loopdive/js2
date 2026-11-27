@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // (#7164) Records — or checks — the four origin/main fixtures that
-// tests/equivalence/issue-7164-externref-vec-length-growth.test.ts compares
-// head against:
+// tests/equivalence/issue-7164-generated-sweeps.test.ts and
+// tests/equivalence/issue-7164-escape-and-target-sweeps.test.ts compare head
+// against:
 //
 //   issue-7164-length-update-sweep-base.json  every sweep cell where the base
 //       compiler differs from node: "wrong" (a value) or "trap" (a trap or a
