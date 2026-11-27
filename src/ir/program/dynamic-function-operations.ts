@@ -14,15 +14,20 @@ import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-i
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { IS_OBJECT, isOrdinaryObject, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
-import { functionChainAnswer } from "./dynamic-error-constructors.js";
+import {
+  IS_OBJECT,
+  holdsFamily,
+  isOrdinaryObject,
+  type CarrierKind,
+  type LegalizationProgram,
+} from "./dynamic-value-kinds.js";
+import { ERROR_ID, OBJECT_PROTOTYPE_ID } from "./builtin-prototype-keys.js";
+import { builtinMethodChain, identityTest } from "./dynamic-builtin-methods.js";
+import { BOOLEAN } from "./dynamic-value-types.js";
 
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
-
-/** The Boolean carrier `instanceof` and the realm's tests answer with (the chains' `TEST_RESULT` is unbranded). */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /**
  * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects
@@ -205,4 +210,31 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
       BOOLEAN,
     ),
   ];
+}
+
+/**
+ * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
+ * isPrototypeOf's step 3): `no` (false), but (#7574) `true` where the program holds the Object family and `prototype`
+ * is the realm's root, which ends every function's chain, and where the program holds the Error family and
+ * `prototype` is `%Error%` the run-time abort, which ends the program before the arm's own (unread) answer (`dynamic-error-constructors.ts`).
+ */
+export function functionChainAnswer(
+  b: ChainBuilders,
+  instr: IrInstr,
+  program: LegalizationProgram,
+  prototype: IrValueId,
+  no: (r: IrValueId) => IrInstr[],
+  r: IrValueId,
+  resultType: IrType,
+): IrInstr[] {
+  const yes = (s: IrValueId): IrInstr[] => [
+    { kind: "const", value: { kind: "bool", value: true }, result: s, resultType: BOOLEAN },
+  ];
+  const tests = [
+    ...(holdsFamily(program, "object") ? [() => identityTest(b, instr, OBJECT_PROTOTYPE_ID, prototype, yes)] : []),
+    ...(holdsFamily(program, "error")
+      ? [() => identityTest(b, instr, ERROR_ID, prototype, (s) => [...b.abort(instr, b.fresh()), ...no(s)])]
+      : []),
+  ];
+  return builtinMethodChain(b, tests, no, resultType)(r);
 }

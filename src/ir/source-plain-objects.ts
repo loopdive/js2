@@ -12,7 +12,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
-import { nativeObjectStaticCall, objectTagCallReceiver, realmConstantRead } from "./realm-static-call.js";
+import { foldedRealmReceiver, nativeObjectStaticCall } from "./realm-static-call.js";
 import {
   WRAPPER_OF_PRIMITIVE,
   realmConstructorId,
@@ -44,21 +44,15 @@ export function programObjects(
   const wrappers = new Set<NativeWrapperConstructor>();
   // (#7354 G1) The family of the realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it
   // the same way, through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such
-  // read, nor a receiver the front end folds, which reaches no object: (#7350 B3a) of a constant
-  // (`realmConstantRead`), (#7574) of a native `Object` static's call (`nativeObjectStaticCall`) or of the object tag
-  // (`objectTagCallReceiver`).
+  // read, nor a receiver the front end folds (`foldedRealmReceiver`), which reaches no object.
   const constructorRead = (node: ts.Identifier): RealmConstructor | undefined => {
     const ctor = realmConstructorId(node.text);
-    if (ctor === undefined || isMemberName(node) || !isPristineGlobal(node)) return undefined;
-    const access = node.parent;
-    if (!ts.isPropertyAccessExpression(access)) return ctor;
-    const call = access.parent;
-    const tag = access.parent.parent?.parent;
-    const folded =
-      realmConstantRead(access, isPristineGlobal) !== undefined ||
-      (ts.isCallExpression(call) && nativeObjectStaticCall(call, isPristineGlobal) !== undefined) ||
-      (tag !== undefined && ts.isCallExpression(tag) && objectTagCallReceiver(tag) === node);
-    return folded ? undefined : ctor;
+    return ctor === undefined ||
+      isMemberName(node) ||
+      !isPristineGlobal(node) ||
+      foldedRealmReceiver(node, isPristineGlobal)
+      ? undefined
+      : ctor;
   };
   // (#7574) The wrapper kinds `Object(v)` / `new Object(v)` may make of its first argument: a literal's, else all.
   const objectWraps = (node: ts.Identifier): readonly NativeWrapperConstructor[] => {

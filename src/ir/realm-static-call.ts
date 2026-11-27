@@ -68,6 +68,29 @@ export function objectTagCallReceiver(call: ts.CallExpression): ts.Identifier | 
 }
 
 /**
+ * (#7350 B3a, #7574) Whether `receiver`, the unchanged global of a realm constructor, is the receiver of a form the front
+ * end folds, which reads no value of it: a constant it holds (`realmConstantRead`), or in callee position, a native
+ * `Object` static's call (`nativeObjectStaticCall`) or the object tag (`objectTagCallReceiver`). Any other position
+ * (an argument, an operand, `Object.prototype` passed anywhere) is a read of the value.
+ */
+export function foldedRealmReceiver(
+  receiver: ts.Identifier,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): boolean {
+  const access = receiver.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== receiver) return false;
+  if (realmConstantRead(access, isPristineGlobal) !== undefined) return true;
+  // The member chain `receiver` heads, and the call it is the callee of.
+  let callee: ts.Expression = access;
+  while (ts.isPropertyAccessExpression(callee.parent) && callee.parent.expression === callee) callee = callee.parent;
+  const call = callee.parent;
+  if (!ts.isCallExpression(call) || call.expression !== callee) return false;
+  return callee === access
+    ? nativeObjectStaticCall(call, isPristineGlobal) !== undefined
+    : objectTagCallReceiver(call) === receiver;
+}
+
+/**
  * (#7350 B3a) `X.<key>` with `X` the unchanged global of a realm constructor and `key` one of its constant value
  * properties (`nativeConstantStatic`: `Number.MAX_VALUE`, …): that number. The fold reads nothing, so the realm holds
  * nothing for it.

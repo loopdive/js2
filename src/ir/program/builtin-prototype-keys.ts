@@ -73,9 +73,6 @@ export const objectPrototypeConversion = (name: string): NativeObjectPrototypeCo
     ? (name as NativeObjectPrototypeConversion)
     : undefined;
 
-/** (#7574) The realm's root, `Object.prototype`, by catalog id. */
-export { OBJECT_PROTOTYPE_ID };
-
 /** (#7354 G1) The catalog ids of `%Error%` and of `Error.prototype.toString`. */
 export const ERROR_ID = "%Error%";
 export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
@@ -194,8 +191,11 @@ export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
   NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),
 );
 
-/** (#7561) The selectors of `js.object.wrapper-data` and (#7352) `js.object.has-brand`, for every IR reader. */
-export { REALM_BRAND, WRAPPER_DATA };
+/**
+ * (#7561) The selectors of `js.object.wrapper-data`, (#7352) `js.object.has-brand`, and (#7574) the catalog id of the
+ * realm's root, for every IR reader.
+ */
+export { OBJECT_PROTOTYPE_ID, REALM_BRAND, WRAPPER_DATA };
 
 /** (#7561) The wrapper constructor of each primitive kind: the prototype its member access reads through. */
 export const WRAPPER_OF_PRIMITIVE = {
