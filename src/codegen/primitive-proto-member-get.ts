@@ -95,7 +95,7 @@ import { linkSymbolWrapperPrototype } from "./expressions/calls-guards.js"; // (
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 
 /** True when this member expression is the callee of a call — `(5).m()`. */

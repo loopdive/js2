@@ -3,7 +3,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
-import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { isSimpleParameterList, isStrictFunction } from "../shared/is-strict-function.js";
 
 function staticArgumentIndex(expr: ts.Expression): number | undefined {
   if (!ts.isNumericLiteral(expr) && !ts.isStringLiteral(expr)) return undefined;

@@ -69,7 +69,7 @@ import { seedArgumentsIteratorProperty, seedStrictArgumentsCalleePoison } from "
 import { emitCachedFuncClosureExternref } from "./closures/method-trampolines.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { isStrictFunction } from "../shared/is-strict-function.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { reserveArgumentsOwnDefine } from "./arguments-length-brand.js"; // (#6964)

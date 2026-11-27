@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { assertEquivalent } from "./helpers.js";
 import { analyzeSource } from "../../src/checker/index.js";
-import { isStrictFunction } from "../../src/codegen/helpers/is-strict-function.js";
+import { isStrictFunction } from "../../src/shared/is-strict-function.js";
 import { ts } from "../../src/ts-api.js";
 
 describe("#2119 — module code gets an unmapped arguments object", () => {

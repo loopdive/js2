@@ -74,7 +74,7 @@ export interface EmittedPreparedIrProgram {
   readonly emittedUnitIds: readonly IrUnitId[];
 }
 
-export { preparedIrProgramOwner } from "./program/owner.js";
+export { locatedFailure, preparedIrProgramOwner } from "./program/owner.js";
 
 /** Reconstructed read surface over the one owned ABI entry vector. */
 export function preparedIrProgramAbiLookup(program: PreparedIrProgram): PreparedComponentAbiLookup {
