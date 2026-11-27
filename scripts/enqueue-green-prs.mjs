@@ -88,6 +88,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = process.env.GH_REPO || "loopdive/js2wasm";
+const MERGEABLE_SETTLE_MS = 2000;
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 // GRACE default is now 0 (#2786): dev agents no longer self-enqueue, so there is
 // no fresh dev GraphQL enqueue to race. A non-zero grace would make the responsive
@@ -333,6 +334,22 @@ export function enqueueEligibility({ checks, requiredNames, isDraft, labels = []
   // NOTE: behind-ness is deliberately absent. A PR behind main is eligible — the
   // queue builds its merge group against main and re-validates there.
   return { eligible: true, reason: "real-signals-green", checks: verdict };
+}
+/**
+ * (#7553) `mergeable` from a list query is computed lazily: after every push to
+ * main GitHub answers UNKNOWN for most PRs and only starts the computation.
+ * Failing closed on that answer stranded green PRs for hours, because each later
+ * sweep asked the same cold question (run of 2026-11-27 01:52: 28 of 100 open
+ * PRs skipped as UNKNOWN). Asking again for the one PR, after a pause, reads the
+ * computed value. Still UNKNOWN after `attempts` re-reads stays UNKNOWN, which
+ * the gate refuses.
+ */
+export function settledMergeable(mergeable, reread, pause, attempts = 2) {
+  for (let i = 0; mergeable === "UNKNOWN" && i < attempts; i++) {
+    pause();
+    mergeable = reread();
+  }
+  return mergeable;
 }
 // STALL SURFACING (#3584). How long a PR must sit BLOCKED with nothing failing
 // and nothing pending before we stop calling it "in flight" and start calling it
@@ -1286,7 +1303,11 @@ function runSweep() {
       requiredNames: REQUIRED_NAMES,
       isDraft: pr.isDraft,
       labels: pr.labels,
-      mergeable: pr.mergeable,
+      mergeable: settledMergeable(
+        pr.mergeable,
+        () => freshPrForEnqueue(pr.number).mergeable,
+        () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, MERGEABLE_SETTLE_MS),
+      ),
     });
     if (!gate.eligible && gate.reason !== "no-checks-visible") {
       // STALL SURFACING (#3584) — unchanged in intent. Best-effort: it changes no
