@@ -179,7 +179,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
-- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory single-fork (~9 min) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
+- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory in parallel forks (`VITEST_MAX_FORKS`, else cores − 1 capped by free RAM, #7565) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
 - **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)-1` (min 1 — one core is left for the shell/editor/sshd; boxes are not all 4-core, so never hardcode it). Baseline 2026-05-20 on a 4-core/16GB container, then at pool 4: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
 

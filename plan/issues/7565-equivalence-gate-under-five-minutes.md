@@ -1,7 +1,8 @@
 ---
 id: 7565
 title: "equivalence-gate under five minutes in the merge queue: forked shards, split the one giant file"
-status: in-progress
+status: done
+completed: 2026-11-27
 created: 2026-11-27
 updated: 2026-11-27
 assignee: ttraenkler/equiv-speed
@@ -108,7 +109,8 @@ shard, minutes:
    are updated.
 3. **Per-file times in the log.** After each run the gate prints the slowest
    files (from the vitest JSON report's `startTime`/`endTime`) and emits a
-   `::warning` for any file over 90 s, naming it — so the next giant is
+   `::warning` for any file over 150 s (most of a shard's ~3-minute budget,
+   wall time under forks), naming it — so the next giant is
    visible in the first queue run that carries it instead of needing this
    kind of archaeology. A warning, not a failure: timing is noisy.
 
@@ -124,7 +126,7 @@ Why not the other options:
 
 New files: vitest hashes them into a slot like any other; the partition
 property (every file in exactly one shard) does not depend on the file list.
-A new file heavier than ~90 s shows up as a warning.
+A new file heavier than ~150 s shows up as a warning.
 
 ### Runner budget
 
@@ -134,10 +136,17 @@ queue run drop from ~41 to ~25.
 
 ### Expected time
 
-`changes` 1.2 + setup 0.5 + slowest shard step + gate 0.2. Slowest shard
-step: the other shards at ~2x are 60–150 s; the 7164 parts (~80–100 s each)
-and 7166 (~150 s) bound a shard from below. ≈ 1.2 + 0.5 + 2.5–3 + 0.2 ≈
-**4.4–4.9 min** (from 11.6).
+`changes` 1.2 + setup 0.5 + slowest shard step + gate 0.2. With the split,
+vitest's hash slices put two 7164 parts (`…length-growth`, `…generated-sweeps`)
+in shard 7, the third in shard 2 and 7166 in shard 4. Single-core work per
+shard then is ~110–300 s except shard 7 at ~445 s (its 33 other files ~260 s
+plus the two parts ~85 + ~100 s). At the measured 2.08x for 4 forks: shards
+1–6 and 8 at 55–150 s, shard 7 at ~215 s. ≈ 1.2 + 0.5 + 3.6 + 0.2 ≈
+**~5.5 min worst shard, ~4.5 min if shard 7 lands near the others** (from
+11.6). The fork speed-up on the runner's 4 vCPU is the unmeasured factor.
+If the first queue runs show shard 7 still the clock, the next step is
+weighted assignment fed by the per-file times this change starts logging
+(follow-up, not this PR).
 
 ### Fail-closed walk
 
@@ -162,3 +171,18 @@ equivalence-shard]`, `if: always() && …`, fails unless the matrix result is
   the gate change is the fork flags plus one report function.
 - `SHARD=1/8 node scripts/equivalence-gate.mjs` still works locally;
   CLAUDE.md and `docs/ci-policy.md` describe the forked shards.
+
+## Validation (2026-11-27)
+
+- `vitest list` over the three new 7164 files collects the same 1,131 test
+  names as the old file, no duplicates (552 / 270 / 309 per file).
+- `tests/equivalence-gate.test.ts` (19 pass, 3 new: the partition for the CI
+  shard count read from `ci.yml` and for 8, executing vitest's
+  `BaseSequencer.shard` over `listEquivalenceFiles()`; per-file durations),
+  `tests/issue-7551-job-skip-propagation.test.ts` and
+  `tests/issue-4609-equivalence-baseline-ratchet.test.ts`: all pass.
+- The equivalence suite itself was not run locally (shared 4-core box); the
+  split files and the forked run are proven by the first queue run.
+- Only a live `merge_group` run proves: the wall time, the fork speed-up on
+  the runner, the per-file times, and that no test flakes under parallel
+  forks.

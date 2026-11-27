@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7164 r6 — the generated length-update sweep's cases, shared by the test
-// (issue-7164-externref-vec-length-growth.test.ts) and the script that records
-// origin/main's outcomes (issue-7164-length-update-sweep-base.json). No vitest
-// import: the recorder runs outside vitest.
+// #7164 r6 — the generated length-update sweep's cases, shared by the tests
+// (issue-7164-generated-sweeps.test.ts, issue-7164-escape-and-target-sweeps.test.ts)
+// and the script that records origin/main's outcomes
+// (issue-7164-length-update-sweep-base.json). No vitest import: the recorder
+// runs outside vitest.
 //
 // Dimensions: every length-update form × element type × setup (with and
 // without a plain `length =` elsewhere in the module) × receiver shape.
