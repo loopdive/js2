@@ -31,7 +31,8 @@
         "src/shared/contracts/string-surrogate.ts",
         "src/shared/contracts/linear-memory-layout.ts",
         "src/shared/contracts/f64-value-markers.ts",
-        "src/shared/contracts/prepared-validation.ts"
+        "src/shared/contracts/prepared-validation.ts",
+        "src/shared/contracts/descriptor-word.ts"
       ],
       "minModules": 12
     },
@@ -17312,7 +17313,22 @@
       "layer": "ir-program"
     },
     {
-      "path": "src/ir/program/dynamic-error-constructors.ts",
+      "path": "src/ir/program/dynamic-realm-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-builtin-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-tag.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-types.ts",
       "state": "clean",
       "layer": "ir-program"
     },
@@ -17325,6 +17341,39 @@
       "path": "src/runtime/wasmgc/values/realm-family-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-wrapper-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/shared/contracts/descriptor-word.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-array-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-arrays.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/prepared-array-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source lowering of an array literal on the Prepared path (#7354 A1) through the function-object host; moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/builtin-global-binding.ts",
@@ -17341,6 +17390,14 @@
       "destination": "ir-core",
       "owner": "7354-prepared-path",
       "nextBoundary": "Source recognition of a native Object static's call form (#7354 O1) beside its symbolic helper call; the TypeScript half moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/realm-constructor-forms.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source shapes that name a realm constructor without reading it (#7354 W2), shared by from-ast and the program-objects walk; moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/program/builtin-prototype-keys.ts",

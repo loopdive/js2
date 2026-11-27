@@ -86,8 +86,13 @@ export function ambientStringPrototypeBorrow(
   isAmbient: (root: ts.Identifier) => boolean,
 ): PrototypeBorrowCall | undefined {
   if (locals.has("String")) return undefined;
-  const borrow = matchPrototypeBorrowCall(expr, "String") ?? matchStringWrapperMethodCall(expr);
+  const borrow = stringPrototypeBorrowShape(expr);
   return borrow !== undefined && isAmbient(borrow.root) ? borrow : undefined;
+}
+
+/** The `String` borrow's shape alone, for a caller that has already decided its root is the ambient `String`. */
+export function stringPrototypeBorrowShape(expr: ts.CallExpression): PrototypeBorrowCall | undefined {
+  return matchPrototypeBorrowCall(expr, "String") ?? matchStringWrapperMethodCall(expr);
 }
 
 /** The `Array` borrow, for a (method, arity) the wrapper symbol can name. */

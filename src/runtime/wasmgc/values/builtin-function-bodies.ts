@@ -12,7 +12,8 @@ import {
   BUILTIN_FUNCTION_PROTOTYPE_FIELD,
   BUILTIN_FUNCTION_INITIAL_NAME_FIELD,
 } from "./builtin-function-layouts.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags, asOrdinaryObject } from "./ordinary-object-descriptor-common.js";
+import { OBJECT_FIELD } from "./object-layouts.js";
 import { realmFamilyAllocation, realmFamilySeed, type RealmFamilyOperands } from "./realm-family-bodies.js";
 
 export interface BuiltinFunctionEntryOperands {
@@ -267,10 +268,9 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
         { op: "f64.const", value: 32 },
         call(d.defineAttributes),
         ...bag(),
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: d.objectTypeIdx },
-        { op: "i32.const", value: 0x81 },
-        { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        ...asOrdinaryObject(d.objectTypeIdx),
+        { op: "i32.const", value: flags.nonExtensible | flags.nullPrototype },
+        { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: OBJECT_FIELD.flags },
       );
     return body;
   });
@@ -345,7 +345,7 @@ export function buildBuiltinFunctionLiftedDefinition(
  * %Function.prototype% answers `undefined`, %ThrowTypeError% throws its TypeError; (#7354 P1) an Object.prototype
  * method called through a value is the run-time abort: its algorithm needs the program's ToPropertyKey, so the
  * Prepared path writes it where a call reads the method (`dynamic-prototype-methods.ts`); (#7354 G1) so is a family
- * member (an Error constructor's ToString(message) is the program's, `dynamic-error-constructors.ts`).
+ * member (an Error constructor's ToString(message) is the program's, `dynamic-realm-constructors.ts`).
  */
 export function buildBuiltinFunctionAlgorithmDefinition(
   d: BuiltinFunctionBodyOperands,

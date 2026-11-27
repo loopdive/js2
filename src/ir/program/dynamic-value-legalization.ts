@@ -35,22 +35,23 @@ import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
+import { dynamicObjectTag } from "./dynamic-object-tag.js";
+import { unheldStaticKeys } from "./builtin-prototype-keys.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
-import { dynamicErrorConstruction, errorConstructorOf } from "./dynamic-error-constructors.js";
-import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
+import { arrayLiteral, dynamicRealmConstruction, realmConstructorOf } from "./dynamic-realm-constructors.js";
+import { isArrayLiteralCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
   IS_OBJECT,
   KINDS_OF_TYPEOF,
-  OBJECT_TAG,
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
-  holdsErrors,
+  programFamilies,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -96,20 +97,27 @@ export function legalizeDynamicValues(
   const definitions = valueDefinitions(fn);
   const admitted = admittedKinds(program);
   const kinds = knownKinds(fn, types, definitions, admitted);
-  const builders = chainBuilders(fn, allocations, kinds, admitted);
+  const builders = chainBuilders(fn, allocations, kinds, admitted, programFamilies(program));
   const { intrinsic, fresh, kindTest, anyKind, text, kindChain } = builders;
-  const errors = holdsErrors(program);
   const conversions = conversionBuilders(builders, program);
   const { stringOf, toNumber } = conversions;
   const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
-  const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
+  const memberAccess = {
+    ...builders,
+    carrier: CARRIER,
+    definitions,
+    kindsOf: kinds.kindsOf,
+    staticKeys: unheldStaticKeys(program.objects.constructors),
+    stringOf,
+    toNumber,
+  };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
-  const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
+  const functionOperations = { ...builders, program, objectKinds: admitted.filter((kind) => IS_OBJECT[kind]) };
   // (#7354 O1, P1, G1) What a recognised `Object` static (`dynamic-object-statics.ts`), a call of a prototype method the
-  // realm holds (`dynamic-prototype-methods.ts`) or of an Error constructor (`dynamic-error-constructors.ts`) is
+  // realm holds (`dynamic-prototype-methods.ts`) or of an Error constructor (`dynamic-realm-constructors.ts`) is
   // written with.
-  const objectStatics = { ...builders, stringOf, errors };
+  const objectStatics = { ...builders, stringOf, toNumber };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -198,30 +206,9 @@ export function legalizeDynamicValues(
       case "dyn.typeof":
         if (typeofs.consumed.has(instr.result!)) return [];
         return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
-      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts: a tag per kind `v` may hold.
+      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts (`dynamic-object-tag.ts`).
       case "dyn.object_tag":
-        return kindChain(
-          instr,
-          instr.value,
-          instr.result!,
-          (kind, result) => {
-            if (kind === "object" && program.objects.namesSymbol)
-              gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-            if (kind !== "object" || !errors) return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
-            // (#7354 G1) An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9).
-            const isError = fresh();
-            return [
-              realmCall("js.object.is-error", [instr.value], isError),
-              builders.branch(
-                isError,
-                (r) => [text("[object Error]", r)],
-                (r) => [text("[object Object]", r)],
-                result,
-              ),
-            ];
-          },
-          kinds.kindsOf(instr.value),
-        );
+        return dynamicObjectTag(builders, program, instr);
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
@@ -239,10 +226,10 @@ export function legalizeDynamicValues(
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
       case "dyn.construct": {
-        const error = errorConstructorOf(instr.callee, definitions);
-        return error === undefined
+        const realmConstructor = realmConstructorOf(instr.callee, definitions);
+        return realmConstructor === undefined
           ? dynamicConstruct(functionOperations, instr)
-          : dynamicErrorConstruction(objectStatics, instr, error, instr.args);
+          : dynamicRealmConstruction(objectStatics, instr, realmConstructor, instr.args, true);
       }
       case "dyn.instanceof":
         return dynamicInstanceOf(functionOperations, instr);
@@ -263,15 +250,18 @@ export function legalizeDynamicValues(
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
+        if (isArrayLiteralCall(instr)) return arrayLiteral(builders, instr);
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
-        const error = dispatched ? errorConstructorOf(instr.args[1]!, definitions) : undefined;
-        if (error !== undefined) return dynamicErrorConstruction(objectStatics, instr, error, instr.args.slice(2));
+        const realmConstructor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
+        if (realmConstructor !== undefined)
+          return dynamicRealmConstruction(objectStatics, instr, realmConstructor, instr.args.slice(2), false);
         // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
         // (G1) a built-in's run-time abort.
+        const method = prototypeMethodOfCall(instr, definitions, builders.families);
+        if (method !== undefined)
+          return dynamicPrototypeMethodCall(objectStatics, instr, method, program.objects.functions);
         if (dispatched && !program.objects.functions)
           return gap(`${instr.target.name} in a program that creates no function value`);
-        const method = prototypeMethodOfCall(instr, definitions, errors);
-        if (method !== undefined) return dynamicPrototypeMethodCall(objectStatics, instr, method);
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&

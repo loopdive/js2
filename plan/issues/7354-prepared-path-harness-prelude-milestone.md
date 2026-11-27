@@ -6989,3 +6989,584 @@ leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7
 - Node 25 (not installed).
 - The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
   h-script-var-dynamic-home and 3518-native-invocation-substrate suites.
+
+## Slice W2 plan (2026-11-26, branch `claude/7354-w2` from `origin/main` 1a726b3e64)
+
+`String`, `Number`, `Boolean` and `Object` as realm constructors on the Prepared path, by G1's mechanism.
+
+Measured on the base (411-row sample): 59 rows stop first at one of these four names (`identifier … is not in
+scope` 27, `unknown class` 31, `direct call to "Object"` 1).
+
+### Design (lead decisions 2026-11-26: option A, reuse #3518's wrapper subtypes)
+
+1. **Catalog.** G1's `errorRows` becomes one parameterised family builder (constructor row, prototype object, the
+   prototype's methods, `heldWith` the constructor); the Error family and the three wrapper families are its rows.
+   The wrapper prototypes' specification keys move from the hand lists in `builtin-prototype-keys.ts` into the catalog
+   (`unavailable` rows), so "which keys does a held object lack" has one answer: its catalog properties whose value
+   is an intrinsic the realm does not hold. `%Object%` becomes a value (native, not constructible through the
+   dispatcher), its statics stay unheld. Number's data constants (`NaN`, `MAX_VALUE`, …) are seeded as data.
+2. **What a realm holds** (`native-realm-requirements.ts`): `heldErrorConstructors` becomes a per-family rule over the
+   same uses (an intrinsic read of a member, a family contract; Error also a bound catch payload).
+3. **Kernel.** Constructors are G1 entries (behavior `native`, algorithm `unreachable`). A wrapper is #3518's
+   `$StringObject` / `$NumberObject` / `$BooleanObject` (`primitive-wrapper-layouts.ts`, payload field 6), allocated
+   by `buildPrimitiveWrapperAllocationDefinition`; the realm's `$Object` takes the existing `extensible` opt-in. The
+   wrapper prototypes are themselves wrappers ("", +0, false). Contracts: `js.object.create-wrapper(primitive,
+   selector)` (also defines a String's own `length`), `js.object.primitive-data(object)` (the payload as a carrier
+   value, `undefined` for no wrapper: which wrapper it is comes only from the `ref.test` of the subtype).
+   `js.object.intrinsic` also answers the family prototype objects.
+4. **IR.** `realmIntrinsicRead` answers the four names (pristine, `pristineBuiltinGlobal`); `dynamic-error-constructors.ts`
+   generalises to `dynamic-realm-constructors.ts`: a call / construct whose callee is the intrinsic expands at the
+   site — `String(v)`/`Number(v)`/`Boolean(v)` are the existing ToString / ToNumber / ToBoolean builders,
+   `new X(v)` is that conversion then `create-wrapper`, `Object(v)` / `new Object(v)` a kind chain (nullish → a new
+   object, object or function → itself, primitive → its wrapper). OrdinaryToPrimitive and P1's method call recognise
+   the wrappers' `valueOf` / `toString` by identity (G1's error-to-string row, generalised to a list) and answer
+   `thisXValue` through `primitive-data`, a TypeError for a wrong receiver. `dyn.object_tag`'s object arm reads the
+   wrapper payload's kind.
+5. **Premise.** With a prototype obtainable, a primitive's member read goes through the realm's prototype object
+   (`js.object.get(%K.prototype% or %Object.prototype%, key, primitive)`) and a primitive's write aborts where the key
+   is found on it; the M1 premise test's routes move accordingly.
+
+### Refuses / aborts (each sound)
+
+- A read or write, by constant key, of a constructor static the realm does not hold (`String.fromCharCode`,
+  `Object.keys`): refusal by name. Computed keys refuse as before.
+- A String wrapper's index keys: run-time abort (the exotic lookup in `string-exotic-bodies.ts` is not wired).
+- `Number.prototype.toString(radix)` with a radix, the unheld prototype methods (`charAt`, `toFixed`): by name.
+- `==` with a wrapper: refused as all loose equality is today (L0a not on main).
+- A built-in called through any other value (`var C = String; C(1)`): the dispatcher's built-in abort (G1).
+
+### Placement and quality criterion
+
+Catalog rows in `native-realm-catalog.ts`; kernel bodies beside G1's in `realm-family-bodies.ts`; contracts in
+`native-source-objects.ts`; IR in `dynamic-realm-constructors.ts` (the renamed G1 module) and the existing chain /
+member-access / to-primitive modules. from-ast net ≤ 0. Quality: no Error-only module stays where it is now one family
+of several; no second wrapper layout; no hand list of wrapper-prototype keys left beside the catalog.
+
+## Slice W2 result (2026-11-26, branch `claude/7354-w2` from `origin/main` 1a726b3e64)
+
+### Built
+
+- **Catalog** (`native-realm-catalog.ts`): G1's `errorRows` is one family builder (`familyRows` over a `Family`
+  record); the Error family and the three wrapper families are rows of it. The wrapper families carry their statics,
+  data constants (`Number.MAX_VALUE`, …) and every prototype method (Annex B included) as `unavailable` rows, but
+  `valueOf` / `toString`; a wrapper prototype carries its primitive slot. `%Object%` is native (a value).
+  `NATIVE_VALUE_INTRINSICS` gains `Object`, the wrapper constructors and methods, and the prototype objects a
+  primitive's member read goes through (appended: G1/P1 selectors unchanged).
+- **What a realm holds** (`native-realm-requirements.ts`): `heldErrorConstructors` → `heldFamilyMembers`, one rule per
+  family over the IR's uses; `heldCatalogRows` holds a family's callable row only if it is a value the realm holds, so
+  an unheld member (`String.prototype.charAt`) is no row, no literal and no seeded property.
+- **Kernel**: the wrappers are #3518's subtypes (`createPrimitiveWrapperDeclaration`, payload field 6) and storage
+  bodies, reserved over the realm's object layouts only where a wrapper family is held
+  (`native-realm-wrappers.ts`; the layouts take the existing `extensible` opt-in then). `realm-wrapper-bodies.ts`:
+  `create-wrapper` (a String's indices {!w,e,!c} and `length` {!w,!e,!c} are stored at creation, so every realm
+  lookup, define, write and key walk answers the exotic object's answer), `primitive-data` (the slot, `undefined` for
+  no wrapper), `wrapper-this` (thisXValue for a held wrapper method, TypeError for a wrong receiver, null for any other
+  method), `wrapper-to-string`. The family seeding takes number values and skips unheld members; a wrapper prototype is
+  allocated as a wrapper. `js.object.intrinsic` also answers the family objects and Object.prototype.
+- **IR**: `dynamic-error-constructors.ts` → `dynamic-realm-constructors.ts` (Error, Object, String, Number, Boolean,
+  call and construct at the site; `realmConstructorsRead`; `functionChainAnswer` answers `true` for
+  %Object.prototype%). Which constructors a program holds is now the IR's answer (`realmConstructorsRead` over the
+  front end's intrinsic reads), not a source walk: an intercepted `String(v)`, `Object.defineProperty(…)` or
+  `Object.prototype.toString.call(v)` reads none, so the prelude holds no wrapper family.
+  `dynamic-wrapper-methods.ts`: one `wrapper-this` call answers a wrapper method in OrdinaryToPrimitive and in P1's
+  method call (G1's error-to-string row and it are entries of one `builtins` list). Member access: unheld statics
+  (`unheldStaticKeys`) and unheld wrapper-prototype keys come from the catalog (the hand lists `STRING_PROTOTYPE` /
+  `NUMBER_PROTOTYPE` are gone); where a program can obtain a prototype (`obtainsPrototypes`) a primitive's read goes
+  through the realm's prototype object and a write of a key found there aborts; the intercepted
+  `Object.prototype.toString.call` aborts if the program replaced Object.prototype.toString. `dyn.object_tag` reads a
+  wrapper's kind through its slot. `new X` answers the carrier in the `+` analysis (`construct` leaf).
+- from-ast: net 0 (the `construct` leaf +1; `Number(v)`'s lane arm moved to `function-object-lowering.ts`
+  `preparedToNumber`).
+
+### Cast / test sites checked for the extensible `$Object` (lead condition)
+
+- `native-builtin-functions.ts` refused an extensible ordinary carrier ("plain storage lookup cannot stand in for an
+  exotic carrier's own-property method"): relaxed only where the realm holds the wrappers, whose own properties are all
+  stored. This is the one site touched.
+- Every other kernel / source-object body casts to `$Object` (`ref.cast`, which accepts the subtype) or tests it as
+  "is ordinary" (`ref.test`, true for a wrapper: a wrapper is an ordinary object with a slot, as intended). No
+  `br_on_cast` on `$Object` exists on this path; no `struct.new $Object` reads a wrapper. Function entries are
+  distinct closure types, unaffected.
+
+### Refuses / aborts (each sound)
+
+Unheld statics and prototype methods (`String.fromCharCode`, `Object.keys`, `"a".charAt`): refusal by name where
+every kind refuses, else the abort; a constructor through a variable (`var C = String; new C()`): the dispatcher's
+built-in abort; `Number.prototype.toString(radix)`: abort; `Object.prototype.constructor`: abort (not seeded);
+`==` with a wrapper: refused as all loose equality; `var String;`: refused by name (G1's S1 rule now covers the four);
+`'a'.valueOf()` on a statically typed string, `(1).toString()`: from-ast's typed refusals, unchanged; a sloppy method
+on String.prototype called on a primitive: the existing C2-D3 abort.
+
+### Proof (local node 22)
+
+- Probes (`.tmp/w2a.json` 92 + `.tmp/w2c.json` 40, each against node with a wrong twin, chunks of 10 programs per
+  process): head 59+33 OK, 0 WRONG, 0 twin failures, 0 invalid, 0 EXC; base → head on the 92: REFUSED→OK 56,
+  REFUSED→REFUSED 27, REFUSED→ABORT 5 (the designed aborts above), OK→OK 2, ABORT→OK 1, EXC→REFUSED 1 (`var String;`,
+  a verifier exception on the base).
+- The probe driver throws invariant errors with message "r" (`verifier-failure`, `invalid-host-capability-catalog`,
+  duplicate module binding) after ~20 compiles in one process, on the base too; each such program compiles and agrees
+  when run alone. Not investigated.
+- Tests (each alone, one fork): `issue-7354-w2-wrappers` (new) 24; g1-error-values 14, g1-refusals-and-aborts 14,
+  g1-spelled-names 17, g1-assert-throws 5, c2-constructors 19, c2-this 18, p1-method-values 19, p1-own-property 18,
+  o1-define-property 30, o1-create-and-define-properties 14, o2-accessors 43, o2-object-values 12, m-refusals 43,
+  m-prototype-premise 18, t2-typeof-standard-globals 16, ty-typeof-comparisons 57, u-prelude 3; 3518
+  native-realm-requirements 25, native-object-realm-declarations 21, ordinary-object-callable-contracts 61,
+  native-builtin-functions 36, native-primitive-wrapper-layouts 71, -storage 178, primitive-wrapper-bodies 185,
+  native-realm-wrapper-storage 24: all pass. Pins moved: premise routes (String/Number/Boolean/Object.prototype are
+  values now; `Object.getPrototypeOf` is an abort row), `typeof` of the four, O1's computed static and M1's G45
+  `Object.freeze` (a call through a value), the catalog's native list, `programObjects` (no constructor names).
+- Ordinary pipeline: 12 test262 files (wrappers, Object, operators, Error) × gc + standalone: 24/24 byte-identical
+  to the base.
+- Prelude + `assert(true);`: 81,397 B → 81,408 B (+11 B: the intrinsic getter's Object.prototype arm in a program
+  holding the Error family), 8.5 s → 8–10 s. Prelude + a `new String` program: 103,727 B, ~13 s (an earlier inline
+  design took 35 s and was replaced by the realm call).
+
+### Sample (the 59 rows of the 411 whose first error names String/Number/Boolean/Object; real runner, two runs)
+
+Base: 59 compile errors. Head: **22 pass**, 18 fail, 19 compile errors. Fails: 16 run-time aborts, almost all an
+unheld String.prototype method (`concat`, `trim`, `toLowerCase`, …) or `Object.preventExtensions` / `isFrozen`; one
+closure body the path cannot lower. Next compile blockers: `delete` 4, `Array` 3, computed member keys 3, RegExp
+literal 2, loose equality 2, `<` / `<=` on dynamic values 2, implicit dynamic flows 3. Sample passes not twin-checked.
+
+### Not verified
+
+Node 25; the full 3518/7354 suites beyond the files above; `check:prepared-bytes`; no adversarial review agent run.
+
+## Slice W2 review r1 (2026-11-26, PR 7515 review; `origin/main` a9cdc8857a merged)
+
+The result section above is superseded where it names `realmConstructorsRead`, `primitive-data`, `wrapper-this`,
+`wrapper-to-string` and `dynamic-wrapper-methods.ts`.
+
+### Blocker: the held constructors were a fact of one legalization group
+
+- Cause: each group computed the constructors its own functions read. A function whose group named none
+  (`function f(x){ return x.message; }` beside `new TypeError("m")` at top level) admitted neither the object nor the
+  function kind, so an error reached the chain's last, untested arm (null / primitive), which threw the realm's
+  TypeError: the uncaught exception of the G1 regression. A primitive's member read in such a function took the
+  "no prototype is obtainable" route and answered `undefined` for a key the program had put on String/Object/Number
+  .prototype (the wrong values).
+- Fix: `programObjects` (`source-plain-objects.ts`) walks every source file once and records `constructors`;
+  `programDynamicContracts` builds one frozen `LegalizationProgram { objects, catches }` and hands it to every
+  group. `holdsErrors`, `heldWrappers`, `obtainsPrototypes` and `admittedKinds` read only it, so no group can
+  disagree with another. The walk over-approximates (a family no code reads costs bytes, not an answer); it skips
+  only the call forms the front end lowers from their shape, by the predicates the lowering uses
+  (`realm-constructor-forms.ts`: `String(v)`, `Object.prototype.toString.call(v)`; the borrow; `Object` as the
+  receiver of a native static). That last skip first matched any member access that is a direct argument of the
+  call, so `Object.defineProperty(String.prototype, …)` did not name String — fixed, and pinned in o2-object-values.
+- Tests: o2-object-values' whole-program test is back ("answers which realm constructors the whole program names");
+  `issue-7354-w2-wrappers.test.ts` has 12 function-body programs (String/Object/Number.prototype data, getter and
+  method keys read in a function; G1's message/concat/String/tag through a function; a wrapper passed into a function
+  and converted) against node with a wrong twin, and 5 of them through the harness prelude.
+
+### Quality items
+
+- a–d: `undefinedValue` deleted; the String index key is `buildStringIndexKeyDefinition`
+  (`string-index-key-body.ts`); `builtinMethodChain` / `identityTest` / `wrapperMethodTest`
+  (`dynamic-builtin-methods.ts`, renamed from `dynamic-wrapper-methods.ts`) serve ToPrimitive and P1's method call;
+  `BuiltinMethodBuilders` is a `Pick<ChainBuilders, …>`, `carried` is defined once (`dynamic-value-types.ts`).
+- e–k, all done: `WRAPPER_OF_PRIMITIVE` (catalog, read by the IR through `builtin-prototype-keys.ts`); one `SLOT`
+  table per kind in `realm-wrapper-bodies.ts`; two rows, `js.object.create-wrapper` and `js.object.wrapper-data`
+  (selector `WRAPPER_DATA = { slot, valueOf, toString }`) replace four; `dynamic-realm-constructors.ts` uses a
+  `CONVERSION` table; the extensible check accepts only when every wrapper type's supertype is `$Object`
+  (`wrapperSubtypes`); `dynamic-object-tag.ts` holds the tag and the toString-replaced guard; `CARRIER`/`F64`/
+  `BOOLEAN` and friends live in `dynamic-value-types.ts`.
+- `Number(null)` (in the W2 test since the first commit) had become a physical-setup error when dc79a7459c narrowed
+  `preparedToNumber` to dynamic/string operands: it is +0 now (§7.1.4); other external operands keep their path
+  (boxing them changed 3518's typed `Number({})`).
+
+### Known limits (each aborts or refuses; were refusals on main)
+
+A closure writing a script `var`; `var t = Object.prototype.toString; t.call(v)` (the realm's toString is not
+populated); unheld statics and methods (`Object.keys`, `"a".charAt`); a string's own `length` / index keys (#7352);
+writing a key found on a primitive's prototype; a method aliased to another name; `String.prototype` not held while a
+string's `toString()` runs; `typeof this` in a getter called on a primitive; `"" + o.toString` (a function's
+ToString). The earlier unexplained abort (`Object.create(Number.prototype)` with the Error family held, then `String(o)`)
+was the static-argument walk bug above and now answers.
+
+### Proof (local node 22)
+
+| Set | OK | Refused | Abort | Wrong | EXC | Twin failures |
+|---|---:|---:|---:|---:|---:|---:|
+| Reviewer batches p1/p3/p4/p5 (248; node answers in a fresh context) | 144 | 87 | 16 | 0 | 0 | 0 |
+| My probes (132) | 94 | 32 | 6 | 0 | 0 | 0 |
+| Blocker programs (12) | 12 | 0 | 0 | 0 | 0 | 0 |
+
+One reviewer program throws in node itself. 10 programs per process.
+
+- Tests (each alone, one fork, under 9 min): w2-wrappers 41 (three parts), w2-jsdoc 7, g1-error-values 14,
+  g1-refusals-and-aborts 14, g1-spelled-names 17, g1-assert-throws 5, c2-constructors 19, c2-this 18,
+  p1-method-values 19, p1-own-property 18, o1-define-property 30, o1-create-and-define-properties 14, o2-accessors 43
+  (two parts), o2-object-values 13, o2b-to-primitive 15, m-refusals 43, m-prototype-premise 18, t2-typeof 16, ty 57,
+  u-prelude 3; 3518 realm-requirements 25, object-realm-declarations 21, realm-wrapper-storage 24, primitive-wrapper
+  layouts 71 / storage 178 / bodies 185, object-realm-algorithm-bodies 214, to-primitive-wrapper-forward 71: all pass.
+  3518 native-realm-object-layouts (4 "genuine source state") and native-realm-source-integration (3) fail identically
+  on `origin/main` a9cdc8857a.
+- Sample (59 rows, real runner): 22 pass, unchanged; the 22 passes' mutated twins (the last assertion naming a
+  wrapper, else the last assertion, inverted) all fail; twin files deleted, directory mtimes restored.
+- Ordinary pipeline: 12 files × gc + standalone byte-identical to the base.
+- Gates (bare chain, exit 0): typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles,
+  compiler-boundaries inventory. The merge-base is `origin/main`, so `LOC_GATE_BASE=origin/main` is the same base.
+  from-ast: no growth.
+
+### Cost
+
+Prelude + `assert.sameValue(1, 1)`: 81,432 B / 5.7–7.3 s on the base, 95,918 B / 7.1–8.8 s on head. The cause is
+harness code, not the tests: `compareArray.format` in assert.js reads `String` as a value
+(`Array.prototype.map.call(arrayLike, String)`), so every prelude program holds the String family and Object.prototype's route.
+That function aborts on this path anyway, but the source fact cannot know it.
+
+## Slice A1 plan (2026-11-26, branch `claude/7354-a1` from `claude/7354-w2` c458a250fe; Phase 1, not started)
+
+Arrays on the Prepared path, driven by `propertyHelper.js`. Overlap: #7352 is still claimed by `c-lead` (2026-11-19);
+its lane (S13, `claude/7354-arrays*`) is suspended since 2026-11-20 and is read here for data only. L0c owns computed
+keys on ordinary objects (not started); O5 (PR 7428) owns for-in.
+
+### Measured (W2 head, strict entry, runner options, real `assert.js` + `sta.js` + includes; `.tmp/ph`)
+
+Of the 411-row sample, 43 rows stop at `Array` inside `propertyHelper.js` and 15 more name an array. Every
+propertyHelper.js statement was stubbed in turn (cumulative variants `v1`…`v13`) and the 43 rows re-run each time.
+Nothing on this path makes an array today: a literal refuses at top level ("resolver cannot register vec") and
+makes the function an abort body. A function body that fails to lower aborts only when it is called. A module-init
+statement that fails refuses the whole program.
+
+| # | propertyHelper.js needs (in source order) | where | gates | after it is lifted, the next stop |
+|---|---|---|---|---|
+| 1 | `Array` as a value: `Array.isArray`, `Array.prototype.join` / `push` (L27, L31, L32) | module-init | 43 | `identifier "Function" is not in scope` (all 43) |
+| 2 | `Function.prototype.call.bind(m)`, 4 times (L31–34): a bound built-in, called through a script var | module-init | 43 | `math.pow needs callable provider materialization` (all 43) |
+| 3 | `Math.pow(2, 32)` (L35) | module-init | 43 | run-time abort in module-init (all 43) |
+| 4 | `Object.defineProperty` / `getOwnPropertyDescriptor` / `getOwnPropertyNames` read as values (L28–30) | module-init | 43 | per row: 19 `dyn.publish_argc`, 6 test-side `var arr = []`, 7 aborts, 11 other built-ins (Date, RegExp, globalThis, `null` under f64) |
+| 5 | `arguments.length` (L47, L183) | verifyProperty, isWritable | 19, refused | 18: "a dynamic value flows into boolean \| undefined" (the JSDoc `@param {PropertyDescriptor\|undefined} desc`, L40, types the caller's literal) |
+| 6 | that JSDoc flow rule | test's call site | 18 | run-time aborts: computed key `obj[name]` (verifyProperty L99, verifyEqualTo; L0c), `delete obj[name]` (isWritable L204, isConfigurable; unowned), `arguments` in test closures (3) |
+| 7 | arrays inside the functions: `[]`, `__push`, `failures.length`, `__join`, gOPN's result read as `names.length` / `names[i]` | verifyProperty | ≈39 | — |
+
+With items 1–6 stubbed, 1 of the 43 rows passes (`harness/propertyhelper-verifynotenumerable-enumerable.js`).
+Lifting `Array` alone gains no propertyHelper row. Items 2–4 are not array work. They are "built-ins as values"
+(V1/P2): the dispatcher aborts on a built-in callee (G1, P1), and P1 put a built-in's algorithm at its call site.
+Nobody owns them today.
+
+### Representation: an array is an ordinary realm object with an [[ArrayExotic]] brand
+
+- **Chosen, (A).** `create-array` is OrdinaryObjectCreate(%Array.prototype%) plus one free bit in `$Object.flags`,
+  the same way G1 marks [[ErrorData]] with 0x800; the bit is still to be checked against the realm's and the legacy
+  encodings. Index keys and `length` are ordinary own data entries in the existing hash map (`length` is
+  {w, !e, !c}). The exotic part is a single hook, §10.4.2.1 ArrayDefineOwnProperty, at the descriptor pack's define
+  entry points (`defineData`, `defineAccessor`, `defineAttributes`). Every realm write funnels there: the set adapter,
+  element creation, defineProperty(ies) and create. The hook does three things. An index ≥ `length` grows `length`,
+  or is refused when `length` is not writable. A `length` define runs §10.4.2.4 ArraySetLength: ToUint32 ≠ ToNumber
+  is a catchable RangeError, and shrinking deletes from the top, stopping at a non-configurable index. Any other key
+  is ordinary.
+- What (A) gives for free, with no array arm anywhere: get, has, has-own, GOPD, holes (absent keys), elisions,
+  inherited `Array.prototype[1]`, sparse `x[4294967294]` (no allocation of that size), expandos, defineProperty on
+  an index, freeze, for-in (O5), and every computed-key route L0c builds over the string-keyed [[Get]] / [[Set]].
+  Keys come from W2's index formatter (`string-index-key-body.ts`) and the kernel's `arrayIndex`. `Array.isArray`,
+  `Object.prototype.toString`'s "Array" and the define hook all read the one bit.
+- **Cost.** `a[i]` with a number `i` formats a key string and does a hash probe, so it allocates once per access.
+  The vector design does a bounds check and an `array.get`. `push` is a format, a define and a length update.
+  `length = n` scans the map once. Own-key order is the map's insertion order, the same as for every ordinary
+  object today (an existing gap for out-of-order integer keys, not array-specific).
+- **Rejected, (B): an `$Array` subtype with a dense externref vector, a hole sentinel and a u32 length** (the S13
+  branch's design). Every own-property role (findOwn, the three defines, GOPD, delete, own keys, integrity levels,
+  the O1 2,808-case sweep) would need an array arm, plus a sparse fallback once an index gets non-default
+  attributes. S13 already ended with named traps and "a map entry under a dense slot". A dense store can come later
+  as a measured element-storage specialisation behind the same bit.
+- **Rejected, (C): the ordinary pipeline's typed vec.** It cannot hold holes, expandos or dynamic elements, and it
+  would be a second object-like carrier kind with a row in every dynamic table.
+
+### Steps, in order of rows unblocked
+
+- **A1a: arrays as realm values.**
+  - Catalog: an Array `Family` row through `familyRows`. %Array% is native. `isArray` is native; `from` and `of`
+    are unavailable. %Array.prototype% is itself an array with `length` 0, allocated as one (the W2 wrapper-prototype
+    precedent). Its methods are `unavailable` rows except `push`, `join` and `toString`, which are native in A1b.
+  - Kernel `realm-array-bodies.ts`, beside `realm-wrapper-bodies.ts`: create-array, the define hook, ArraySetLength.
+  - Contract row `js.object.create-array` in `native-source-objects.ts`.
+  - IR: `Array` in `realmIntrinsicRead`. `Array(n)` / `new Array(…)` / `Array.isArray(v)` as rows of
+    `dynamic-realm-constructors.ts`. The "Array" tag in `dynamic-object-tag.ts`.
+  - The literal: create-array, then CreateDataProperty for each present element, in a new front-end sibling.
+    `from-ast.ts`'s `lowerArrayLiteral` takes one arm, paid for by moving code out.
+  - Expected: about 6–8 of the 15 non-propertyHelper sample rows: S15.4.5.2_A1_T1, S15.4.5.1_A1.1_T2,
+    15.2.3.6-4-120/-135, 15.2.3.7-6-a-126/-156, 15.2.3.6-3-140-1, 11.1.4_4-5-1. The 43 rows move to item 2.
+- **A1b: the propertyHelper module-init runs (items 2–4).**
+  - The dispatcher's built-in arm (`closure-method-body.ts`) runs a held native built-in through one program-side
+    function `(callee, this, args) → value`. That function is an identity ladder over the held natives. It reuses
+    P1/G1/W2's call-site algorithms (`dynamic-builtin-methods.ts`) instead of copying them, and so it can use
+    `stringOf` and ToPrimitive. This is P2.
+  - `Function.prototype.call` / `apply` as natives.
+  - `bind` as BoundFunctionCreate: a kernel entry with target, this and arguments.
+  - `Array.prototype.push` / `join` / `toString` (`join` also gives an array its ToPrimitive).
+  - The Object statics as values, with `getOwnPropertyNames` returning an A1a array.
+  - `Math.pow`, as a physical provider.
+  - Expected: all 43 rows get past module-init. About 1 passes until items 5–6 and L0c land.
+- **A1c: verifyProperty's own shapes.** `arguments.length` on the Prepared path (`dyn.publish_argc`, slice C's
+  `arguments` lane), and the JSDoc flow rule extended to a literal argument under a `@param` type (W's rule). The
+  rows then need L0c's computed keys and a `delete` slice to pass.
+
+### Refuses / aborts (each sound)
+
+- A length value that is an object: ToNumber would need the program's ToPrimitive inside the kernel, so the realm
+  aborts by name.
+- Array.prototype methods not yet native: refusal by name where every kind refuses, else the abort (W2's rule).
+- `Array.from` / `of`, spread of an array: refusal by name.
+- A built-in called through a value before A1b: G1's abort, unchanged.
+
+### Placement and quality criterion
+
+- One array representation, the brand bit; no array arm in get, has, keys or computed keys.
+- The family is `familyRows` (no second family builder) and the hook is one function at the pack (no second
+  define).
+- The index key comes from W2's formatter; the literal lowering lives in a sibling module; from-ast ends ≤ base.
+- Programs that hold no Array family keep their Prepared bytes, and the ordinary pipeline is byte-identical.
+- Risk: `assert.js`'s `compareArray.format` reads `Array`, so every prelude program would hold the family. W2 paid
+  the same cost for `String` (+14 KB, about +1.5 s). A1a measures it, and only when the cost matters does A1a
+  narrow the "held" rule to functions that are not abort bodies.
+
+### A1a design, after the lead's GO (2026-11-26; #7352 is now claimed for this lane: `ttraenkler/ir-lane-a1`, branch `claude/7354-a1`)
+
+- **The hook.** One realm function, `array-define(o, key, value, get, set, word, throw) -> i32` (§10.4.2.1 with
+  §10.4.2.4 inside), reserved only where the realm holds the Array family. It has two callers:
+  - The descriptor pack's two boundary defines (`define-data`, `define-accessor`; `define-attributes` goes through
+    `define-data`) call it after their preflight when the target carries the array bit, with `throw` 1. A rejection
+    is the pack's TypeError.
+  - OrdinarySet (`js.object.set`) calls it with `throw` 0 for an array receiver and answers its boolean, so a sloppy
+    `a[5] = 1` on a read-only `length` is silent and a strict one throws at the site (O1's PutValue).
+
+  Kernel seeding (`defineDataBody`: function `length` / `name`, family objects, wrapper indices, error `message`)
+  never targets an array. It deliberately bypasses the hook when it seeds %Array.prototype%'s own `length`.
+- **ToNumber of a `length` value inside the realm.** A number, boolean, `undefined` or `null` is converted in the
+  realm. A string or an object is the named run-time abort: the realm has no string parser or ToPrimitive.
+- **RangeError.** Where the realm holds the Error family, holding the Array family also holds %RangeError%, and the
+  realm throws a real RangeError. Elsewhere no code can read a thrown value, so it throws the substrate's error.
+- **Computed keys, the subset arrays need.** This overlaps L0c item 7; L0c's general rule replaces it later.
+  - Keys:
+    - A string key reads `has ? get : abort`: a miss could be a built-in key the realm does not hold.
+    - Any other primitive key goes through ToString (the program's `stringOf`; a canonical number string is never a
+      built-in key), then [[Get]].
+    - An object key is the abort: its `toString` order is observable.
+  - Receivers:
+    - An object receiver's write aborts on `"__proto__"`, and otherwise goes through OrdinarySet.
+    - A function or primitive receiver aborts.
+    - A nullish receiver throws a TypeError.
+- **Not in A1a.** Array.prototype methods (`push`, `join`, `toString` and the rest) stay `unavailable` rows.
+  - A constant-key read of one refuses or aborts through W2's unheld-key rule, generalised from wrappers to families.
+  - ToPrimitive of an array aborts.
+  - They come with A1b, because the harness calls them through bound values.
+
+## Slice A1a result (2026-11-27, branch `claude/7354-a1`, #7352 claimed for this lane)
+
+### Built
+
+- **Catalog**: Array is one more row of W2's `familyRows` (`ARRAY_FAMILY`). `isArray` is native; `from`, `of` and
+  the 38 prototype methods are `unavailable`. %Array.prototype% is an array (`array: true`) with `length` 0.
+  `NATIVE_VALUE_INTRINSICS` gains `%Array%`, `%Array.isArray%` and `%Array.prototype%`, appended so earlier
+  selectors are unchanged.
+- **One flags table**: `ORDINARY_OBJECT_DESCRIPTOR_ENCODING` gains `errorData` (G1's 0x800, folded in; the
+  `ERROR_DATA_FLAG` constant is gone) and `arrayExotic` (0x1000). The legacy object flags stop at 0x400.
+  `js.object.is-error` becomes `js.object.has-brand(o, REALM_BRAND)`, one body for both brands.
+- **Kernel** (`realm-array-bodies.ts`, `native-realm-arrays.ts`):
+  - `create-array` is ArrayCreate; a length that is no array length throws a RangeError.
+  - `array-define` is §10.4.2.1, with ArraySetLength (§10.4.2.4) split out.
+  - The descriptor pack's `define-data` / `define-accessor` boundaries call `array-define` after their preflight
+    when the target carries the brand, with `throw` set. OrdinarySet (`js.object.set`) calls it for an array
+    receiver with `throw` 0 and answers its boolean.
+  - Where the Error family is held, holding Array also holds RangeError.
+- **Literals**:
+  - Only held members' keys become realm literals (`native-realm-literals.ts`). A family's unheld methods had
+    added their names, which fixes W2's String family too.
+  - Fixed on the way: `ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)` had pointed at `%Boolean.prototype%`
+    since W2. It now names `Error.prototype.toString`. Probed on the base: no wrong answer was found.
+- **IR**:
+  - `prepared-array-literal.ts`: CreateDataProperty per present element, in order, through `dynamicStoreOperand`.
+  - `Array(…)` / `new Array(…)` is a row of `dynamic-realm-constructors.ts`.
+  - `Array.isArray(v)` is P1's method call by identity. On the lane, the #7106 static predicate yields to the
+    realm (`realmHoldsStatic`).
+  - "[object Array]" is in `dynamic-object-tag.ts`.
+  - The unheld-key rule is generalised to families (`unheldFamilyPrototypeKeys`).
+  - An array's ToPrimitive aborts (`unlessArray` in OrdinaryToPrimitive): its `toString` is `join`, which comes in
+    A1b.
+  - A function-local array or object is boxed onto the carrier for an element read or write and for a method
+    call (`preparedReceiver`).
+- **Computed keys** (`computedAccess` in `dynamic-member-access.ts`, the subset arrays need; L0c's general rule
+  replaces it):
+  - A constant number key is its canonical string.
+  - A string key reads `has ? get : canonical-numeric ? undefined : abort`. Its write is OrdinarySet, but
+    `"__proto__"` aborts. A function receiver's string-key write keeps the `has` rule.
+  - Any other primitive key is ToString'd.
+  - An object key, or a primitive receiver, aborts.
+- `from-ast.ts`: 17,328 lines, as at the base. Stale comments were cut to pay for the new arm.
+
+### Every write path into an array, and how it is covered
+
+| path | through |
+|---|---|
+| member / computed write `a.k = v`, `a[i] = v` (incl. `length`) | `js.object.set`: OrdinarySet, then `array-define` with `throw` 0; sloppy ignores and strict throws on `false` (PutValue) |
+| `Object.defineProperty` / `defineProperties` / `create` | the kernel's define roles, then the pack's boundary defines, then `array-define` with `throw` 1 |
+| array literal, `new Array(a, b)` | `js.object.define-data` (the pack's boundary) on an already branded array |
+| accessor on an index | the pack's `define-accessor`, then `array-define` (the index grows `length`) |
+| inherited setter on an Array.prototype index | OrdinarySet finds the accessor and calls it; no define happens |
+| `length` shrink | `array-define` deletes through the kernel's `deleteOwn`, stopping above the highest non-configurable index |
+| kernel seeding (function `length` / `name`, family objects, wrapper indices, error `message`) | data-body directly; never an array but %Array.prototype%'s own `length`, seeded at creation |
+| push / unshift / splice / freeze / seal / preventExtensions | not in A1a: unheld, so a refusal by name or the run-time abort |
+
+### Proof (local node 22)
+
+- **Probes**: 152 programs (holes, elisions, sparse `a[4294967294]`, `length` truncation and growth, shrink
+  against a non-configurable element, sloppy and strict, read-only `length`, Array.prototype indices, getters and
+  setters, arrays as values, keys "01", "1.0", "-0", "4294967295", -1 and 1.5, `Array` and `new Array` forms,
+  IsArray, `instanceof`, tags, defineProperty and defineProperties), each against node with a wrong twin.
+  - Head: 143 OK (all twins throw), 5 ABORT, 4 REFUSED, 0 WRONG, 0 INVALID, 0 EXC.
+  - Base → head: 135 REFUSED→OK, 8 ABORT→OK, 5 REFUSED→ABORT, 4 REFUSED→REFUSED.
+  - The aborts are known limits: a closure writing a script var, and a closure over a function-local object.
+  - The refusals: `typeof []` and `Object.prototype.toString.call([])` on a literal operand; `Array.isArray = …`;
+    `null` under an f64 hint.
+- **Sample rows, real runner** (`TEST262_COMPILER_PATH=ir`, standalone; refusal-only eval provider here): the 20
+  non-propertyHelper sample rows naming arrays.
+  - Base: 20 compile errors.
+  - Head: 11 pass, 8 fail, 1 compile timeout.
+  - The fails are all run-time aborts: forEach / filter / toString / an object `length` value.
+  - The timeout is `ident-name-keyword-accessor.js` (86 accessors). The same program without its array takes 38 s
+    on the base (the known function-count scaling).
+  - Each of the 11 passes has a mutated twin (last assertion changed), and all 11 twins fail.
+- **Ordinary pipeline**: 16 programs (8 test262 array/defineProperty files, 8 TS programs with typed arrays, push,
+  holes, `Array.isArray`, `new Array`) × default and standalone: 32/32 binaries identical to the base.
+- **Prelude cost** (`assert.sameValue(1, 1)`, 4 runs each, interleaved): 95,918 B → 103,542 B (+7.6 KB); the
+  median goes from about 9.0 s to 9.5 s.
+  - `compareArray.format` reads `Array`, so the family is held.
+  - `compareArray` itself now lowers (computed keys).
+  - Holding finer was not needed under the 15 KB / 1 s bar.
+- **Run time**: 10,000 `a[a.length] = i` writes then 10,000 reads take 108 ms in the module, against 0.8 ms in node.
+  Every index access formats a key and probes the hash map. A dense store is the measured option for later.
+- **Gates** (bare chain, merge-base and `LOC_GATE_BASE=origin/main`): loc, func, coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles and the compiler-boundaries inventory (three new modules classified) all pass.
+
+### Known limits
+
+- Array.prototype methods (A1b).
+- An array's ToPrimitive.
+- A string or object `length` value (no ToNumber in the realm).
+- Spread.
+- `typeof` / tag of a literal operand.
+- A computed string key the realm lacks that is not canonical-numeric.
+- An object key.
+- A primitive receiver with a computed key.
+- `Array.isArray` reassigned.
+
+All of these are aborts or refusals.
+
+## Slice A1a review r1 (2026-11-27, branch `claude/7354-a1`, #7352)
+
+### Root cause of the blocker, and the fix
+
+- `compile()` threw on for-of over a function-local array (`callable __iterator (runtime) was not reserved`), and
+  on `s = s + v` in its body (`Phase 1 requires matching operand types for '+'`).
+- Cause: the literal lowered to `js.object.create-array`'s raw externref. A script var boxed it on store, but a
+  function-local `var` kept the raw externref, which A1a boxed at three receiver sites only (`preparedReceiver`).
+  Every other consumer saw an externref: for-of took the host iterator arm, `+` saw mismatched operands.
+- Fix (one representation): the literal is a dynamic value at its source. The front end emits one helper call over
+  the present elements, `__ir_array_literal:<length>:<indices>` (`arrayLiteralHelper` in `dynamic-realm-calls.ts`),
+  typed `irDynamic()`. The legalization writes it with `arrayOf` (`dynamic-realm-constructors.ts`), the one
+  ArrayCreate-then-CreateDataProperty helper, which `Array(…)` also uses. `carrierKindOf` / `knownKinds` read the
+  call as an object. Defining after all elements are evaluated is the same as defining each in turn: nothing in a
+  fresh array's defines runs program code.
+- `preparedReceiver` and the array arm of `boxConcreteToDynamic` are gone; the three receiver sites are W2's again.
+- A function-local **object** (W2's representation, still a raw externref) had the same throw for for-of. The
+  iter-host arm now refuses on the lane (`createsFunctionObjects`): the Prepared program has no host iterator.
+
+### Consumer sweep (120 programs, each against node with a wrong twin; 0 wrong, 0 invalid, 0 exception)
+
+`abort` is the run-time abort (mostly a refused function's abort body); `abort (node throws)` was checked again
+under a `try`/`catch`: node catches a TypeError, the module aborts.
+
+| consumer | function-local array | script array | literal | function-local object |
+|---|---|---|---|---|
+| for-of var | abort | abort | abort | abort (node throws) |
+| for-of const | abort | abort | abort | abort (node throws) |
+| for-of let ++ | abort | abort | abort | abort (node throws) |
+| for-of sum | abort | abort | abort | abort (node throws) |
+| typeof | ok | ok | ok | abort |
+| === | ok | ok | ok | abort |
+| == | abort | abort | abort | abort |
+| ! | ok | ok | ok | abort |
+| ternary | ok | ok | ok | abort |
+| String | abort | abort | abort | abort |
+| + str | abort | abort | abort | abort |
+| + num | abort | abort | abort | abort |
+| closure | ok | ok | ok | abort |
+| return | abort | abort | abort | ok |
+| argument | abort | abort | abort | abort |
+| for-in | abort | abort | abort | abort |
+| spread | abort | abort | abort | abort (node throws) |
+| destructure arr | abort | abort | abort | abort (node throws) |
+| destructure obj | abort | abort | abort | abort |
+| in | abort | abort | abort | abort |
+| delete | abort | abort | abort | abort |
+| isArray | ok | ok | ok | ok |
+| instanceof | ok | ok | ok | ok |
+| index read | ok | ok | ok | abort |
+| index write | ok | ok | ok | abort |
+| length | ok | ok | ok | ok |
+| toString tag | ok | ok | ok | abort |
+| && | ok | ok | ok | abort |
+| || | ok | ok | ok | abort |
+| ?? | abort | abort | abort | abort |
+
+The object column's aborts match W2, except index read and write, which A1a's `preparedReceiver` had answered.
+
+### Quality points
+
+1. One create-and-define helper: `arrayOf`. `prepared-array-literal.ts` only lowers the elements and emits the call.
+2. One descriptor-word table, `src/shared/contracts/descriptor-word.ts` (`DESCRIPTOR_WORD`, `FULL_DATA_DESCRIPTOR`),
+   read by the IR and by the runtime's encoding table. `CREATE_DATA_PROPERTY_WORD`, from-ast's `191` and
+   `preflight(d, 3, 191)` are gone. (It lives under `src/shared` because a `src/runtime` home added two ir→runtime
+   import edges.)
+3. `$Object` fields by name (`OBJECT_FIELD` in `object-layouts.ts`). One brand dispatch, `ifArrayBrand`, used by the
+   descriptor pack and by OrdinarySet. One flag mark, `markObjectFlag`, used by ArrayCreate, %Array.prototype% and
+   ErrorCreate. One `asOrdinaryObject`, replacing two local copies.
+4. `js.object.has-brand` reads a `REALM_BRAND` → bit table (`BRAND_FLAG`). %ThrowTypeError%'s `0x81` is
+   `flags.nonExtensible | flags.nullPrototype`, the same bits.
+5. `staticPredicatePlan`'s `realmHolds` has no default. Lowering passes `realmStatics(resolver)`
+   (`function-object-lowering.ts`). Selection passes `ORDINARY_PIPELINE_REALM`: it plans only the ordinary pipeline,
+   which has no realm; the Prepared program is lowered without selection, so the two agree.
+6. OrdinaryToPrimitive takes `isArray` (the brand test) instead of the five-parameter `unlessArray`.
+   `ToPrimitiveAnswer` gains `unsupported`, the abort as the answer itself: its text is the answer's operand, so it
+   cannot be dropped as dead code, and no fake text follows it. The nested ternary is `objectAbsentToString`.
+7. See the root cause above.
+
+Also: `tests/issue-7354-t-truthiness-null.test.ts`'s wrapper ToPrimitive case (red since W2) asserts
+"refuses or aborts" instead of a message.
+
+### Proof (local node 22)
+
+- 152 probes: 145 OK (all twins throw), 4 ABORT, 3 REFUSED, 0 wrong / invalid / exception. Against A1a: two
+  more OK (a closure over a function-local array; `typeof` of one).
+- Ordinary pipeline: 32/32 binaries identical to the base.
+- Prelude: 95,918 B → 103,439 B (+7.5 KB); the median goes from 7.7 s to 8.2 s (3 runs each, same session).
+- `from-ast.ts`: 17,328 lines, as at the base.
+
+### Follow-ups (not fixed here)
+
+- A function-local object literal is still a raw externref (W2). Its element read and write abort, and most other
+  consumers too. Making it a dynamic value at the literal, like the array, is the clean fix.
+- An object captured by a closure aborts ("box of a non-primitive value has no Prepared intrinsic"). A captured
+  array now works.
+- `o[k]` for an absent non-numeric key on a plain object aborts.
+
+## Slice A1a review r2 (2026-11-27, branch `claude/7354-a1`, #7352)
+
+- **Wrong value fixed.** With `Object.prototype.toString` written, `String([1, 2])` answered `"z"` (node: `"1,2"`).
+  ToPrimitive looked up `toString` along the chain (`js.object.has`), and %Array.prototype% has no own one yet, so
+  Object.prototype's was called. OrdinaryToPrimitive now tests the array brand first and aborts before any read
+  (`answer.unsupported`), whatever the chain holds, until Array.prototype.toString exists (A1b). An array with its
+  own `toString` aborts too now (it answered before); no wrong value either way.
+- **ToPrimitive consumers re-checked** with `Object.prototype.toString` / `valueOf` written (32 programs vs node,
+  fresh realm): `String()`, concatenation and template (script and function-local), unary `+`, `Number()`,
+  `isNaN`, `-`, `<` (script, function-local, through a parameter), a computed key `o[[1]]`, `in`,
+  `Object.defineProperty(o, [1], …)`, `hasOwnProperty([1])`, `new Error([1, 2])`, `new String([1, 2])`: each
+  aborts, or refuses (`==` loose, the template's number provider, `in`'s `__extern_has`). A plain object under a
+  written `toString` still answers `"z"`.
+- **The literal's shape is operands, not symbol text.** `__ir_array_literal` is one fixed symbol; its operands are
+  the length (f64), then each present element's index key (a string) and value. `isArrayLiteralCall(instr)` replaces
+  the parser; `arrayOf(b, length, [key, value][], r)` serves the literal and `Array(…)`.
+- `preparedOrdinaryObjectLiteral` is renamed `preparedRealmLiteral` (it answers for arrays too). The element-read
+  arm's "MECHANISM ONLY … unreached" comment and its dead `key !== null` test are gone.
+- `abortsAtRunTime` (test helper) runs node in a fresh realm, so a program that writes a built-in leaves the test
+  context's untouched; its 19 users pass.

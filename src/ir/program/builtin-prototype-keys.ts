@@ -7,16 +7,20 @@
  * so a read of one of them refuses by name; (#7354 P1) but for the Object.prototype methods the catalog marks native.
  *
  * (#7354 M1, C3) Object.prototype's keys are the realm catalog's (`OBJECT_PROTOTYPE_KEYS`, read here for every IR
- * reader, `src/ir/realm-keys.ts` re-exports them); the wrapper prototypes are not in the catalog yet, so their keys
- * are listed here from the specification.
+ * reader, `src/ir/realm-keys.ts` re-exports them); (#7354 W2) so are the wrapper prototypes'.
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
+  REALM_BRAND,
+  WRAPPER_DATA,
+  WRAPPER_OF_PRIMITIVE,
   realmMethodId,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
+  type NativeWrapperConstructor,
   type NativeRealmProperty,
 } from "../../runtime/contracts/native-realm-catalog.js";
 
@@ -68,6 +72,37 @@ export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 export const errorConstructorId = (name: string): string | undefined =>
   (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined;
 
+/**
+ * (#7354 W2) The catalog id of the realm constructor the global `name` names, if it names one: an Error constructor,
+ * a wrapper constructor (`NATIVE_WRAPPER_CONSTRUCTORS`), `Object` or (#7354 A1) `Array`. The IR's one read of which global names read
+ * realm constructors (`identifier-read.ts`).
+ */
+export const realmConstructorId = (name: string): string | undefined =>
+  errorConstructorId(name) ??
+  (name === "Object" || name === "Array" || (NATIVE_WRAPPER_CONSTRUCTORS as readonly string[]).includes(name)
+    ? `%${name}%`
+    : undefined);
+
+/** (#7354 A1) The catalog ids of `%Array%` and `Array.isArray`. */
+export const ARRAY_ID = "%Array%";
+export const IS_ARRAY_ID = realmMethodId("Array", "isArray");
+
+/** (#7354 A1) Whether the realm holds the static `path` (`"Array.isArray"`) as a function value. */
+export const realmHoldsStatic = (path: string): boolean => NATIVE_VALUE_INTRINSICS.includes(`%${path}%`);
+
+/**
+ * (#7354 W2) The catalog's wrapper tables, for every IR reader (this module is the IR's one reader of the catalog): the
+ * wrapper of each primitive kind, the wrapper constructors in selector order, and `js.object.wrapper-data`'s questions.
+ */
+export { NATIVE_WRAPPER_CONSTRUCTORS, REALM_BRAND, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE };
+
+/** (#7354 W2) The wrapper constructors' catalog ids, in selector order. */
+export const WRAPPER_IDS: readonly string[] = NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`);
+
+/** (#7354 W2) The wrapper constructor `id`'s selector (`js.object.create-wrapper`), or -1. */
+export const wrapperConstructorSelector = (id: string): number =>
+  NATIVE_WRAPPER_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
+
 /** (#7354 G1) The Error constructor `id`'s selector (`js.object.create-error`), or -1. */
 export const errorConstructorSelector = (id: string): number =>
   NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
@@ -106,57 +141,74 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  */
 export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
-const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
-const STRING_PROTOTYPE = [
-  "at",
-  "charAt",
-  "charCodeAt",
-  "codePointAt",
-  "concat",
-  "endsWith",
-  "includes",
-  "indexOf",
-  "isWellFormed",
-  "lastIndexOf",
-  "localeCompare",
-  "match",
-  "matchAll",
-  "normalize",
-  "padEnd",
-  "padStart",
-  "repeat",
-  "replace",
-  "replaceAll",
-  "search",
-  "slice",
-  "split",
-  "startsWith",
-  "substring",
-  "toLocaleLowerCase",
-  "toLocaleUpperCase",
-  "toLowerCase",
-  "toUpperCase",
-  "toWellFormed",
-  "trim",
-  "trimEnd",
-  "trimStart",
-  "substr",
-  "anchor",
-  "big",
-  "blink",
-  "bold",
-  "fixed",
-  "fontcolor",
-  "fontsize",
-  "italics",
-  "link",
-  "small",
-  "strike",
-  "sub",
-  "sup",
-  "trimLeft",
-  "trimRight",
-];
+/** The catalog's ordinary objects (a family's prototype objects): the realm holds each with its family. */
+const CATALOG_OBJECTS: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, callable }) => (callable === undefined ? [id] : [])),
+);
+
+/**
+ * The catalog's string keys of `id` whose value the realm can hold: data, a function value of
+ * `NATIVE_VALUE_INTRINSICS`, or an ordinary object of the catalog.
+ */
+function holdableKeys(id: string): ReadonlySet<string> {
+  return stringKeys(
+    propertiesOf([id]).filter(
+      (property) =>
+        property.kind === "data" &&
+        (property.value.kind !== "intrinsic" ||
+          NATIVE_VALUE_INTRINSICS.includes(property.value.id) ||
+          CATALOG_OBJECTS.has(property.value.id)),
+    ),
+  );
+}
+
+/** (#7354 W2, A1) The families whose objects have a prototype of the catalog's: the wrappers and Array. */
+const PROTOTYPE_FAMILIES = [...NATIVE_WRAPPER_CONSTRUCTORS, "Array"] as const;
+type PrototypeFamily = (typeof PROTOTYPE_FAMILIES)[number];
+
+/**
+ * (#7354 W2) Each family prototype's keys (§22.1.3, §21.1.3, §20.3.3, (A1) §23.1.3, Annex B included), from the
+ * catalog, and those the realm holds where it holds the family (`constructor`, `toString`, `valueOf`, String.prototype's
+ * and Array.prototype's `length`).
+ */
+const FAMILY_PROTOTYPE_KEYS = Object.fromEntries(
+  PROTOTYPE_FAMILIES.map((name) => {
+    const id = `%${name}.prototype%`;
+    return [name, { all: realmStringKeys(id), held: holdableKeys(id) }];
+  }),
+) as Readonly<Record<PrototypeFamily, { readonly all: ReadonlySet<string>; readonly held: ReadonlySet<string> }>>;
+
+/**
+ * (#7354 W2, A1) The keys a read of a held family's object reaches on its prototype that the realm does not hold
+ * (`String.prototype.charAt`, `Array.prototype.map`): an object that may belong to a family of `families` (catalog ids
+ * of constructors) finds them only on its own or source-built chain.
+ */
+export function unheldFamilyPrototypeKeys(families: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set(
+    PROTOTYPE_FAMILIES.filter((name) => families.has(`%${name}%`)).flatMap((name) => {
+      const { all, held } = FAMILY_PROTOTYPE_KEYS[name];
+      return [...all].filter((key) => !held.has(key));
+    }),
+  );
+}
+
+/** (#7354 W2) Whether the realm holds `key` on the wrapper prototype `name` where it holds the family. */
+export const heldWrapperPrototypeKey = (name: NativeWrapperConstructor, key: string): boolean =>
+  FAMILY_PROTOTYPE_KEYS[name].held.has(key);
+
+/**
+ * (#7354 W2) The statics of the realm constructors `constructors` (catalog ids) the realm does not hold
+ * (`Object.keys`, `String.fromCharCode`, `Number.isNaN`): a read or write of one on a value that may be a function
+ * refuses by name, as the realm's constructor lacks the property.
+ */
+export function unheldStaticKeys(constructors: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set(
+    [...constructors].flatMap((id) => {
+      const held = holdableKeys(id);
+      return [...realmStringKeys(id)].filter((key) => !held.has(key));
+    }),
+  );
+}
 
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */
 const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
@@ -181,9 +233,9 @@ const FUNCTION_REACHABLE_KEYS = new Set(
 export const BUILTIN_REACHABLE_KEYS = {
   object: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
   function: FUNCTION_REACHABLE_KEYS,
-  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...NUMBER_PROTOTYPE]),
-  boolean: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
-  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...STRING_PROTOTYPE, "length"]),
+  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...FAMILY_PROTOTYPE_KEYS.Number.all]),
+  boolean: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...FAMILY_PROTOTYPE_KEYS.Boolean.all]),
+  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...FAMILY_PROTOTYPE_KEYS.String.all]),
 } as const satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
 /** A canonical array index (§6.1.7): a string's own indexed character. */

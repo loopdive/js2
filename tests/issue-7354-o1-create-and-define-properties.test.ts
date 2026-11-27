@@ -95,8 +95,10 @@ describe("#7354 O1 — what stays a refusal or the run-time abort", () => {
       expect(await refusal("var o = {}; var a = ['p', {}]; Object.defineProperty(o, ...a);", runnerOptions())).toMatch(
         /spread|array/,
       );
+      // (#7354 W2) `Object` is a value: a computed member call of it is a call through a value, which a program that
+      // creates no function value has no dispatcher for.
       expect(await refusal("var o = {}; Object['defineProperty'](o, 'p', {value: 1});", runnerOptions())).toMatch(
-        /Object/,
+        /js\.closure\.call:3 in a program that creates no function value/,
       );
     },
     SLOW,

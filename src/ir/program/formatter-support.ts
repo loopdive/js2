@@ -10,9 +10,7 @@ import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "../runtime/native-async-call
 import { freezePreparedIrValue } from "./data.js";
 import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./runtime-abi-identity.js";
 import type { IrFormatterKernelRole, IrNumberFormatRadixSupport, IrRuntimeSupportCallable } from "./runtime-support.js";
-
-const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
-const STRING: IrType = Object.freeze({ kind: "string" });
+import { F64, STRING } from "./dynamic-value-types.js";
 
 /** One signature authority shared by the frontend producer and program validation. */
 export function numberFormatRadixSupportDeclarations(sourceId: IrSourceId): {

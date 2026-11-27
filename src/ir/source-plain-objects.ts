@@ -6,14 +6,19 @@
  * the source decides whether the object kind is admitted. OrdinaryToPrimitive is decided at run time (`ordinary-to-primitive.ts`) and needs to know only
  * whether `@@toPrimitive` is reachable, i.e. whether the program names `Symbol`.
  *
- * (#7354 M1, C1) No question about the built-in prototypes is asked here: no Prepared program can obtain one as a
- * value (tests/issue-7354-m-prototype-premise.test.ts pins every route), so code cannot change one, and naming
- * `String` as a callee or the intercepted `Object.prototype.toString.call(v)` reaches none.
+ * (#7354 G1, W2) The walk also records which realm constructors the program names (`readsConstructor`), a fact of the
+ * whole program that every group's legalization reads. A program that names `Object` or a wrapper constructor can
+ * obtain a built-in prototype and change it (`String.prototype.k = 5`); the legalization derives that from these
+ * names (`programFamilies`), and a primitive's member access then reads through the realm's prototype objects. A
+ * program that names none obtains no built-in prototype (tests/issue-7354-m-prototype-premise.test.ts pins the
+ * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { errorConstructorId } from "./program/builtin-prototype-keys.js";
+import { ARRAY_ID, realmConstructorId } from "./program/builtin-prototype-keys.js";
+import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
+import { stringPrototypeBorrowShape } from "./array-prototype-borrow-call.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -33,15 +38,12 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
-  let namesErrors = false;
+  const constructors = new Set<string>();
   const visit = (node: ts.Node): void => {
-    // (#7354 G1) A read of the unchanged global Error constructor (`identifier-read.ts` reads it the same way, through
-    // `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such read.
-    namesErrors ||=
-      ts.isIdentifier(node) &&
-      errorConstructorId(node.text) !== undefined &&
-      !isMemberName(node) &&
-      isPristineGlobal(node);
+    const id = ts.isIdentifier(node) ? realmConstructorId(node.text) : undefined;
+    if (id !== undefined && readsConstructor(node as ts.Identifier, isPristineGlobal)) constructors.add(id);
+    // (#7354 A1) An array literal is an array, whose `constructor` is %Array%.
+    if (ts.isArrayLiteralExpression(node)) constructors.add(ARRAY_ID);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -51,5 +53,30 @@ export function programObjects(
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
+  return { present: present || constructors.size > 0, functions, namesSymbol, constructors };
+}
+
+/**
+ * (#7354 G1, W2) Whether `identifier` names the unchanged global realm constructor of its name where the front end may
+ * read it as a value (`identifier-read.ts` `realmIntrinsicRead`, the same pristine test). A member name, a label or a
+ * binding of the same spelling is none, and neither is a call form the front end lowers from its shape without reading
+ * the name, tested by the predicate that lowering uses: `Object` as the receiver of a native static
+ * (`realm-static-call.ts`), `String(v)` and `Object.prototype.toString.call(v)` (`realm-constructor-forms.ts`),
+ * `String.prototype.m.call(r)` (`array-prototype-borrow-call.ts`). Any other mention counts, also one in a function
+ * the path cannot lower: holding a family no code reads costs bytes, never an answer, while a family a function reads
+ * but this walk missed would answer wrong in every other function.
+ */
+function readsConstructor(
+  identifier: ts.Identifier,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): boolean {
+  if (isMemberName(identifier) || !isPristineGlobal(identifier)) return false;
+  const call = ts.findAncestor(identifier.parent, (node) => !ts.isPropertyAccessExpression(node));
+  if (call === undefined || !ts.isCallExpression(call)) return true;
+  return !(
+    (call.expression === identifier && isStringConversionCall(call)) ||
+    objectToStringCallRoot(call) === identifier ||
+    stringPrototypeBorrowShape(call)?.root === identifier ||
+    (identifier.parent === call.expression && nativeObjectStaticCall(call, isPristineGlobal) !== undefined)
+  );
 }

@@ -12,10 +12,12 @@ import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from 
 import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
-import { realmCall } from "./dynamic-realm-calls.js";
+import { isArrayLiteralCall, realmCall } from "./dynamic-realm-calls.js";
+import { CARRIER, F64, I32, STRING, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { ERROR_TO_STRING_ID, REALM_BRAND, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { identityTest, wrapperMethodTest, type WrapperMethodName } from "./dynamic-builtin-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -23,30 +25,19 @@ import {
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   carrierKindOf,
-  holdsErrors,
   type CarrierKind,
   type LegalizationProgram,
+  type ProgramFamilies,
 } from "./dynamic-value-kinds.js";
 
-/** The dynamic value's carrier, the native externref. */
-export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
+export { CARRIER, carried } from "./dynamic-value-types.js";
 
-/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
-export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
-  kind: "coerce.to_externref",
-  value,
-  result,
-  resultType: CARRIER,
-});
-
-const STRING: IrType = Object.freeze({ kind: "string" });
-const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
- * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, and
+ * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, (A1) an
+ * array literal an object, and
  * the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
  * (`learn`). Any other value may hold every admitted kind.
  */
@@ -66,7 +57,7 @@ export function knownKinds(
             ? carrierKindOf(i.value, types, definitions, i.toType.tag)
             : projected !== undefined
               ? carrierKindOf(projected, types, definitions)
-              : i.kind === "global.get"
+              : i.kind === "global.get" || isArrayLiteralCall(i)
                 ? carrierKindOf(i.result!, types, definitions)
                 : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, [kind]);
@@ -88,6 +79,7 @@ export function chainBuilders(
   allocations: AllocSiteRegistry,
   kinds: KnownKinds,
   admitted: readonly CarrierKind[],
+  families: ProgramFamilies,
 ) {
   let valueCount = fn.valueCount;
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
@@ -249,6 +241,7 @@ export function chainBuilders(
   return {
     kinds,
     admitted,
+    families,
     allocations,
     intrinsic,
     fresh,
@@ -267,6 +260,15 @@ export function chainBuilders(
 }
 export type ChainBuilders = ReturnType<typeof chainBuilders>;
 
+/** A conversion of a carrier value into `result`: `conversionBuilders`' ToString (`stringOf`) and ToNumber. */
+export type ValueConversion = (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+
+/** The legalization's builders with its conversions, as the realm's call and construct arms take them. */
+export type ConvertingBuilders = ChainBuilders & {
+  readonly stringOf: ValueConversion;
+  readonly toNumber: ValueConversion;
+};
+
 /** Which of OrdinaryToPrimitive's two receivers a `to-primitive` kind is. */
 const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "function" ? "function" : "object");
 
@@ -277,7 +279,7 @@ const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "fu
  * finishes in its own way (`ToPrimitiveAnswer`).
  */
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
-  const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, kindChain } = builders;
+  const { kinds, admitted, families, intrinsic, fresh, anyKind, text, branch, kindChain } = builders;
   const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
   const nan = (r: IrValueId): IrInstr => ({
     kind: "const",
@@ -285,17 +287,23 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** (#7354 G1) The realm's Error.prototype.toString, recognised by identity (`ordinary-to-primitive.ts`). */
-  const errorToString = (instr: IrInstr) => ({
-    is: (method: IrValueId, r: IrValueId): IrInstr[] => {
-      const builtin = fresh();
-      return [
-        ...builders.realmIntrinsic(ERROR_TO_STRING_ID, builtin),
-        intrinsic(instr, "js.value.strict_eq", [method, builtin], r),
-      ];
-    },
-    answer: (object: IrValueId, r: IrValueId): IrInstr[] => [realmCall("js.object.error-to-string", [object], r)],
-  });
+  /**
+   * (#7354 G1, W2) The built-ins a method read under `name` may be: Error.prototype.toString where a value may be an
+   * error, a held wrapper's method of that name.
+   */
+  const builtins = (instr: IrInstr) => (name: WrapperMethodName, method: IrValueId, object: IrValueId) => [
+    ...(name === "toString" && families.errors
+      ? [
+          () =>
+            identityTest(builtinMethodBuilders, instr, ERROR_TO_STRING_ID, method, (r) => [
+              realmCall("js.object.error-to-string", [object], r),
+            ]),
+        ]
+      : []),
+    ...(families.wrappers.size > 0
+      ? [() => wrapperMethodTest(builtinMethodBuilders, instr, name, method, object)]
+      : []),
+  ];
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
   const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);
   const toPrimitive = (
@@ -315,8 +323,14 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
-      ...(holdsErrors(program) ? { errorToString: errorToString(instr) } : {}),
+      builtins: builtins(instr),
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
+      ...(families.arrays
+        ? {
+            isArray: (object: IrValueId, r: IrValueId) =>
+              builders.selectorCall("js.object.has-brand", [object], REALM_BRAND.array, r),
+          }
+        : {}),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
   };
@@ -351,6 +365,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         return toPrimitive(instr, value, "string", result, kind, {
           type: STRING,
           text: (source, r) => [source === undefined ? unsupported(instr, r) : text(source, r)],
+          unsupported: (r) => [unsupported(instr, r)],
           primitive: (primitive, r) => stringOf(instr, primitive, r, primitives),
         });
     }
@@ -370,7 +385,15 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
     if (converted.length === 0) return unbox(value, result);
     const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
-      toPrimitive(instr, value, "number", r, kind, { type: F64, text: (_, s) => [nan(s)], primitive: unbox });
+      toPrimitive(instr, value, "number", r, kind, {
+        type: F64,
+        text: (_, s) => [nan(s)],
+        unsupported: (s) => {
+          const [string, carrier] = [fresh(), fresh()];
+          return [unsupported(instr, string), carried(string, carrier), ...unbox(carrier, s)];
+        },
+        primitive: unbox,
+      });
     const convert = (r: IrValueId) => kindChain(instr, value, r, arm, converted, F64);
     if (converted.length === held.length) return convert(result);
     const cond = fresh();
@@ -389,6 +412,10 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       text: (source, r) => {
         const string = fresh();
         return [source === undefined ? unsupported(instr, string) : text(source, string), carried(string, r)];
+      },
+      unsupported: (r) => {
+        const string = fresh();
+        return [unsupported(instr, string), carried(string, r)];
       },
       primitive: (primitive, r) => [carried(primitive, r)],
     };
@@ -409,6 +436,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     );
     return { instrs, value: result };
   };
+  const builtinMethodBuilders = { ...builders, stringOf };
   return { stringOf, toNumber, primitiveOf };
 }
 

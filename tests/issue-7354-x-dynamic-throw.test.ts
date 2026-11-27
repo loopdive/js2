@@ -185,11 +185,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       // (#7354 O1) The thrown ReferenceError is no carrier kind: the program-wide throw rule refuses it first.
       "throw of a value outside the dynamic carrier's kinds",
     ],
-    [
-      "a vector store (the null-vector guard throws a null payload)",
-      "try { var a = [1]; a[5] = 2; } catch (e) { if (!e) throw 1; }",
-      "resolver cannot register vec for array literal",
-    ],
+    // (#7354 A1) "a vector store (the null-vector guard throws a null payload)" left this table: an array literal is
+    // the realm's array, whose element store is the realm's define (tests/issue-7354-a1-arrays.test.ts).
     [
       "a call through a dynamic value in a program without a function value (always a TypeError)",
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",

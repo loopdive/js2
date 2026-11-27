@@ -43,7 +43,7 @@ import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import { realmBuiltinOperand } from "./realm-static-call.js";
 import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
-import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
+import type { LegalizationProgram } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
@@ -367,6 +367,9 @@ export function programDynamicContracts(
     functionDeclarationValues.length > 0,
     pristineBuiltinGlobal(checker, sourceFiles),
   );
+  // (#7354 W2) What every group's legalization asks of the whole program: one record, so no function sees another
+  // set of admitted kinds or held families than the rest.
+  const program: LegalizationProgram = Object.freeze({ objects, catches: sourceFiles.some(readsCatchPayload) });
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
     const functionCodeStrict = input.codeStrictness?.(code);
     return functionObjects &&
@@ -430,7 +433,7 @@ export function programDynamicContracts(
         provenance.carries,
         sourceFiles,
         allocations,
-        objects,
+        program,
         owners,
         converts,
       ),
@@ -567,7 +570,7 @@ function legalizeSourceDynamicValues(
   carries: Carries,
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
-  objects: ProgramObjects,
+  program: LegalizationProgram,
   owners: RefusalOwners,
   converts: (call: ts.CallExpression) => boolean,
 ): readonly IrFunction[] {
@@ -586,7 +589,6 @@ function legalizeSourceDynamicValues(
     );
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
-  const catches = sourceFiles.some(readsCatchPayload);
   // A gap is the refusal of the function it was met in.
   const owned = <T>(fn: IrFunction, step: () => T): T => {
     try {
@@ -599,10 +601,8 @@ function legalizeSourceDynamicValues(
       );
     }
   };
-  const legalized = retargeted.map((fn) =>
-    owned(fn, () => legalizeDynamicValues(fn, allocations, { objects, catches })),
-  );
-  if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
+  const legalized = retargeted.map((fn) => owned(fn, () => legalizeDynamicValues(fn, allocations, program)));
+  if (program.catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))
     refuseImplicitDynamicFlows(
       checker,

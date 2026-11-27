@@ -35,6 +35,18 @@ export const realmIntrinsicHelper = (id: string): string => INTRINSIC_HELPER_PRE
 export const realmIntrinsicOfHelper = (symbol: string): string | undefined =>
   symbol.startsWith(INTRINSIC_HELPER_PREFIX) ? symbol.slice(INTRINSIC_HELPER_PREFIX.length) : undefined;
 
+/**
+ * (#7354 A1) The front end's helper symbol for an array literal: its operands are the literal's length (an f64, holes
+ * and a trailing elision counted), then each present element's index key (a string) and value, in source order. The
+ * legalization writes it as the realm's array (`arrayOf`), a dynamic value.
+ */
+export const ARRAY_LITERAL_HELPER = "__ir_array_literal";
+/** Whether `instr` is the front end's array literal helper call. */
+export const isArrayLiteralCall = (instr: IrInstr | undefined): boolean =>
+  instr?.kind === "call" &&
+  instr.target.binding.kind === "runtime" &&
+  instr.target.binding.symbol === ARRAY_LITERAL_HELPER;
+
 /** The builders a synthesized TypeError is written with. */
 export interface TypeErrorBuilders {
   readonly carrier: IrType;

@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * (#7354 M1, G1, W2) `Object.prototype.toString.call(v)`, which from-ast intercepts (`dyn.object_tag`): a tag per kind
+ * `v` may hold (§20.1.3.6). `undefined` and `null` are named before ToObject (steps 1-2), a primitive answers its
+ * wrapper's builtinTag, and an object a wrapper's kind by its slot (W2), "Array" for an array (A1), "Error" for
+ * [[ErrorData]] (G1), else "Object";
+ * its `@@toStringTag` is reachable only by naming `Symbol`, which refuses by name.
+ *
+ * (W2) A program that can obtain Object.prototype can replace its `toString`, which the realm's Object.prototype
+ * otherwise lacks: the intercepted call then is the run-time abort.
+ */
+import type { IrInstr, IrValueId } from "../core/nodes.js";
+import { REALM_BRAND, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
+import type { ChainBuilders } from "./dynamic-value-chains.js";
+import { gap } from "./dynamic-value-gap.js";
+import { OBJECT_TAG, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
+import { CARRIER, carried } from "./dynamic-value-types.js";
+
+type ObjectTag = Extract<IrInstr, { kind: "dyn.object_tag" }>;
+
+/** The legalized `dyn.object_tag` into its result. */
+export function dynamicObjectTag(b: ChainBuilders, program: LegalizationProgram, instr: ObjectTag): IrInstr[] {
+  const tag = (r: IrValueId) =>
+    b.kindChain(
+      instr,
+      instr.value,
+      r,
+      (kind, result) => {
+        if (kind === "object" && program.objects.namesSymbol)
+          gap("Object.prototype.toString of an object in a program that names 'Symbol'");
+        return kind === "object" ? objectTag(b, instr, result) : [b.text(`[object ${OBJECT_TAG[kind]}]`, result)];
+      },
+      b.kinds.kindsOf(instr.value),
+    );
+  if (!b.families.prototypes) return tag(instr.result!);
+  const [prototype, name, key, replaced] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+  return [
+    ...b.realmIntrinsic("%Object.prototype%", prototype),
+    b.text("toString", name),
+    carried(name, key),
+    ...b.selectorCall("js.object.has-own", [prototype, key], 0, replaced),
+    b.branch(replaced, (r) => [b.intrinsic(instr, "js.value.unsupported", [], r)], tag, instr.result!),
+  ];
+}
+
+/** An object's tag: a wrapper's kind by its slot (`undefined` for no wrapper), "Error", else "Object". */
+function objectTag(b: ChainBuilders, instr: ObjectTag, result: IrValueId): IrInstr[] {
+  const object = instr.value;
+  // The realm brands a value of the program may carry, tested in turn: (#7354 A1) "Array", (G1) "Error".
+  const brands = [
+    ...(b.families.arrays ? [["array", "Array"] as const] : []),
+    ...(b.families.errors ? [["error", "Error"] as const] : []),
+  ];
+  const plain = brands.reduceRight(
+    (otherwise: (r: IrValueId) => IrInstr[], [brand, name]) =>
+      (r: IrValueId): IrInstr[] => {
+        const branded = b.fresh();
+        return [
+          ...b.selectorCall("js.object.has-brand", [object], REALM_BRAND[brand], branded),
+          b.branch(branded, (s) => [b.text(`[object ${name}]`, s)], otherwise, r),
+        ];
+      },
+    (r: IrValueId): IrInstr[] => [b.text("[object Object]", r)],
+  );
+  if (b.families.wrappers.size === 0) return plain(result);
+  const [absent, data] = [b.fresh(), b.fresh()];
+  const slots = b.admitted.filter((kind) => kind === "undefined" || kind in WRAPPER_OF_PRIMITIVE);
+  return [
+    { kind: "const", value: { kind: "null", ty: CARRIER }, result: absent, resultType: CARRIER },
+    ...b.selectorCall("js.object.wrapper-data", [object, absent], WRAPPER_DATA.slot, data),
+    ...b.kindChain(
+      instr,
+      data,
+      result,
+      (kind: CarrierKind, r) => (kind === "undefined" ? plain(r) : [b.text(`[object ${OBJECT_TAG[kind]}]`, r)]),
+      slots,
+    ),
+  ];
+}

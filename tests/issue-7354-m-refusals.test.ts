@@ -126,18 +126,7 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
 
 describe("#7354 M1 — refusals that stay", () => {
   it.each([
-    // C5: from-ast lowers a computed key as ToNumber, wrong for a string key; no arm may legalize it silently.
-    [
-      "C5: a computed read",
-      "function f(o, k){ return o[k]; } f({a:1}, 'a');",
-      gapText("dyn.member_get with a computed key"),
-    ],
-    [
-      "C5: a computed write",
-      "function f(o, k){ o[k] = 1; } f({a:1}, 'a');",
-      gapText("dyn.member_set with a computed key"),
-    ],
-    ["C5: a number key", "function f(v){ return v[0]; } f('abc');", gapText("dyn.member_get with a computed key")],
+    // C5 (a computed key) is no refusal since #7354 A1: tests/issue-7354-a1-arrays.test.ts reads and writes one.
     [
       "E38: Object.prototype.toString of an object in a program that names Symbol",
       "function f(v){ return Object.prototype.toString.call(v); } var s = typeof Symbol; f({});",
@@ -167,9 +156,10 @@ describe("#7354 M1 — refusals that stay", () => {
     // (#7354 O1) Object.defineProperty and its three siblings run (tests/issue-7354-o1-*); a static the catalog does
     // not mark native stays refused.
     [
+      // (#7354 W2) `Object` is a value; its static the realm lacks is a call through a value, which needs a dispatcher.
       "G45: an Object static that is not native",
       "var o = {}; Object.freeze(o);",
-      'ir/from-ast: identifier "Object" is not in scope in <module-init>',
+      gapText("js.closure.call:1 in a program that creates no function value"),
     ],
     [
       "F41: a switch over a member",

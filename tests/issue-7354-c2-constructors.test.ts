@@ -60,11 +60,7 @@ describe("#7354 C2 — new", () => {
   );
 
   it.each([
-    [
-      "a spread argument",
-      "function F(){} var xs = [1]; new F(...xs);",
-      "resolver cannot register vec for array literal",
-    ],
+    ["a spread argument", "function F(){} var xs = [1]; new F(...xs);", "dynamic construct spread"],
     ["a member callee", "var a = {b: function(){}}; new a.b();", "only direct constructor names supported in slice 4"],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);

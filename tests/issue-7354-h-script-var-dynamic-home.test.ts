@@ -205,7 +205,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it. Each binding is
     // read, so the #3418 dead-binding elision (#7354 F0) keeps it.
     // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
-    ["holding an array literal", "var arr = [1]; var r = arr;", "resolver cannot register vec for array literal"],
+    // (#7354 A1) An array literal is the realm's array, an object of the dynamic value (tests/issue-7354-a1-arrays.test.ts).
     // (#7354 Fa) A function expression is stored now (tests/issue-7354-fa-function-values.test.ts).
     // (#7354 F1b) A function declaration read as a value is stored now (tests/issue-7354-f1b-declaration-values.test.ts).
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],

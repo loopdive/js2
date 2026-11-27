@@ -11,13 +11,15 @@
  * closure does not carry, which the caller answers (`ToPrimitiveAnswer.text`). In a program that creates no function
  * value no method can be callable, so only `toString` is consulted. `@@toPrimitive` (§7.1.1 step 2) is reachable only
  * by naming `Symbol`, and such a program refuses by name. (#7354 G1) An error's `toString` is the realm's
- * Error.prototype.toString, which the dispatcher cannot call: recognised by identity and answered here.
+ * Error.prototype.toString, which the dispatcher cannot call: recognised by identity and answered here; (W2) so are a
+ * wrapper's `valueOf` and `toString`.
  */
 import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import { irClosureMethodReference } from "../core/closure-invocation-callables.js";
 import type { LegalizationProgram } from "./dynamic-value-kinds.js";
 import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
+import { builtinMethodChain, type BuiltinMethodTest, type WrapperMethodName } from "./dynamic-builtin-methods.js";
 
 /** ToPrimitive's hint: `string` for ToString, `number` for ToNumber and (as `default`) for `+`. */
 export type ToPrimitiveHint = "string" | "number";
@@ -30,6 +32,8 @@ export interface ToPrimitiveAnswer {
    * text. Also the never-produced value of the TypeError arm (`""`).
    */
   readonly text: (value: string | undefined, result: IrValueId) => IrInstr[];
+  /** (#7354 A1) The run-time abort, as the answer it never produces: the abort's text is the answer's operand. */
+  readonly unsupported: (result: IrValueId) => IrInstr[];
   /** The answer from the primitive a source method returned, a carrier value of a primitive kind. */
   readonly primitive: (value: IrValueId, result: IrValueId) => IrInstr[];
 }
@@ -48,18 +52,22 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
   /** Whether the carrier `value` holds a primitive (none of the program's object kinds), into `result`. */
   readonly isPrimitive: (value: IrValueId, result: IrValueId) => IrInstr[];
   /**
-   * (#7354 G1) Where a value may be an error: whether `method` is the realm's Error.prototype.toString, into `result`,
-   * and its answer for `object` (`js.object.error-to-string`): a built-in the dispatcher cannot call, written here.
+   * (#7354 G1, W2) The realm's built-in conversion methods the dispatcher cannot call, each tested on the method read
+   * and answered here: Error.prototype.toString where a value may be an error (`js.object.error-to-string`), a held
+   * wrapper family's `valueOf` and `toString` (`dynamic-builtin-methods.ts`).
    */
-  readonly errorToString?: {
-    readonly is: (method: IrValueId, result: IrValueId) => IrInstr[];
-    readonly answer: (object: IrValueId, result: IrValueId) => IrInstr[];
-  };
+  readonly builtins: (
+    name: WrapperMethodName,
+    method: IrValueId,
+    object: IrValueId,
+  ) => readonly (() => BuiltinMethodTest)[];
   /**
    * (#7354 G1) Where the program creates no source function, every callable method is a built-in, which the
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
    */
   readonly builtinOnly?: (result: IrValueId) => IrInstr[];
+  /** (#7354 A1) Where the program holds arrays: whether `object` is one (its brand), into the i32 `result`. */
+  readonly isArray?: (object: IrValueId, result: IrValueId) => IrInstr[];
 }
 
 /**
@@ -78,7 +86,11 @@ export function ordinaryToPrimitive(
   if (program.objects.namesSymbol) gap("ToPrimitive of an object in a program that names 'Symbol'");
   // Without a callable kind `valueOf` is skipped whether held or not, so it is not consulted at all: the answers are
   // the same, and a program without function values keeps the bytes it had before F1.
-  const names = !b.isCallable ? ["toString"] : hint === "string" ? ["toString", "valueOf"] : ["valueOf", "toString"];
+  const names: readonly WrapperMethodName[] = !b.isCallable
+    ? ["toString"]
+    : hint === "string"
+      ? ["toString", "valueOf"]
+      : ["valueOf", "toString"];
   // The method `names[index]` and the ones after it, into `r`.
   const step = (index: number, r: IrValueId): IrInstr[] => {
     const name = names[index];
@@ -86,7 +98,7 @@ export function ordinaryToPrimitive(
     if (name === undefined) return [...typeError(b, "Cannot convert object to primitive value"), ...answer.text("", r)];
     const [text, key] = [b.fresh(), b.fresh()];
     const next = (s: IrValueId) => step(index + 1, s);
-    const method = (s: IrValueId) => callIfCallable(b, object, key, answer, next, s);
+    const method = (s: IrValueId) => callIfCallable(b, name, object, key, answer, next, s);
     const named: IrInstr[] = [
       b.text(name, text),
       { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },
@@ -97,7 +109,12 @@ export function ordinaryToPrimitive(
     const absent = (s: IrValueId) => answer.text(kind === "object" ? "[object Object]" : undefined, s);
     return [...named, realmCall("js.object.has", [object, key], held), b.branch(held, method, absent, r, answer.type)];
   };
-  return step(0, result);
+  // (#7354 A1) An array's `toString` is Array.prototype's (`join`, A1b), which the realm does not hold yet: whatever
+  // its chain holds (a program may write Object.prototype's `toString` / `valueOf`), an array aborts before any read.
+  const isArray = kind === "object" ? b.isArray : undefined;
+  if (!isArray) return step(0, result);
+  const array = b.fresh();
+  return [...isArray(object, array), b.branch(array, answer.unsupported, (r) => step(0, r), result, answer.type)];
 }
 
 /**
@@ -106,6 +123,7 @@ export function ordinaryToPrimitive(
  */
 function callIfCallable(
   b: ToPrimitiveBuilders,
+  name: WrapperMethodName,
   object: IrValueId,
   key: IrValueId,
   answer: ToPrimitiveAnswer,
@@ -126,12 +144,7 @@ function callIfCallable(
             resultType: b.carrier,
           },
         ];
-  const builtin = b.errorToString;
-  const call = (r: IrValueId): IrInstr[] => {
-    if (!builtin) return dispatch(r);
-    const same = b.fresh();
-    return [...builtin.is(method, same), b.branch(same, (s) => builtin.answer(object, s), dispatch, r, b.carrier)];
-  };
+  const call = builtinMethodChain(b, b.builtins(name, method, object), dispatch, b.carrier);
   const skip = (r: IrValueId): IrInstr[] => [
     { kind: "coerce.to_externref", value: object, result: r, resultType: b.carrier },
   ];

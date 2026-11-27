@@ -157,25 +157,38 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: false,
       functions: false,
       namesSymbol: false,
-      namesErrors: false,
+      constructors: new Set(),
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
       namesSymbol: false,
-      namesErrors: false,
+      constructors: new Set(),
     });
   });
 
-  // (#7354 G1) An Error constructor makes objects; naming one (not as a member) admits the object kind.
-  it("answers whether the program names an Error constructor", () => {
-    expect(objects("export const e = new TypeError('m');")).toMatchObject({ present: true, namesErrors: true });
-    expect(objects("export const o = { TypeError: 1 }; export const v = o.TypeError;").namesErrors).toBe(false);
+  // (#7354 G1, W2) A realm constructor makes objects; naming one (not as a member) admits the object kind. This is a
+  // fact of the whole program, which every group's legalization reads (a function that names none sees it too).
+  it("answers which realm constructors the whole program names", () => {
+    const names = (source: string) => [...objects(source).constructors];
+    expect(objects("export const e = new TypeError('m');")).toMatchObject({ present: true });
+    expect(names("export const e = new TypeError('m');")).toEqual(["%TypeError%"]);
+    expect(
+      names("export function f(x: any) { return x.k; } export const s = String; export const n = new Number(1);"),
+    ).toEqual(["%String%", "%Number%"]);
+    expect(names("export const o = { TypeError: 1, String: 2 }; export const v = o.TypeError;")).toEqual([]);
     // A binding or a label spelled like one is not the global.
-    expect(objects("function f(RangeError: unknown) { return RangeError; } export const v = f(1);").namesErrors).toBe(
-      false,
-    );
-    expect(objects("TypeError: for (;;) { break TypeError; }").namesErrors).toBe(false);
+    expect(names("function f(RangeError: unknown) { return RangeError; } export const v = f(1);")).toEqual([]);
+    expect(names("TypeError: for (;;) { break TypeError; }")).toEqual([]);
+    // (W2) A call form the front end lowers without reading the name (realm-constructor-forms.ts) names none.
+    expect(names("export const s = String(1); export const t = Object.prototype.toString.call(1);")).toEqual([]);
+    expect(names("export const o = Object.create(null);")).toEqual([]);
+    // Only the static's receiver is that form: a constructor among its arguments is read.
+    expect(names("Object.defineProperty(String.prototype, 'g', { value: 1 });")).toEqual(["%String%"]);
+    // A mention anywhere else counts, also a value passed on.
+    // (#7354 A1) ... and an array literal names %Array%, its `constructor`.
+    expect(names("export const a = [1].map(String);")).toEqual(["%Array%", "%String%"]);
+    expect(names("export const a = [];")).toEqual(["%Array%"]);
   });
 
   // (#7354 F1) A function expression is the one producer of a function value the source shows here.

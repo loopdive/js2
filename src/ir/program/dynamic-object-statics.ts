@@ -10,7 +10,7 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-catalog.js";
 import { nativeObjectStatic } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { CARRIER, carried, type ConvertingBuilders } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 
 const HELPER_PREFIX = "__ir_object_static:";
@@ -21,12 +21,6 @@ export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undef
   return symbol.startsWith(HELPER_PREFIX) ? nativeObjectStatic(symbol.slice(HELPER_PREFIX.length))?.name : undefined;
 }
 
-/** The legalization's builders, with its ToString (`stringOf`, ToPropertyKey here). */
-export type ObjectStaticBuilders = ChainBuilders & {
-  readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-  /** (#7354 G1) A value may be an error (`holdsErrors`). */
-  readonly errors: boolean;
-};
 type Call = Extract<IrInstr, { kind: "call" }>;
 type Arm = (result: IrValueId) => IrInstr[];
 
@@ -35,7 +29,7 @@ const served = (kind: CarrierKind): boolean =>
   MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function";
 
 /** The legalized `Object.<name>(…args)` into the call's result. */
-export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
+export function dynamicObjectStatic(b: ConvertingBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
   const [first, second, third] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
   const undefinedValue = (r: IrValueId) => b.intrinsic(instr, "js.value.undefined", [], r);
   const throwing = (message: string, r: IrValueId) =>

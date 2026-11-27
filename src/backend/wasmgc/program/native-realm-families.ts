@@ -2,26 +2,25 @@
 /**
  * (#7354 G1) What the kernel seeds for the intrinsic families a realm holds (`heldCatalogRows`): each member's own
  * properties beyond `length` and `name`, and the family's ordinary objects (its prototypes), read from the catalog so
- * the kernel writes no row of its own.
+ * the kernel writes no row of its own. (#7354 W2) A property whose value is a member the realm does not hold
+ * (`String.fromCharCode`) is not seeded: the IR refuses its key by name (`builtin-prototype-keys.ts`).
  */
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 import type { NativeBuiltinObject, NativeBuiltinProperty } from "../resources/native-builtin-function-requests.js";
 
 const SEEDED_BY_THE_KERNEL = new Set(["length", "name"]);
 
-/** A family row's data properties, as the kernel defines them (catalog order). */
-export function familyProperties(row: NativeRealmIntrinsic): NativeBuiltinProperty[] {
+/** A family row's data properties whose values the realm holds (`holds`), as the kernel defines them (catalog order). */
+export function familyProperties(row: NativeRealmIntrinsic, holds: (id: string) => boolean): NativeBuiltinProperty[] {
   return row.properties.flatMap((property) => {
     if (property.key.kind !== "string" || (row.callable && SEEDED_BY_THE_KERNEL.has(property.key.value))) return [];
-    if (property.kind !== "data" || property.value.kind === "number")
-      throw Error(`native realm families: ${row.id}.${property.key.value} is no string or intrinsic data property`);
+    if (property.kind !== "data")
+      throw Error(`native realm families: ${row.id}.${property.key.value} is no data property`);
+    if (property.value.kind === "intrinsic" && !holds(property.value.id)) return [];
     return [
       {
         key: property.key.value,
-        value:
-          property.value.kind === "string"
-            ? { kind: "string", value: property.value.value }
-            : { kind: "intrinsic", id: property.value.id },
+        value: property.value,
         writable: property.writable,
         configurable: property.configurable,
       },
@@ -33,13 +32,18 @@ export function familyProperties(row: NativeRealmIntrinsic): NativeBuiltinProper
  * The held families' ordinary objects, each after the object it links to (catalog order), as the kernel's requirement
  * field: none where the realm holds no family, so such a realm's requirements are what they were.
  */
-export function familyObjects(heldRows: readonly NativeRealmIntrinsic[]): { readonly objects?: NativeBuiltinObject[] } {
+export function familyObjects(
+  heldRows: readonly NativeRealmIntrinsic[],
+  holds: (id: string) => boolean,
+): { readonly objects?: NativeBuiltinObject[] } {
   const objects = heldRows
     .filter((row) => row.heldWith !== undefined && row.callable === undefined)
     .map((row) => ({
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
-      properties: familyProperties(row),
+      ...(row.primitive ? { primitive: row.primitive } : {}),
+      ...(row.array ? { array: row.array } : {}),
+      properties: familyProperties(row, holds),
     }));
   return objects.length === 0 ? {} : { objects };
 }

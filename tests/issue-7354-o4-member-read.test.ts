@@ -2,8 +2,9 @@
 //
 // #7354 slice O, step O4 — a member read of a dynamic value with a constant key (`MEMBER_ACCESS_ARM` in
 // src/ir/program/dynamic-value-kinds.ts): `undefined` / `null` throw a TypeError, an object reads through the realm's
-// [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, a
-// computed key, or a primitive receiver in a program whose prototypes code can reach refuses by name; (#7354 M1) a
+// [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, or a
+// primitive receiver in a program whose prototypes code can reach, refuses by name ((#7354 A1) a computed key is read:
+// tests/issue-7354-a1-arrays.test.ts); (#7354 M1) a
 // nullish read in a program that reads a caught value refuses by name. Every program runs twice: node's answer (returns) and a wrong one
 // (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,12 +58,6 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
-async function refusal(source: string): Promise<string> {
-  const result = await compile(source, options());
-  expect(result.success).toBe(false);
-  return messages(result).join("\n");
-}
-
 /** Each program is run as written (node's answer) and with `!==` turned into `===` (a wrong answer). */
 const PROGRAMS: readonly [string, string][] = [
   ["an own member of a script var's object", "var o = { a: 1 }; if (o.a !== 1) throw 1;"],
@@ -109,13 +104,6 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
       expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow();
     },
     180_000,
-  );
-
-  it.each([["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"]])(
-    "refuses %s by name",
-    async (_label, source, reason) => {
-      expect(await refusal(source)).toContain(reason);
-    },
   );
 
   // (#7354 C2, C2-D1) A script var's home may also hold `undefined` or `null`, whose arm answers (the TypeError), so the

@@ -75,7 +75,14 @@ import {
   buildErrorCreateDefinition,
   type ErrorCreateOperands,
 } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
-import { NATIVE_ERROR_CONSTRUCTORS } from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  NATIVE_ERROR_CONSTRUCTORS,
+  WRAPPER_OF_PRIMITIVE,
+  type NativeRealmPrimitive,
+} from "../../../runtime/contracts/native-realm-catalog.js";
+import { wrapperOfConstant } from "../../../runtime/wasmgc/values/realm-wrapper-bodies.js";
+import type { NativePrimitiveWrapperStorageReservations } from "./native-primitive-wrapper-storage.js";
+import type { NativePrimitiveWrapperLayoutReservations } from "./native-primitive-wrapper-layouts.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -90,6 +97,15 @@ export interface NativeBuiltinFunctionDependencies {
   readonly errorCreate?: FunctionReservation;
   /** (#7354 O2) The program's dispatchers a source getter / setter is called through (`nativeInvocationAccessorCalls`). */
   readonly accessorCalls?: { readonly get: FunctionReservation; readonly set: FunctionReservation };
+  /**
+   * (#7354 W2) Where the realm holds a wrapper family: #3518's wrapper storage, whose subtypes of the ordinary object
+   * store every own property (a String object's indices included, `realm-wrapper-bodies.ts`), so the plain storage
+   * lookup answers them.
+   */
+  readonly wrappers?: {
+    readonly storage: NativePrimitiveWrapperStorageReservations;
+    readonly layouts: NativePrimitiveWrapperLayoutReservations;
+  };
 }
 const functionRoles = [
   "initialize",
@@ -178,7 +194,7 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   const required = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
     required.some((key) => !Object.hasOwn(d, key)) ||
-    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls"].includes(key))
+    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls", "wrappers"].includes(key))
   )
     fail("unexpected dependency input");
   if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
@@ -194,11 +210,22 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   assertBuiltinFunctionDataRecord(dd.sameValueDependencies.valueDependencies);
   nativeClosureReservationInventory(tx, d.closures, d.closurePlan);
   const inventory = nativeObjectDescriptorReservationInventory(tx, d.descriptors, dd);
-  const ordinary = dd.storageDependencies.lookupDependencies.layouts.object.object;
+  const lookupLayouts = dd.storageDependencies.lookupDependencies.layouts;
+  const ordinary = lookupLayouts.object.object;
   // ref.test includes subtypes. Plain storage lookup cannot stand in for an
   // exotic carrier's own-property method (String's virtual indices, for example).
   // Parentless structs are implicitly final in the emitted Wasm representation.
-  if (ordinary.kind !== "struct" || (ordinary.superTypeIdx !== undefined && ordinary.final !== true))
+  // (#7354 W2) An extensible carrier is admitted only for the realm's wrappers, #3518's subtypes of it, which store
+  // every own property (`realm-wrapper-bodies.ts`): no other subtype is declared over the realm's object layout.
+  const wrapperSubtypes =
+    d.wrappers !== undefined &&
+    Object.values(d.wrappers.layouts.types).every(
+      (type) => type.object.kind === "struct" && type.object.superTypeIdx === lookupLayouts.object.typeIndex,
+    );
+  if (
+    ordinary.kind !== "struct" ||
+    (ordinary.superTypeIdx !== undefined && ordinary.final !== true && !wrapperSubtypes)
+  )
     fail("extensible ordinary carrier requires heterogeneous prototype dispatch");
   if (
     dd.closures !== d.closures ||
@@ -457,7 +484,8 @@ function operands(
 ): BuiltinFunctionPrototypeOperands {
   const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests),
     dd = owner.dependencies.descriptorDependencies,
-    calls = owner.dependencies.accessorCalls;
+    calls = owner.dependencies.accessorCalls,
+    wrappers = owner.dependencies.wrappers;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
   const literal = (text: string, external = true): Instr[] => [
@@ -519,6 +547,20 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(wrappers && {
+      wrapperAllocation: (primitive: NativeRealmPrimitive, prototype: readonly Instr[]): Instr[] => {
+        const kind = WRAPPER_OF_PRIMITIVE[primitive.kind];
+        const representation = {
+          anyStrTypeIdx: input.strings.layout.anyStrTypeIdx,
+          boxedBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
+          boxNumber: values.functions.boxNumber.handle,
+          unboxNumber: values.functions.unboxNumber.handle,
+          isNumber: values.functions.isNumber.handle,
+        };
+        const allocation = wrappers.storage.allocation[kind].handle;
+        return wrapperOfConstant(representation, kind, allocation, primitive, prototype, (text) => literal(text));
+      },
+    }),
     ...(calls && {
       accessorCalls: {
         source: [calls.get.handle, calls.set.handle],

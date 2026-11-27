@@ -19,6 +19,7 @@ import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { realmIntrinsicRead } from "./identifier-read.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import { realmIntrinsicHelper } from "./program/dynamic-realm-calls.js";
+import { realmHoldsStatic } from "./program/builtin-prototype-keys.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -158,6 +159,15 @@ export function createsFunctionObjects(resolver: { createsFunctionObjects?(): bo
   return resolver?.createsFunctionObjects?.() === true;
 }
 
+/**
+ * (#7354 A1) Whether the realm holds the static `path` (`"Array.isArray"`) as a function value: only where closures are
+ * function objects, the lane whose program has a realm (`staticPredicatePlan`'s `realmHolds`).
+ */
+export const realmStatics =
+  (resolver: { createsFunctionObjects?(): boolean } | undefined) =>
+  (path: string): boolean =>
+    createsFunctionObjects(resolver) && realmHoldsStatic(path);
+
 export function functionObjectDynamicValue(
   value: IrValueId,
   source: ts.Expression,
@@ -237,7 +247,7 @@ export function dynamicStoreOperand(
   value: IrValueId,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
-  role: "member-store" | "construct argument" | "Object static argument",
+  role: "member-store" | "construct argument" | "Object static argument" | "Number argument" | "array element",
 ): IrValueId {
   const boxed = storedCarrierValue(value, source, cx);
   if (cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
@@ -246,6 +256,24 @@ export function dynamicStoreOperand(
     "build",
     `ir/from-ast: dynamic ${role} operand of ${describeIrType(cx.builder.typeOf(value))} has no dynamic carrier (${cx.funcName})`,
   );
+}
+
+/**
+ * (#7354 T, W2) `Number(v)`'s ToNumber on the Prepared lane, which binds no `js.number.from-value`: the carrier's
+ * legalized ToNumber of a dynamic or a string operand, and +0 for a `null` literal (§7.1.4); `undefined` for any
+ * other operand or lane.
+ */
+export function preparedToNumber(
+  value: IrValueId,
+  source: ts.Expression,
+  cx: FunctionObjectLoweringHost,
+): IrValueId | undefined {
+  const kind = cx.builder.typeOf(value).kind;
+  if (!createsFunctionObjects(cx)) return undefined;
+  if (skipOuterExpressions(source).kind === ts.SyntaxKind.NullKeyword)
+    return cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
+  if (kind !== "dynamic" && kind !== "string") return undefined;
+  return cx.builder.emitDynToNumber(dynamicStoreOperand(value, source, cx, "Number argument"));
 }
 
 /**

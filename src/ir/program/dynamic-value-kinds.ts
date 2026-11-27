@@ -14,6 +14,8 @@ import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
+import { isArrayLiteralCall } from "./dynamic-realm-calls.js";
+import { ARRAY_ID, errorConstructorSelector, WRAPPER_IDS } from "./builtin-prototype-keys.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
@@ -159,14 +161,14 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
  * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
- * way to `@@toPrimitive` and `@@toStringTag`, and (G1) whether it names an Error constructor (a built-in function
- * value, which makes objects).
+ * way to `@@toPrimitive` and `@@toStringTag`, and (G1, W2) the realm constructors it names, by catalog id (built-in
+ * function values, which make objects).
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
-  readonly namesErrors: boolean;
+  readonly constructors: ReadonlySet<string>;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -182,7 +184,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
   namesSymbol: false,
-  namesErrors: false,
+  constructors: new Set<string>(),
 });
 
 /**
@@ -190,7 +192,44 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
  * or reads a catch binding, the one way a realm error becomes a value. The realm then holds the Error family
  * (`native-realm-requirements.ts`), whose prototypes the program can read and write.
  */
-export const holdsErrors = (program: LegalizationProgram): boolean => program.catches || program.objects.namesErrors;
+const holdsErrors = (program: LegalizationProgram): boolean =>
+  program.catches || [...program.objects.constructors].some((id) => errorConstructorSelector(id) >= 0);
+
+/**
+ * (#7354 G1, W2) The realm families a program's values may come from, derived once per function's legalization from
+ * its `LegalizationProgram` (`programFamilies`) and read by every arm through `ChainBuilders.families`.
+ */
+export interface ProgramFamilies {
+  /** (G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
+  readonly errors: boolean;
+  /**
+   * (W2) The wrapper families a value may belong to: those the program names, and all three where it names `Object`
+   * (`Object(v)` wraps any primitive). The realm then holds them (`native-realm-requirements.ts` reads the IR's uses).
+   */
+  readonly wrappers: ReadonlySet<string>;
+  /**
+   * (W2) The program can obtain a built-in prototype (`Object.prototype`, a wrapper's): it names `Object` or a wrapper
+   * constructor, so it can change one; a primitive's member access then reads through the realm's prototype objects.
+   */
+  readonly prototypes: boolean;
+  /** (A1) A value may be an array: the program names `Array` or writes an array literal. */
+  readonly arrays: boolean;
+}
+
+export function programFamilies(program: LegalizationProgram): ProgramFamilies {
+  const named = program.objects.constructors;
+  const wrappers = new Set(WRAPPER_IDS.filter((id) => named.has(id) || named.has("%Object%")));
+  return {
+    errors: holdsErrors(program),
+    wrappers,
+    prototypes: named.has("%Object%") || wrappers.size > 0,
+    arrays: named.has(ARRAY_ID),
+  };
+}
+
+/** (#7354 W2, A1) The families (constructor ids) whose objects a value may be: the wrappers', and Array's. */
+export const objectFamilies = (families: ProgramFamilies): ReadonlySet<string> =>
+  families.arrays ? new Set([...families.wrappers, ARRAY_ID]) : families.wrappers;
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
@@ -201,7 +240,10 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
   return KIND_ORDER.filter(
     (kind) =>
       (kind !== "object" || program.objects.present || holdsErrors(program)) &&
-      (kind !== "function" || program.objects.functions || holdsErrors(program)),
+      (kind !== "function" ||
+        program.objects.functions ||
+        holdsErrors(program) ||
+        program.objects.constructors.size > 0),
   );
 }
 
@@ -210,9 +252,9 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
  * carrier form (the coercion and throw rules); with it, `value` is the operand of a box to the dynamic value with that
  * tag refinement (the box arm, and the kind a box proves to the chains). The rules, in order: a Boolean (its tag or
  * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), the dynamic value itself, a
- * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2) the ordinary object
- * `js.object.create-default` answered (whatever its tag: a function-local object's member access boxes the externref
- * it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
+ * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2, A1) the ordinary object or array
+ * `js.object.create-default` / `create-array` answered (whatever its tag: a function-local object's member access boxes
+ * the externref it holds without one) or an array literal's helper call (before the dynamic value it is), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
  * tag a declaration's home holds), or, through a coercion or the function-value projection, its operand's kind. Any
  * other value has none.
  */
@@ -227,15 +269,13 @@ export function carrierKindOf(
   const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
   if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
   if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
+  if (isArrayLiteralCall(definition)) return "object";
   if (type?.kind === "dynamic") return type.tag === JS_TAG_IDS.Function ? "function" : "dynamic";
   if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";
   if ((type?.kind === "val" && type.val.kind === "f64") || produced("js.number.box")) return "number";
-  if (
-    definition?.kind === "call" &&
-    irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
-  )
-    return "object";
+  const created = definition?.kind === "call" ? irOrdinaryObjectCallableDeclaration(definition.target)?.feature : "";
+  if (created === "js.object.create-default" || created === "js.object.create-array") return "object";
   const projected = functionValueOperand(definition);
   if (projected !== undefined) return carrierKindOf(projected, types, definitions);
   return definition?.kind === "coerce.to_externref" ? carrierKindOf(definition.value, types, definitions) : undefined;
