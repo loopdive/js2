@@ -1,7 +1,8 @@
 ---
 id: 7574
 title: "Prepared path: `Object` as a realm value (the constructor, `Object.prototype`, `Object(v)` / `new Object(v)`)"
-status: in-progress
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-27
 updated: 2026-11-27
@@ -407,3 +408,28 @@ lacks; the object tag through a written `toString`; `delete Object.definePropert
 Not built: zero-argument `new Object()` stays the realm's `create-default` through `%Object%` (#7575 is not on this
 base); `toLocaleString` is held but its call aborts; a computed-key `Object.prototype.hasOwnProperty(k)` aborts
 instead of answering.
+
+**Proof** (local node 22, load 2–6 from other agents):
+
+- Probes in a fresh realm, each agreement with a wrong twin: 27 programs, right 16, refused 4, aborted 7, wrong 0,
+  invalid 0, exceptions 0 (two wrong answers and one invalid module found on the way were fixed: an own query of the
+  root's `__proto__` / Annex B keys answered `false`; the tag answer was not carried into the carrier).
+- Harness: the 12 `propertyHelper.js` programs of `built-ins/Object/defineProperty` stopped at line 28 (`"Object" is
+  not in scope`); all 12 now first stop at line 31 (`"Function" is not in scope`, #7557). Lines 28–30 refuse by name
+  after it (`Object.defineProperty is not reachable on this path yet`, #7580).
+- Prelude (`assert.js` + `sta.js` + one assertion): 90,242 → 90,125 B; median of 3 compiles 6.5 → 6.2 s and
+  6.7 → 6.5 s (two interleaved sessions).
+- Cost: `var O = Object; typeof O` 24,840 B; `Object.prototype.hasOwnProperty.call(o, "x")` 49,329 B against
+  46,774 B for `o.hasOwnProperty("x")` (+2.5 KB: `%Object%`, the root's `constructor`; the call itself aborts until
+  #7557).
+- Bytes: ordinary pipeline 30 programs × 2 targets identical. Prepared: every realm program is 117 B smaller (only the
+  global section differs): `%Object%` and the three methods are no longer rows of every realm, so their names and the
+  statics' keys are no longer realm literals. 12 programs that name `Object` only as a native static's receiver or in
+  the object tag: same outcome, each exactly −117 B.
+- test262, own runner, `mw-00` (87 rows): pass 18 → 19 (`S15.2.1.1_A2_T13`), fail 11 → 11, compile error 58 → 57, no
+  pass lost.
+- `src/ir/from-ast.ts` 17,395 → 17,393. Gates at the merge base: all pass. With `LOC_GATE_BASE=origin/main` the LOC and
+  function budgets fail only on files this branch does not touch (`src/codegen/…`): main moving.
+
+Pins moved: `issue-7354-m-prototype-premise` (Object.prototype is obtainable; `Object.getPrototypeOf` refuses by its
+static's name), `issue-7354-m-refusals` (G45 refuses by the static's name), `issue-7354-t2` (`typeof Object` agrees).
