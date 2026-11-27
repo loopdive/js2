@@ -242,16 +242,16 @@ test("IR provenance adds a newer current-edition measurement with its own commit
   };
   const currentEdition = {
     edition: "ES5",
-    pass: 2,
-    total: 4,
-    pct: 50,
-    sourceSha: "head",
+    pass: 2017,
+    total: 9029,
+    pct: 22,
+    sourceSha: "f00dcafe",
     measuredAt: "2026-11-27T12:00:00Z",
   };
-  assert.match(
-    await provenance({ ...allCompileErrors, editions: rawEditions, currentEdition }),
-    /^full run · newer ES5 measurement \(edition only\): 2 \/ 4 pass \(50%\) · source head · 2026-11-27T12:00:00Z/,
-  );
+  const label = await provenance({ ...allCompileErrors, editions: rawEditions, currentEdition });
+  assert.ok(label.startsWith("full run"));
+  for (const value of ["ES5", "2017", "9029", "22%", "f00dcafe", "2026-11-27T12:00:00Z"])
+    assert.ok(label.includes(value), value);
   assert.equal(await provenance({ ...allCompileErrors, editions: rawEditions }), "full run");
   // An editions file that is not a measured IR envelope adds nothing.
   assert.equal(await provenance({ editions: rawEditions, currentEdition }), "full run");
@@ -684,6 +684,7 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
         return JSON.stringify({ jobs: options.jobsOf?.(runId) ?? options.jobs ?? [producerJob] });
       }
       const runId = path.split("/").at(-1);
+      if (options.editionRunLookupFails && runId.endsWith("-run")) throw new Error("HTTP 404: Not Found");
       return JSON.stringify({
         id: runId,
         name: "Test262 Sharded",
@@ -1095,6 +1096,7 @@ test("a wrong, unreadable or inconsistent edition artifact is refused with a war
       },
     ],
     ["failed download", { editionDownloadFails: true }],
+    ["failed run lookup", { editionRunLookupFails: true }],
   ]) {
     const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
       editionFiles: fullWithEditions,

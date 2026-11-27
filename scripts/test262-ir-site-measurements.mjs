@@ -207,11 +207,12 @@ function dailyMeasurements(context, kind) {
   for (const artifact of artifacts) {
     const day = artifact.created_at?.slice(0, 10) ?? artifact.id;
     if (days.has(day)) continue;
-    const execution = producingRun(api, repository, artifact.workflow_run.id);
-    if (!execution) continue;
     const directory = `.ir-measurement-download/${artifact.id}`;
+    let execution;
     let measurement;
     try {
+      execution = producingRun(api, repository, artifact.workflow_run.id);
+      if (!execution) continue;
       fs.mkdirSync(directory, { recursive: true });
       gh(["run", "download", String(execution.id), "--repo", repository, "--name", kind.name, "--dir", directory]);
       measurement = kind.read(context, directory, execution, artifact);
@@ -219,7 +220,7 @@ function dailyMeasurements(context, kind) {
       measurement = error.message;
     }
     if (typeof measurement === "string") {
-      kind.reject(context, `${measurement} (artifact ${artifact.id}, run ${execution.id})`);
+      kind.reject(context, `${measurement} (artifact ${artifact.id}, run ${artifact.workflow_run.id})`);
       continue;
     }
     days.add(day);

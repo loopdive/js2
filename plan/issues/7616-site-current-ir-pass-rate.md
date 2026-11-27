@@ -78,17 +78,25 @@ the report's total. `scope.json` gains `compilerPath` and `target` in
 test262-sharded.yml so the artifact describes itself (metadata only; nothing
 the queue runs or gates changes).
 
-**What the page shows.** The full run supplies every file as before. When the
-newest valid edition measurement is of a LATER commit (first-parent position)
-than the full run, its row replaces that edition's row in
-`ir/test262-standalone-editions.json`, carrying `scope: "edition"`,
-`sourceSha`, `measuredAt`, `runId`; the envelope keeps the full run's
-identity. The report page's IR provenance line names the full run's commit and
-date, then the edition row's own. The edition history gains the edition runs'
-points (newest per day), marked `scope: "edition"`; the trend draws such a
-point only at its own edition's scope, where that edition is the whole
+**What the page shows.** The full run supplies every file and every edition
+row, so nothing the pages sum or scale (cumulative edition scopes, strict
+scaling, the edition timeline) mixes two commits. When the newest valid
+edition measurement is of a LATER commit (first-parent position) than the full
+run, it is published beside the rows as the envelope's `currentEdition` in
+`ir/test262-standalone-editions.json` (counts, `sourceSha`, `measuredAt`,
+`runId`). Both pages show it through one shared function,
+`t262ViewState.showIrProvenance`: the full run's commit and date, then the
+newer edition figure with its own. The edition history gains the edition
+runs' points (newest per day), marked `scope: "edition"`; the trend draws such
+a point only at its own edition's scope, where that edition is the whole
 cumulative sum (`t262EditionScopeExtract`). With no retained valid edition
 artifact, the output is exactly as before.
+
+**Edition artifacts are optional.** Edition runs of commits without this
+script (`git cat-file -e`; before #7616 `scope.json` had no `compilerPath`)
+are skipped before any API call or download. Any error of an edition artifact
+(run lookup, download, unreadable file) is a warning and a skip; a full-run
+artifact still fails the deploy.
 
 **Daily.** `test262-sharded.yml` cron back to `23 2 * * *`; every statement of
 the weekly cadence that would now be false is corrected (workflows, scripts,
@@ -106,7 +114,7 @@ edition-only point is drawn at a cumulative scope it does not cover.
 
 ## Result (2026-11-27)
 
-Implemented as planned (commit 381af36a5e).
+Implemented in 381af36a5e, revised after review r1 in 4d2748f047 and r2.
 
 - **Daily.** `test262-sharded.yml` cron `23 2 * * *`. Corrected every
   statement of the weekly cadence that is now false: test262-sharded,
@@ -115,36 +123,41 @@ Implemented as planned (commit 381af36a5e).
   the queue's edition summary text (`scripts/test262-edition-scope.ts`),
   `docs/ci-policy.md`, `docs/releasing.md`, CLAUDE.md, test names, and a
   "superseded" note in #7551's file.
-- **Not changed, deliberately:** the floor-staleness threshold stays 192 h. It
-  was derived for the weekly cadence; with daily runs it cannot false-alarm,
-  but it now alerts only after about a week of missed promotions. Tightening
-  it (~24 h + 3.6 h jitter + ~4 h run time) is a separate owner decision.
 - **Site.** `deploy-pages.yml` runs `scripts/test262-ir-site-measurements.mjs`.
   With no retained valid edition artifact its output is the same as the
   former inline step (the previous tests pass unchanged apart from the
-  fixtures now naming the run's commit).
-- **Tests.** `scripts/test262-ir-pages-artifacts.test.mjs` (69 pass) adds:
-  landed newer edition run replaces the row with its own commit/date and the
-  envelope and full-corpus score keep the full run's identity; a group that
-  never landed is neither shown nor downloaded; an older edition run never
-  overrides (but stays in the history); the newest landed commit wins over
-  upload order; ten wrong-edition / wrong-commit / non-IR / pre-#7616 /
-  inconsistent artifacts are refused with a warning; a failed producer job is
-  refused; no edition row without a measured full run; newest per day.
-  `tests/issue-7616-ir-edition-trend.test.ts`: an edition-only point is drawn
-  only at its own scope. Each guard was removed once and the matching test
-  failed (landed filter, newer-than-full check, configured-edition and commit
-  checks, position ordering, the trend guard).
+  fixtures now naming the run's commit). The edition rows are always the full
+  run's; a newer landed edition measurement is `currentEdition` beside them,
+  shown in the IR provenance line of both pages.
+- **Tests.** `scripts/test262-ir-pages-artifacts.test.mjs` adds: a landed newer
+  edition run is published as `currentEdition` with its own commit/date while
+  every row, the envelope and the full-corpus score keep the full run's
+  identity; a group that never landed is neither shown nor downloaded; an
+  older edition run is never current (but stays in the history); the newest
+  landed commit wins over upload order; wrong-edition / wrong-commit / non-IR
+  / inconsistent / unreadable / failed-download / failed-run-lookup edition
+  artifacts are refused with a warning and never fail the deploy; the
+  edition config is not read for a non-IR artifact; a commit before #7616 is
+  not downloaded; a failed producer job is refused; nothing without a
+  measured full run; newest per day; the provenance line carries the
+  figure's values. `tests/issue-7616-ir-edition-trend.test.ts`: an
+  edition-only point is drawn only at its own scope. Each guard was removed
+  once and the matching test failed.
 - **Pre-existing, unrelated failures** seen while checking neighbours (fail
-  identically with the base `report.html`):
-  `tests/issue-4362-test262-paths-compact.test.ts` (5) and
-  `tests/report-error-patterns-edition-scope.test.ts` (1).
+  identically on origin/main): `tests/issue-4362-test262-paths-compact.test.ts`
+  (5), `tests/report-error-patterns-edition-scope.test.ts` (1),
+  `tests/issue-1764.test.ts` (1), `tests/issue-1778.test.ts` (1).
 - **Not verifiable offline** (artifact download is blocked here): the first
-  deploy after merge. The edition artifacts retained today carry no
-  `compilerPath` in `scope.json`, so they are refused with a warning. This
-  PR's own merge group already writes the new `scope.json`, so its edition
-  row can appear on the deploy after it lands, once that group's run has
-  completed (otherwise on the next deploy).
+  deploy after merge. Edition artifacts retained today come from commits
+  before #7616, so they are skipped. This PR's own merge group writes the new
+  `scope.json`, so its edition figure can appear on the deploy after it lands,
+  once that group's run has completed (otherwise on the next deploy).
+
+## Follow-ups
+
+- Staleness threshold 192 h → ~32 h for the daily cadence (~24 h + 3.6 h
+  jitter + ~4 h run time); the fresh figure sits in the provenance line, not
+  the headline (owner call); the history gains one edition point per day.
 
 ## Review r1 fixes (2026-11-27)
 

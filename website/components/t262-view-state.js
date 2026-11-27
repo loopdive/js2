@@ -267,7 +267,6 @@
     fetchData,
     bindIrToggle,
     irMeasurementLabel,
-    irCurrentEditionLabel,
     showIrProvenance,
     historicalHostLabel,
     irStatus,
