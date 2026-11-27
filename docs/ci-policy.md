@@ -445,7 +445,7 @@ Owner decision, 2026-11-26.
 | Event | test262 work | `merge shard reports` (required) |
 |---|---|---|
 | `pull_request` | none | green no-op |
-| `merge_group` | IR path (`TEST262_COMPILER_PATH=ir`, standalone), current edition only (`scripts/test262-current-edition.json`: ES5, 8 shards) | **gate**: fails when a test of that edition went pass → not-pass against the IR measurement of the group's `base_sha` |
+| `merge_group` | IR path (`TEST262_COMPILER_PATH=ir`, standalone), current edition only (`scripts/test262-current-edition.json`: ES5, 102 shards) | **gate**: fails when a test of that edition went pass → not-pass against the IR measurement of the group's `base_sha` |
 | `push` to main | nothing, when the queue already measured this SHA; a direct push runs the edition measurement | not run |
 | `schedule` (**weekly**, Sunday 02:23 UTC) / dispatch | full legacy matrix (102 shards) with the high-water floor, edition ratchet and #1897 guard, then `promote-baseline`; full-corpus IR measurement. Both matrices run at `max-parallel: 40`, so about 40 of the ~120 runners stay free for the merge queue | the legacy gates; a breach fails the scheduled run, blocks promotion, and names the commits since the last green full run (weekly or `full_run` dispatch). `-f full_run=true` runs this same job set by hand |
 

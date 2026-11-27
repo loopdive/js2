@@ -2358,9 +2358,9 @@ jobs:
     # results of the jobs that do run.
     #
     # max-parallel 40: the weekly run starts this matrix and the full IR one
-    # (also 40) together; 80 of the ~120 runners leaves room for the merge
-    # queue's own 8-shard IR gate instead of stalling it for hours (set on the
-    # matrix's `strategy` below).
+    # (also 40) together; 80 of the ~120 runners leaves about 40 for the merge
+    # queue's own IR gate, which then runs its shards in waves instead of
+    # stalling for hours (set on the matrix's `strategy` below).
     if: |
       !cancelled() &&
       needs.mg-artifact-probe.result == 'success' &&

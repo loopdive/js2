@@ -350,7 +350,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 - **Merge queue:** the required `merge shard reports` check runs test262 on
   the IR path (`TEST262_COMPILER_PATH=ir`, standalone), for the current
-  edition only (`scripts/test262-current-edition.json`, ES5, 8 shards).
+  edition only (`scripts/test262-current-edition.json`, ES5, 102 shards).
   - It diffs per test against the IR measurement of the group's base commit.
   - To move a test out of the edition on purpose, list it with a reason in
     `scripts/test262-edition-reclassified.json` in the same PR. Otherwise it
