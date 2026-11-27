@@ -2488,37 +2488,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       lowerYield(s.expression, cx);
       return false;
     }
-    // (#5163) The mutating shapes this issue adopted — chained assignment,
-    // member compound assignment, and `++`/`--`. Placed BEFORE the
-    // single-target `=` arms because a chain's outer LHS matches those arms
-    // while its RHS is itself an assignment they cannot lower.
-    if (lowerAdoptedMutatingStatement(s.expression, cx)) return false;
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(s.expression.left)
-    ) {
-      lowerIdentifierAssignment(s.expression.left, s.expression.right, cx);
-      return false;
-    }
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(s.expression.left)
-    ) {
-      lowerPropertyAssignment(s.expression, cx);
-      return false;
-    }
-    // (#2856 C2) element store `arr[i] = v;` as a non-tail statement —
-    // quicksort's post-partition swap writes live here (outside any loop).
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(s.expression.left)
-    ) {
-      lowerElementStore(s.expression.left, s.expression.right, cx);
-      return false;
-    }
+    if (lowerStatementMutation(s.expression, cx)) return false;
     // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
     // `cond ? a : b;`. The expression evaluates for its effects and its
     // SSA result is simply never consumed (a discarded ternary becomes an
@@ -2848,52 +2818,8 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     }
     return;
   }
-  // Slice 14 (#1228) — void function tail: any non-return statement that
-  // doesn't terminate the function falls through to an implicit return.
-  // We accept ExpressionStatement (e.g., `f();`) as a tail in void
-  // functions and synthesize the implicit return.
   if (cx.returnType === null && ts.isExpressionStatement(stmt)) {
-    if (ts.isCallExpression(stmt.expression)) {
-      lowerDiscardedExpression(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(stmt.expression.left)
-    ) {
-      lowerIdentifierAssignment(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: property-store assignment as a void tail — the SET accessor
-    // body shape `set name(v) { this.#name = v; }`. Route through the SAME
-    // `lowerPropertyAssignment` the non-tail statement path uses (see
-    // `lowerStatementList`), so a setter's lone assignment produces bytes
-    // identical to the mid-body case, then synthesize the implicit return.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(stmt.expression.left)
-    ) {
-      lowerPropertyAssignment(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: element-store assignment as a void tail (`arr[i] = v;` as the
-    // final statement of a void function) — mirror the non-tail element-store
-    // arm for select↔build parity.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(stmt.expression.left)
-    ) {
-      lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    lowerDiscardedExpression(stmt.expression, cx);
+    if (!lowerStatementMutation(stmt.expression, cx)) lowerDiscardedExpression(stmt.expression, cx);
     cx.builder.terminate({ kind: "return", values: [] });
     return;
   }
@@ -10955,29 +10881,19 @@ function dynamicCompoundStep(
   return { result, stored: dynamicBinaryOnCarrier(result, cx) };
 }
 
-/**
- * (#5163) Dispatch the mutating expression-statement shapes this issue adopted:
- * chained assignment, and compound assignment and `++`/`--` on any target
- * (#7183 folded the identifier compound arm in from both dispatchers).
- * Returns `true` when it handled the statement.
- *
- * Shared verbatim by BOTH statement dispatchers (`lowerStatementList` and
- * `lowerStmt`) so the two positions cannot drift — a shape lowered one way at
- * top level and another inside a loop body is exactly the class of divergence
- * the selector's parallel arms are written to prevent.
- *
- * Property chains evaluate receivers before the RHS; identifier chains reuse
- * the ordinary assignment producer recursively.
- */
-function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boolean {
+/** Lower assignments and updates whose result is discarded, including the last statement of a void function. */
+function lowerStatementMutation(expression: ts.Expression, cx: LowerCtx): boolean {
+  const expr = peelParensExpr(expression);
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerAdoptedMutatingStatement(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerStatementMutation(expr, cx));
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
-    // S3 — `a = b = e;`.
-    const chain = op === ts.SyntaxKind.EqualsToken ? peelAssignmentChain(expr) : null;
-    if (chain !== null) {
-      lowerBinary(expr, cx, IR_F64);
+    if (op === ts.SyntaxKind.EqualsToken) {
+      if (peelAssignmentChain(expr) !== null) lowerBinary(expr, cx, IR_F64);
+      else if (ts.isIdentifier(expr.left)) lowerIdentifierAssignment(expr.left, expr.right, cx);
+      else if (ts.isPropertyAccessExpression(expr.left)) lowerPropertyAssignment(expr, cx);
+      else if (ts.isElementAccessExpression(expr.left)) lowerElementStore(expr.left, expr.right, cx);
+      else return false;
       return true;
     }
     // `x %= e;` / S1/S2 `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms
@@ -11007,7 +10923,7 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
   if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return false;
   const operand = expr.operand;
   if (ts.isIdentifier(operand)) {
-    lowerIncrementDecrement(operand, expr.operator, cx);
+    lowerIncrementDecrement(operand, expr, cx);
     return true;
   }
   if (ts.isPropertyAccessExpression(operand)) {
@@ -12384,7 +12300,7 @@ function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
   if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) {
     const op = expr.operator;
     if ((op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(expr.operand)) {
-      lowerIncrementDecrement(expr.operand, op, cx);
+      lowerIncrementDecrement(expr.operand, expr, cx);
       return;
     }
   }
@@ -12838,34 +12754,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerYield(stmt.expression, cx);
       return;
     }
-    // (#5163) The adopted mutating shapes — the SAME helper the top-level
-    // dispatcher uses, consulted at the same point in the order.
-    if (lowerAdoptedMutatingStatement(stmt.expression, cx)) return;
-    if (ts.isBinaryExpression(stmt.expression)) {
-      const op = stmt.expression.operatorToken.kind;
-      // Plain assignment `<id> = <expr>` — id MUST resolve to a `slot`
-      // binding (mutation pre-pass should have detected it). For
-      // property assignment, dispatch to `lowerPropertyAssignment`
-      // (the slice-4 helper).
-      if (op === ts.SyntaxKind.EqualsToken) {
-        if (ts.isIdentifier(stmt.expression.left)) {
-          lowerIdentifierAssignment(stmt.expression.left, stmt.expression.right, cx);
-          return;
-        }
-        if (ts.isPropertyAccessExpression(stmt.expression.left)) {
-          lowerPropertyAssignment(stmt.expression, cx);
-          return;
-        }
-        // (#2856 C2) element store `arr[i] = v;` in a body buffer.
-        if (ts.isElementAccessExpression(stmt.expression.left)) {
-          lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-          return;
-        }
-      }
-    }
-    // Slice 12 (#1280): postfix `i++` / `i--` and prefix `++i` / `--i` as
-    // expression statements are handled by `lowerAdoptedMutatingStatement`
-    // above, alongside the #5163 member targets that share their desugaring.
+    if (lowerStatementMutation(stmt.expression, cx)) return;
     // (#4459) Value-discarding statement inside a body buffer — the same
     // `lowerDiscardedExpression` the top-level walker uses. A discarded
     // ternary collects one buffer per arm and emits `if.stmt` (#2952
@@ -13675,18 +13564,28 @@ function lowerCompoundAssignment(
  * f64 (typed `number`) but `type i32 = number` annotated counters use
  * i32. The binop dispatches on the slot ValType.
  */
-function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: LowerCtx): void {
+function lowerIncrementDecrement(
+  id: ts.Identifier,
+  expr: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression,
+  cx: LowerCtx,
+): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
-    withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
+    withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, expr, cx));
     return;
   }
+  const op = expr.operator;
   refuseImmutableWrite(id, "increment/decrement of", cx);
-  const binding = cx.scope.get(id.text);
+  let binding = cx.scope.get(id.text);
   if (!binding) {
-    demoteToLegacy(
-      "compound-assign-unsupported",
-      `ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`,
-    );
+    const writable = cx.resolver?.resolveModuleBinding?.(id, expr);
+    if (!writable)
+      demoteToLegacy(
+        "compound-assign-unsupported",
+        `ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`,
+      );
+    requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
+    lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
+    binding = { kind: "moduleGlobal", globalRef: writable.globalRef, type: writable.type };
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
