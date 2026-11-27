@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("anonymous object types", () => {
   it("function returning anonymous object type", async () => {
@@ -18,13 +19,7 @@ describe("anonymous object types", () => {
     ).toBe(true);
     expect(result.wat).toContain("struct");
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(7);
   });
 
@@ -43,13 +38,7 @@ describe("anonymous object types", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(30);
   });
 
@@ -70,13 +59,7 @@ describe("anonymous object types", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(50);
   });
 

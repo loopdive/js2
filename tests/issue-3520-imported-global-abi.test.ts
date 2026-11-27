@@ -7,7 +7,6 @@ import { addImport, addStringConstantGlobal } from "../src/codegen/registry/impo
 import { irGlobalBindingKey, irImportGlobalRef } from "../src/ir/abi-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
 import { type GlobalDef, createEmptyModule } from "../src/ir/types.js";
-import { STRING_CONSTANTS16_NS } from "../src/string-surrogate.js";
 import { ts } from "../src/ts-api.js";
 
 function fixture(nativeStrings: boolean) {
@@ -30,7 +29,9 @@ function fixture(nativeStrings: boolean) {
 
 describe("#3520 production imported-global ABI planning", () => {
   it("retains an empty string import field in an injective structural key", () => {
-    const { entrySource } = fixture(false);
+    // Only the entry source is needed; `nativeStrings: false` is a compile
+    // error on the JS target since #6979, so build the context natively.
+    const { entrySource } = fixture(true);
     const empty = irImportGlobalRef(entrySource.id, "string_constants", "", "__str_0", 0);
     const nonEmpty = irImportGlobalRef(entrySource.id, "string_constants", "0:", "__str_1", 1);
 
@@ -43,16 +44,20 @@ describe("#3520 production imported-global ABI planning", () => {
     expect(irGlobalBindingKey(empty.binding)).not.toBe(irGlobalBindingKey(nonEmpty.binding));
   });
 
-  it("binds deduplicated string constants to exact import objects after late/interleaved imports", () => {
-    const { ctx, entrySource, module, session } = fixture(false);
+  // The host `string_constants` import path is reached only with
+  // `nativeStrings: false`, which #6979 (S7) removed from the JS target: the
+  // context now refuses it. The native counterpart follows.
+  it("refuses the host string_constants lane (nativeStrings: false, removed by #6979)", () => {
+    expect(() => fixture(false)).toThrow(
+      "Compile option nativeStrings: false selected the host-assisted semantic profile, which #6979 removed",
+    );
+  });
+
+  it("keeps native string constants out of the import space across late/interleaved imports", () => {
+    const { ctx, module, session } = fixture(true);
     const earlyFunc = addImport(ctx, "env", "early", { kind: "func", typeIdx: 0 });
-    expect(earlyFunc).toBe(module.imports[0]);
-
-    addStringConstantGlobal(ctx, "");
     addStringConstantGlobal(ctx, "");
     addStringConstantGlobal(ctx, "plain");
-    addStringConstantGlobal(ctx, "plain");
-
     const definedGlobal: GlobalDef = {
       name: "__state",
       type: { kind: "i32" },
@@ -60,86 +65,17 @@ describe("#3520 production imported-global ABI planning", () => {
       init: [{ op: "i32.const", value: 0 }],
     };
     module.globals.push(definedGlobal);
-    ctx.moduleGlobals.set("state", 2);
+    ctx.moduleGlobals.set("state", 0);
     const lateFunc = addImport(ctx, "env", "late", { kind: "func", typeIdx: 0 });
-    expect(lateFunc).toBe(module.imports[3]);
+    addStringConstantGlobal(ctx, "\ud800");
 
-    const loneSurrogate = "\ud800";
-    addStringConstantGlobal(ctx, loneSurrogate);
-    const latestFunc = addImport(ctx, "env", "latest", { kind: "func", typeIdx: 0 });
-    expect(latestFunc).toBe(module.imports[5]);
-
-    expect(ctx.numImportFuncs).toBe(3);
-    expect(ctx.numImportGlobals).toBe(3);
-    expect(ctx.moduleGlobals.get("state")).toBe(3);
-    expect(module.imports.map(({ module: namespace, name, desc }) => [namespace, name, desc.kind])).toEqual([
-      ["env", "early", "func"],
-      ["string_constants", "", "global"],
-      ["string_constants", "plain", "global"],
-      ["env", "late", "func"],
-      [STRING_CONSTANTS16_NS, "d800", "global"],
-      ["env", "latest", "func"],
-    ]);
-
-    const emptyRef = irImportGlobalRef(entrySource.id, "string_constants", "", "empty-label", 0);
-    const plainRef = irImportGlobalRef(entrySource.id, "string_constants", "plain", "renamed-label", 1);
-    const surrogateRef = irImportGlobalRef(entrySource.id, STRING_CONSTANTS16_NS, "d800", "other-label", 2);
-    const emptyImport = module.imports[1]!;
-    const plainImport = module.imports[2]!;
-    const surrogateImport = module.imports[4]!;
-    expect(session.getDraft(emptyRef.binding.bindingId)).toMatchObject({
-      structuralOrder: {
-        sourceId: entrySource.id,
-        declarationOrdinal: 0,
-        domainOrdinal: 1,
-        roleOrdinal: 4,
-        derivedOrdinal: 0,
-      },
-      structuralReferenceKey: irGlobalBindingKey(emptyRef.binding),
-      displayName: "__str_0",
-      intent: { kind: "global", origin: "import" },
-    });
-    expect(session.getDraft(plainRef.binding.bindingId)).toMatchObject({
-      structuralOrder: {
-        sourceId: entrySource.id,
-        declarationOrdinal: 0,
-        domainOrdinal: 1,
-        roleOrdinal: 4,
-        derivedOrdinal: 1,
-      },
-      structuralReferenceKey: irGlobalBindingKey(plainRef.binding),
-      displayName: "__str_1",
-      slotPolicy: "required",
-      slotSpace: "global",
-      intent: {
-        kind: "global",
-        origin: "import",
-        valueType: '{"kind":"externref"}',
-        mutable: false,
-      },
-    });
-    expect(session.getDraft(surrogateRef.binding.bindingId)).toMatchObject({
-      structuralOrder: {
-        sourceId: entrySource.id,
-        declarationOrdinal: 0,
-        domainOrdinal: 1,
-        roleOrdinal: 4,
-        derivedOrdinal: 2,
-      },
-      structuralReferenceKey: irGlobalBindingKey(surrogateRef.binding),
-      displayName: "__str_2",
-      intent: { kind: "global", origin: "import" },
-    });
-    expect(session.hasLocator(emptyRef.binding.bindingId, emptyImport)).toBe(true);
-    expect(session.hasLocator(plainRef.binding.bindingId, plainImport)).toBe(true);
-    expect(session.hasLocator(surrogateRef.binding.bindingId, surrogateImport)).toBe(true);
-
+    expect(module.imports).toEqual([earlyFunc, lateFunc]);
+    expect(ctx.numImportFuncs).toBe(2);
+    expect(ctx.numImportGlobals).toBe(0);
+    expect(ctx.moduleGlobals.get("state")).toBe(0);
+    expect([...ctx.stringGlobalMap.values()]).toEqual([-1, -1, -1]);
     ctx.indexSpaceFrozen = true;
-    const { abi } = session.publish(module);
-    expect(abi.entries()).toHaveLength(3);
-    expect(abi.resolveFinalIndex(emptyRef.binding.bindingId)).toEqual({ space: "global", index: 0 });
-    expect(abi.resolveFinalIndex(plainRef.binding.bindingId)).toEqual({ space: "global", index: 1 });
-    expect(abi.resolveFinalIndex(surrogateRef.binding.bindingId)).toEqual({ space: "global", index: 2 });
+    expect(session.publish(module).abi.entries()).toEqual([]);
   });
 
   it("keeps nativeStrings on the sentinel path without an ABI import entry", () => {
