@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // (#2023) `new.target` used to lower to a constant `i32.const 1` truthiness
 // stub, so identity comparisons (`new.target === SomeClass`) were always wrong
@@ -10,7 +10,7 @@ import { compileAndInstantiate } from "../src/runtime-instantiate.js";
 // runtime identity check while truthiness uses stay correct.
 
 async function run<T = unknown>(src: string, fn: string, args: unknown[] = []): Promise<T> {
-  const exports = (await compileAndInstantiate(src)) as Record<string, (...a: unknown[]) => T>;
+  const exports = (await compileToWasm(src)) as Record<string, (...a: unknown[]) => T>;
   return exports[fn]!(...args);
 }
 
