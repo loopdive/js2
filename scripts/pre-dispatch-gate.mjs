@@ -145,8 +145,15 @@ if (realHits.length) {
 // ── 2. Open PR touching the issue file? ───────────────────────────────────
 // (#7559) Over REST through the shared lister, which section 6 reuses. The old
 // `gh pr list` is GraphQL, which Claude Code cloud sessions are refused.
-const openPrs = await openPrFiles();
-if (openPrs.checked) {
+// The PR list alone answers this section, so it is used even when some file
+// lists are missing. No failure of the lookup may read as STOP (exit 1): it is
+// a caution with a loud line.
+const openPrs = await openPrFiles().catch((error) => ({
+  prs: null,
+  checked: false,
+  reason: String(error?.message || error).split("\n")[0],
+}));
+if (openPrs.prs) {
   for (const pr of openPrs.prs) {
     if (new RegExp(`\\b${id}\\b`).test(`${pr.title} ${pr.branch}`)) {
       blockers.push(`open PR #${pr.number} appears to cover #${id}: ${pr.title}`);

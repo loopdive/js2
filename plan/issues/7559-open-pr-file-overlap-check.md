@@ -42,7 +42,7 @@ Owner decision (2026-11-27): build it.
 1. `scripts/lib/open-pr-files.mjs` — the one REST lister of open PRs and their
    changed files, plus the pure overlap logic:
    - `IGNORED_OVERLAP_PATHS` — ONE named constant of path prefixes that never
-     conflict meaningfully (`plan/issues/`, `dashboard/`, `public/`: the
+     conflict meaningfully (`dashboard/`, `plan/`, `public/`: the
      planning artifacts CLAUDE.md's merge protocol resolves with
      `checkout --theirs` + regen).
    - `listOpenPrs({ ghJson })` — `GET repos/<repo>/pulls?state=open`, paginated
@@ -117,7 +117,29 @@ Measured on a 4-core cloud container, 87 open PRs:
 
 Live smoke run `--paths src/ir/from-ast.ts` named 19 open PRs (#7427 …
 #7520, including L0b #7516, L0c #7519, W2 #7515 and A1a #7520).
-`tests/issue-7559-pr-file-overlap.test.ts`: 14/14 pass.
+`tests/issue-7559-pr-file-overlap.test.ts`: 23/23 pass (after review r1).
+
+**Default repository changed.** `UPSTREAM_REPO` in
+`scripts/lib/open-pr-issue-files.mjs` is now `loopdive/js2` (was
+`loopdive/js2wasm`), and it is also the default of `openPrIssueFiles`, which
+`claim-issue.mjs` (`openPrIssueIds`) and `check-issue-ids.mjs` use. It is the
+same repository under its current name: `git remote get-url origin` is
+`https://github.com/loopdive/js2`, and `.husky/pre-push` already calls
+`loopdive/js2wasm` "the legacy … alias" of the canonical upstream. GitHub
+resolves the old name to the same repository, so the scans read the same PRs;
+`CLAIM_PR_REPO` still overrides it.
+
+**Known limits.**
+
+- GitHub's REST `pulls/N/files` returns at most 3,000 files. A PR at the cap
+  is marked `file list cut at 3000 by GitHub` on its line when it overlaps;
+  an overlap beyond its first 3,000 files is not seen.
+- Merge-queue membership is not on REST, so it is not shown.
+- The cold run is about as long as the pre-push hook's 8 s budget; with many
+  more open PRs that run prints NOT CHECKED, banks what it fetched, and the
+  next run finishes.
+- `--json` prints one JSON object (the verdict is its `verdict` field), so its
+  last line is not the verdict line.
 
 ## Follow-up (to be filed)
 
@@ -126,4 +148,12 @@ is refused (HTTP 403) in Claude Code cloud sessions, so there the scan always
 fails and cloud sessions must allocate with `--no-pr-scan --allow-unscanned`.
 Porting it onto `openPrFiles` needs `claim-issue.mjs` to go async (a cold scan
 is ~90 REST calls, which does not fit its synchronous 25 s budget); the
-`number@headSha` cache makes the warm case cheap.
+`number@headSha` cache makes the warm case cheap. The end state is ONE open-PR
+lister: `openPrIssueFiles` becomes a filter over `openPrFiles`
+(`liveIssuePaths` over each PR's files), and its private GraphQL query and
+retry loop go away.
+
+The REST lister keeps its own one-retry `call` instead of `ghWithRetry`
+(`scripts/lib/gh-api-retry.mjs`): that helper is synchronous and sleeps
+2–15 s between attempts, which would stall the parallel fetch and overrun the
+deadline. Both share `isTransientGhFailure`.

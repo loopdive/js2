@@ -32,8 +32,12 @@ const USAGE =
   "usage: node scripts/pr-file-overlap.mjs [--branch | --paths <p…> | --issue <id>] " +
   "[--exclude-pr N] [--json] [--timeout <seconds>] [--max-lines <n>]";
 
-const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const lines = (text) => text.split("\n").filter(Boolean);
+const firstLine = (error) =>
+  String(error?.stderr || error?.message || error)
+    .trim()
+    .split("\n")[0];
 
 /** Upstream's main when `origin` is a fork that has one, else origin's (as the hooks resolve it). */
 function mainRef() {
@@ -51,6 +55,18 @@ function branchPaths() {
   return [
     ...new Set([...lines(git("diff", "--name-only", `${base}...HEAD`)), ...lines(git("diff", "--name-only", "HEAD"))]),
   ];
+}
+
+/** This checkout's branch and the GitHub repos of its remotes: what identifies its own PR. */
+function ownHead() {
+  const branch = git("branch", "--show-current");
+  const repos = lines(git("remote")).map(
+    (r) =>
+      git("remote", "get-url", r)
+        .toLowerCase()
+        .match(/github\.com[:/](.+?)(?:\.git)?\/?$/)?.[1],
+  );
+  return branch ? { branch, repos: repos.filter(Boolean) } : undefined;
 }
 
 function issuePaths(id) {
@@ -95,15 +111,21 @@ export function verdictLine(result) {
 
 /** Compute the overlap result. `deps` lets tests inject the fetcher and cache. */
 export async function overlapResult(opts, deps = {}) {
-  const all = opts.mode === "branch" ? branchPaths() : opts.mode === "issue" ? issuePaths(opts.issue) : opts.paths;
+  let all, excludeHead;
+  try {
+    all = opts.mode === "branch" ? branchPaths() : opts.mode === "issue" ? issuePaths(opts.issue) : opts.paths;
+    excludeHead = opts.mode === "branch" ? ownHead() : undefined;
+  } catch (error) {
+    // No main ref, a clone too shallow for a merge-base, no plan/issues/ …
+    return { checked: false, reason: `cannot read this checkout (${firstLine(error)})`, paths: [] };
+  }
   if (all === null) return { checked: false, reason: `no plan/issues/${opts.issue}-*.md`, paths: [] };
   const paths = all.filter((p) => !isIgnoredOverlapPath(p));
   // Nothing that can conflict: answer without spending API calls.
   if (!paths.length) return { checked: true, paths, ignored: all.length, overlaps: [] };
   const listing = await openPrFiles({ timeoutMs: opts.timeoutMs, ...deps });
-  if (!listing.checked) return { ...listing, paths };
-  const excludeBranch = opts.mode === "branch" ? git("branch", "--show-current") || undefined : undefined;
-  const overlaps = findPathOverlaps(paths, listing.prs, { excludePr: opts.excludePr, excludeBranch });
+  if (!listing.checked) return { checked: false, reason: listing.reason, paths };
+  const overlaps = findPathOverlaps(paths, listing.prs, { excludePr: opts.excludePr, excludeHead });
   return { checked: true, paths, ignored: all.length - paths.length, prCount: listing.prs.length, overlaps };
 }
 

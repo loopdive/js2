@@ -1,8 +1,10 @@
 // #7559 — the advisory open-PR file-overlap check.
 //
-// Hermetic: every GitHub call goes through an injected `ghJson` fetcher, and
-// the cache lives in a temp dir, so no test touches the network.
+// Hermetic: every GitHub call goes through an injected `ghJson` fetcher or a
+// fake `gh` on PATH, and the cache lives in a temp dir, so no test touches the
+// GitHub API.
 
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +13,7 @@ import {
   findPathOverlaps,
   formatOverlaps,
   issuePlanPaths,
+  ghRest,
   openPrFiles,
   // @ts-expect-error — plain .mjs module without type declarations
 } from "../scripts/lib/open-pr-files.mjs";
@@ -23,7 +26,7 @@ const pull = (number: number, branch: string, labels: string[] = []) => ({
   number,
   title: `PR ${number}`,
   user: { login: "dev" },
-  head: { ref: branch, sha: `sha${number}` },
+  head: { ref: branch, sha: `sha${number}`, repo: { full_name: "loopdive/js2" } },
   draft: false,
   labels: labels.map((name) => ({ name })),
 });
@@ -53,7 +56,17 @@ afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe("#7559 findPathOverlaps", () => {
   const prs = [
-    { number: 1, title: "a", author: "x", branch: "b1", draft: false, hold: false, sha: "s", files: ["src/a.ts"] },
+    {
+      number: 1,
+      title: "a",
+      author: "x",
+      branch: "b1",
+      headRepo: "Me/js2",
+      draft: false,
+      hold: false,
+      sha: "s",
+      files: ["src/a.ts"],
+    },
     {
       number: 2,
       title: "b",
@@ -80,8 +93,20 @@ describe("#7559 findPathOverlaps", () => {
     expect(findPathOverlaps(["src/z.ts"], prs)).toEqual([]);
   });
 
-  it("excludes the caller's own PR and branch", () => {
-    expect(findPathOverlaps(["src/a.ts"], prs, { excludePr: 2, excludeBranch: "b1" })).toEqual([]);
+  it("excludes the caller's own PR, by number or by branch AND head repository", () => {
+    const excludeHead = { branch: "b1", repos: ["me/js2"] };
+    expect(findPathOverlaps(["src/a.ts"], prs, { excludePr: 2, excludeHead })).toEqual([]);
+  });
+
+  it("keeps a same-named branch from another fork: that is the duplicate PR to show", () => {
+    const excludeHead = { branch: "b1", repos: ["someone-else/js2"] };
+    const overlaps = findPathOverlaps(["src/a.ts"], prs, { excludePr: 2, excludeHead });
+    expect(overlaps.map((o: { number: number }) => o.number)).toEqual([1]);
+  });
+
+  it("marks a PR whose file list GitHub cut at its cap", () => {
+    const lines = formatOverlaps(findPathOverlaps(["src/a.ts"], [{ ...prs[0], truncated: true }]));
+    expect(lines[0]).toContain("file list cut at 3000 by GitHub");
   });
 
   it("ignores planning paths that never conflict meaningfully", () => {
@@ -140,9 +165,58 @@ describe("#7559 openPrFiles", () => {
       throw Object.assign(new Error("Command failed"), { stderr: "HTTP 403: API rate limit exceeded" });
     };
     expect(await openPrFiles({ ghJson, cacheFile })).toEqual({
+      prs: null,
       checked: false,
       reason: "GitHub unreachable or rate-limited (HTTP 403: API rate limit exceeded)",
     });
+  });
+
+  it("returns the PR list but NOT CHECKED when a file fetch fails partway", async () => {
+    const gh = fakeGitHub([pull(7, "b7"), pull(8, "b8")], { 7: [{ filename: "a" }] });
+    const ghJson = (endpoint: string) =>
+      endpoint.includes("/8/files") ? Promise.reject(new Error("HTTP 404: Not Found")) : gh.ghJson(endpoint);
+    const result = await openPrFiles({ ghJson, cacheFile });
+    expect(result.checked).toBe(false);
+    expect(result.prs.map((pr: { number: number }) => pr.number)).toEqual([7, 8]);
+    expect(result.prs[1].files).toBeUndefined();
+  });
+
+  it("stops at the deadline with NOT CHECKED", async () => {
+    let t = 0;
+    const gh = fakeGitHub([pull(7, "b7")], { 7: [{ filename: "a" }] });
+    const ghJson = (endpoint: string) => {
+      t += 25_000; // the list call alone spends the 20 s budget
+      return gh.ghJson(endpoint);
+    };
+    const result = await openPrFiles({ ghJson, cacheFile, timeoutMs: 20_000, now: () => t });
+    expect(result).toMatchObject({ checked: false, reason: expect.stringContaining("time budget exhausted") });
+  });
+
+  it("ignores a corrupt cache file and a cache from another repository", async () => {
+    const gh = fakeGitHub([pull(7, "b7")], { 7: [{ filename: "a" }] });
+    fs.writeFileSync(cacheFile, "{ torn");
+    expect((await openPrFiles({ ghJson: gh.ghJson, cacheFile })).checked).toBe(true);
+    const calls = gh.calls.length;
+    expect(calls).toBe(2);
+    const other = await openPrFiles({ ghJson: gh.ghJson, cacheFile, repo: "someone/else" });
+    expect(other.checked).toBe(true);
+    expect(gh.calls.length).toBe(calls + 2);
+  });
+
+  it("turns a non-JSON `gh` response into NOT CHECKED, not a crash", async () => {
+    // A fake `gh` on PATH that answers like an intercepting proxy, exit 0.
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "gh"), '#!/bin/sh\necho "<html>proxy</html>"\n', { mode: 0o755 });
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+    try {
+      await expect(ghRest("repos/x/y/pulls", 5000)).rejects.toThrow("response is not JSON");
+      const result = await openPrFiles({ cacheFile });
+      expect(result).toMatchObject({ checked: false, reason: expect.stringContaining("not JSON") });
+    } finally {
+      process.env.PATH = savedPath;
+    }
   });
 });
 
@@ -194,8 +268,48 @@ describe("#7559 pr-file-overlap CLI", () => {
     expect(out.at(-1)).toBe("pr-file-overlap: NOT CHECKED — GitHub unreachable or rate-limited (connect ECONNREFUSED)");
   });
 
+  it("says NOT CHECKED, never OK, when one PR's files could not be fetched", async () => {
+    const gh = fakeGitHub([pull(7, "b7"), pull(8, "b8")], { 7: [{ filename: "src/x.ts" }] });
+    const ghJson = (endpoint: string) =>
+      endpoint.includes("/8/files") ? Promise.reject(new Error("HTTP 404: Not Found")) : gh.ghJson(endpoint);
+    const { code, out } = await run(["--paths", "src/a.ts"], { ghJson });
+    expect(code).toBe(0);
+    expect(out.at(-1)).toMatch(/^pr-file-overlap: NOT CHECKED — /);
+  });
+
+  it("--branch ends in NOT CHECKED, not a crash, when main cannot be resolved", () => {
+    const repo = path.join(dir, "repo");
+    execFileSync("git", ["init", "-q", repo]);
+    const run = spawnSync(process.execPath, [path.resolve("scripts/pr-file-overlap.mjs"), "--branch"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim().split("\n").at(-1)).toMatch(/^pr-file-overlap: NOT CHECKED — cannot read this checkout/);
+  });
+
   it("exits 2 on a usage error", async () => {
     expect((await run(["--paths"], {})).code).toBe(2);
     expect((await run(["--nope"], {})).code).toBe(2);
   });
+});
+
+describe("#7559 pre-dispatch-gate", () => {
+  it("never exits 1 (STOP) when the open-PR lookup cannot run", () => {
+    // An empty git repo (so the cache lands in it) and a `gh` that returns HTML.
+    const repo = path.join(dir, "repo");
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "gh"), '#!/bin/sh\necho "<html>proxy</html>"\n', { mode: 0o755 });
+    execFileSync("git", ["init", "-q", repo]);
+    const gate = path.resolve("scripts/pre-dispatch-gate.mjs");
+    const run = spawnSync(process.execPath, [gate, "1", "--paths", "src/a.ts"], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      timeout: 150_000,
+    });
+    expect(run.stdout).toContain("FILE OVERLAP NOT CHECKED");
+    expect(run.status).toBe(2);
+  }, 160_000);
 });
