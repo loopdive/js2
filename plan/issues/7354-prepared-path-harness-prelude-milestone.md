@@ -8041,3 +8041,57 @@ not done yet (next part). `from-ast.ts` 17172 → 17152.
   `enclosingFunctionBody` has no defensive test.
 - Proof: the 404 probes are identical to part 1 (0 wrong); runner targeted 44, sample 87, unchanged; ordinary bytes
   identical (33 programs × 2); the 17 modified root test files each exit 0 alone; gates exit 0.
+
+## Slice O2 r1 fix (2026-11-26, branch `claude/7354-o2-fix` from `main` c3b7be667a; PR 7415 merged without it)
+
+- **Blocker fixed: `new` on an accessor function** constructed an object (node: TypeError). IsConstructor is now the
+  function object's own answer where the source creates a function value without [[Construct]]
+  (`ProgramObjects.nonConstructors`: an accessor): `dynamicConstruct` asks the new realm row `js.object.is-constructor`
+  after the function-kind test (the arguments are already evaluated, §13.3.5.1.1), and `init-function` marks such a
+  function in its bag's flags (bit 0x40, free on the realm `$Object`) only in a program that asks. Elsewhere `new`
+  and `init-function` keep their bytes. The premise checks: `F.prototype` is created only for constructors (init),
+  `instanceof g` and `Object.create(g.prototype)` read `g.prototype` (undefined → their TypeErrors; tested).
+- **One built-in call sequence** (`buildBuiltinVectorCall`): the kernel's `method0..3`, the getter and the setter.
+  Getter and setter take the same arms with or without `accessorCalls`: a built-in half is called, a source half is
+  the dispatcher's call or, without `accessorCalls` (no source half can exist), the trap. **Cost, measured:** the
+  kernel read and the set adapter of every realm program change bytes (`check:prepared-bytes` vs main c3b7be667a: 14
+  of 804 rows — 46 47 48 53 74 149 180 204 239 244 445 532 533 581 — each run on main and head with the same outcome;
+  prelude + `assert(true);` 031c67f3… → 76b0dffa…). Kept for one sequence and the symmetry; the alternative (the old
+  two shapes) restores those bytes.
+- `isFunctionObject` asks `sourceDynamicClosureSignature` which accessors are function objects (no second copy).
+- Already done by a3ee87c5d9 / cd503a9d41 (another session, merged with PR 7415): the dispatch partition, the
+  kernel-dependency spread, the undefined-key refusal, `SourceObjectSetOperands` (kept, extended by
+  `AccessorCallOperands`), and the resource-join callable row as an expected-limit pin (#7463; the file is 15/15).
+- Known limit kept: `realmAccessors` fires for `Object.create(c)` without a property map (the legalization keeps the
+  `descriptors-define` arm when the argument's kinds are not folded); one unused dispatcher function at most.
+
+Proof: the reviewer's five batches (196 programs) main vs head: identical verdicts except the three blocker programs,
+WRONG → node's `T`; `issue-7354-o2-accessors` 49 / 49 (run in describe-sized parts), new `new`-on-accessor tests
+with wrong twins (getter, setter, the body never runs, arguments first, declarations still construct, `prototype` /
+`instanceof` / `Object.create`); `issue-7354-o2-object-values` 14 / 14; resource-join 15 / 15, getter-invocation 37,
+runtime-providers 299, o1-create-and-define-properties 14, c2-constructors 19, p1-method-values 19, r-provider-census
+117, native-realm-requirements 25; `issue-3518-native-getter-results` 19 / 21 — the same 2 fail on main (not modified
+here). Gates: typecheck, LOC / function budgets (also `LOC_GATE_BASE` = main), coercion-sites, oracle-ratchet,
+dead-exports, import-cycles, compiler-boundaries inventory: exit 0; from-ast net 0.
+
+### Review r2 of PR 7446 (2026-11-26)
+
+- One constructor rule: `isConstructorFunction` (`function-object-lowering.ts`: a declaration or function expression,
+  not a generator or async function) is what `init-function` records; it always sets the bag's bit, and
+  `dynamicConstruct` always asks `js.object.is-constructor` after the function-kind test. `ProgramObjects
+  .nonConstructors`, the `marksNonConstructors` gate and the row `Body`'s `served` parameter are gone (Prepared bytes
+  of `new` / function-creating programs change; agreed). An arrow function as a value is not expressible on this
+  path yet (`closure must have a return type annotation`, `module-level closure binding … not in module-init`), so
+  the arrow case has no probe.
+- The bag is cast once in init (`bagObject` + a typed local); getOwn's ABI comment no longer names status 3;
+  `buildBuiltinVectorCall` / `buildAccessorCall` take the arguments together with their vector local
+  (`BuiltinCallArguments`), so arguments without a vector cannot be expressed; the `NOT_CONSTRUCTOR` comment names
+  the legacy `OBJ_FLAG_CONSTRUCTOR` (0x20) as a different realm's.
+- Re-run: blocker programs + wrong twins 6 / 6; o2-accessors `new` block 6 / 6; o2-object-values 13 / 13;
+  c2-constructors 19, c2-this 18, f1b-function-objects 9, f2 10, m-refusals 43; the reviewer's five batches vs main
+  c3b7be667a: identical verdicts except the three blocker programs (WRONG → `T`). Gates (chained, bare): typecheck,
+  LOC / function budgets (also `LOC_GATE_BASE` = origin/main 1a726b3e64), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, compiler-boundaries inventory: exit 0.
+- Follow-ups to file: (1) the realm `$Object` flags field index (`OBJECT_FLAGS_FIELD = 4`) has a third copy in
+  `mixed-object-access` bodies — one named constant for the layout; (2) `dynamicClosureSignature` is asked twice for
+  an accessor (from-ast's signature choice and `isFunctionObject`) — one answer per closure literal.
