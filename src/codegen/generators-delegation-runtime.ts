@@ -19,6 +19,9 @@ import {
 } from "./generators-native-protocol.js";
 import { addStringConstantGlobals } from "./registry/imports.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
+import { findAlternateStructsForField } from "./property-access.js";
+import { resolveWellKnownSymbol } from "./literals.js";
 
 const ER: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -114,6 +117,16 @@ export function ensureNativeGeneratorNumericPayload(ctx: CodegenContext): number
   ctx.funcMap.set(name, funcIdx);
   pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: fctx.locals, body: fctx.body, exported: false });
   return funcIdx;
+}
+
+/**
+ * The call that opens a delegation over a user iterator. Its protocol reads (`@@iterator`, `next`, …) are
+ * runtime-key reads on an unknown receiver, so a class instance's prototype methods must be reachable from
+ * `__extern_get`.
+ */
+export function delegateStartCall(ctx: CodegenContext): Instr {
+  recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
+  return call(ctx, "__gen_delegate_start");
 }
 
 /** Reserve before emitting callers; the existing iterator finalization fills bodies. */
@@ -228,7 +241,7 @@ function buildGetter(ctx: CodegenContext, key: Key): { body: Instr[]; locals: Fu
     labelMap: new Map(),
     savedBodies: [],
   };
-  const property = key === "iterator" ? "@@iterator" : key;
+  const property = key === "iterator" ? resolveWellKnownSymbol(key)! : key;
   const keyValue = (): Instr[] =>
     key === "iterator" ? [num(1), call(ctx, "__box_symbol")] : stringConstantExternrefInstrs(ctx, key);
   let fallback: Instr[] = [load(0), ...keyValue(), call(ctx, "__extern_get")];
@@ -236,18 +249,22 @@ function buildGetter(ctx: CodegenContext, key: Key): { body: Instr[]; locals: Fu
   if (sget !== undefined) {
     const fn = definedFuncAt(ctx, sget);
     const sig = fn && ctx.mod.types[fn.typeIdx];
-    if (sig?.kind === "func" && sig.results[0]) {
+    // Only a struct that declares the field answers through the getter; any other receiver (a class instance, an
+    // open object) is a runtime-key read, which the getter would answer as a miss.
+    const holders = findAlternateStructsForField(ctx, property, -1);
+    if (sig?.kind === "func" && sig.results[0] && holders.length > 0) {
       fctx.body = [load(0), { op: "call", funcIdx: sget }];
       coerceType(ctx, fctx, sig.results[0], ER);
       const closed = fctx.body;
-      const open = ctx.objectRuntimeTypes?.objectTypeIdx;
-      if (open !== undefined)
-        fallback = [
+      fallback = [
+        ...holders.flatMap(({ structTypeIdx }, i): Instr[] => [
           load(0),
           { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: open },
-          branch(fallback, closed, ER),
-        ];
+          { op: "ref.test", typeIdx: structTypeIdx },
+          ...(i > 0 ? [{ op: "i32.or" } as Instr] : []),
+        ]),
+        branch(closed, fallback, ER),
+      ];
     }
   }
   // Descriptor accessors on closed shapes live in closure globals, not fields.

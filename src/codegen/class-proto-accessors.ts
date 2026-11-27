@@ -51,12 +51,16 @@
  * exactly its pre-#4455 answer.
  */
 
+import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
 import { classMemberFuncKey, isInstanceAccessorKey } from "./class-member-keys.js";
 import { dynamicClassKeyGlobalKey, dynamicClassMemberOrdinal } from "./class-dynamic-keys.js"; // (#5195 Step 1)
+import { symbolMemberKeyId } from "../runtime/contracts/well-known-symbols.js";
+import { buildPrototypeSeedSymbolKey } from "../runtime/wasmgc/values/prototype-seeder-bodies.js";
+import { wellKnownSymbolKeyOf } from "./literals.js";
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
 const PRIVATE_NAME_PREFIX = "__priv_";
@@ -180,6 +184,15 @@ export function emitClassMemberKeyOperand(
   className: string,
   memberName: string,
 ): boolean {
+  // A `[Symbol.iterator]() {}` member is spelled `@@iterator`; its key is the symbol. A string-keyed
+  // `"@@iterator"() {}` has the same spelling and keeps its string key.
+  const symbolId = isWellKnownSymbolMember(ctx, className, memberName) ? symbolMemberKeyId(memberName) : undefined;
+  if (symbolId !== undefined) {
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    if (boxSymbolIdx === undefined) return false;
+    fctx.body.push(...buildPrototypeSeedSymbolKey(symbolId, boxSymbolIdx));
+    return true;
+  }
   const ordinal = dynamicClassMemberOrdinal(memberName);
   if (ordinal === undefined) {
     addStringConstantGlobal(ctx, memberName);
@@ -190,6 +203,19 @@ export function emitClassMemberKeyOperand(
   if (keyGlobalIdx === undefined) return false;
   fctx.body.push({ op: "global.get", index: keyGlobalIdx });
   return true;
+}
+
+function isWellKnownSymbolMember(ctx: CodegenContext, className: string, memberName: string): boolean {
+  return (
+    ctx.classDeclarationMap
+      .get(className)
+      ?.members.some(
+        (m) =>
+          m.name !== undefined &&
+          ts.isComputedPropertyName(m.name) &&
+          wellKnownSymbolKeyOf(m.name.expression) === memberName,
+      ) ?? false
+  );
 }
 
 export function emitClassProtoAccessorInstalls(
