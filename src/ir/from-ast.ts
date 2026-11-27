@@ -8085,12 +8085,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
 
 /**
  * (#7106 S1i) An under-arity direct call (`isWritable(obj, name)` on four
- * formals): legacy pads each missing formal with the canonical `undefined`
- * and publishes `__argc = actual` when the callee reads its own `arguments`.
- * Admitted only when every missing formal is the dynamic carrier (a concrete
- * formal takes legacy's `0` sentinel, not `undefined`) and the exact callee
- * declaration is known, so the argc decision is the callee's, not a guess.
- * `null` = not an under-arity call this lowering can build.
+ * formals): legacy pads each missing formal with `undefined` and publishes
+ * `__argc = actual` when the callee reads its own `arguments`. Admitted only
+ * when every missing formal is the dynamic carrier (not legacy's `0` sentinel)
+ * and the exact callee declaration is known. (#7562) Unselected (Prepared), an
+ * exact-arity call plans too: a dispatched caller's count is still installed.
  */
 function planUnderArityDirectCall(
   expr: ts.CallExpression,
@@ -8099,7 +8098,8 @@ function planUnderArityDirectCall(
   cx: LowerCtx,
 ): { readonly publishArgc: boolean } | null {
   const params = direct.signature.params;
-  if (actual >= params.length || expr.arguments.some(ts.isSpreadElement)) return null;
+  if (actual > params.length || (actual < params.length ? expr.arguments.some(ts.isSpreadElement) : !cx.unselected))
+    return null;
   for (let i = actual; i < params.length; i++) if (params[i]!.kind !== "dynamic") return null;
   const binding = direct.target.binding;
   const declaration = binding.kind === "unit" ? cx.identityContext?.declarationByUnitId.get(binding.unitId) : undefined;
