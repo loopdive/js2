@@ -928,6 +928,17 @@ tail does not.** "Always get PRs into the queue" is satisfied by making them
 backstop rules under "PR-queue shepherd" for the only sanctioned manual enqueue,
 which is one-shot, PAT-authenticated, and never repeated.
 
+**One issue per PR (project-lead order, 2026-11-27).** Every code PR has its
+own issue file, `plan/issues/<id>-<slug>.md`, with the plan and the result of
+that PR. Do not add a slice as a new section of a collection issue: #7354's
+file grew to hold a dozen slices, and nobody could tell from an issue what a PR
+did.
+
+- Allocate the id with `claim-issue.mjs --allocate` before coding (see
+  "Project Structure").
+- A larger effort keeps one parent issue that only lists its child issues.
+- A docs-only PR is the exception, per the rule below.
+
 **Docs-only changes go in ONE open PR — check before opening a second.** If a
 docs-only PR is already open (issue files under `plan/issues/`, `plan/` notes,
 `docs/`, README-level edits), **push your docs commits onto that PR's branch
