@@ -87,6 +87,7 @@ import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { checkerTypeIgnoresOmission, jsDocMarksParamOptional } from "../shared/omittable-param.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
@@ -594,6 +595,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * that result whatever the selector resolved from the lattice.
    */
   readonly resultWidensToDynamic?: (fn: ts.FunctionDeclaration) => boolean;
+  /** (#7448) `jsDocParamLowersAsExternref`'s question for the function's result. */
+  readonly legacyResultIsExternref?: (fn: ts.FunctionDeclaration) => boolean;
   /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
@@ -2576,24 +2579,21 @@ function isIrClaimable(
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
 /**
- * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
- * the IR must ASK about rather than derive? True for a JSDoc type outside the
- * certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
- * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes)
- * and for any bracketed tag (`@param {string} [functionName]`). Legacy lowers
- * these from the checker and the answer is NOT syntactic (measured 2026-10-21:
- * `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag →
- * externref; `{string|number}` → `$AnyValue`; `{string|undefined}` →
- * `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
- * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the
- * registered legacy signature, and keeps its prior answer otherwise. A real
- * `.type` annotation is never a candidate (#2135's union rejection stands).
+ * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot the IR must ASK about rather than
+ * derive? True for a JSDoc type outside the certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
+ * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes), for any bracketed tag
+ * (`@param {string} [functionName]`), and (#7448) for a position a caller omits (`h()` for `@param {number} x`, see
+ * `checkerTypeIgnoresOmission`). Legacy lowers these from the checker and the answer is NOT syntactic (measured
+ * 2026-10-21: `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag → externref; `{string|number}`
+ * → `$AnyValue`; `{string|undefined}` → `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
+ * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the registered legacy signature, and keeps
+ * its prior answer otherwise. A real `.type` annotation is never a candidate (#2135's union rejection stands).
  */
 export function jsDocParamIsExternrefCandidate(param: ts.ParameterDeclaration): boolean {
   if (param.type !== undefined || param.parent === undefined) return false;
   const jsDocType = ts.getJSDocType(param);
   if (jsDocType === undefined) return false;
-  if (ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed === true)) return true;
+  if (jsDocMarksParamOptional(param) || checkerTypeIgnoresOmission(param)) return true;
   return (
     jsDocType.kind !== ts.SyntaxKind.NumberKeyword &&
     jsDocType.kind !== ts.SyntaxKind.StringKeyword &&
@@ -2939,23 +2939,32 @@ function resolveReturnType(
     const literalKind = uniformLiteralReturnKind(fn.body);
     if (literalKind !== null) return literalKind;
   }
-  // (#7106 S1b) An unannotated function whose value returns are all one
-  // concrete kind but whose body can FALL OUT (no terminating last statement:
-  // `switch` without default, a guard `if`) returns that kind OR `undefined`.
-  // Legacy registers the checker's `T | undefined` as `externref` — measured
-  // 2026-10-20 on assert.js's `formatIdentityFreeValue`: `(param externref)
-  // (result externref)` — so the IR signature is the dynamic carrier, the
-  // concrete returns box at `coerceReturnValue`, and the fall-out is
-  // #7104's `dyn.undefined`. Same divergence guard as the dynamic arm below.
-  if (
-    ts.isFunctionDeclaration(fn) &&
-    fn.body &&
+  const concreteLattice =
     mapped !== undefined &&
-    (mapped.kind === "f64" || mapped.kind === "bool" || mapped.kind === "string" || mapped.kind === "object") &&
-    irFunctionBodyReturnsValue(fn.body) &&
-    !functionBodyAlwaysTerminates(fn.body)
-  ) {
-    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+    (mapped.kind === "f64" || mapped.kind === "bool" || mapped.kind === "string" || mapped.kind === "object");
+  if (ts.isFunctionDeclaration(fn) && fn.body && concreteLattice) {
+    // (#7106 S1b) An unannotated function whose value returns are all one
+    // concrete kind but whose body can FALL OUT (no terminating last statement:
+    // `switch` without default, a guard `if`) returns that kind OR `undefined`.
+    // Legacy registers the checker's `T | undefined` as `externref` — measured
+    // 2026-10-20 on assert.js's `formatIdentityFreeValue`: `(param externref)
+    // (result externref)` — so the IR signature is the dynamic carrier, the
+    // concrete returns box at `coerceReturnValue`, and the fall-out is
+    // #7104's `dyn.undefined`. Same divergence guard as the dynamic arm below.
+    if (irFunctionBodyReturnsValue(fn.body) && !functionBodyAlwaysTerminates(fn.body)) {
+      return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+    }
+    // (#7448) A self-recursive body (`return 1 + f()`) gets the checker's
+    // circular `any`, which legacy registers as externref while the lattice
+    // infers a scalar. Claiming the scalar only withdraws on
+    // `abi-signature-parity` after the claim, so refuse here. A #7331 widened
+    // result is the exception: the override map gives it legacy's carrier.
+    if (
+      currentSelectionOptions?.legacyResultIsExternref?.(fn) === true &&
+      currentSelectionOptions.resultWidensToDynamic?.(fn) !== true
+    ) {
+      return null;
+    }
   }
   if (mapped?.kind === "f64") return "f64";
   if (mapped?.kind === "bool") return "bool";

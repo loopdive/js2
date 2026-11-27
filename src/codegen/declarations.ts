@@ -76,6 +76,7 @@ import { heritagePrototypeGetTarget } from "./classes/class-heritage-runtime-get
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import { collectBindingPatternNames, collectReferencedIdentifiers, functionBodyReferencesThis } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
+import { parameterMayBeOmitted } from "../shared/omittable-param.js";
 import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
 import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
@@ -1108,29 +1109,6 @@ export function functionReturnsThroughWithScope(
 
   withScopedReturnByFunction.set(stmt, found);
   return found;
-}
-
-/**
- * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
- * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
- * slot cannot represent that value: the generic missing-argument pad for an
- * `f64`/`i32`/`i64` is zero, while JavaScript observes `undefined`. This is
- * especially important for JSDoc declarations imported across a module
- * boundary, where local call-site inference cannot see the caller.
- *
- * Initializers are deliberately excluded. Their existing parameter-default
- * sentinel path evaluates the initializer in the callee, so widening those
- * parameters would change a proven numeric default ABI for no semantic gain.
- */
-export function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
-  const jsdocType = ts.getJSDocType(param);
-  const jsdocTags = ts.getJSDocParameterTags(param);
-  return (
-    param.initializer === undefined &&
-    (param.questionToken !== undefined ||
-      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
-      jsdocTags.some((tag) => tag.isBracketed === true))
-  );
 }
 
 /**
