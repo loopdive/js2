@@ -1,7 +1,8 @@
 ---
 id: 7563
 title: "quality under five minutes in the merge queue: parallel lanes, one blobless history fetch"
-status: in-progress
+status: done
+completed: 2026-11-27
 created: 2026-11-27
 updated: 2026-11-27
 assignee: ttraenkler/quality-speed
@@ -150,3 +151,43 @@ account limit is touched during the first ~3 minutes of each queue run.
   publishes `quality`.
 - Code quality: one matrix job, no copied job bodies, no per-step fetch left,
   no dead step.
+
+## Implementation notes
+
+- `quality-lane` matrix + `quality` aggregator as planned. The step that fails
+  `quality` is `Every quality lane succeeded`; it is registered as a
+  forwarding step in `scripts/auto-park-merge-group-failure.mjs` (like the
+  #7551 `IR current-edition gate`). Without that, a runner kill or setup
+  failure in one lane would park the PR, because the aggregator's own failed
+  step would be judged as a verdict.
+- The two artifact uploads now carry the npm-compat guard and their lane;
+  `tests/issue-4130-npm-compat-promotion-fast-path.test.ts` failed on main
+  because they lacked the guard, and now passes.
+- Every step after `pnpm install` names exactly one lane; the test fails on a
+  lane name the matrix does not define (such a step would never run).
+
+## Validation
+
+Each file run alone (`VITEST_MAX_FORKS=1`, 2 GB):
+
+| File | Result |
+| --- | --- |
+| tests/issue-7551-job-skip-propagation.test.ts | 32/32 (6 new #7563 cases) |
+| tests/issue-4130-npm-compat-promotion-fast-path.test.ts | 8/8 (was 7/8 on main) |
+| tests/ci-quality-failfast.test.ts | 3/3 |
+| tests/issue-6418-boundary-verdict-in-log.test.ts | 4/4 |
+| tests/issue-3934.test.ts | 57/57 |
+| tests/issue-6795-claude-md-paths.test.ts | 19/19 |
+| tests/issue-3597-auto-park-step-aware.test.ts | 48/48 |
+| tests/issue-7551-ir-edition-scope.test.ts | 23/23 |
+| scripts/select-changed-issue-tests.test.mjs (node --test) | 54/54 |
+| auto-park `--self-check` | all passed (2 new #7563 cases) |
+
+Local timing (4 cores, this box's network; a 4-vCPU `ubuntu-latest` runner
+fetched the full-blob variant in ~98 s where this box took 126 s): the
+blobless fetch pair took 30 s against 126 s with blobs, and selected the same
+169 paths.
+
+Only a live `merge_group` run proves: the wall time, the runner start latency
+next to the 102 test262 runners, and that `git fetch --filter=blob:none` on
+the depth-2 checkout behaves on the runner as it does here.
