@@ -1,7 +1,8 @@
 ---
 id: 7559
 title: "Automatic file-overlap check between a lane's work and every open pull request"
-status: in-progress
+status: done
+completed: 2026-11-27
 created: 2026-11-27
 updated: 2026-11-27
 assignee: ttraenkler/overlap
@@ -103,6 +104,20 @@ onto the REST lister — see Follow-up.
 - Live smoke run `--paths src/ir/from-ast.ts` names the open PRs touching it.
 - Code quality: one lister, results are objects formatted only at the edge,
   no defensive branches for impossible cases, files within the size budgets.
+
+## Result (2026-11-27)
+
+Measured on a 4-core cloud container, 87 open PRs:
+
+| Run of `pr-file-overlap.mjs --branch --timeout 8` | wall time |
+| ------------------------------------------------- | --------- |
+| cold cache (list + 87 file lists, 8 in parallel)  | 8.0 s     |
+| list expired, no head moved (one list call)       | 0.9 s     |
+| within the 5-minute list TTL (no API call)        | 0.1 s     |
+
+Live smoke run `--paths src/ir/from-ast.ts` named 19 open PRs (#7427 …
+#7520, including L0b #7516, L0c #7519, W2 #7515 and A1a #7520).
+`tests/issue-7559-pr-file-overlap.test.ts`: 14/14 pass.
 
 ## Follow-up (to be filed)
 

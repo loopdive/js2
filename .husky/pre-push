@@ -13,6 +13,8 @@
 #      issue-id gates against main and open PRs, and the root test files the
 #      push adds or modifies, each alone. The merge queue is the only CI gate.
 #
+#   4. (#7559, advisory, never blocks) the open PRs that change the same files.
+#
 # This hook never commits. It used to auto-commit a benchmark refresh when a
 # `v*` tag was pushed and a conformance-number sync, both with the hook-bypass
 # flag (#6799) — and a commit made inside pre-push is not even part of the push
@@ -443,3 +445,12 @@ if [ "$roots_rc" -ne 0 ]; then
   exit 1
 fi
 echo "Pre-push: changed root test files OK."
+
+# (6d) ADVISORY (#7559): the open PRs that change the same files as this
+# branch — whichever lands second gets the conflict. Settle it with that lane on
+# the coordination PR #7526. Never fails the push: the file lists are cached by
+# PR head, so a warm run fetches only the PR list and the PRs whose head moved,
+# and a cold one is cut off at 8 s
+# (it then says NOT CHECKED and finishes warming the cache next time).
+echo "Pre-push: open PRs changing this branch's files (advisory) ..."
+node scripts/pr-file-overlap.mjs --branch --timeout 8 --max-lines 10 || true

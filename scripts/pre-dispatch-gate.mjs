@@ -33,6 +33,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { findPathOverlaps, formatOverlaps, issuePlanPaths, openPrFiles } from "./lib/open-pr-files.mjs";
 // (#4045/#4117) READ THE CLAIM LEDGER THROUGH claim-issue.mjs, NOT a raw
 // `git show` of a remote-tracking ref.
 //
@@ -80,10 +81,14 @@ const ISSUES_DIR = "plan/issues";
 
 const argv = process.argv.slice(2);
 const json = argv.includes("--json");
-const id = argv.find((a) => /^\d+$/.test(a));
+// `--paths a b c`: files the dispatch intends to touch, on top of the ones the
+// issue's Implementation Plan names (section 6).
+const pathsAt = argv.indexOf("--paths");
+const intendedPaths = pathsAt < 0 ? [] : argv.slice(pathsAt + 1).filter((a) => !a.startsWith("--"));
+const id = argv.slice(0, pathsAt < 0 ? argv.length : pathsAt).find((a) => /^\d+$/.test(a));
 
 if (!id) {
-  console.error("usage: node scripts/pre-dispatch-gate.mjs <issue-id> [--json]");
+  console.error("usage: node scripts/pre-dispatch-gate.mjs <issue-id> [--json] [--paths <p…>]");
   process.exit(1);
 }
 
@@ -138,30 +143,17 @@ if (realHits.length) {
 }
 
 // ── 2. Open PR touching the issue file? ───────────────────────────────────
-const prJson = sh("gh", [
-  "pr",
-  "list",
-  "-R",
-  "loopdive/js2wasm",
-  "--state",
-  "open",
-  "--limit",
-  "60",
-  "--json",
-  "number,title,headRefName",
-]);
-if (prJson) {
-  try {
-    for (const pr of JSON.parse(prJson)) {
-      if (new RegExp(`\\b${id}\\b`).test(`${pr.title} ${pr.headRefName}`)) {
-        blockers.push(`open PR #${pr.number} appears to cover #${id}: ${pr.title}`);
-      }
+// (#7559) Over REST through the shared lister, which section 6 reuses. The old
+// `gh pr list` is GraphQL, which Claude Code cloud sessions are refused.
+const openPrs = await openPrFiles();
+if (openPrs.checked) {
+  for (const pr of openPrs.prs) {
+    if (new RegExp(`\\b${id}\\b`).test(`${pr.title} ${pr.branch}`)) {
+      blockers.push(`open PR #${pr.number} appears to cover #${id}: ${pr.title}`);
     }
-  } catch {
-    warnings.push("could not parse `gh pr list` output — check open PRs by hand");
   }
 } else {
-  warnings.push("`gh pr list` returned nothing — offline or unauthenticated; check open PRs by hand");
+  warnings.push(`open PRs NOT CHECKED (${openPrs.reason}) — check open PRs by hand`);
 }
 
 // ── 3. Claim ref ──────────────────────────────────────────────────────────
@@ -271,6 +263,27 @@ if (localIssue) {
   }
 } else {
   notes.push(`no local ${ISSUES_DIR}/${id}-*.md — idiom scan skipped`);
+}
+
+// ── 6. FILE OVERLAP with open PRs (#7559) ─────────────────────────────────
+// Another lane's open PR changing the same files means a merge conflict for
+// whichever lands second (2026-11-27: four PRs of one lane). A caution, never a
+// blocker: two PRs often touch one file in separate hunks.
+const isFile = (p) => fs.statSync(p, { throwIfNoEntry: false })?.isFile() ?? false;
+const planPaths = localIssue ? issuePlanPaths(fs.readFileSync(path.join(ISSUES_DIR, localIssue), "utf8"), isFile) : [];
+const intended = [...new Set([...intendedPaths, ...planPaths])];
+if (!intended.length) {
+  notes.push("file overlap: no intended paths (none named in the Implementation Plan, no --paths) — skipped");
+} else if (!openPrs.checked) {
+  warnings.push(`FILE OVERLAP NOT CHECKED — ${openPrs.reason}`);
+} else {
+  const overlaps = findPathOverlaps(intended, openPrs.prs);
+  if (overlaps.length) {
+    warnings.push(`FILE OVERLAP — ${overlaps.length} open PR(s) change files this work touches; settle it on #7526:`);
+    for (const line of formatOverlaps(overlaps, { maxLines: 20 })) warnings.push(`    ${line}`);
+  } else {
+    notes.push(`file overlap: no open PR changes the ${intended.length} intended path(s)`);
+  }
 }
 
 // ── Report ────────────────────────────────────────────────────────────────
