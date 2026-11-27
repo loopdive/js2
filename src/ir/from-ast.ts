@@ -14444,15 +14444,14 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       throw new Error(detail);
     }
     case ts.SyntaxKind.TildeToken: {
-      const randType = typeOfValue(rand, cx);
-      if (asVal(randType)?.kind !== "f64") {
-        demoteToLegacy(
-          "operand-coercion-unsupported",
-          `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`,
-        );
+      const host = functionObjectLoweringHost(cx);
+      const number = host.createsFunctionObjects() ? realmToNumber(rand, expr.operand, host) : rand;
+      if (asVal(typeOfValue(number, cx))?.kind !== "f64") {
+        const detail = `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`;
+        demoteToLegacy("operand-coercion-unsupported", detail);
       }
-      const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, irVal({ kind: "f64" }));
-      return cx.builder.emitBinary("js.bitxor", rand, minusOne, irVal({ kind: "f64" }));
+      const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, IR_F64);
+      return cx.builder.emitBinary("js.bitxor", number, minusOne, IR_F64);
     }
     default:
       demoteToLegacy(
