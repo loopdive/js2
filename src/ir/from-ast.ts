@@ -14363,37 +14363,25 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       ? cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }))
       : lowerExpr(expr.operand, cx, irVal({ kind: "f64" }));
   switch (expr.operator) {
-    case ts.SyntaxKind.MinusToken: {
-      const randType = typeOfValue(rand, cx);
-      // #2949 S5.5 — unary `-` on a boxed-any carrier is ToNumber then negate
-      // (§13.5.5 Unary Minus): `dyn.to_number` (canonical `__any_to_f64` gc /
-      // `__unbox_number` host — D4) feeds the existing `f64.neg`. Byte-inert
-      // until the S5.P scan admits dynamic-unary bodies.
-      if (randType.kind === "dynamic") {
-        refuseBigIntDynamicOperand(cx, expr.operand);
-        const n = cx.builder.emitDynToNumber(rand);
-        return cx.builder.emitUnary("f64.neg", n, irVal({ kind: "f64" }));
-      }
-      // (#3168) `-x` is `-ToNumber(x)` (§13.5.5 →
-      // §7.1.4). ToNumber the operand to f64, then `f64.neg` — sign-correct for
-      // `-0` (`-"" === -0`), unlike `0 - x`. Mirrors legacy `expressions/unary.ts`.
-      const negToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (negToNumber === null) throwUnaryNotNumber(expr, "-", cx);
-      return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
-    }
+    case ts.SyntaxKind.MinusToken:
     case ts.SyntaxKind.PlusToken: {
-      const randType = typeOfValue(rand, cx);
-      // #2949 S5.5 — unary `+` on a boxed-any carrier IS ToNumber (§13.5.4
-      // Unary Plus is exactly `? ToNumber(value)`): a bare `dyn.to_number`.
-      if (randType.kind === "dynamic") {
+      const type = typeOfValue(rand, cx);
+      const minus = expr.operator === ts.SyntaxKind.MinusToken;
+      let number: IrValueId | null;
+      if (type.kind === "dynamic") {
         refuseBigIntDynamicOperand(cx, expr.operand);
-        return cx.builder.emitDynToNumber(rand);
+        number = cx.builder.emitDynToNumber(rand);
+      } else if (
+        (type.kind === "closure" || asVal(type)?.kind === "externref") &&
+        functionObjects.createsFunctionObjects(cx.resolver)
+      ) {
+        refuseBigIntDynamicOperand(cx, expr.operand);
+        number = realmToNumber(rand, expr.operand, functionObjectLoweringHost(cx));
+      } else {
+        number = emitUnaryToNumber(rand, type, cx, cx.stringNumericCoercion);
       }
-      // (#3168) `+x` IS `ToNumber(x)` (§13.5.4): boolean → 0/1, string →
-      // §7.1.4.1 StringToNumber, a branded f64's `undefined` marker → NaN.
-      const plusToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (plusToNumber === null) throwUnaryNotNumber(expr, "+", cx);
-      return plusToNumber;
+      if (number === null) throwUnaryNotNumber(expr, minus ? "-" : "+", cx);
+      return minus ? cx.builder.emitUnary("f64.neg", number, IR_F64) : number;
     }
     case ts.SyntaxKind.ExclamationToken: {
       const randType = typeOfValue(rand, cx);

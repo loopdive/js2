@@ -19,7 +19,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { agreesWithNode, runnerOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (): Test262CompileOptions =>
   ({
@@ -91,6 +91,13 @@ const PROGRAMS: readonly { name: string; source: string; answers: [string, strin
 ];
 
 describe("#7354 O2b — OrdinaryToPrimitive of an ordinary object", () => {
+  it("converts direct object and function operands of unary signs", async () => {
+    const body =
+      "var calls = 0; var n = -({ valueOf: function () { calls = calls + 1; return 6; } });" +
+      "var out = n === -6 && calls === 1 && isNaN(+function () { return 1; }) ? 'yes' : 'no';";
+    await agreesWithNode(body, true, runnerOptions());
+  }, 180_000);
+
   for (const { name, source, answers } of PROGRAMS) {
     it(
       name,
