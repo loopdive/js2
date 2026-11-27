@@ -89,7 +89,12 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["a hoisted local function", 'function f() { eval("1"); function eval(v) { return v; } }', ordinaryCall("f")],
     ["a hoisted local var", 'function f() { eval("1"); var eval = 1; }', ordinaryCall("f")],
     ["a block function, for its function", 'function f() { eval("1"); { function eval() {} } }', ordinaryCall("f")],
-    ["a block function, for its file", 'function f() { eval("1"); }\n{ function eval() {} }', ordinaryCall("f")],
+    // (#7372) A script-level Annex B block function named after a built-in global refuses the program by name first.
+    [
+      "a block function, for its file",
+      'function f() { eval("1"); }\n{ function eval() {} }',
+      "Annex B block function 'eval' shadows a built-in global",
+    ],
     ["a parameter", 'function f(eval) { eval("1"); }\nf(1);', DYNAMIC_CALL],
     [
       "a destructured parameter",
