@@ -5840,6 +5840,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/global-builtin-identifier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/expressions/helpers.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9641,6 +9649,14 @@
     },
     {
       "path": "src/codegen/registry/error-constructor-delegates.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/registry/error-names.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -15540,6 +15556,14 @@
       "destination": "compiler",
       "owner": "3518-coordinator",
       "nextBoundary": "Resolver-time source fold (#6725); moves with src/cjs-rewrite.ts and src/resolve.ts when the frontend/orchestration split lands."
+    },
+    {
+      "path": "src/codegen/exn-render-kind.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
       "path": "src/codegen/exn-render-lite.ts",

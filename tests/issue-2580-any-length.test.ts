@@ -24,7 +24,7 @@
 
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string): Promise<unknown> {
   const result = await compile(source);
@@ -32,10 +32,8 @@ async function run(source: string): Promise<unknown> {
     throw new Error("compile error: " + result.errors.map((e) => e.message).join("; "));
   }
   if (!WebAssembly.validate(result.binary)) throw new Error("invalid wasm");
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  const instance = await instantiateWithRuntime(result);
   // setExports wires host closures back to the instance (no-op when absent).
-  (imports as { setExports?: (e: WebAssembly.Exports) => void }).setExports?.(instance.exports);
   return (instance.exports as { run: () => unknown }).run();
 }
 

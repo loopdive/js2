@@ -343,25 +343,7 @@ export async function compileToWasm(source: string) {
   if (!WebAssembly.validate(result.binary)) {
     throw new Error(`Invalid Wasm binary (WebAssembly.validate failed)\nWAT:\n${result.wat}`);
   }
-  // Use the runtime's buildImports for full host import support (iterator protocol, etc.)
-  // Merge with the manual buildImports for wasm:js-string polyfill and string_constants.
-  const manualImports = buildImports(result);
-  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
-  if (result.imports && result.imports.length > 0) {
-    const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setInstanceFn = runtimeResult.setInstance;
-    // Merge: runtime env overrides manual env, keep manual wasm:js-string and string_constants
-    const mergedEnv = { ...(manualImports.env as Record<string, Function>), ...runtimeResult.env };
-    manualImports.env = mergedEnv;
-    // Use runtime string_constants if available
-    if (runtimeResult.string_constants) {
-      manualImports.string_constants = runtimeResult.string_constants;
-    }
-  }
-  const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
-  // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
-  setInstanceFn?.(instance);
-  return jsFacingExports(result, instance);
+  return (await instantiateWithRuntime(result)).exports as Record<string, Function>;
 }
 
 /**
