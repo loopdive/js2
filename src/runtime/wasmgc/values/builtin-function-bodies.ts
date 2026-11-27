@@ -36,6 +36,8 @@ export interface BuiltinFunctionEntryOperands {
   /** `object-prototype`, `function-prototype`, or (#7354 G1) an earlier entry's id. */
   readonly prototype: string;
   readonly properties: RealmFamilyOperands["entries"][number]["properties"];
+  /** (#7350 B3a) The catalog models only this entry's identity: a miss among its own properties aborts. */
+  readonly identityOnly?: true;
 }
 export interface BuiltinFunctionBodyOperands extends Pick<
   RealmFamilyOperands,

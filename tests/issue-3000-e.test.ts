@@ -31,7 +31,16 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
+
+// `compileAndInstantiate(source, deps)` took this options bag as host deps, so
+// both lanes compiled with defaults; and its raw exports return the native
+// string carrier (#6708). Compile per lane and read through the JS adapter.
+async function runLane(experimentalIR: boolean): Promise<{ test(): unknown }> {
+  const result = await compile(DOG, { fileName: "test.ts", experimentalIR });
+  expect(result.success).toBe(true);
+  return (await instantiateWithRuntime(result)).exports as unknown as { test(): unknown };
+}
 
 // Mirrors website/playground/examples/js/classes.ts's `Animal`/`Dog`: a string +
 // numeric private field on the flat parent, a `super(...)`-chaining ctor and a
@@ -68,15 +77,27 @@ const DOG = `
 
 const DOG_MEMBERS = ["Dog_new", "Dog_speak", "Dog_get_breed"] as const;
 
-describe("#3000-E — IR inheritance/super emission — genuine emission (both lanes)", () => {
-  for (const nativeStrings of [false, true]) {
-    const lane = nativeStrings ? "native/standalone ($AnyString)" : "host (externref)";
+// The host (externref) string lane was removed by #6979 (S7): `nativeStrings:
+// false` is now a compile error, asserted below. The standalone lane is the
+// other `$AnyString` environment the native lane's label already names.
+const LANES = [
+  { lane: "native/standalone ($AnyString)", options: { nativeStrings: true } },
+  { lane: "standalone target ($AnyString)", options: { target: "standalone" } },
+] as const;
 
+describe("#3000-E — IR inheritance/super emission — genuine emission (both lanes)", () => {
+  it("host (externref): nativeStrings: false is rejected since #6979 removed the host lane", async () => {
+    await expect(compile(DOG, { fileName: "test.ts", experimentalIR: true, nativeStrings: false })).rejects.toThrow(
+      "Compile option nativeStrings: false selected the host-assisted semantic profile, which #6979 removed",
+    );
+  });
+
+  for (const { lane, options } of LANES) {
     it(`IR-emits Dog_new / Dog_speak / Dog_get_breed — ${lane}`, async () => {
       const r = await compile(DOG, {
         fileName: "test.ts",
         experimentalIR: true,
-        nativeStrings,
+        ...options,
         trackIrOutcomes: true,
       });
       expect(r.success).toBe(true);
@@ -107,8 +128,8 @@ describe("#3000-E — IR inheritance/super emission — genuine emission (both l
 
 describe("#3000-E — runtime: super-chain + super.method + inherited reads", () => {
   it("legacy and IR produce identical output (super init once, super.method dispatch)", async () => {
-    const legacy: any = await compileAndInstantiate(DOG, { fileName: "test.ts", experimentalIR: false });
-    const ir: any = await compileAndInstantiate(DOG, { fileName: "test.ts", experimentalIR: true });
+    const legacy = await runLane(false);
+    const ir = await runLane(true);
     // `Rex/4` — describe() reads Animal's inherited #name/#age (super(...) ran the
     // parent init exactly once — a double-init would corrupt the fields).
     // `Rex makes a sound woof` — Dog.speak() → super.speak() (Animal_speak, Dog

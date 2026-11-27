@@ -25,11 +25,13 @@
 //   3. The propagation path works end-to-end without a flag.
 
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
 
 import { describe, it, expect } from "vitest";
 
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
+import { REPO_ROOT } from "./helpers/repo-paths.js";
 
 const ENV = {
   env: {
@@ -125,14 +127,17 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
     expect(fibBody!).not.toContain("__box_number");
   });
 
-  it("benchmarks/competitive/programs/fib-recursive.js compiles fib without boxing", async () => {
+  it("website/public/benchmarks/competitive/programs/fib-recursive.js compiles fib without boxing", async () => {
     // The real benchmark file uses JSDoc annotations — this test ensures
     // the end-to-end compile path against the exact file the benchmark
     // harness consumes, so a later refactor can't silently drop the
     // Phase 2 win. Runtime invocation is skipped because the file also
     // declares a `benchmark` const literal, whose compiled form needs
     // string_constants import wiring the test ENV doesn't provide.
-    const source = readFileSync(resolve(__dirname, "../benchmarks/competitive/programs/fib-recursive.js"), "utf8");
+    const source = readFileSync(
+      join(REPO_ROOT, "website/public/benchmarks/competitive/programs/fib-recursive.js"),
+      "utf8",
+    );
     const result = await compile(source, { allowJs: true, nativeStrings: true });
     expect(result.success).toBe(true);
     const fibBody = extractFuncBody(result.wat, "fib");
@@ -146,7 +151,9 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
     // reachable via `experimentalIR: false`.
     const result = await compile(SOURCE_PROPAGATED, { nativeStrings: true, experimentalIR: false });
     expect(result.success).toBe(true);
-    const { instance } = await WebAssembly.instantiate(result.binary, ENV);
+    // The legacy path imports runtime helpers (`__boundary_object_get`, ...)
+    // that the hand-built ENV does not provide.
+    const instance = await instantiateWithRuntime(result);
     const run = instance.exports.run as (n: number) => number;
     expect(run(10)).toBe(55);
   });

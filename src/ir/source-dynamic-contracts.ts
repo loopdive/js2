@@ -326,8 +326,9 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    */
   readonly codeStrictness: CodeStrictness;
   /**
-   * {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. `converts` names a call that converts
-   * its arguments itself (#7354 T: an admitted `isNaN(v)`), so an argument has no implicit flow into its parameter.
+   * {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. `converts` names an admitted conversion
+   * call (#7354 T `isNaN(v)`, #7350 B3a `Number(v)`, `String(v)`, `Boolean(v)`): it converts its arguments itself, so an
+   * argument has no implicit flow into its parameter, and its value is the conversion's primitive, never dynamic.
    */
   readonly legalize: (
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
@@ -480,7 +481,8 @@ function refuseImplicitDynamicFlows(
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
-    const exempt = (e: ts.Expression) => passedOn(e) || converted || realmBuiltinOperand(e, isPristineGlobal);
+    const exempt = (e: ts.Expression) =>
+      passedOn(e) || converted || (ts.isCallExpression(e) && converts(e)) || realmBuiltinOperand(e, isPristineGlobal);
     if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))

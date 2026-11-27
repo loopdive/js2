@@ -49,7 +49,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { compileProject } from "../src/index.js";
-import { buildCompiledImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -91,10 +91,7 @@ async function instantiate(entrySource: string): Promise<WebAssembly.Exports> {
     platform: "node",
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildCompiledImports(result, {}) as Record<string, unknown> & WebAssembly.Imports;
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports.setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
-  (imports.__setInstance as ((i: WebAssembly.Instance) => void) | undefined)?.(instance);
+  const instance = await instantiateWithRuntime(result);
   (instance.exports.__module_init as (() => void) | undefined)?.();
   return instance.exports;
 }
