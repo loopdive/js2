@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  HELD_OBJECT_STATICS,
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_CONVERSIONS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
@@ -14,6 +15,7 @@ import {
   IS_ARRAY_ID,
   OBJECT_PROTOTYPE_ID,
   objectPrototypeMethodId,
+  objectStaticId,
 } from "./builtin-prototype-keys.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { forEachInstrDeep } from "../core/nodes.js";
@@ -194,7 +196,8 @@ const OBJECT_PROTOTYPE: PinnedPrototype = {
  * (#7350 condition 2) The members a realm holds of the prototypes `prototypes`: each prototype the IR reads or creates
  * an object of, with its constructor, the methods it always holds, and the methods whose name a use spells as a
  * constant key, or every method where a use's key may be computed. A member not held is then one no key of the
- * program reaches.
+ * program reaches. (#7580) A constructor's own function members (the statics a realm models) are held where a
+ * constant key names them: the constructor is an identity row, so a computed key that misses it aborts in the kernel.
  */
 const pinnedMembers =
   (prototypes: readonly PinnedPrototype[]) =>
@@ -202,20 +205,19 @@ const pinnedMembers =
     const keys = new Set(uses.flatMap((use) => use.constantKey ?? []));
     const every = uses.some((use) => COMPUTED_KEY_CONTRACTS.has(use.feature) && use.constantKey === undefined);
     return prototypes.flatMap(({ name, creates, always }) => {
-      const prototype = `%${name}.prototype%`;
+      const [ctor, prototype] = [`%${name}%`, `%${name}.prototype%`];
       if (!uses.some(creates) && !named.has(prototype)) return [];
-      const methods = NATIVE_REALM_CATALOG.intrinsics
-        .find(({ id }) => id === prototype)!
-        .properties.flatMap((property) => {
+      const methods = (id: string, computed: boolean) =>
+        modelledRow(NATIVE_REALM_CATALOG.intrinsics.find((row) => row.id === id)!).properties.flatMap((property) => {
           const key = property.key.value;
           return property.kind === "data" &&
             property.value.kind === "intrinsic" &&
             key !== "constructor" &&
-            (every || keys.has(key) || always.includes(key))
+            (computed || keys.has(key) || always.includes(key))
             ? [property.value.id]
             : [];
         });
-      return [`%${name}%`, prototype, ...methods];
+      return [ctor, prototype, ...methods(ctor, false), ...methods(prototype, every)];
     });
   };
 /** The `NATIVE_VALUE_INTRINSICS` ids of the constructors `names` and their members (`%String%`, `%String.x%`). */
@@ -246,9 +248,15 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
     pinned: pinnedMembers([ARRAY_PROTOTYPE]),
     throws: ["%RangeError%"],
   },
-  // (#7574) The Object family: `Object` and the realm's root; the root's methods as pinned.
+  // (#7574) The Object family: `Object` and the realm's root; the root's methods and (#7580) `Object`'s statics as
+  // pinned.
   {
-    members: ["%Object%", OBJECT_PROTOTYPE_ID, ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS.map(objectPrototypeMethodId)],
+    members: [
+      "%Object%",
+      OBJECT_PROTOTYPE_ID,
+      ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS.map(objectPrototypeMethodId),
+      ...HELD_OBJECT_STATICS.map(objectStaticId),
+    ],
     contracts: new Set(),
     base: ["%Object%", OBJECT_PROTOTYPE_ID],
     pinned: pinnedMembers([OBJECT_PROTOTYPE]),
@@ -280,13 +288,19 @@ function heldFamilies(uses: readonly Use[], program: PreparedIrProgram): Readonl
 /**
  * (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its held values bring,
  * (#7350 B3b-0) each as far as a realm models it (`modelledRow`); (#7561) a family row without the properties whose
- * value the realm does not hold, which no key of the program reaches (`pinnedMembers`).
+ * value the realm does not hold, which no key of the program reaches (`pinnedMembers`). (#7580) A callable row of
+ * every realm is a function value only where the realm holds it (`intrinsics`, as P1's methods and `Object`'s statics).
  */
 export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {
   const held = description.catalog.intrinsics.flatMap((row) =>
     row.heldWith === undefined || description.intrinsics.includes(row.heldWith) ? [modelledRow(row)] : [],
   );
-  const ids = new Set(held.map(({ id }) => id));
+  const values = new Set([...description.catalog.bootstrap, ...description.intrinsics]);
+  const ids = new Set(
+    held.flatMap(({ id, heldWith, callable }) =>
+      callable !== undefined && heldWith === undefined && !values.has(id) ? [] : [id],
+    ),
+  );
   return held.map((row) => {
     const properties = row.properties.filter(
       (property) => property.kind !== "data" || property.value.kind !== "intrinsic" || ids.has(property.value.id),

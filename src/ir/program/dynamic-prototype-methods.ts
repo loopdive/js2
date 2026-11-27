@@ -14,7 +14,9 @@
  * so it is never `undefined` or `null` (that [[Get]] threw). A detached call (`var h = o.m; h(v)`) has another
  * receiver and takes the dispatcher. (#7352) `Array.isArray` reads no `this` and no key, so a call whose callee is it
  * is IsArray in either shape: `X.isArray(v)`, or detached (`var f = Array.isArray; f(v)`). A method read under another
- * name (`o.m = Array.isArray; o.m(v)`) takes the dispatcher, whose built-in arm aborts.
+ * name (`o.m = Array.isArray; o.m(v)`) takes the dispatcher, whose built-in arm aborts. (#7580) A native `Object`
+ * static the program reads as a value (`staticValues`) ignores `this` too: any call whose callee is it, under any name
+ * (`var d = Object.defineProperty; d(o, k, v)`, `({ f: d }).f(o, k, v)`), is its algorithm.
  *
  * Where the program creates no source function no dispatcher exists, and a call that is none of these built-ins is the
  * run-time abort (a built-in the dispatcher could only abort for).
@@ -25,6 +27,7 @@ import {
   IS_ARRAY_ID,
   REALM_BRAND,
   nativeObjectPrototypeMethod,
+  nativeObjectStatic,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
 import {
@@ -37,7 +40,7 @@ import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
-import { toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
+import { objectStaticTest, toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
@@ -150,6 +153,10 @@ export function dynamicPrototypeMethodCall(
     ...(holdsFamily(b.program, "array") && (name === undefined || name === "isArray")
       ? [() => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))]
       : []),
+    ...[...b.program.objects.staticValues].flatMap((value) => {
+      const native = nativeObjectStatic(value)?.name;
+      return native === undefined ? [] : [() => objectStaticTest(b, instr, native, callee, instr.args.slice(2))];
+    }),
   ];
   if (tests.length === 0) return undefined;
   const call = (r: IrValueId): IrInstr[] =>

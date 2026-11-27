@@ -40,7 +40,7 @@ import {
   type NativeStringValueReservations,
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
-import { familyObjects, familyProperties } from "./native-realm-families.js";
+import { familyObjects, familyProperties, isRootMethod } from "./native-realm-families.js";
 import {
   fillNativeRealmArrays,
   nativeRealmArrayInventory,
@@ -319,9 +319,9 @@ function beginRealm(
     const behavior =
       index < catalog.bootstrap.length
         ? call?.implementation
-        : row?.heldWith !== undefined
-          ? "native"
-          : "object-prototype-method";
+        : row !== undefined && isRootMethod(held, row)
+          ? "object-prototype-method"
+          : "native";
     const supported =
       index < catalog.bootstrap.length
         ? behavior === "function-prototype" || behavior === "throw-type-error"

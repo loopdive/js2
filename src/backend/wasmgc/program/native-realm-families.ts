@@ -41,6 +41,18 @@ function kernelProperties(
   });
 }
 
+/**
+ * (#7580) Whether `row`, a function value the realm holds without a family, is the root's own property (P1's
+ * methods), which the kernel installs there; any other (`Object`'s statics) is held by its family's property lists.
+ */
+export const isRootMethod = (heldRows: readonly NativeRealmIntrinsic[], row: NativeRealmIntrinsic): boolean =>
+  row.heldWith === undefined &&
+  heldRows
+    .find(({ id }) => id === OBJECT_PROTOTYPE_ID)!
+    .properties.some(
+      (property) => property.kind === "data" && property.value.kind === "intrinsic" && property.value.id === row.id,
+    );
+
 /** A family row's data properties, as the kernel defines them (catalog order). */
 export const familyProperties = (row: NativeRealmIntrinsic): NativeBuiltinProperty[] => kernelProperties(row);
 

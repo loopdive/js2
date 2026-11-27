@@ -7,8 +7,8 @@
  * legalization expands (`program/dynamic-object-statics.ts`).
  *
  * The receiver must be the unchanged global `Object` (`builtin-global-binding.ts`: lib-declared only, never assigned);
- * (#7574) `Object` as a value is an identity row whose statics the realm lacks: a program's write to one through the
- * value aborts in the kernel, and a read of one refuses by name, so no program replaces a folded static.
+ * (#7580) A program may replace a static it reaches through `Object` as a value; the legalization then calls the member
+ * `Object` holds instead of the fold (the escape rule of `source-plain-objects.ts`).
  * (#7350 B3a) Beside it, a constant a realm constructor holds (`Number.MAX_VALUE`) and the conversion calls of the
  * wrapper constructors' source-bound plans (`Number(v)`, `Boolean(v)`).
  */

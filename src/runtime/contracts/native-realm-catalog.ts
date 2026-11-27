@@ -146,6 +146,11 @@ const NATIVE_OBJECT_STATICS = Object.freeze([
 ] as const);
 export type NativeObjectStatic = (typeof NATIVE_OBJECT_STATICS)[number];
 /**
+ * (#7580) The `Object` statics a realm holds as function values, each where the program reads it: the native ones and
+ * `getOwnPropertyNames`, whose call is the run-time abort until it is native (#7574 slice 3).
+ */
+export const HELD_OBJECT_STATICS: readonly string[] = Object.freeze([...NATIVE_OBJECT_STATICS, "getOwnPropertyNames"]);
+/**
  * (#7354 P1) The Object.prototype methods the realm populates: each is a built-in function object on the realm's
  * Object.prototype, and the Prepared path writes its algorithm where a call reads it (`dynamic-prototype-methods.ts`).
  */
@@ -462,7 +467,7 @@ const arrayMethods: readonly Method[] = (
  * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a) the
  * wrapper constructors, (#7561) their prototype objects and those prototypes' methods, (#7352) `Array`, its prototype,
  * `Array.isArray` and Array.prototype's methods, (#7574) `Object`, the realm's root and the root's methods held with
- * `Object`. Positional: new rows are appended.
+ * `Object`, (#7580) the statics it holds as values. Positional: new rows are appended.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
@@ -482,6 +487,7 @@ export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   "%Object%",
   OBJECT_PROTOTYPE_ID,
   ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS.map((name) => realmMethodId("Object.prototype", name)),
+  ...HELD_OBJECT_STATICS.map((name) => realmMethodId("Object", name)),
 ]);
 /** (#7350 B3b-0) §22.1.3, §21.1.3, §20.3.3: a wrapper prototype's primitive value. */
 const WRAPPER_PRIMITIVE_DATA: Readonly<Record<NativeWrapperConstructor, string | number | boolean>> = {
@@ -646,7 +652,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       "function-prototype",
     ),
     callable(throwTypeError, "", 0, "ThrowTypeError", ["TypeError"], [], false, "throw-type-error"),
-    // (#7574) Held with itself, identity-only: a realm holds its `prototype`, not its statics.
+    // (#7574) Held with itself, identity-only: a realm holds its `prototype` and (#7580) the statics it holds as values.
     {
       ...callable(
         "%Object%",
@@ -662,7 +668,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
         true,
         "native",
       ),
-      identityOnly: ["length", "name", "prototype"],
+      identityOnly: ["length", "name", "prototype", ...HELD_OBJECT_STATICS],
       heldWith: "%Object%",
     },
     callable(

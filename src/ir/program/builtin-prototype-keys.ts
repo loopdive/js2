@@ -10,6 +10,7 @@
  * (`OBJECT_PROTOTYPE_KEYS`, read here for every IR reader, `src/ir/realm-keys.ts` re-exports them).
  */
 import {
+  HELD_OBJECT_STATICS,
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_CONVERSIONS,
   NATIVE_REALM_CATALOG,
@@ -62,6 +63,12 @@ export const nativeObjectPrototypeMethod = (name: string): NativeObjectPrototype
   nativeLength("Object.prototype", name) === undefined || objectPrototypeConversion(name) !== undefined
     ? undefined
     : (name as NativeObjectPrototypeMethod);
+
+/** (#7580) The catalog id of the `Object` static `name` (`%Object.defineProperty%`). */
+export const objectStaticId = (name: string): string => realmMethodId("Object", name);
+
+/** (#7580) The `Object` statics a realm holds as function values (`identityOnly` of `%Object%`). */
+export { HELD_OBJECT_STATICS };
 
 /** (#7354 P1) The catalog id of the native Object.prototype method `name`, (#7574) a conversion method's too. */
 export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod | NativeObjectPrototypeConversion): string =>

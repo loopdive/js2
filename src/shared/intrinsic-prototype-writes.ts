@@ -50,6 +50,8 @@ export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "
 interface PrototypeUse {
   readonly writes: Set<PatchableIntrinsic>;
   readonly mayPatch: Set<PatchableIntrinsic>;
+  /** (#7580) Intrinsics a use other than an inert one hands on (an alias, an argument, a stored value). */
+  readonly escapes: Set<PatchableIntrinsic>;
   /** Names the source stores into, deletes or defines on anything: `x.call = f`, `String = v`. */
   readonly writtenNames: Set<string>;
   /** The source names a {@link REFLECTIVE_NAMES} route or has a `with` statement. */
@@ -136,6 +138,15 @@ export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: str
   return use.dynamicCode || use.reflective || use.writtenNames.has(name);
 }
 
+/**
+ * (#7580) Whether the source hands the constructor `intrinsic` on: a use of its name that is no call, `new`, member
+ * access, `typeof`, `instanceof` or equality operand (`var O = Object`, `f(Object)`). Only then can code that
+ * does not spell the name reach the constructor's own members.
+ */
+export function sourceLetsIntrinsicEscape(sourceFile: ts.SourceFile, intrinsic: PatchableIntrinsic): boolean {
+  return prototypeUse(sourceFile).escapes.has(intrinsic);
+}
+
 /** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
 export function sourceMayWriteUnspelledMember(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).unspelledWrite;
@@ -162,6 +173,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
     use = {
       writes: new Set(),
       mayPatch: new Set(),
+      escapes: new Set(),
       writtenNames: new Set(),
       reflective: false,
       globalObjectEscapes: false,
@@ -182,6 +194,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
       if (name !== undefined) {
         const reference = node as ts.Expression;
         if (PATCHABLE.has(name) && !isInertUse(reference)) {
+          found.escapes.add(name as PatchableIntrinsic);
           const method = name === "String" ? arrayCallbackMethod(reference) : undefined;
           if (method === undefined) found.mayPatch.add(name as PatchableIntrinsic);
           else callbacks.push({ intrinsic: "String", method });

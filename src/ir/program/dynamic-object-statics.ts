@@ -5,13 +5,19 @@
  * padded with `undefined` to the catalog's length; this module writes the specification's steps that precede the
  * realm's descriptor bodies (`object-static-bodies.ts`): each argument's kind test (a TypeError for a primitive) and
  * ToPropertyKey (the program's own ToString, which can call a key's `toString`), in the specification's order.
+ * (#7580) The same algorithm answers a call through the realm's static as a value (`objectStaticTest`).
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-catalog.js";
-import { nativeObjectStatic } from "./builtin-prototype-keys.js";
+import { nativeObjectStatic, objectStaticId } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { unlessUnheldOwnKey } from "./dynamic-builtin-methods.js";
+import {
+  builtinMethodChain,
+  identityTest,
+  unlessUnheldOwnKey,
+  type BuiltinMethodTest,
+} from "./dynamic-builtin-methods.js";
 import { constantArgumentOf } from "./dynamic-member-access.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
@@ -49,9 +55,52 @@ export function toPropertyKey(b: ObjectStaticBuilders, instr: IrInstr, value: Ir
   return known === undefined ? b.stringOf(instr, value, text) : [b.text(known, text)];
 }
 
-/** The legalized `Object.<name>(…args)` into the call's result. */
+/**
+ * The legalized `Object.<name>(…args)` into the call's result: the static's algorithm, or (#7580) where the program may
+ * have replaced the static (`replacedStatics`, the escape rule), a call of the member `Object` holds now: the
+ * algorithm where it is the realm's static, else the run-time abort, never the folded answer.
+ */
 export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
-  const [first, second, third] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
+  if (!b.program.objects.replacedStatics.has(name)) return objectStatic(b, instr, name, instr.args, instr.result!);
+  const [object, text, key, method] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+  const test = () => objectStaticTest(b, instr, name, method, instr.args);
+  return [
+    ...b.realmIntrinsic("%Object%", object),
+    b.text(name, text),
+    carried(text, key),
+    realmCall("js.object.get", [object, key, object], method),
+    ...builtinMethodChain(b, [test], (r) => b.abort(instr, r), CARRIER)(instr.result!),
+  ];
+}
+
+/**
+ * (#7580) Whether `callee` is the realm's `Object.<name>`, answering its algorithm over `args` (`this` is not
+ * read), each argument the call lacks `undefined`: the identity row of the folded call and of a call through a value.
+ */
+export function objectStaticTest(
+  b: ObjectStaticBuilders,
+  instr: Call,
+  name: NativeObjectStatic,
+  callee: IrValueId,
+  args: readonly IrValueId[],
+): BuiltinMethodTest {
+  const missing = Array.from({ length: Math.max(0, nativeObjectStatic(name)!.length - args.length) }, () => b.fresh());
+  missing.forEach((value) => b.kinds.learn(value, ["undefined"]));
+  return identityTest(b, instr, objectStaticId(name), callee, (r) => [
+    ...missing.map((value) => b.intrinsic(instr, "js.value.undefined", [], value)),
+    ...objectStatic(b, instr, name, [...args, ...missing], r),
+  ]);
+}
+
+/** The algorithm of `Object.<name>(…args)` into `result` (`args` as long as the static's `length`). */
+function objectStatic(
+  b: ObjectStaticBuilders,
+  instr: Call,
+  name: NativeObjectStatic,
+  args: readonly IrValueId[],
+  result: IrValueId,
+): IrInstr[] {
+  const [first, second, third] = args as [IrValueId, IrValueId, IrValueId | undefined];
   const undefinedValue = (r: IrValueId) => b.intrinsic(instr, "js.value.undefined", [], r);
   const throwing = (message: string, r: IrValueId) =>
     typeErrorThen({ ...b, carrier: CARRIER }, message, undefinedValue(r));
@@ -101,7 +150,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
       r,
     );
   const onObject = (object: Arm) =>
-    byKind(first, object, (_kind, r) => throwing(`Object.${name} called on non-object`, r), instr.result!);
+    byKind(first, object, (_kind, r) => throwing(`Object.${name} called on non-object`, r), result);
   switch (name) {
     case "defineProperty":
       return onObject((r) =>
@@ -125,7 +174,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
           nullish(kind)
             ? throwing("Cannot convert undefined or null to object", r)
             : withKey(second, () => (kind === "string" ? b.abort(instr, r) : [undefinedValue(r)])),
-        instr.result!,
+        result,
       );
     case "create":
       // The prototype must be an object or null: an ordinary object links (a function is no ordinary object, which the
@@ -133,7 +182,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
       return b.kindChain(
         instr,
         first,
-        instr.result!,
+        result,
         (kind, r) => {
           const object = b.fresh();
           const create =

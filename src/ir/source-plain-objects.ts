@@ -9,17 +9,32 @@
  * (#7354 M1, C1) A built-in prototype is one a program can change only where it can obtain it: (#7561) a wrapper's
  * (`wrappers`), (#7352, #7574) Array's or the root through its family (`realmFamilies`). A receiver the front end
  * folds (a native `Object` static's call, the intercepted `Object.prototype.toString.call(v)`) reaches none.
+ *
+ * (#7580) The escape rule: a call `Object.m(…)` keeps the folded built-in unless the program may have replaced
+ * `Object.m` when it runs. That needs the `object` family (without it no code obtains `Object`: the root's
+ * `constructor` comes with the family) and a route that writes `m` on it: a member named `m` written, deleted or
+ * defined on any object, a member installed under a name the source does not spell, a reflective route
+ * (`constructor`, `Reflect`, …), code the walk cannot see, or `Object` handed on (`var O = Object`, `f(Object)`).
+ * Each is a question of the shared walk (`intrinsic-prototype-writes.ts`), asked of every source file.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall, objectTagCallReceiver, realmConstantRead } from "./realm-static-call.js";
 import {
+  HELD_OBJECT_STATICS,
   WRAPPER_OF_PRIMITIVE,
   realmConstructorId,
   type RealmConstructor,
   type RealmFamily,
 } from "./program/builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
+import {
+  sourceLetsIntrinsicEscape,
+  sourceMayWriteUnspelledMember,
+  sourceNamesReflectiveRoute,
+  sourceRunsDynamicCode,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -72,6 +87,14 @@ export function programObjects(
       return [WRAPPER_OF_PRIMITIVE.boolean];
     return Object.values(WRAPPER_OF_PRIMITIVE);
   };
+  // (#7580) The statics a value read reaches by name: `Object.m` that is no folded call.
+  const staticValues = new Set<string>();
+  const staticRead = (node: ts.Identifier): readonly string[] => {
+    const access = node.parent;
+    return ts.isPropertyAccessExpression(access) && HELD_OBJECT_STATICS.includes(access.name.text)
+      ? [access.name.text]
+      : [];
+  };
   const visit = (node: ts.Node): void => {
     const ctor = ts.isIdentifier(node) ? constructorRead(node) : undefined;
     if (ctor !== undefined) realmFamilies.add(ctor.family);
@@ -83,7 +106,10 @@ export function programObjects(
         (ts.isPropertyAccessExpression(access) && access.name.text === "prototype"))
     )
       wrappers.add(ctor.name);
-    if (ctor?.family === "object") objectWraps(node as ts.Identifier).forEach((kind) => wrappers.add(kind));
+    if (ctor?.family === "object") {
+      objectWraps(node as ts.Identifier).forEach((kind) => wrappers.add(kind));
+      staticRead(node as ts.Identifier).forEach((name) => staticValues.add(name));
+    }
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -93,5 +119,23 @@ export function programObjects(
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || realmFamilies.has("error"), functions, namesSymbol, realmFamilies, wrappers };
+  const escapes = sourceFiles.some((file) => sourceLetsIntrinsicEscape(file, "Object"));
+  const replaces = (name: string): boolean =>
+    escapes ||
+    sourceFiles.some(
+      (file) =>
+        sourceWritesMemberNamed(file, name) ||
+        sourceMayWriteUnspelledMember(file) ||
+        sourceNamesReflectiveRoute(file) ||
+        sourceRunsDynamicCode(file),
+    );
+  return {
+    present: present || realmFamilies.has("error"),
+    functions,
+    namesSymbol,
+    realmFamilies,
+    wrappers,
+    staticValues: escapes ? new Set(HELD_OBJECT_STATICS) : staticValues,
+    replacedStatics: new Set(realmFamilies.has("object") ? HELD_OBJECT_STATICS.filter(replaces) : []),
+  };
 }

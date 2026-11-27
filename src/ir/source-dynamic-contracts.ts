@@ -525,6 +525,24 @@ function passedOn(node: ts.Expression): boolean {
 }
 
 /**
+ * (#7354 F2, P1) `value` is an argument of the dispatcher's call, which takes every argument as a carrier whatever the
+ * lib types it: a method call on a dynamic receiver (`o.hasOwnProperty(k)`'s `PropertyKey`) or (#7580) a call through
+ * a dynamic value (`var d = Object.defineProperty; d(o, k, { value: v })`); so is a field (name or value) of an object
+ * literal passed to one, a property of the object the call receives.
+ */
+function dispatchedArgument(value: ts.Expression, carries: Carries): boolean {
+  let argument = value;
+  while (ts.isPropertyAssignment(argument.parent)) argument = argument.parent.parent;
+  const call = argument.parent;
+  if (!ts.isCallExpression(call) || !call.arguments.includes(argument)) return false;
+  const callee = call.expression;
+  return (
+    carries(callee) ||
+    ((ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) && carries(callee.expression))
+  );
+}
+
+/**
  * `value` lands where the dynamic value is held, whatever the checker types that place: stored by a plain `=` into a
  * binding that may hold it, or (#7354 W2) the initializer of such a binding, an argument for a parameter whose
  * contract is dynamic, a value returned from a function whose result is. The checker reads the type of the last
@@ -545,12 +563,8 @@ function landsInCarrier(value: ts.Expression, checker: ts.TypeChecker, policy: S
       sourceDynamicResult(checker, policy, owner, carries)?.kind === "dynamic"
     );
   }
+  if (dispatchedArgument(value, carries)) return true;
   if (!ts.isCallExpression(parent) || parent.expression === value) return false;
-  // (#7354 F2, P1) A method call on a dynamic receiver is the [[Get]], then the dispatcher's call, which takes every
-  // argument as a carrier whatever the lib types the method (`o.hasOwnProperty(k)`'s `PropertyKey`).
-  const access = parent.expression;
-  if ((ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) && carries(access.expression))
-    return true;
   const callee = sourceFunctionCallee(checker, parent);
   if (callee === undefined) return false;
   const parameter = callee.parameters[parent.arguments.indexOf(value)];
