@@ -8042,6 +8042,28 @@ not done yet (next part). `from-ast.ts` 17172 → 17152.
 - Proof: the 404 probes are identical to part 1 (0 wrong); runner targeted 44, sample 87, unchanged; ordinary bytes
   identical (33 programs × 2); the 17 modified root test files each exit 0 alone; gates exit 0.
 
+### L0c review r3: lost write through a closure created in a nested block (2026-11-27)
+
+- **Wrong value, fixed.** `function t(){ var sum = 1; for (var i = 0; i < 4; i++) { var f = function () { sum = sum * 2; };
+  f(); } return String(sum); }` answered `"1"` (node `"16"`); the same in a `while`, `do`, `if`, `try`/`catch`/`finally`
+  body and two levels deep, for a captured parameter, and for a loop body's `let` read after an inner block. Cause:
+  the closure literal moved its mutable capture into a new cell at the closure (`lowerClosureExpressionWithSignature`,
+  `lowerNestedFuncCall`) and rebound the name in the scope it was lowered in — a block's or loop body's copy — so the
+  enclosing scope kept reading the uncaptured local, and a loop made a fresh cell per iteration.
+- **Rule** (`capturedBindings`, `function-declaration-values.ts`): a binding of a function that a nested function
+  reads or writes has one cell, made where the binding is, before any statement can capture it — a `var` (a cell of
+  the carrier, as a nested declaration's captured `var` already was) and a parameter (a cell of its value) at function
+  entry, a `let` statement's binding where it is bound (per iteration in a loop body). On the Prepared lane a closure
+  only passes that cell (`mutableCaptureCell`); a capture with no cell — a loop head's `let`, a `catch` binding, a
+  parameter kept in a slot — refuses (run-time abort). The ordinary pipeline keeps its in-place cell.
+- **Probes** (vs node, wrong twins fail): right — the two reported programs' loop form, `for`/`while`/`do`/`if`/`try`/
+  `switch` bodies, two levels deep, several closures sharing one `var`, read-and-write, `+=`/`++`/`--`/`=`, a captured
+  parameter in a loop, a `var` declared and captured in the loop body (`"3"`), recursion, a body `let` per iteration
+  (also after an inner block), a closure calling a closure; unchanged right — hoisted mutual recursion, captured writes
+  outside loops, compound member writes, a closure created outside the loop; aborts — a closure kept and called after
+  the loop (`assignment … got closure`), a loop head's `let` written by a closure, `for-in` (no dynamic for-in), a bare
+  block statement and a block function declaration (L0c2). Wrong: 0.
+
 ## Slice L0c part 2
 
 Moved to its own issue: [#7554](7554-prepared-block-function-declarations.md) (one issue per PR, 2026-11-27).

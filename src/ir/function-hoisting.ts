@@ -17,20 +17,44 @@ import { enclosingFunctionBody } from "./function-declaration-values.js";
  */
 export type HoistedStorage = "cell" | "slot";
 
-const analysed = new WeakMap<ts.Block, ReadonlyMap<string, HoistedStorage>>();
+/** A binding of a function that a function inside it may share: a `var`, a `let` statement's or a parameter. */
+export type CapturedBinding = ts.VariableDeclaration | ts.ParameterDeclaration;
+
+interface BodyBindings {
+  readonly names: ReadonlyMap<string, HoistedStorage>;
+  readonly captured: ReadonlySet<CapturedBinding>;
+}
+
+const analysed = new WeakMap<ts.Block, BodyBindings>();
 
 /**
- * The names `body` binds at entry besides its top-level function declarations: a `var` that a function declaration
- * of the body reads or writes, or that code reaches outside the statement declaring it or before its declaration
- * (from-ast binds a declaration where it stands), and the var binding of each Annex B function (B.3.3.1). A `var`
- * also declared by a `for-in`/`for-of` head is left out: the loop binds its own slot. Analysed once per body.
+ * The names `body` binds at entry besides its top-level function declarations: a `var` that a function inside the
+ * body reads or writes (one cell per activation, wherever the function is created), or that code reaches outside the
+ * statement declaring it or before its declaration (from-ast binds a declaration where it stands), and the var binding
+ * of each Annex B function (B.3.3.1). A `var` also declared by a `for-in`/`for-of` head is left out: the loop binds its
+ * own slot. Analysed once per body.
  */
 export function hoistedBodyNames(body: ts.Block, checker: ts.TypeChecker): ReadonlyMap<string, HoistedStorage> {
+  return bodyBindings(body, checker).names;
+}
+
+/**
+ * Whether a function inside `declaration`'s function reads or writes it, so it lives in one cell that function shares:
+ * a parameter's made at entry, a `let` statement's where it is bound (per iteration in a loop body). A `const` (never
+ * written) and a loop head's `let` (whose per-iteration copies are not modelled) have none: a closure writing such a
+ * binding refuses. A `var`'s cell is a hoisted name (`hoistedBodyNames`).
+ */
+export function sharesCell(declaration: CapturedBinding, checker: ts.TypeChecker): boolean {
+  const body = enclosingFunctionBody(declaration);
+  return body !== undefined && ts.isBlock(body) && bodyBindings(body, checker).captured.has(declaration);
+}
+
+function bodyBindings(body: ts.Block, checker: ts.TypeChecker): BodyBindings {
   const known = analysed.get(body);
   if (known !== undefined) return known;
   const declarations = new Map<ts.Symbol, ts.VariableDeclaration[]>();
   const references = new Map<ts.Symbol, ts.Identifier[]>();
-  const readByDeclaration = new Set<ts.Symbol>();
+  const readByFunction = new Set<ts.Symbol>();
   const namedInFunction = new Set<string>();
   const hoisted = new Set<string>();
   const add = <K, V>(map: Map<K, V[]>, key: K, value: V): void => {
@@ -38,11 +62,11 @@ export function hoistedBodyNames(body: ts.Block, checker: ts.TypeChecker): Reado
     if (list === undefined) map.set(key, [value]);
     else list.push(value);
   };
-  const visit = (node: ts.Node, inDeclaration: boolean, inFunction: boolean): void => {
-    const symbol = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined;
+  const visit = (node: ts.Node, inFunction: boolean): void => {
+    const symbol = ts.isIdentifier(node) ? bindingSymbol(node, checker) : undefined;
     if (symbol !== undefined) {
       add(references, symbol, node as ts.Identifier);
-      if (inDeclaration) readByDeclaration.add(symbol);
+      if (inFunction) readByFunction.add(symbol);
     }
     if (ts.isIdentifier(node) && inFunction && !isOwnName(node)) namedInFunction.add(node.text);
     // The checker gives a `var` in a `with` body no symbol: it keeps its own lowering.
@@ -50,22 +74,45 @@ export function hoistedBodyNames(body: ts.Block, checker: ts.TypeChecker): Reado
     if (own !== undefined) add(declarations, own, node as ts.VariableDeclaration);
     if (ts.isFunctionDeclaration(node) && enclosingFunctionBody(node) === body && annexBApplies(node))
       hoisted.add(node.name!.text);
-    ts.forEachChild(node, (child) =>
-      visit(child, inDeclaration || ts.isFunctionDeclaration(node), inFunction || ts.isFunctionLike(node)),
-    );
+    ts.forEachChild(node, (child) => visit(child, inFunction || ts.isFunctionLike(node)));
   };
-  ts.forEachChild(body, (child) => visit(child, false, false));
+  ts.forEachChild(body, (child) => visit(child, false));
   const loopHeads: string[] = [];
   for (const [symbol, declared] of declarations) {
     if (declared.some((d) => ts.isForInStatement(d.parent.parent) || ts.isForOfStatement(d.parent.parent)))
       loopHeads.push(symbol.name);
-    else if (readByDeclaration.has(symbol) || references.get(symbol)!.some((r) => declared.some((d) => outside(r, d))))
+    else if (readByFunction.has(symbol) || references.get(symbol)!.some((r) => declared.some((d) => outside(r, d))))
       hoisted.add(symbol.name);
   }
   for (const name of loopHeads) hoisted.delete(name);
   const names = new Map([...hoisted].map((name) => [name, namedInFunction.has(name) ? "cell" : "slot"] as const));
-  analysed.set(body, names);
-  return names;
+  const captured = new Set(
+    [...readByFunction].flatMap((symbol) => (symbol.declarations ?? []).filter((d) => isCellBinding(d, body))),
+  );
+  const bindings = { names, captured };
+  analysed.set(body, bindings);
+  return bindings;
+}
+
+/** The binding an identifier names; a shorthand property (`{ x }`) names its value's. */
+function bindingSymbol(identifier: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
+  const { parent } = identifier;
+  return ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
+    ? checker.getShorthandAssignmentValueSymbol(parent)
+    : checker.getSymbolAtLocation(identifier);
+}
+
+/** A parameter of `body`'s function, or a `let` statement's binding in it. */
+function isCellBinding(declaration: ts.Declaration, body: ts.Block): declaration is CapturedBinding {
+  if (ts.isParameter(declaration)) return declaration.parent === body.parent;
+  const list = declaration.parent;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    enclosingFunctionBody(declaration) === body &&
+    ts.isVariableDeclarationList(list) &&
+    ts.isVariableStatement(list.parent) &&
+    (list.flags & ts.NodeFlags.Let) !== 0
+  );
 }
 
 /** A function's own name: no reference to the binding the function is assigned to. */

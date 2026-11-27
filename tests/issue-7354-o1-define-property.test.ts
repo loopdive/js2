@@ -5,7 +5,7 @@
 // test262 runner's options. Each accepted program runs twice against node: its answer returns, a wrong one throws. A
 // TypeError the specification demands is caught by the program itself, so it is part of node's answer.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { abortsAtRunTime, agreesWithNode, nodeOut, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import { agreesWithNode, nodeOut, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";
 import { CATCHES, FIELDS } from "./helpers/object-static-probes.js";
 
@@ -194,16 +194,10 @@ describe("#7354 O1c — the statics inside a function body", () => {
       `function mk(){ var o = {}; return o; } function f(){ var o = mk(); ${STATICS} ${RESULT} } var out = f();`,
     ],
     ["a constructor", `function C(){ var o = {}; ${STATICS} this.r = show(o, d, c); } var out = new C().r;`],
+    // (#7354 L0c) A closure reads the captured object from the function's cell of the dynamic value.
+    [
+      "a nested closure over a function-local object",
+      `function f(){ var o = {}; var g = function(){ ${STATICS} ${RESULT} }; return g(); } var out = f();`,
+    ],
   ])("%s agrees with node", (_name, body) => agrees(SHOW + body), SLOW);
-  // A closure reads the captured object from its capture, whose kind the legalization cannot prove: the closure's
-  // body is the run-time abort, never a wrong value.
-  it(
-    "a nested closure over a function-local object aborts",
-    () =>
-      abortsAtRunTime(
-        SHOW + `function f(){ var o = {}; var g = function(){ ${STATICS} ${RESULT} }; return g(); } var out = f();`,
-        runnerOptions(),
-      ),
-    SLOW,
-  );
 });
