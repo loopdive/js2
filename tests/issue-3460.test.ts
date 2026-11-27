@@ -18,7 +18,7 @@
 // pure closure programs) is preserved.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileAndRun(source: string): Promise<unknown> {
   const r = await compile(source, {
@@ -27,11 +27,7 @@ async function compileAndRun(source: string): Promise<unknown> {
     skipSemanticDiagnostics: true,
   });
   expect(r.success, r.errors?.[0]?.message).toBe(true);
-  const imports = buildImports(r.imports, undefined, r.stringPool) as unknown as WebAssembly.Imports & {
-    setExports?: (e: Record<string, Function>) => void;
-  };
-  const { instance } = await WebAssembly.instantiate(r.binary!, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { test: () => unknown }).test();
 }
 

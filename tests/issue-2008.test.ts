@@ -10,18 +10,14 @@
 // of routing the opaque struct through the `__tagged_template` host bridge.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string): Promise<unknown> {
   const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`compile failed: ${result.errors.map((e) => `L${e.line}: ${e.message}`).join("; ")}`);
   }
-  const importObj = buildImports(result.imports, undefined, result.stringPool) as Record<string, unknown>;
-  const { instance } = await WebAssembly.instantiate(result.binary, importObj as never);
-  if (typeof importObj.setExports === "function") {
-    (importObj.setExports as (e: unknown) => void)(instance.exports);
-  }
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as { test(): unknown }).test();
 }
 

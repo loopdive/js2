@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildImports, evaluateAsJs } from "./equivalence/helpers.js";
-import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { assertEquivalent, compileToWasm } from "./equivalence/helpers.js";
 
 /**
  * JWT Decode + HS256 Verify Showcase
@@ -14,41 +12,6 @@ import { buildStringConstants } from "../src/runtime.js";
  *
  * All logic is pure TypeScript compiled to Wasm -- no host crypto dependencies.
  */
-
-/**
- * Extended compileToWasm that includes String_fromCharCode host import.
- * The compiler emits this import for String.fromCharCode() calls.
- */
-async function compileToWasm(source: string) {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e: any) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  const imports = buildImports(result);
-  // Add String.fromCharCode host import (compiler emits String_fromCharCode)
-  (imports.env as Record<string, Function>).String_fromCharCode = (code: number) => String.fromCharCode(code);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  return instance.exports as Record<string, Function>;
-}
-
-/**
- * Assert Wasm output matches native JS for each test case.
- */
-async function assertEquivalent(source: string, testCases: { fn: string; args: unknown[]; approx?: boolean }[]) {
-  const wasmExports = await compileToWasm(source);
-  const jsExports = evaluateAsJs(source);
-  for (const { fn, args, approx } of testCases) {
-    const wasmResult = wasmExports[fn]!(...args);
-    const jsResult = jsExports[fn]!(...args);
-    if (approx) {
-      expect(wasmResult).toBeCloseTo(jsResult as number, 3);
-    } else {
-      expect(wasmResult).toBe(jsResult);
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 1. Base64url decode
