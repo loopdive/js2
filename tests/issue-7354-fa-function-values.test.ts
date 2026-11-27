@@ -17,7 +17,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { abortsAtRunTime, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, agreesWithNode, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -181,18 +181,19 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = function (a) { a = function () { return 1; }; return a; }; f(1);",
       'assignment to "a" (dynamic) got closure()->dynamic',
     ],
-    // JavaScript hoists the local; the closure captures only what is bound where it is created.
-    [
-      "a closure reading a local declared after it",
-      "function g() { var k = function () { return x; }; var x = 1; return k(); } g();",
-      'closure g__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
-    ],
+    // (#7354 L0c) A closure reading a local declared after it now reads the hoisted `var` (an agreement test below).
     // (#7354 F1) `+=` on a parameter, `+`, `String(f)` and `typeof` of a function value:
     // tests/issue-7354-f1-*.test.ts.
     // (#7354 H2) A declaration read as a value and written has a mutable home: tests/issue-7354-h2-*.test.ts.
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
   });
+
+  // (#7354 L0c) JavaScript hoists the `var`: a function body binds a local read before its declaration at entry.
+  it("reads a local declared after the closure that reads it", () =>
+    agreesWithNode(
+      "function g() { var k = function () { return x; }; var x = 1; return k(); }\nvar out = String(g());",
+    ));
 
   // (#7354 C2) Sloppy `this` without a receiver would be the global object, which the realm lacks: the run-time abort.
   it("ends a sloppy function value's `this` without a receiver at the run-time abort", () =>

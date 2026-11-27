@@ -157,57 +157,57 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
     expect(await run(program("0"), "test.ts")).toBe("threw");
   });
 
-  // What the Prepared path does not model refuses by name: no binding is hoisted to the function scope yet, and a
-  // repeated declaration has no single storage.
+  // (#7354 L0c) A `var` reached outside the statement declaring it, or before it, or declared twice, is bound at
+  // function entry: one storage for every declaration.
   it.each([
-    [
-      "read after the loop that declares it",
-      "function f(v){ for (var j = 0; j < 1; j = j + 1) { var x; x = v; } return x; } f(1);",
-      'identifier "x" is not in scope in f',
-    ],
+    ["read after the loop that declares it", "for (var j = 0; j < 1; j = j + 1) { var x; x = v; } return x;"],
     [
       "read in a loop before its declaration",
-      "function f(v, w){ var r = w; for (var i = 0; i < 2; i = i + 1) { if (i === 1) r = x; var x; x = v; } return r; } f(5, 0);",
-      'identifier "x" is not in scope in f',
+      "var r; for (var i = 0; i < 2; i = i + 1) { if (i === 1) r = x; var x; x = v; } return r;",
+    ],
+    ["declared again after an assignment", "var x = v; var x; return x;"],
+    ["repeated in a block, then at function level", "if (v === 5) { var x; x = v; } var x; return x * 1;"],
+    [
+      "repeated in two loops",
+      "for (var i = 0; i < 1; i++) { var x; x = v; } for (var j = 0; j < 1; j++) { var x; return x * 1; }",
+    ],
+    ["repeated in a loop, then after it", "for (var i = 0; i < 1; i++) { var x; x = v; } var x; return x * 1;"],
+    [
+      "repeated in both arms of an if in a loop",
+      "for (var i = 0; i < 2; i++) { if (i === 0) { var x; x = v; } else { var x; return x * 1; } }",
     ],
     [
-      "declared again after an assignment",
-      "function f(v){ var x = v; var x; return x; } f(1);",
-      "redeclaration of 'x' in f",
+      "repeated in try, catch and finally",
+      "try { var x; x = v; } catch (e) { var x; } finally { var x; } return x * 1;",
     ],
-    // Review round 1: a repeat in another block opened a second slot starting at `undefined` (a wrong answer on
-    // main too). Every repeat of a `var` name in its function refuses; none may bind a second local.
-    ...(
-      [
-        ["in a block, then at function level", "if (v === 5) { var x; x = v; } var x; return x * 1;"],
-        [
-          "in two loops",
-          "for (var i = 0; i < 1; i++) { var x; x = v; } for (var j = 0; j < 1; j++) { var x; return x * 1; }",
-        ],
-        ["in a loop, then after it", "for (var i = 0; i < 1; i++) { var x; x = v; } var x; return x * 1;"],
-        [
-          "in both arms of an if in a loop",
-          "for (var i = 0; i < 2; i++) { if (i === 0) { var x; x = v; } else { var x; return x * 1; } }",
-        ],
-        ["in try, catch and finally", "try { var x; x = v; } catch (e) { var x; } finally { var x; } return x * 1;"],
-        ["with an initializer in a block", "var x = 1; { var x = 2; } return x;"],
-        ["after a parameter of the same name", "var v; return v * 1;"],
-        [
-          "as a for-head variable of two loops",
-          "var r = 0; for (var i = 0; i < 2; i++) r = r + i; for (var i = 0; i < 3; i++) r = r + i; return r;",
-        ],
-      ] as const
-    ).map(
-      ([shape, body]) =>
-        [`repeated ${shape}`, `function f(v){ ${body} } f(5);`, /redeclaration of '[xvi]' in f/] as const,
-    ),
-    // (#7372) A nested and a repeated script `var` are one global: `tests/issue-7372-nested-script-var.test.ts`
-    // runs the two script programs this list refused.
+    ["repeated with an initializer in a block", "var x = v; { var x = v + 1; } return x - 1;"],
+    // (#7354 Fa) The closure reads the hoisted `x`'s cell.
     [
       "read by a closure",
-      "function f(v, w){ var r = w; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r; } f(5, 0);",
-      // (#7354 Fa) The closure has the all-dynamic contract now; the hoisted `x` it reads has no capture.
-      'closure f__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
+      "var r; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r;",
+    ],
+  ])("reads a var %s", async (_, body) => {
+    expect(await run(`function f(v){ ${body} } if (f(5) !== 5) throw 1;`)).toBe("returned");
+    expect(await run(`function f(v){ ${body} } if (f(5) !== 6) throw 1;`)).toBe("threw");
+  });
+
+  // What the Prepared path does not model refuses by name: a repeated declaration it does not hoist has no single
+  // storage.
+  it.each([
+    // Review round 1: a repeat in another block opened a second slot starting at `undefined` (a wrong answer on
+    // main too). (#7354 L0c) A repeat is hoisted to one storage now (above); a parameter's name still refuses.
+    [
+      "repeated after a parameter of the same name",
+      "function f(v){ var v; return v * 1; } f(5);",
+      "redeclaration of 'v' in f",
+    ],
+    // (#7372) A nested and a repeated script `var` are one global: `tests/issue-7372-nested-script-var.test.ts`
+    // runs the two script programs this list refused.
+    // (#7354 L0c) The for-head `i` is hoisted (both loops declare it), so it is the dynamic value; `r` is a number.
+    [
+      "repeated as a for-head variable of two loops",
+      "function f(v){ var r = 0; for (var i = 0; i < 2; i++) r = r + i; for (var i = 0; i < 3; i++) r = r + i; return r; } f(5);",
+      'assignment to "r" (f64) got dynamic in f',
     ],
   ])("refuses a var %s by name", async (_, program, message) => {
     expect(await refusal(program)).toMatch(message);

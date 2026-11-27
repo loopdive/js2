@@ -7828,54 +7828,6 @@ not done yet (next part). `from-ast.ts` 17172 → 17152.
 - Proof: the 404 probes are identical to part 1 (0 wrong); runner targeted 44, sample 87, unchanged; ordinary bytes
   identical (33 programs × 2); the 17 modified root test files each exit 0 alone; gates exit 0.
 
-## Slice L0c part 2 plan (2026-11-27, branch `claude/7354-l0c2` from `claude/7354-l0c` e9ac3bb85c)
+## Slice L0c part 2
 
-Annex B block functions, `var`s reached outside the statement that declares them, `{ … }` blocks in a function
-prefix, and the part-1 review leftovers. Every arm is gated on `onPreparedDynamicLane`; ordinary bytes stay identical;
-`from-ast.ts` (17160) does not grow.
-
-### Measured at the base (5 probes, all fail)
-
-`{ function f(){} }` read outside the block (abort `f not in scope`), `if (c) { function f(){} }`, the B.3.3
-block-scoping shape (abort `unexpected statement before tail (got Block)`), `i` after `for (var i…)` (abort), `{ x = 2; }`
-in a function prefix (abort).
-
-### Mechanism (extends part 1's hoisting; no second path)
-
-- **One analysis module, `src/ir/function-hoisting.ts`** (pure AST + checker, no lowering), replacing
-  `localDeclarationCaptures`. `hoistedBodyNames(body)` answers the names a function body binds as cells of the carrier at
-  entry (§10.2.11 VarDeclaredNames, only where needed): a `var` read or written by a function declaration of the body
-  (part 1, now at any block depth), a `var` declared in a nested statement and reached outside that statement or before
-  its declaration, and the var name of each Annex B function. `annexBApplies(declaration)` is B.3.3.1's test: sloppy
-  function code, a function in a block, `case`/`default` clause or (B.3.4) an `if` arm, whose name is no parameter and
-  whose replacement by `var` would collide with no `let`/`const`/`class`/block function of an enclosing scope (a simple
-  catch parameter does not collide, B.3.5). The provenance asks the same module (`localNeedsDynamicCarrier`).
-- **Lowering (from-ast; the hoisting emission is one helper pair, not a copy):** at function entry the body's names are
-  cells (`undefined`) and its top-level declarations get their values (part 1). At the entry of a block, a `switch`'s
-  case block (all clauses at once, before the dispatch) and a try/catch/finally block, each function declaration is a
-  fresh cell of the block shadowing the outer name, valued through the same closure path; an Annex B one records the
-  function's var cell. Evaluating the declaration statement copies the block cell into that var cell (B.3.3.1 step
-  b.ii); otherwise it is a no-op. A block function in global code, or whose var cell is shadowed (a catch parameter of
-  the same name), keeps refusing.
-- **Blocks:** `{ … }` before the tail lowers through the existing body-statement Block arm (lane only).
-- **Review leftovers:** a.) the parameter check reads the parameter list, not the scope; b.) the two "not in slice 3"
-  diagnostics name the unsupported shape; c.) `bindingHoldsDynamic` looks inside a cell, so the call-site twin
-  `heldType(callee)` goes; d.) the whole-program `__new_ReferenceError` failure is narrowed back to the function (or
-  made right); e.) only if cheap.
-
-### Still refused / aborting (by design)
-
-Global-code Annex B (the var binding is a script global), block functions in strict code read outside their block
-(ReferenceError per spec: the scope miss aborts), a block `let`/`const` shadowing a hoisted name (redeclaration
-abort, part 1), `for (var k in …)` heads, implicit globals, `with`, `eval`.
-
-### Tests, proof, quality criterion
-
-- `tests/issue-7354-l0c-function-declarations.test.ts` (and a new `-annex-b` file if it would grow past ~120 lines):
-  node agreement for block/if/switch/try/loop functions, B.3.3 block scoping, skip cases (let in an enclosing block,
-  parameter, for-let head), existing var/function updates, nested-var reads; aborts for the refused shapes.
-- Probes base → head with twins, ≤ 10 compiles per process; the part-1 probe sets; runner sample (411) and targeted
-  list, no pass lost, a hand-made wrong twin for each new pass; ordinary bytes identical on both targets.
-- **Quality:** one analysis module answering both lowering and provenance; one cell/value emission for body and block
-  hoisting; Annex B is one field on the block's cell binding and one evaluation arm; no `func-budget-allow`, no
-  `loc-budget-allow`; `from-ast.ts` ≤ 17160.
+Moved to its own issue: [#7554](7554-prepared-block-function-declarations.md) (one issue per PR, 2026-11-27).
