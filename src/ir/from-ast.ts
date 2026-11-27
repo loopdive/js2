@@ -190,6 +190,7 @@ import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
 import { someReturnedValue } from "./function-returns.js";
 import { describeIrType } from "./describe-ir-type.js";
 import {
+  enclosingFunctionBody,
   isFunctionLocalDeclaration,
   localDeclarationCaptures,
   type FunctionDeclarationValue,
@@ -354,6 +355,7 @@ import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "
 import {
   isInLoopOfOwnFunction,
   isModuleInitVarList,
+  isVarDeclarationList,
   moduleInitContainsNestedVar,
 } from "../shared/var-declaration-lists.js";
 import { emitLogicalSelect } from "./logical-select.js";
@@ -411,7 +413,6 @@ import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
   tryLowerPromiseDelayConstruction,
-  validateExactCapturePlan,
   type ExactClosureLoweringOptions,
   type IrPromiseDelayLoweringHost,
   type IrPromiseDelayLoweringPlans,
@@ -2359,15 +2360,9 @@ function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): 
   // (L0c) A function declaration in a function body with the lane's all-dynamic contract is hoisted there before the
   // statements run (§10.2.11 step 36); an annotated one keeps the nested-function lowering.
   const lane = functionObjects.onPreparedDynamicLane(cx.resolver);
-  const hoisted = lane
-    ? statements.filter(
-        (s): s is ts.FunctionDeclaration =>
-          isFunctionLocalDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined,
-      )
-    : [];
-  hoistFunctionDeclarations(hoisted, cx);
+  const hoisted = lane ? hoistFunctionDeclarations(statements, cx) : new Set<ts.Statement>();
   const stmts = lane
-    ? statements.filter((statement) => !ts.isEmptyStatement(statement) && !hoisted.includes(statement as never))
+    ? statements.filter((statement) => !ts.isEmptyStatement(statement) && !hoisted.has(statement))
     : statements;
   if (stmts.length < 1) {
     // #7104 — an empty dynamic-return body returns the carrier's undefined.
@@ -2414,34 +2409,38 @@ function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): 
 }
 
 /**
- * (#7354 L0c) Each declaration's name is first bound to a cell of the carrier (`undefined`), so the functions capture
- * the cell and a sibling or the function itself is read at call time; then each cell gets its function value, in
- * source order, so a later declaration of the same name wins.
+ * (#7354 L0c) The function declarations of `statements` with the all-dynamic contract, hoisted. Each name, and each
+ * `var` of the function body a declaration reads or writes, is first bound to a cell of the carrier (`undefined`), so
+ * the functions capture the cell and a sibling or the function itself is read at call time; then each cell gets its
+ * function value, in source order, so a later declaration of the same name wins.
  */
-function hoistFunctionDeclarations(declarations: readonly ts.FunctionDeclaration[], cx: LowerCtx): void {
-  const cellType: IrType = { kind: "boxed", inner: irDynamic() };
+function hoistFunctionDeclarations(statements: readonly ts.Statement[], cx: LowerCtx): ReadonlySet<ts.Statement> {
+  const declarations = statements.filter(
+    (s): s is ts.FunctionDeclaration =>
+      isFunctionLocalDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined,
+  );
   const body = declarations[0]?.parent;
-  const captured = body && ts.isBlock(body) && cx.checker ? [...localDeclarationCaptures(body, cx.checker)] : [];
+  if (body === undefined) return new Set();
+  if (declarations.some((d) => cx.scope.has(d.name!.text)))
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: function declaration shares a parameter's name in ${cx.funcName}`,
+    );
+  const captured = ts.isBlock(body) ? [...localDeclarationCaptures(body, cx.checker!)] : [];
   const names = [...declarations.map((d) => d.name!.text), ...captured.map((d) => (d.name as ts.Identifier).text)];
   for (const name of new Set(names.filter((n) => !cx.scope.has(n)))) {
     const cell = cx.builder.emitRefCellNew(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined), irDynamic());
-    cx.scope.set(name, { kind: "local", value: cell, type: cellType, hoisted: true });
+    cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: irDynamic() }, hoisted: body });
   }
   for (const declaration of declarations) {
-    const closure = lowerDynamicClosure(declaration, cx)!;
     const value = functionObjects.functionObjectDynamicValue(
-      closure,
+      lowerDynamicClosure(declaration, cx)!,
       declaration.name!,
       functionObjectLoweringHost(cx),
     );
-    const binding = cx.scope.get(declaration.name!.text);
-    if (binding?.kind !== "local" || !binding.hoisted)
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: function declaration shares a parameter's name in ${cx.funcName}`,
-      );
-    cx.builder.emitRefCellSet(binding.value, value);
+    cx.builder.emitRefCellSet((cx.scope.get(declaration.name!.text) as { readonly value: IrValueId }).value, value);
   }
+  return new Set(declarations);
 }
 
 /**
@@ -3104,8 +3103,11 @@ type ScopeBinding =
       value: IrValueId;
       type: IrType;
       stringEncoding?: Encoding;
-      /** (#7354 L0c) A cell bound at function entry for a hoisted `var` or function: its declaration is a write. */
-      hoisted?: true;
+      /**
+       * (#7354 L0c) A cell bound at entry to this function body for a hoisted function or `var`: a `var` declaration
+       * of the name in that function is a write.
+       */
+      hoisted?: ts.Node;
     }
   | {
       /**
@@ -4514,7 +4516,12 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   }
   const name = d.name.text;
   const hoisted = cx.scope.get(name);
-  if (hoisted?.kind === "local" && hoisted.hoisted) {
+  if (
+    hoisted?.kind === "local" &&
+    hoisted.hoisted === enclosingFunctionBody(d) &&
+    ts.isVariableDeclarationList(d.parent) &&
+    isVarDeclarationList(d.parent)
+  ) {
     if (d.initializer) lowerIdentifierAssignment(d.name, d.initializer, cx);
     return;
   }
@@ -4950,7 +4957,6 @@ function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
   return asVal(actual)?.kind === "externref";
 }
 
-/** Emit the exact legacy module-global TDZ guard before a read or write. */
 /**
  * (#7354 L0c) On the Prepared lane, the script binding a function's compound or update write targets when its scope does
  * not hold the name (`log += v`, `n++` on a module `var`): the resolver's module binding, after its TDZ check. A plain
@@ -4965,6 +4971,7 @@ function laneModuleBinding(id: ts.Identifier, cx: LowerCtx): ScopeBinding | unde
   return { kind: "moduleGlobal", globalRef: binding.globalRef, type: binding.type };
 }
 
+/** Emit the exact legacy module-global TDZ guard before a read or write. */
 function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): void {
   requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
@@ -13866,6 +13873,11 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
   const dynamicArm = (arm: ts.Expression): boolean => {
     const e = peelParensExpr(arm);
     if (ts.isConditionalExpression(e)) return isDynamicConditionalValueShape(e);
+    // (#7354 L0c) On the Prepared lane a call through a binding of the dynamic value (a function declaration's cell)
+    // answers the dynamic value, whatever the checker infers for its result.
+    const callee =
+      ts.isCallExpression(e) && ts.isIdentifier(e.expression) ? cx.scope.get(e.expression.text) : undefined;
+    if (callee && functionObjects.onPreparedDynamicLane(cx.resolver)) return heldType(callee)?.kind === "dynamic";
     return ts.isIdentifier(e) && bindingHoldsDynamic(e, cx);
   };
   const isDynamicConditionalValueShape = (e: ts.ConditionalExpression): boolean => {
@@ -13904,21 +13916,17 @@ function lowerCarrierConditional(expr: ts.ConditionalExpression, cx: LowerCtx): 
 
 /**
  * (#7354 L0b) On the Prepared lane, a conditional whose arms are primitives of different kinds (`c ? n : undefined`,
- * `c ? "s" : null`) joins on the carrier; (L0c) so does a primitive beside a call through a binding of the dynamic
- * value (a function declaration's cell), whatever the checker infers for its result.
+ * `c ? "s" : null`) joins on the carrier.
  */
 function laneMixedConditional(expr: ts.ConditionalExpression, cx: LowerCtx): boolean {
   if (!functionObjects.onPreparedDynamicLane(cx.resolver)) return false;
   const typed = (arm: ts.Expression): OperandFamily | null => {
     if (isUnshadowedGlobalExpression(arm, "undefined", cx)) return "undefined";
-    const callee =
-      ts.isCallExpression(arm) && ts.isIdentifier(arm.expression) ? cx.scope.get(arm.expression.text) : undefined;
-    if (callee && heldType(callee)?.kind === "dynamic") return "dynamic";
     const family = checkerOperandFamily(arm, cx);
     return isSupportedPrimitiveFamily(family) ? family : null;
   };
   const [whenTrue, whenFalse] = [expr.whenTrue, expr.whenFalse].map((arm) => conditionalJoinArmFamily(arm, typed));
-  return whenTrue !== null && whenFalse !== null && whenTrue !== whenFalse;
+  return whenTrue !== null && whenFalse !== null && conditionalJoinFamily(whenTrue, whenFalse) === "unknown";
 }
 
 /**

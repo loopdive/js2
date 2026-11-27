@@ -5,9 +5,7 @@ import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../shared/bind
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 import type { IrType, IrValueId } from "./nodes.js";
 import { demoteToLegacy } from "./outcomes.js";
-import { validateExactCapturePlan } from "./promise-delay-lowering.js";
 
-/** Conservatively collect writes in the function-like enclosing a lifted closure. */
 /** A function whose body may capture outer bindings. */
 type CapturingFunction =
   | ts.FunctionDeclaration
@@ -17,6 +15,7 @@ type CapturingFunction =
   | ts.GetAccessorDeclaration
   | ts.SetAccessorDeclaration;
 
+/** Conservatively collect writes in the function-like enclosing a lifted closure. */
 function collectOuterWrites(fn: CapturingFunction): Set<string> {
   const writes = new Set<string>();
   let outer: ts.Node | undefined = fn.parent;
@@ -244,10 +243,7 @@ export function analyseClosureCaptures(
     // the lifted body reaches the same `__mod_` storage itself.
     if (binding.kind === "moduleGlobal") continue;
     if (binding.kind !== "local") {
-      // Slice 3 doesn't yet capture closure / nested-fn bindings — that
-      // would require either lifting the inner closure to a top-level
-      // ref.func or adding closure VALUE fields to the capture struct.
-      // Defer.
+      // A slot, a nested function's name or another non-local binding has no capture field.
       demoteToLegacy(
         "body-shape-rejected",
         `ir/from-ast: closure inside ${host.funcName} captures non-local binding "${name}" — not in slice 3`,
@@ -267,4 +263,29 @@ export function analyseClosureCaptures(
     });
   }
   return captures;
+}
+
+/** An exact closure plan names exactly the locals the body captures. */
+function validateExactCapturePlan(
+  orderedNames: readonly string[],
+  referencedNames: ReadonlySet<string>,
+  ownParams: ReadonlySet<string>,
+  lookup: (name: string) => "local" | "other" | undefined,
+  funcName: string,
+): void {
+  const ordered = new Set(orderedNames);
+  for (const name of referencedNames) {
+    if (ownParams.has(name)) continue;
+    const kind = lookup(name);
+    if (kind !== undefined && (kind !== "local" || !ordered.has(name))) {
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
+      throw new Error(`ir/from-ast: exact closure capture plan omitted binding "${name}" (${funcName})`);
+    }
+  }
+  for (const name of orderedNames) {
+    if (lookup(name) !== "local") {
+      // invariant (producer-promise): the prepared exact proof promised this shape — #4502.
+      throw new Error(`ir/from-ast: exact closure capture "${name}" is not a local in scope (${funcName})`);
+    }
+  }
 }

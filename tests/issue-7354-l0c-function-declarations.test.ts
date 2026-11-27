@@ -41,6 +41,25 @@ describe("#7354 L0c — function declarations inside functions", () => {
     );
   });
 
+  // A `let`/`const` is never hoisted with the functions (its TDZ would be lost: node throws a ReferenceError where an
+  // `undefined` cell would answer), and a block `let` never writes a hoisted `var` of the same name.
+  it.each([
+    [
+      "a declaration reading a let before its binding",
+      "function t(){ function g(){ return typeof x; } var r='none'; try { r = g(); } catch(e){ r='tdz'; } let x = 1; return r; }\nvar out = t();",
+    ],
+    [
+      "a declaration writing a let before its binding",
+      "function t(){ function g(){ x = 5; } var r='no'; try { g(); } catch(e){ r='tdz'; } let x; return r; }\nvar out = t();",
+    ],
+    [
+      "a block let shadowing a hoisted var",
+      "function t(){ var x='v'; if (true) { let x='a'; } function g(){ return x; } return g(); }\nvar out = t();",
+    ],
+  ])("ends at the run-time abort for %s, never a wrong value", async (_label, source) => {
+    await abortsAtRunTime(source, runnerOptions());
+  });
+
   it("ends at the run-time abort where a declaration shares a parameter's name", async () => {
     await abortsAtRunTime(
       "function t(g) { function g() { return 2; } return typeof g; }\nvar r = t(1);",
