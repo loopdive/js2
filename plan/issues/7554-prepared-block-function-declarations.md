@@ -130,3 +130,41 @@ block; a block `let`/`const` of a hoisted name (redeclaration); `for (var k in �
 - Gates exit 0: typecheck (ts7), loc, func, coercion-sites, oracle-ratchet, dead-exports (merge-base). With
   `LOC_GATE_BASE` = origin/main 2e75c932fd: func OK; loc reports `src/runtime.ts` +1, which this branch does not touch
   (main changed it after the merge-base; the merge preview has no such growth).
+
+## Review round 1 (2026-11-27)
+
+- **Blocker fixed.** `function t(){ if (false) { function f(){} } return typeof f; }` threw
+  `native closures: missing first signature/root` out of `compile()`: f's var binding was a cell, and the only closure
+  (f) sat in the folded-away arm, so the program issued a cell type with no closure root. Root causes, both fixed:
+  1. A hoisted name is a cell only where a function inside the body *names* it (a function's own name does not
+     count); an Annex B var binding with no such reader is a slot (`lowerBlockFunctionEvaluation` writes a slot or a
+     cell). The repro now gives node's `"undefined"`.
+  2. A cell whose capturing closure is dead code still has no root; the physical plan now names that gap
+     (`a mutable capture cell needs a closure root, and the program creates no closure`) instead of throwing.
+  - Dead-code sweep, 20 programs (constant true/false arms in statement and tail position, `while (false)`,
+    `for (;false;)`, after `break`/`continue`/`throw`/`return`, a non-matching `switch`, `0 && fn`, `false ? fn : 2`, a
+    never-called block function, a hoisted declaration used only in dead code, function expressions only in dead
+    code): 13 right, 4 abort, 3 refused (the new gap: a dead closure that names a hoisted var or itself), 0 exceptions.
+    The repro shapes are in `tests/issue-7354-l0c-annex-b.test.ts` ("block functions in dead code").
+- **Q2.** `isHoistedVar` (function-hoisting.ts) is the one predicate; the provenance calls it. `hoistedBodyNames` is
+  memoised per body (`WeakMap`); the lists are appended in place.
+- **Q3.** `HoistedStorage`'s doc and code agree: a cell where a function inside the body names the binding, else a
+  slot — for vars and Annex B names alike.
+- **Q4.** Every block function is bound by `hoistBlockFunctions` at its scope's entry; for an `if` arm (B.3.4) the
+  arm's entry is the statement itself, so `lowerStmt` opens the arm's scope, hoists, then evaluates.
+  `lowerBlockFunctionEvaluation` only copies (or refuses an unbound function statement).
+- **Q5.** `ScopeBinding.hoisted`/`annexB` are replaced by `bodyVar` (a `var` of this function body, on a cell or a
+  slot) and `blockFunction: { scope, varBinding? }`.
+- **Q6 (rebutted).** The two message rewrites are review item 4b of the slice brief (the "not in slice 3" texts must
+  say what is unsupported); the closure-capture one keeps the prefix its tests match.
+- **Proof after the fixes** (head e8…, see the final commit):
+  - Probes: part 1's 404 identical to round 0 (361 right, 4 abort→right vs part 1, nothing else changed); the 105 L0c
+    and reviewer programs identical to round 0; 77 own programs (Annex B, nested vars, hazards, `with`, h2 shapes, the
+    dead-code sweep): 51 right, 21 abort, 5 refused. Wrong 0, invalid 0, exceptions 0.
+  - Runner, **base run by me this round** (`origin/claude/7354-l0c` e9ac3bb85c as `.tmp/basefull`, same lists, same
+    runner): targeted 44 → 62, sample 87 → 90; 21 new passes (all `annexB/language/function-code/*`), 0 lost; the 21
+    wrong twins all fail.
+  - Ordinary bytes identical to e9ac3bb85c: 42 programs and 92 test262 files, each × default/standalone.
+  - The 20 root test files the branch modifies, each alone: all exit 0 (annex-b now 13 tests).
+  - Gates exit 0; with `LOC_GATE_BASE` = origin/main 2e75c932fd only the inherited `src/runtime.ts` +1 (not touched by
+    this branch). `from-ast.ts` 16992 → 17007 (≤ 17160).
