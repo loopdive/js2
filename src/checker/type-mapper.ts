@@ -353,10 +353,14 @@ export function isBigIntType(type: ts.Type): boolean {
   return (type.flags & ts.TypeFlags.BigInt) !== 0 || (type.flags & ts.TypeFlags.BigIntLiteral) !== 0;
 }
 
+/** (#7525) Is this static type a bigint, or a union with a bigint member? */
+export function typeHasBigIntMember(type: ts.Type): boolean {
+  return type.isUnion() ? type.types.some(isBigIntType) : isBigIntType(type);
+}
+
 /** (#7371) Can a value of this static type be a BigInt at runtime: a bigint, `any`/`unknown`, or a union with one? */
 export function typeMayBeBigInt(type: ts.Type): boolean {
-  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return true;
-  return type.isUnion() ? type.types.some(isBigIntType) : isBigIntType(type);
+  return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || typeHasBigIntMember(type);
 }
 
 /** Check if a ts.Type represents number */
