@@ -13,7 +13,7 @@ import {
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { emitThrowTypeError, isConstIdentifierAssignmentTarget } from "./helpers.js";
 import {
   analyzeTdzAccess as analyzeIdentifierTdzAccess,

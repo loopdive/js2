@@ -24,6 +24,7 @@ import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
   type IrDerivedUnitProvenance,
+  type IrBindingId,
   type IrSourceId,
   type IrUnitId,
 } from "./identity.js";
@@ -36,6 +37,7 @@ import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
+import { annexBDeclaringRange, annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
@@ -77,8 +79,8 @@ export function localDeclarationCaptures(body: ts.Block, checker: ts.TypeChecker
 }
 
 /**
- * The top-level function declarations of a single-source program that some identifier reads as a value, in source
- * order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
+ * The top-level function declarations of a single-source program that some identifier reads as a value, or that an
+ * Annex B block function writes, in source order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
  * is one: [[Construct]] takes the function object, its `prototype` included.
  */
 export function functionDeclarationsReadAsValues(
@@ -97,8 +99,11 @@ export function functionDeclarationsReadAsValues(
     ts.forEachChild(node, visit);
   };
   visit(source);
+  // (#7372 2a-3) An Annex B block function of its name writes the binding: calls of the name then read the home.
   return source.statements.filter(
-    (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && read.has(statement),
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) &&
+      (read.has(statement) || (statement.name !== undefined && annexBWritesScriptBinding(source, statement.name.text))),
   );
 }
 
@@ -175,7 +180,10 @@ export function functionDeclarationValues(
     const unitId = identity.unitIdByDeclaration.get(declaration)!;
     diagnostic.active = unitId;
     // A JS symbol also lists the member stores of its function (`f.x = 1`), which declare no binding.
-    if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration).length > 1)
+    // (#7372 2a-3) An Annex B block function the checker binds to the file is no second declaration: it has its own
+    // block binding and writes this home (`annexb-block-function-values.ts`).
+    const declarations = checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration);
+    if (declarations.filter((other) => annexBDeclaringRange(other) === null).length > 1)
       refuse(name, "has a second declaration");
     const rewritten = preparedBindingRewritten(checker, declaration.name!);
     const { params, returnType } = signatures.get(unitId)!;
@@ -185,32 +193,42 @@ export function functionDeclarationValues(
     const binding = plan.bindings.find((row) => row.names[0] === name && row.start === start)!;
     // A script without top-level code has no module-init to make the value: nothing of it runs.
     const moduleInit = plan.unitId ?? refuse(name, "is in a script that runs no top-level code");
-    const home: ModuleBindingGlobal = {
-      ownerUnitId: moduleInit,
-      globalRef: irSourceGlobalRef(binding.globalBindingId!, name),
-      tdzGlobalRef: null,
-      globalName: name,
-      tdzGlobalName: null,
+    const global = moduleInitDynamicHome(moduleInit, plan.sourceId, binding.globalBindingId!, name, {
       type: irDynamic(rewritten ? undefined : JS_TAG_IDS.Function),
-    };
+      mutable: rewritten,
+    });
     return {
       declaration,
       unitId,
       unitName: identity.terminalByUnitId.get(unitId)!.displayName,
       params,
       returnType,
-      home,
-      global: {
-        binding: home,
-        identity: {
-          ownerUnitId: moduleInit,
-          storageOwnerUnitId: moduleInit,
-          sourceId: plan.sourceId,
-          mutable: rewritten,
-        },
-      },
+      home: global.binding,
+      global,
     };
   });
+}
+
+/**
+ * A home in the dynamic carrier: a module-init global named `adapterName` (the key its storage is found by), owned
+ * and stored by the module-init. (#7372 2a) An Annex B block function's homes are built the same way.
+ */
+export function moduleInitDynamicHome(
+  moduleInit: IrUnitId,
+  sourceId: IrSourceId,
+  bindingId: IrBindingId,
+  adapterName: string,
+  { type, mutable }: { readonly type: IrType; readonly mutable: boolean },
+): FunctionValueGlobal {
+  const binding: ModuleBindingGlobal = {
+    ownerUnitId: moduleInit,
+    globalRef: irSourceGlobalRef(bindingId, adapterName),
+    tdzGlobalRef: null,
+    globalName: adapterName,
+    tdzGlobalName: null,
+    type,
+  };
+  return { binding, identity: { ownerUnitId: moduleInit, storageOwnerUnitId: moduleInit, sourceId, mutable } };
 }
 
 function refuse(name: string, why: string): never {

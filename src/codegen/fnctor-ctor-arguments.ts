@@ -75,7 +75,7 @@ import { buildArgcExtrasSetupFromLocals } from "./expressions/argc-extras.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
-import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { isSimpleParameterList, isStrictFunction } from "../shared/is-strict-function.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { emitArgumentsVecBody } from "./statements/nested-declarations.js";
 

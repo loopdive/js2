@@ -59,7 +59,9 @@ import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
-import { functionDeclarationsReadAsValues, isFunctionLocalDeclaration } from "./function-declaration-values.js";
+import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
+import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
+import { scriptBlockFunctions } from "./annexb-block-function-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 
@@ -219,7 +221,7 @@ function sourceDynamicClosureSignature(
   const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
-    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression) || isFunctionLocalDeclaration(expression)) ||
+    !(ts.isFunctionExpression(expression) || ts.isFunctionDeclaration(expression) || ts.isAccessor(expression)) ||
     (descriptorLiteral &&
       dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||
@@ -274,6 +276,8 @@ export function nativeDynamicLane(policy: SourcePolicy): boolean {
 export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   /** (#7354 F1b) The top-level function declarations read as values (`function-declaration-values.ts`). */
   readonly functionDeclarationValues: readonly ts.FunctionDeclaration[];
+  /** (#7372 2a) The script's Annex B block functions (`annexb-block-function-values.ts`). */
+  readonly blockFunctions: readonly AnnexBBlockFunction[];
   /** The dynamic (or host Promise) contract of a parameter of `declaration`, if any. */
   readonly parameter: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => IrType | undefined;
   /** The dynamic result contract of `declaration`, or natively its Boolean carrier, if any. */
@@ -364,9 +368,10 @@ export function programDynamicContracts(
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
+  const blockFunctions = functionObjects ? scriptBlockFunctions(sourceFiles) : [];
   const objects = programObjects(
     sourceFiles,
-    functionDeclarationValues.length > 0,
+    functionDeclarationValues.length > 0 || blockFunctions.length > 0,
     pristineBuiltinGlobal(checker, sourceFiles),
   );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
@@ -393,6 +398,7 @@ export function programDynamicContracts(
   return {
     ...provenance,
     functionDeclarationValues,
+    blockFunctions,
     codeStrictness,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)

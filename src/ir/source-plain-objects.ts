@@ -22,7 +22,8 @@ const isMemberName = (node: ts.Identifier): boolean =>
   ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
 
 /**
- * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`).
+ * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`),
+ * or (#7372 2a) an Annex B block function is made as one (`annexb-block-function-values.ts`).
  * Such a function, like a function expression, is a constructor whose `prototype` is an ordinary object the source
  * spells nowhere, so either one admits the object kind too.
  */

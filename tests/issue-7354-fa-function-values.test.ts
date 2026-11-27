@@ -308,6 +308,8 @@ describe("#7354 Fa — the closure contracts", () => {
     ],
     ["in a program of two scripts", ["var f = function (a) { return a; };", "var k = 1;"]],
     ["initialized with a literal without the contract", ["var f = function (a = 1) { return a; };"]],
+    // (#7372 2a-3) An Annex B block function of the name writes the var when it is evaluated (§B.3.2.2).
+    ["redeclared by a block-level function", ["var f = function (a) { return 1; }; { function f(a) { return 2; } }"]],
   ])("refuses a static closure to a var %s", (_, sources) => {
     const { resolver, f } = contractsOf(sources);
     expect(resolver.staticFunctionValue!(f)).toBe(false);
@@ -321,7 +323,6 @@ describe("#7354 Fa — the closure contracts", () => {
     ["rewritten through `this`", "var f = function (a) { return 1; }; this.f = function (a) { return 2; };"],
     ["rewritten through `this` in a function", "var f = function (a) { return 1; }; function w() { this.f = 0; }"],
     ["rewritten through `globalThis.f`", "var f = function (a) { return 1; }; globalThis.f = 0;"],
-    ["redeclared by a block-level function", "var f = function (a) { return 1; }; { function f(a) { return 2; } }"],
     ["in a source that reaches `Function` by `constructor`", 'var f = function (a) {}; f.constructor("f = 0")();'],
     ["sharing its name with a parameter", "var f = function (a) { return a; }; function w(f) { f = 1; return f; }"],
   ])("knows a var holds its closure %s", (_, source) => {

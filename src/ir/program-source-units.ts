@@ -4,6 +4,7 @@
 // lowered from its AST and legalized, against the program-wide plans the producer prepared before any body.
 
 import { ts } from "../ts-api.js";
+import type { BlockFunctionHomes } from "./annexb-block-function-values.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { checkerAny, checkerScalar, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import type { TypeOracle } from "../checker/oracle.js";
@@ -56,6 +57,7 @@ export interface SourceUnitLowering {
   readonly closureInvocations: ReadonlyMap<ts.CallExpression, SourceClosureInvocationPlan>;
   readonly closureCallableParameters: ReadonlySet<ts.Node | undefined>;
   readonly functionValues: ReturnType<NonNullable<IrFromAstResolver["moduleInitFunctionValues"]>>;
+  readonly blockFunctionHomes: BlockFunctionHomes | undefined;
   readonly directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly nativeFamily: NativeAsyncSourceFamilies | undefined;
   readonly nativeStringValues: boolean;
@@ -99,11 +101,12 @@ function lowerUnitOnce(
   const { input, identity, dynamicContracts } = lowering;
   const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
     let symbol = input.checker.getSymbolAtLocation(node);
-    if (!symbol) return undefined;
-    const imported = (symbol.flags & ts.SymbolFlags.Alias) !== 0;
-    if (imported) symbol = input.checker.getAliasedSymbol(symbol);
-    const declaration = symbol.valueDeclaration;
-    const global = declaration ? lowering.globalByDeclaration.get(declaration) : undefined;
+    const imported = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0;
+    if (imported) symbol = input.checker.getAliasedSymbol(symbol!);
+    const declaration = symbol?.valueDeclaration;
+    const global =
+      lowering.blockFunctionHomes?.resolve(node, symbol) ??
+      (declaration ? lowering.globalByDeclaration.get(declaration) : undefined);
     if (!global) return undefined;
     if (writeValue && (imported || !global.identity.mutable))
       demoteToLegacy("type-resolution-unsupported", `write to immutable module binding ${node.text}`);
@@ -118,6 +121,7 @@ function lowerUnitOnce(
     sourceClosureCallableParameter: (node) => lowering.closureCallableParameters.has(node),
     resolveModuleBinding: resolveBinding,
     moduleInitFunctionValues: () => lowering.functionValues,
+    annexBBlockFunctionHomes: (declaration) => lowering.blockFunctionHomes?.homesOf(declaration),
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
       const resultType =
