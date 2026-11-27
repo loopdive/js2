@@ -138,3 +138,25 @@ in the P1 notes): the dispatcher's built-in arm stops being the run-time abort.
   flow rule) and L0c (computed keys) land.
 - Cost bars as in A1a: about 1 s and 15 KB for the prelude. The caller exists only where a dispatcher exists and
   a built-in is held as a value.
+
+## Step 0 result (2026-11-27, A1a r2 head c86f46cc81; measurement only)
+
+- **The 43 rows, real `propertyHelper.js`** (each test with its `includes`, plus `assert.js` and `sta.js`;
+  refuse-mode compile): 42 refuse at `identifier "Function" is not in scope in <module-init>` (L31,
+  `Function.prototype.call.bind`), and 1 at `identifier "globalThis"` (the test's own code). `Array` no longer
+  stops any row: A1a lifted item 1, as planned. So every one of the 42 needs `Function` and
+  `Function.prototype.call` / `bind` before anything else.
+- **How the caller becomes callable.** The Prepared program has no runtime body that calls a program function by a
+  static handle. The dispatcher calls program code only through values: a closure struct's funcref, matched by the
+  source-closure entries. And no unit is made without a source node: the `synthetic-support` / `compiler-unit:`
+  units belong to the ordinary pipeline (`compiler-timer-shim-preparation.ts`). The candidate is the shape the
+  lowering already has: a unit's **lifted** functions (`lowered.lifted` with `liftedUnitProvenance`,
+  `program-source-units.ts`), which are closures with dispatcher entries. The caller would be one lifted function
+  of module-init, whose closure module-init stores in a realm global. The built-in arm reads that global and calls
+  it through the ordinary dispatch. A1b-1 starts by proving that a legalization can add one lifted function with
+  valid provenance; if it cannot, the fallback is a reserved program callable, which is new consumer plumbing.
+- **Loops.** The IR has `while.loop` / `for.loop` (state in function slots; SSA values are buffer-local). No
+  legalization writes a loop or allocates a slot today. `join`, `push` and `apply` need both, so the legalization
+  builders gain a `slot` (fresh function slot) and a `loop` builder. That is new shared builder code, sized in A1b-3.
+- **Order changes.** `Function` (the global, `Function.prototype` and its `call` / `apply` / `bind`) comes first in
+  A1b-1, because every row stops there.
