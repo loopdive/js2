@@ -217,7 +217,7 @@ const ROWS = {
     },
   },
   "js.object.init-function": {
-    signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
+    signature: { params: [EXTERNREF, EXTERNREF, F64, I32, I32], results: [] },
     body: (dependencies, tx) => {
       const key = literalKey(tx, dependencies);
       return buildSourceFunctionInitDefinition({
@@ -225,6 +225,7 @@ const ROWS = {
         create: createOperands(dependencies),
         prototypeKey: key("prototype"),
         constructorKey: key("constructor"),
+        callerKey: key("caller"),
       });
     },
   },
