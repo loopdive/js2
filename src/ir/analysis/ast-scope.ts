@@ -21,11 +21,11 @@
  *
  * ## What is (and is not) here
  *
- * MOTION ONLY. Every function below is byte-identical to the one it replaced,
- * with the same doc comment. Nothing takes a `CodegenContext` / `FunctionContext`
- * / `ts.TypeChecker`, nothing emits Wasm: a `ts.Node` in, names out. The old
- * homes re-export these names, so every existing codegen consumer keeps
- * importing exactly what it imported before.
+ * Nothing takes a `CodegenContext` / `FunctionContext` / `ts.TypeChecker`,
+ * nothing emits Wasm: a `ts.Node` in, names or scopes out. The old homes
+ * re-export the lifted names, so every existing codegen consumer keeps
+ * importing exactly what it imported before. The lexical resolution walk below
+ * them (`resolvesToSourceBinding`, `argumentsObjectOwner`) is IR-only.
  *
  * Same precedent as `src/ir/js-tag.ts` (#3113 slice 1) and
  * `src/ir/async-static.ts` / `src/ir/regexp-runtime-contract.ts` (#3113 S2):
@@ -241,26 +241,58 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
  * whole function or file, because Annex B.3.3 makes it a `var` there in sloppy code.
  */
 export function resolvesToSourceBinding(identifier: ts.Identifier): boolean {
-  for (let scope = identifier.parent; scope; scope = scope.parent) {
-    if (scopeNames(scope).has(identifier.text)) return true;
-  }
-  return false;
+  return bindingScope(identifier, false) !== undefined;
 }
 
 /**
- * The names `scope` binds itself; empty for a node that opens no scope. A function or the file binds its `var`s and
- * function declarations (`declaresFunction` adds block-nested ones by name); a block, switch, loop head or catch
- * binds its lexical declarations.
+ * (#7562) The function whose own arguments object the `arguments` identifier `reference` names, or `undefined` when
+ * a declaration binds the name first or none does (a global read). The walk ends at a declaring scope or at the
+ * first non-arrow function, which owns the object unless its parameters or function declarations bind the name.
  */
-function scopeNames(scope: ts.Node): ReadonlySet<string> {
+export function argumentsObjectOwner(reference: ts.Identifier): ts.SignatureDeclaration | undefined {
+  const scope = bindingScope(reference, true);
+  return scope && !scopeNames(scope, true).has("arguments") ? (scope as ts.SignatureDeclaration) : undefined;
+}
+
+/**
+ * The nearest scope around `identifier` that binds its name, or `undefined` for none. With `argumentsObject` the
+ * name is `arguments`, which every non-arrow function binds itself (§10.2.11): the walk ends there.
+ */
+function bindingScope(identifier: ts.Identifier, argumentsObject: boolean): ts.Node | undefined {
+  for (let scope = identifier.parent; scope; scope = scope.parent) {
+    if (argumentsObject && ownsArgumentsObject(scope)) return scope;
+    if (scopeNames(scope, argumentsObject).has(identifier.text)) return scope;
+  }
+  return undefined;
+}
+
+function ownsArgumentsObject(scope: ts.Node): boolean {
+  return isFunctionScopeBoundary(scope) && !ts.isArrowFunction(scope);
+}
+
+/**
+ * The names `scope` binds itself; empty for a node that opens no scope. A function, a class static block or the file
+ * binds its `var`s and function declarations (`declaredFunctionNames` adds block-nested ones by name); a block,
+ * switch, loop head or catch binds its lexical declarations. With `argumentsObject`, a function that owns an
+ * arguments object leaves out its `var`s and its own name: neither keeps the object from being created.
+ */
+function scopeNames(scope: ts.Node, argumentsObject: boolean): ReadonlySet<string> {
   const names = new Set<string>();
-  if (isFunctionScopeBoundary(scope)) collectFunctionOwnLocals(scope, names);
-  if (ts.isSourceFile(scope))
-    for (const statement of scope.statements) collectVarAndTopLevelDecls(statement, names, true);
-  if ((ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) && scope.name) names.add(scope.name.text);
+  if (argumentsObject && ownsArgumentsObject(scope)) {
+    for (const parameter of (scope as ts.SignatureDeclaration).parameters) addBindingNames(parameter.name, names);
+  } else {
+    if (isFunctionScopeBoundary(scope)) collectFunctionOwnLocals(scope, names);
+    if ((ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) && scope.name) names.add(scope.name.text);
+  }
+  if (ts.isSourceFile(scope) || ts.isClassStaticBlockDeclaration(scope))
+    for (const statement of statementsOf(scope)) collectVarAndTopLevelDecls(statement, names, true);
   for (const declaration of lexicalDeclarations(scope)) addLexicalNames(declaration, names);
   if (isFunctionScopeBoundary(scope) || ts.isSourceFile(scope)) declaredFunctionNames(scope, names);
   return names;
+}
+
+function statementsOf(scope: ts.SourceFile | ts.ClassStaticBlockDeclaration): readonly ts.Statement[] {
+  return ts.isSourceFile(scope) ? scope.statements : scope.body.statements;
 }
 
 /** The declarations whose bindings belong to `scope` itself: a block's, a switch's, a loop head's, a catch's. */
@@ -274,10 +306,12 @@ function lexicalDeclarations(scope: ts.Node): readonly ts.Node[] {
   return [];
 }
 
+/** The names a lexical declaration binds; a `var` list binds none here: its names belong to the enclosing var scope. */
 function addLexicalNames(declaration: ts.Node, names: Set<string>): void {
-  if (ts.isVariableStatement(declaration)) addDeclaratorNames(declaration.declarationList, names);
-  else if (ts.isVariableDeclarationList(declaration)) addDeclaratorNames(declaration, names);
-  else if (ts.isVariableDeclaration(declaration)) addBindingNames(declaration.name, names);
+  const list = ts.isVariableStatement(declaration) ? declaration.declarationList : declaration;
+  if (ts.isVariableDeclarationList(list)) {
+    if (!isVarList(list)) addDeclaratorNames(list, names);
+  } else if (ts.isVariableDeclaration(declaration)) addBindingNames(declaration.name, names);
   else if (ts.isClassDeclaration(declaration) && declaration.name) names.add(declaration.name.text);
   else if (ts.isImportDeclaration(declaration) && declaration.importClause) {
     const { name, namedBindings } = declaration.importClause;
@@ -300,35 +334,8 @@ function declaredFunctionNames(scope: ts.Node, names: Set<string>): void {
   });
 }
 
-/**
- * (#7562) The function whose own arguments object the `arguments` identifier `reference` names, or `undefined` when
- * a declaration binds the name first or none does (a global read). Every function but an arrow binds `arguments`
- * itself (§10.2.11), so the walk out from the reference ends at the first such function unless a nearer scope
- * declares the name: a block's lexical or function declaration, a loop head's, a catch binding, a parameter, an
- * arrow's `var`. A function's own `var arguments` does not end it: that binding starts as the object.
- */
-export function argumentsObjectOwner(reference: ts.Identifier): ts.SignatureDeclaration | undefined {
-  for (let scope = reference.parent; !ts.isSourceFile(scope); scope = scope.parent) {
-    const names = new Set<string>();
-    if (ts.isArrowFunction(scope)) collectFunctionOwnLocals(scope, names);
-    else if (isFunctionScopeBoundary(scope))
-      for (const parameter of (scope as ts.SignatureDeclaration).parameters) addBindingNames(parameter.name, names);
-    for (const declaration of lexicalDeclarations(scope)) addBlockScopedNames(declaration, names);
-    if (names.has("arguments")) return undefined;
-    if (isFunctionScopeBoundary(scope) && !ts.isArrowFunction(scope)) return scope as ts.SignatureDeclaration;
-  }
-  return undefined;
-}
-
-/** The names `declaration` binds in its own block: a lexical, class or function declaration's, not a `var`'s. */
-function addBlockScopedNames(declaration: ts.Node, names: Set<string>): void {
-  if (ts.isFunctionDeclaration(declaration) && declaration.name) names.add(declaration.name.text);
-  const list = ts.isVariableStatement(declaration) ? declaration.declarationList : declaration;
-  if (!ts.isVariableDeclarationList(list) || !isVarList(list)) addLexicalNames(declaration, names);
-}
-
 /** How a function uses its own arguments object: not at all, only by reading `arguments.length`, or otherwise. */
-export type ArgumentsObjectUse = "none" | "length" | "other";
+type ArgumentsObjectUse = "none" | "length" | "other";
 
 const argumentsObjectUses = new WeakMap<ts.SignatureDeclaration, ArgumentsObjectUse>();
 
@@ -361,31 +368,41 @@ function namesBinding(identifier: ts.Identifier): boolean {
   return named.name !== identifier && named.label !== identifier && named.propertyName !== identifier;
 }
 
-/**
- * Whether `reference` is the object of an `arguments.length` read: not written, deleted or incremented, and not in a
- * literal or loop head that may be a destructuring or for-in target.
- */
+/** Whether `reference` is the object of an `arguments.length` read, not of a write. */
 function readsLength(reference: ts.Identifier): boolean {
-  let access: ts.Node = reference.parent;
-  if (!ts.isPropertyAccessExpression(access) || access.name.text !== "length") return false;
-  while (ts.isParenthesizedExpression(access.parent)) access = access.parent;
-  const user = access.parent;
+  const access = reference.parent;
+  return ts.isPropertyAccessExpression(access) && access.name.text === "length" && !isWriteTarget(access);
+}
+
+/**
+ * Whether `expression` is written: the target of an assignment, update, `delete` or for-in/of head, itself or
+ * inside the array or object literal that such a target destructures.
+ */
+function isWriteTarget(expression: ts.Expression): boolean {
+  let target: ts.Node = expression;
+  while (isTargetContainer(target.parent)) target = target.parent;
+  const user = target.parent;
   if (ts.isBinaryExpression(user))
     return (
-      user.left !== access ||
-      user.operatorToken.kind < ts.SyntaxKind.FirstAssignment ||
-      user.operatorToken.kind > ts.SyntaxKind.LastAssignment
+      user.left === target &&
+      user.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      user.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     );
-  if (ts.isPrefixUnaryExpression(user))
-    return user.operator !== ts.SyntaxKind.PlusPlusToken && user.operator !== ts.SyntaxKind.MinusMinusToken;
-  return !(
-    ts.isPostfixUnaryExpression(user) ||
-    ts.isDeleteExpression(user) ||
-    ts.isArrayLiteralExpression(user) ||
-    ts.isObjectLiteralElementLike(user) ||
-    ts.isSpreadElement(user) ||
-    ts.isForInStatement(user) ||
-    ts.isForOfStatement(user)
+  if (ts.isPrefixUnaryExpression(user) || ts.isPostfixUnaryExpression(user))
+    return user.operator === ts.SyntaxKind.PlusPlusToken || user.operator === ts.SyntaxKind.MinusMinusToken;
+  if (ts.isForInStatement(user) || ts.isForOfStatement(user)) return user.initializer === target;
+  return ts.isDeleteExpression(user);
+}
+
+/** A node that passes a target through to its own parent: parentheses, or a literal that may be a destructuring. */
+function isTargetContainer(node: ts.Node): boolean {
+  return (
+    ts.isParenthesizedExpression(node) ||
+    ts.isArrayLiteralExpression(node) ||
+    ts.isObjectLiteralExpression(node) ||
+    ts.isPropertyAssignment(node) ||
+    ts.isSpreadElement(node) ||
+    ts.isSpreadAssignment(node)
   );
 }
 
