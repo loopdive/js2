@@ -40,7 +40,12 @@ import {
 } from "../../shared/contracts/dynamic-delete-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberDelete, dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
-import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
+import {
+  argumentsCount,
+  dynamicConstruct,
+  dynamicCurrentThis,
+  dynamicInstanceOf,
+} from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
 import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
@@ -115,7 +120,8 @@ export function legalizeDynamicValues(
   const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3, #7471) What a member read, write or delete is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
-  // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
+  // (#7354 C2) What `this`, `new`, `instanceof` and (#7562) the argument count are written with
+  // (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
   // (#7354 O1, P1, G1) What a recognised `Object` static (`dynamic-object-statics.ts`), a call of a prototype method the
   // realm holds (`dynamic-prototype-methods.ts`) or of a realm constructor (`dynamic-error-constructors.ts`, (#7350
@@ -253,6 +259,9 @@ export function legalizeDynamicValues(
         return dynamicMemberWrite(memberAccess, instr);
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
+      case "dyn.arguments_length":
+      case "dyn.publish_argc":
+        return argumentsCount(functionOperations, instr);
       case "dyn.construct": {
         const ctor = realmConstructorOf(instr.callee, definitions);
         return ctor === undefined
