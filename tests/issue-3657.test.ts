@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const SOURCE = `
 declare function predicate(value: string): boolean;
@@ -39,9 +39,7 @@ async function compileGate() {
 
 async function instantiateGate(deps: Record<string, unknown>) {
   const result = await compileGate();
-  const imports = buildImports(result.imports, deps, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result, deps);
   return instance.exports.check as (value: string) => number;
 }
 

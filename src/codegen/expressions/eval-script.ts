@@ -11,8 +11,8 @@
  */
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
-import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
+import { isUseStrictDirectiveExpression } from "../../shared/use-strict-directive.js";
 import { foldedEvalDeclarationNames } from "../registry/expression-helper-delegates.js";
 import { evalCallerCapabilities, foldedEvalEarlyError } from "./eval-early-errors.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
@@ -44,7 +44,7 @@ export function evalBodyHasUseStrictDirective(stmts: ts.NodeArray<ts.Statement>)
     if (!ts.isExpressionStatement(s)) break;
     // Only a plain StringLiteral counts as a directive (a template does not).
     if (!ts.isStringLiteral(s.expression)) break;
-    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    // §11.2.2 matches the RAW token — see src/shared/use-strict-directive.ts.
     if (isUseStrictDirectiveExpression(s.expression)) return true;
     // Some other directive (e.g. "use asm") → keep scanning the prologue.
   }

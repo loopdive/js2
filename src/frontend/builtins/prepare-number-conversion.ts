@@ -1,22 +1,24 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../typescript.js";
 import { isCurrentCompilerLibrarySourceFile } from "../../checker/index.js";
-import { isUndeclaredInFile } from "../../shared/ambient-intrinsics.js";
+
+/** (#7350) The realm keeps its own value under the callee's name (`pristineBuiltinGlobal`, `src/ir`). */
+type Pristine = (identifier: ts.Identifier) => boolean;
 
 /**
  * Source binding evidence for direct calls `Name(…)` of one ambient conversion function; the conversion's
- * semantics require their own provider. Admits a call only against the lib declaration, and only while no source
- * file declares the name (the checker reports a script's top-level `function String() {}` as the lib declarations
- * alone) and, unless `escapesRefuse`, the binding is never read as a value anywhere in the program (an alias could
- * be stored or rebound). `escapesRefuse` is the Prepared program's guarantee that every such read already refuses
- * by name.
+ * semantics require their own provider. Admits a call only against the lib declaration. `binding` says what else
+ * must hold program-wide: a {@link Pristine} predicate — the callee is the pristine global (no source declares or
+ * writes it, which the checker would not report for a script's top-level `function String() {}`), whatever value
+ * reads the program makes; `"unaliased"` — the binding is never read as a value anywhere in the program (an alias
+ * could be stored or rebound).
  */
 function ambientConversionCalls(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
-  name: "Number" | "String" | "isNaN",
-  escapesRefuse: boolean,
+  name: "Number" | "String" | "Boolean" | "isNaN",
+  binding: Pristine | "unaliased",
 ): (call: ts.CallExpression) => boolean {
   const calls = new WeakSet<ts.CallExpression>();
   const ambient = checker.resolveName(name, undefined, ts.SymbolFlags.Value, false);
@@ -32,10 +34,9 @@ function ambientConversionCalls(
     !call.arguments.some(ts.isSpreadElement);
   const roots: readonly ts.Node[] = "kind" in declaration ? [declaration] : declaration;
   let invalidated = roots.some((root) => !sourceFiles.includes(root.getSourceFile())) || !canonical();
+  const pristine = binding === "unaliased" ? () => true : binding;
   const inspect = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && escapesRefuse) {
-      if (node.text === name && !isUndeclaredInFile(node)) invalidated = true;
-    } else if (ts.isIdentifier(node)) {
+    if (ts.isIdentifier(node)) {
       const symbol = checker.getSymbolAtLocation(node);
       // A bare constructor alias can subsequently be stored/rebound by arbitrary
       // consumers. Admit only direct calls, never infer identity through aliases.
@@ -60,7 +61,7 @@ function ambientConversionCalls(
     }
     ts.forEachChild(node, inspect);
   };
-  sourceFiles.forEach(inspect);
+  if (binding === "unaliased") sourceFiles.forEach(inspect);
   const collect = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && shape(node)) {
       const signature = checker.getResolvedSignature(node);
@@ -71,7 +72,8 @@ function ambientConversionCalls(
   };
   if (!invalidated) roots.forEach(collect);
   return (call) => {
-    if (invalidated || !canonical() || !calls.has(call) || !shape(call)) return false;
+    if (invalidated || !canonical() || !calls.has(call) || !shape(call) || !pristine(call.expression as ts.Identifier))
+      return false;
     const signature = checker.getResolvedSignature(call);
     return !!signature?.declaration && isCurrentCompilerLibrarySourceFile(signature.declaration.getSourceFile());
   };
@@ -83,30 +85,31 @@ export function prepareNumberConversionResolver(
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
 ): { readonly preparedNumberCall: (call: ts.CallExpression) => boolean } {
-  return { preparedNumberCall: ambientConversionCalls(checker, sourceFiles, declaration, "Number", false) };
+  return { preparedNumberCall: ambientConversionCalls(checker, sourceFiles, declaration, "Number", "unaliased") };
 }
 
 /**
- * (#7354 Str2) The Prepared program's conversion plans: `Number(v)` and `String(v)`. from-ast asks the `String`
- * question of the callee identifier (`isAmbientStringBinding`), so only the callee of an admitted direct call
- * answers yes; every other read of `String` (`String.fromCharCode`, `new String(v)`, `typeof String`) keeps its
- * own refusal. The `String` plan is not invalidated by an escape: the Prepared program is closed, and every way to
- * rebind the ambient `String` (a value read of `String` or `globalThis`, an assignment) refuses by name
- * (tests/issue-7354-str2-to-string.test.ts pins each), while a program's own `String` declaration is not the lib
- * symbol. The harness prelude escapes both (`String: globalThis.String`, `map.call(a, String)`), so the
- * invalidation would deny its every `String(v)`. (#7354 T) `isNaN(v)` is `Number(v)`'s ToNumber and a NaN test
- * (§19.2.3), admitted by the same proof as `String(v)`.
+ * (#7354 Str2) The Prepared program's conversion plans: `Number(v)`, `String(v)`, (#7350 B3a) `Boolean(v)` and
+ * (#7354 T) `isNaN(v)`, `Number(v)`'s ToNumber and a NaN test (§19.2.3). from-ast asks the `String` question of the
+ * callee identifier (`isAmbientStringBinding`), so only the callee of an admitted direct call answers yes. (#7350) Each
+ * plan holds while the realm's global is pristine, independent of value reads: a read of the value
+ * (`map.call(a, String)` in the harness prelude, `var N = Number`) is the realm's own value (`identifier-read.ts`) and
+ * cannot rebind the name, while a declaration or write of it anywhere in the program withdraws the plan.
  */
 export function prepareConversionResolvers(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
+  pristine: Pristine,
 ) {
-  const stringCall = ambientConversionCalls(checker, sourceFiles, declaration, "String", true);
+  const plan = (name: "Number" | "String" | "Boolean" | "isNaN") =>
+    ambientConversionCalls(checker, sourceFiles, declaration, name, pristine);
+  const stringCall = plan("String");
   return {
-    ...prepareNumberConversionResolver(checker, sourceFiles, declaration),
+    preparedNumberCall: plan("Number"),
+    preparedBooleanCall: plan("Boolean"),
     isAmbientStringBinding: (node: ts.Identifier): boolean =>
       ts.isCallExpression(node.parent) && node.parent.expression === node && stringCall(node.parent),
-    preparedIsNaNCall: ambientConversionCalls(checker, sourceFiles, declaration, "isNaN", true),
+    preparedIsNaNCall: plan("isNaN"),
   };
 }

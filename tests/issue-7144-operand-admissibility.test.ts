@@ -16,6 +16,7 @@ import {
   additiveOperandsProvable,
   type AdditiveLane,
   binaryOperandsAdmissible,
+  booleanReadBesideCarrier,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   nullComparisonFolds,
@@ -135,7 +136,9 @@ describe("#7144 — binary operands: selector ⇔ from-ast", () => {
           const admissible =
             // Every lane here formats numbers (#7066).
             (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(pair, left.additive, right.additive, LANE)) &&
-            binaryOperandsAdmissible(op, left.family, right.family);
+            binaryOperandsAdmissible(op, left.family, right.family) &&
+            // The harness is an ES module, so its closure is a prepared component (#7282).
+            !booleanReadBesideCarrier(op, left.family, right.family);
           await expectAgreement(`var t = ${left.expr} ${spelling} ${right.expr}; throw m;`, admissible);
         }
       }
@@ -187,8 +190,9 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
         );
       }
     }
+    // An assignment's value is its right-hand side's (#7133), whatever `u` held.
     await expectAgreement(`var u = 1; n = u = 4; throw m;`, true);
-    await expectAgreement(`var u; n = u = 4; throw m;`, slotWriteVerdict("number", "dynamic") === "admissible");
+    await expectAgreement(`var u; n = u = 4; throw m;`, slotWriteVerdict("number", "number") === "admissible");
   }, 240_000);
 
   it("increments of each slot family", async () => {

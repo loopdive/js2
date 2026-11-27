@@ -24,7 +24,7 @@ export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undef
 /** The legalization's builders, with its ToString (`stringOf`, ToPropertyKey here). */
 export type ObjectStaticBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-  /** (#7354 G1) A value may be an error (`holdsErrors`). */
+  /** (#7354 G1) A value may be an error (`holdsFamily`). */
   readonly errors: boolean;
 };
 type Call = Extract<IrInstr, { kind: "call" }>;

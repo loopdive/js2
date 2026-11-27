@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runTest262File } from "./test262-runner.js";
 import { writeFileSync, mkdtempSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 
 /**
@@ -74,7 +74,7 @@ describe("#779c — String.prototype.split / Array literal constructor identity 
 
   it("real test262 split test passes", async () => {
     const r = await runTest262File(
-      "/workspace/test262/test/built-ins/String/prototype/split/instance-is-string.js",
+      resolve(__dirname, "../test262/test/built-ins/String/prototype/split/instance-is-string.js"),
       "built-ins/String",
       30000,
     );

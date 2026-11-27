@@ -56,6 +56,7 @@ import {
 } from "./ir-fnctor-parameter-planning.js";
 import {
   legacyParamSlotIsExternref,
+  legacyExternrefSlotProbes,
   legacyRefinedParamSlot,
   makeIrDynamicCarrierDivergenceProbe,
   resolveFnctorInstanceType,
@@ -195,6 +196,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
+  bigIntOperandOption,
   makeIrArrayElementFamilyClassifier,
   makeIrCheckerSelectionOptions,
   makeIrLocalClassExpressionResolver,
@@ -431,10 +433,10 @@ import { fillProtoIteratorDriver, reserveArrayProtoIteratorOverrideGlobals } fro
 import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
 import { fillObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
+import { scriptGlobalLexicalNames } from "../shared/script-lexical-names.js";
 import {
   collectGlobalObjectPropertyNames,
   recordSloppyImplicitGlobalNames,
-  recordScriptGlobalLexicalBindingNames,
   recordScriptVarBindingNames,
   sourceContainsClass,
   scanModuleMemberDeletes,
@@ -622,7 +624,7 @@ import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
-import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
+import { zeroArgCallInstrs, zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
 import {
   buildIsUndefinedExternBody,
   canonicalUndefinedExternInstrs,
@@ -2943,8 +2945,10 @@ function resolveIrOverrideParamType(
   // withdraws the complete caller cluster if legacy kept the param dynamic.
   // Nonnumeric mapped kinds cannot lower polymorphic equality soundly before
   // that guard (the #3471 string failure), so those retain the direct dynamic
-  // ABI in the IR view.
-  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64")) return projected.type;
+  // ABI in the IR view. (#7448) A JSDoc slot legacy registered as externref
+  // is no guess: it keeps that ABI, as the selector's `resolveParamType` does.
+  const legacyAbi = parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate);
+  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64" && !legacyAbi)) return projected.type;
   return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
 }
 
@@ -3114,6 +3118,7 @@ function planIrOverlay(
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
+            scriptVarModel: "statement-and-for-heads",
           },
           identityContext,
         );
@@ -3312,6 +3317,7 @@ function planIrOverlay(
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       ...makeIrCheckerSelectionOptions(ast.checker),
+      ...bigIntOperandOption(ast.checker, hostFreeEnvironment(ctx)), // (#7525)
       jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       classifyArrayElementFamily,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
@@ -3332,7 +3338,7 @@ function planIrOverlay(
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
-      jsDocParamLowersAsExternref: (parameter) => legacyParamSlotIsExternref(ctx, parameter),
+      ...legacyExternrefSlotProbes(ctx),
       resultWidensToDynamic: (fn) => functionReturnsWidenedValue(ctx, fn),
       resolveFnctorAdmission,
       ...(fnctorArgumentProjections.length > 0
@@ -4301,7 +4307,7 @@ function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.Sourc
   const vars = (ctx.globalObjectVarBindings ??= new Set());
   recordScriptVarBindingNames(vars, sourceFile);
   const lexicals = (ctx.globalLexicalBindings ??= new Set());
-  recordScriptGlobalLexicalBindingNames(lexicals, sourceFile);
+  for (const name of scriptGlobalLexicalNames(sourceFile)) lexicals.add(name.text);
   const implicit = (ctx.sloppyImplicitGlobals ??= new Set());
   recordSloppyImplicitGlobalNames(implicit, sourceFile, ctx.oracle, ctx.inferModuleStrictArguments ?? true);
   // (#3956) A top-level `this.p = v` creates a global-object property that a
@@ -5907,6 +5913,7 @@ export function generateModule(
         identityContext: irPlanningIdentityContext,
         target: ctx.wasi ? "wasi" : "standalone",
         deferTopLevelInit: ctx.deferTopLevelInit,
+        scriptVarModel: "statement-and-for-heads",
       });
       moduleInitPlanning = Object.freeze({
         plan,
@@ -8296,10 +8303,10 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       } else {
         testAndCall.push(...entry.extraParams.flatMap(padMissingArg));
       }
-      testAndCall.push({ op: "call", funcIdx: entry.funcIdx });
+      const call: Instr = { op: "call", funcIdx: entry.funcIdx };
+      testAndCall.push(...(classMember ? [call] : zeroArgCallInstrs(ctx, `${entry.structName}_${methodSuffix}`, call)));
 
       appendResultBoxing(testAndCall, entry.resultType);
-      // externref: no conversion needed
 
       // (#6773 S1) Iterator dispatchers take the nominal guard too: same-layout classes are one
       // runtime type, so `__call_next` on one ran the other's `next` (then failed its brand check).

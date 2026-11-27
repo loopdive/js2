@@ -12,7 +12,16 @@ import {
   type Test262CompileOptions,
 } from "../../src/test262/test262-prepared-entry.js";
 
-export const preparedScriptOptions = (fileName = "test.js"): Test262CompileOptions =>
+/**
+ * The test262 worker's script options (`scripts/test262-worker.mjs`): the checker's semantic diagnostics are skipped,
+ * so legal sloppy code it cannot type (an Annex B block function read outside its block) compiles as in CI.
+ */
+export const TEST262_SCRIPT = { skipSemanticDiagnostics: true, scriptGoal: true } as const;
+
+export const preparedScriptOptions = (
+  fileName = "test.js",
+  overrides: Partial<Test262CompileOptions> = {},
+): Test262CompileOptions =>
   ({
     wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
     backend: "wasmgc",
@@ -22,6 +31,7 @@ export const preparedScriptOptions = (fileName = "test.js"): Test262CompileOptio
     emitWat: false,
     fileName,
     ...(/\.m?js$/.test(fileName) ? { allowJs: true } : {}),
+    ...overrides,
   }) as Test262CompileOptions;
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
@@ -43,7 +53,11 @@ const TOLERATED = new RegExp(
 );
 
 /** Run `source`'s module-init: `returned`, or `threw` when it threw a Wasm exception. */
-export async function runPreparedScript(source: string, fileName = "test.js"): Promise<"returned" | "threw"> {
+export async function runPreparedScript(
+  source: string,
+  fileName = "test.js",
+  overrides: Partial<Test262CompileOptions> = {},
+): Promise<"returned" | "threw"> {
   for (const spy of [
     vi.spyOn(gc, "generateModule"),
     vi.spyOn(gc, "generateMultiModule"),
@@ -53,7 +67,7 @@ export async function runPreparedScript(source: string, fileName = "test.js"): P
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
-  const result = await compile(source, preparedScriptOptions(fileName));
+  const result = await compile(source, preparedScriptOptions(fileName, overrides));
   expect(messages(result).filter((message) => !TOLERATED.test(message))).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();
   try {
@@ -67,8 +81,12 @@ export async function runPreparedScript(source: string, fileName = "test.js"): P
 }
 
 /** The refusal messages of `source`, which must not compile. */
-export async function preparedScriptRefusal(source: string, fileName = "test.js"): Promise<string> {
-  const result = await compile(source, preparedScriptOptions(fileName));
+export async function preparedScriptRefusal(
+  source: string,
+  fileName = "test.js",
+  overrides: Partial<Test262CompileOptions> = {},
+): Promise<string> {
+  const result = await compile(source, preparedScriptOptions(fileName, overrides));
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }

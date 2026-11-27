@@ -8,6 +8,16 @@ import type { IrRuntimeCallableDeclaration } from "./callable-declarations.js";
 
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const VECTOR: IrType = Object.freeze({ kind: "vec", elementType: EXTERNAL, nullable: false });
+const scalar = (kind: "f64" | "i32"): IrType => Object.freeze({ kind: "val", val: Object.freeze({ kind }) });
+/** The fixed callables' signatures; a method's follows from its arity. */
+const FIXED = {
+  "apply-vector": { params: [EXTERNAL, EXTERNAL, VECTOR], results: [EXTERNAL] },
+  undefined: { params: [], results: [EXTERNAL] },
+  receiver: { params: [], results: [EXTERNAL] },
+  // (#7562) The count protocol: the entry read (`arguments.length`) and a direct call's publication.
+  "arguments-length": { params: [], results: [scalar("f64")] },
+  "publish-argc": { params: [scalar("i32")], results: [] },
+} as const;
 
 /**
  * Semantic signatures only. A matching spelling is not physical permission:
@@ -18,17 +28,14 @@ export function irClosureInvocationCallableDeclaration(ref: IrFuncRef): IrRuntim
   const { symbol } = ref.binding;
   const kind = closureInvocationKind(symbol);
   if (!kind) return undefined;
-  const arity = closureMethodArity(symbol);
+  const { params, results } =
+    kind === "method"
+      ? { params: Array.from({ length: closureMethodArity(symbol)! + 2 }, () => EXTERNAL), results: [EXTERNAL] }
+      : FIXED[kind];
   return Object.freeze({
     feature: `js.closure.${kind}` as const,
     ref: irIntrinsicFuncRef(symbol),
-    params: Object.freeze(
-      kind === "method"
-        ? Array.from({ length: arity! + 2 }, () => EXTERNAL)
-        : kind === "apply-vector"
-          ? [EXTERNAL, EXTERNAL, VECTOR]
-          : [],
-    ),
-    results: Object.freeze([EXTERNAL]),
+    params: Object.freeze([...params]),
+    results: Object.freeze([...results]),
   });
 }

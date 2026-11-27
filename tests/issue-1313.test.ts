@@ -20,11 +20,10 @@
 // any await over a Promise<T> that comes from an async call expression.
 
 import { describe, expect, it } from "vitest";
-
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function runTest(src: string): Promise<unknown> {
-  const exports = await compileAndInstantiate(src);
+  const exports = await compileToWasm(src);
   return await (exports as Record<string, () => Promise<unknown>>).test?.();
 }
 

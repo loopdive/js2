@@ -17,16 +17,12 @@ import { ts } from "../src/ts-api.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { isSyntacticallyBooleanExpr } from "../src/checker/oracle.js";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runHost(source: string, fn: string): Promise<unknown> {
   const result = await compile(source, { fileName: "t.ts" });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as unknown as { setExports?: (e: Record<string, Function>) => void }).setExports?.(
-    instance.exports as Record<string, Function>,
-  );
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 

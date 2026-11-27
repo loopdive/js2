@@ -22,7 +22,13 @@ import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "./ta-dy
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
-import { compileAndEmitToString, emitNumberToStringSentinelAware, emitToString } from "./coercion-engine.js";
+import {
+  compileAndEmitToString,
+  emitNumberToStringSentinelAware,
+  emitToNumber,
+  emitToString,
+} from "./coercion-engine.js";
+import { ensureIrNativeStringRepeatProvider, ensureNativeStringPadProvider } from "./ir-native-string-repeat.js";
 import { registerStringHelperEmitters } from "./string-emitter-registry.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
@@ -370,12 +376,8 @@ export function compileNativeConcatOperand(
   if ((opType.kind === "f64" || opType.kind === "i32" || opType.kind === "i64") && toStrIdx !== undefined) {
     if (opType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
     else if (opType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
-    // (#6423) NOT routed through `emitNumberToStringSentinelAware`. This is a
-    // native-strings arm, and the sentinel-aware ToString is js-host-only by
-    // design — see that helper's doc comment for why (this lane has its own
-    // branded-f64 producers, chiefly `for-of` over a numeric vec, and no
-    // standalone measurement backs changing it here).
-    fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    // (#7464) A branded f64 holding the sentinel concatenates as "undefined".
+    emitNumberToStringSentinelAware(ctx, fctx, opType, toStrIdx);
     emitNativeStringRefFromExternref(ctx, fctx);
     return true;
   }
@@ -890,9 +892,8 @@ export function compileNativeTemplateExpression(
       // but "did this externref come from the native formatter?", and here it
       // always did. The dynamic-externref / struct arms below KEEP the bridge:
       // those really do carry host strings.
-      // (#6423) NOT sentinel-aware, deliberately — native-strings arm; see
-      // `emitNumberToStringSentinelAware`'s doc comment.
-      fctx.body.push({ op: "call", funcIdx: toStrIdx });
+      // (#7464) A branded f64 holding the sentinel prints "undefined".
+      emitNumberToStringSentinelAware(ctx, fctx, spanType, toStrIdx);
       emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i32" && toStrIdx !== undefined) {
       // (#3912) native-formatter box — see the f64 arm above.
@@ -3267,64 +3268,28 @@ export function compileNativeStringMethodCall(
     return nativeStringType(ctx);
   }
 
-  // repeat: native helper with RangeError validation
+  // repeat: the provider validates the count and the result length (#7442)
   if (method === "repeat") {
+    const funcIdx = ensureIrNativeStringRepeatProvider(ctx);
+    flushLateImportShifts(ctx, fctx);
     emitReceiver();
     emitFlatten();
-    if (expr.arguments.length > 0) {
-      // BigInt / Symbol args → TypeError per ToNumber spec (#1445)
-      if (tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[0]!)) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-        const funcIdx = ctx.nativeStrHelpers.get("__str_repeat")!;
-        fctx.body.push({ op: "call", funcIdx });
-        return nativeStringType(ctx);
-      }
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, {
-        kind: "f64",
-      });
-      // RangeError: count must be non-negative, finite, and not too large.
-      // §22.1.3.18: n = ToIntegerOrInfinity(count) (truncates toward zero),
-      // THEN throw if n < 0 or n is +∞. The `< 0` test must run on the
-      // truncated value, else `repeat(-0.5)` — whose ToIntegerOrInfinity is
-      // `-0`, NOT negative — wrongly throws (#2124). `f64.trunc(-0.5) = -0.0`,
-      // and `-0.0 < 0` is false, so truncating first gives the spec result.
-      // The +∞ check stays on the raw f64 (trunc_sat would clamp it).
-      if (argType && argType.kind === "f64") {
-        const countLocal = allocLocal(fctx, `__repeat_count_${fctx.locals.length}`, { kind: "f64" });
-        fctx.body.push({ op: "local.tee", index: countLocal });
-        // Check ToIntegerOrInfinity(count) < 0 — truncate toward zero first.
-        fctx.body.push({ op: "f64.trunc" });
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.lt" });
-        // Check count is Infinity (count != count is NaN, but we also need +Inf)
-        // Use: count == +Infinity
-        fctx.body.push({ op: "local.get", index: countLocal });
-        fctx.body.push({ op: "f64.const", value: Infinity });
-        fctx.body.push({ op: "f64.eq" });
-        fctx.body.push({ op: "i32.or" });
-        {
-          const rangeErrMsg = "RangeError: Invalid count value";
-          const rangeErrInstrs = buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: rangeErrInstrs,
-            else: [],
-          });
-        }
-        fctx.body.push({ op: "local.get", index: countLocal });
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+    const count = expr.arguments[0];
+    // BigInt / Symbol args → TypeError per ToNumber spec (#1445); an omitted count is ToIntegerOrInfinity(undefined) = 0.
+    if (count === undefined || tryThrowOnBigIntOrSymbolArg(ctx, fctx, count)) {
+      fctx.body.push({ op: "f64.const", value: 0 });
     } else {
-      fctx.body.push({ op: "i32.const", value: 0 });
+      emitToNumber(ctx, fctx, compileExpression(ctx, fctx, count, { kind: "f64" }));
     }
-    const funcIdx = ctx.nativeStrHelpers.get("__str_repeat")!;
     fctx.body.push({ op: "call", funcIdx });
+    fctx.body.push({ op: "ref.as_non_null" });
     return nativeStringType(ctx);
   }
 
-  // padStart: native helper
-  if (method === "padStart") {
+  // padStart / padEnd: the kernel behind the string length check (#7442)
+  if (method === "padStart" || method === "padEnd") {
+    const funcIdx = ensureNativeStringPadProvider(ctx, method === "padStart" ? "__str_padStart" : "__str_padEnd");
+    flushLateImportShifts(ctx, fctx);
     emitReceiver();
     emitFlatten();
     // targetLength (ToLength per spec — throws TypeError on BigInt/Symbol)
@@ -3357,45 +3322,6 @@ export function compileNativeStringMethodCall(
       });
       fctx.body.push({ op: "struct.new", typeIdx: ctx.nativeStrTypeIdx });
     }
-    const funcIdx = ctx.nativeStrHelpers.get("__str_padStart")!;
-    fctx.body.push({ op: "call", funcIdx });
-    return nativeStringType(ctx);
-  }
-
-  // padEnd: native helper
-  if (method === "padEnd") {
-    emitReceiver();
-    emitFlatten();
-    // targetLength (ToLength per spec — throws TypeError on BigInt/Symbol)
-    if (expr.arguments.length > 0) {
-      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
-    } else {
-      fctx.body.push({ op: "i32.const", value: 0 });
-    }
-    // padString (default: " "). §22.1.4.1 StringPad step 2: an `undefined`
-    // fillString (explicit `padEnd(n, undefined)` / `padEnd(n, void 0)`) is
-    // spec-equivalent to omission and defaults to a single space — emitting it
-    // through `compileExpression(undefined) + emitFlatten()` flattens a null
-    // ref and traps in `__str_flatten` (#2160 standalone residual).
-    if (expr.arguments.length > 1 && !isStaticUndefinedArg(expr.arguments[1])) {
-      // (#5152) §22.1.3.16 StringPad step 4 coerces the fill via ToString, which
-      // §7.1.17 makes THROW on a Symbol. A bare `compileExpression` pushed the
-      // symbol's raw i32 id where `(ref null $AnyString)` is expected — invalid
-      // Wasm, not a TypeError. `emitArgAsNativeString` carries that guard.
-      emitArgAsNativeString(ctx, fctx, expr.arguments[1]!);
-      emitFlatten();
-    } else {
-      fctx.body.push({ op: "i32.const", value: 1 }); // len
-      fctx.body.push({ op: "i32.const", value: 0 }); // off
-      fctx.body.push({ op: "i32.const", value: 32 });
-      fctx.body.push({
-        op: "array.new_fixed",
-        typeIdx: ctx.nativeStrDataTypeIdx,
-        length: 1,
-      });
-      fctx.body.push({ op: "struct.new", typeIdx: ctx.nativeStrTypeIdx });
-    }
-    const funcIdx = ctx.nativeStrHelpers.get("__str_padEnd")!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }

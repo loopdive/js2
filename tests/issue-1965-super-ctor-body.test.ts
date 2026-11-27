@@ -10,15 +10,14 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string): Promise<unknown> {
   const result = await compile(source, {});
   if (!result.success) {
     throw new Error(`compile failed:\n${result.errors.map((e) => e.message).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await instantiateWasm(result.binary, imports.env);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports.test as () => unknown)();
 }
 

@@ -49,7 +49,7 @@ import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorLeavesFnctor } from "./helpers/self-guarded-constructor.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 

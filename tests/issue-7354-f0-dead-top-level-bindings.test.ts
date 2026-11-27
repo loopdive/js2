@@ -156,7 +156,12 @@ const KEPT = [
 // Global-object reflection the pass cannot see; the Prepared path refuses each.
 const REFLECTS = [
   ["a computed global key", `${DEAD} var k = "p" + "q"; var v = globalThis[k];`, 'identifier "globalThis"'],
-  ["for-in over the global object", `${DEAD} var c = 0; for (var k in this) { c = c + 1; }`, "nested var declaration"],
+  // (#7377) The for-in head is a script var now; the global object as a value is what stops it.
+  [
+    "for-in over the global object",
+    `${DEAD} var c = 0; for (var k in this) { c = c + 1; }`,
+    "'this' reference outside",
+  ],
   ["Object.keys of the global object", `${DEAD} var c = Object.keys(globalThis).length;`, 'identifier "Object"'],
 ] as const;
 

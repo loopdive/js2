@@ -3,13 +3,12 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, compileMulti } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, Function>;
 }
 

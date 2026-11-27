@@ -36,6 +36,8 @@ export interface BuiltinFunctionEntryOperands {
   /** `object-prototype`, `function-prototype`, or (#7354 G1) an earlier entry's id. */
   readonly prototype: string;
   readonly properties: RealmFamilyOperands["entries"][number]["properties"];
+  /** (#7350 B3a) The catalog models only this entry's identity: a miss among its own properties aborts. */
+  readonly identityOnly?: true;
 }
 export interface BuiltinFunctionBodyOperands extends Pick<
   RealmFamilyOperands,
@@ -59,6 +61,7 @@ export interface BuiltinFunctionBodyOperands extends Pick<
   readonly createNull: FuncHandle;
   readonly boxNumber: FuncHandle;
   readonly defineDataBody: FuncHandle;
+  readonly defineAccessorBody: FuncHandle;
   readonly defineAttributes: FuncHandle;
   readonly typeError: FuncHandle;
   readonly exceptionTag: number;
@@ -68,12 +71,9 @@ export interface BuiltinFunctionBodyOperands extends Pick<
   readonly entries: readonly BuiltinFunctionEntryOperands[];
   /**
    * (#7354 O2) Where a source closure can be an accessor half: per arity (0 a getter, 1 a setter) the program's
-   * dispatcher `(receiver, callee, …args)` and the kernel's own call of a built-in `(callee, receiver, …args)`.
+   * dispatcher `(receiver, callee, …args)`.
    */
-  readonly accessorCalls?: {
-    readonly source: readonly [FuncHandle, FuncHandle];
-    readonly builtin: readonly [FuncHandle, FuncHandle];
-  };
+  readonly accessorCalls?: readonly [FuncHandle, FuncHandle];
 }
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 /** (#7354 P1) A writable, non-enumerable, configurable data property's descriptor word, every field present. */
@@ -414,24 +414,48 @@ export function buildBuiltinFunctionArgument(
     },
   ];
 }
+/** A call's arguments, each an instruction sequence, and the free externref local their vector is built in. */
+export interface BuiltinCallArguments {
+  readonly vector: number;
+  readonly values: readonly (readonly Instr[])[];
+}
+/**
+ * Call(callee, receiver, args) of a built-in through the kernel's `callVector`, leaving the result. Without `args` the
+ * new vector is passed as made.
+ */
+export function buildBuiltinVectorCall(
+  d: Pick<BuiltinFunctionBodyOperands, "newVector" | "push" | "vectorTypeIdx" | "callVector">,
+  callee: readonly Instr[],
+  receiver: readonly Instr[],
+  args?: BuiltinCallArguments,
+): Instr[] {
+  const tail: Instr[] = [
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.vectorTypeIdx },
+    call(d.callVector),
+  ];
+  if (!args) return [...callee, ...receiver, call(d.newVector), ...tail];
+  const { vector, values } = args;
+  return [
+    call(d.newVector),
+    { op: "local.set", index: vector },
+    ...values.flatMap((value): Instr[] => [get(vector), ...value, call(d.push)]),
+    ...callee,
+    ...receiver,
+    get(vector),
+    ...tail,
+  ];
+}
 export function buildBuiltinFunctionMethodDefinition(
   d: BuiltinFunctionBodyOperands,
   arity: number,
 ): BuiltinFunctionDefinition {
-  const vector = arity + 2;
   return {
     locals: [{ name: "arguments", type: { kind: "externref" } }],
-    body: [
-      call(d.newVector),
-      { op: "local.set", index: vector },
-      ...Array.from({ length: arity }, (_, index): Instr[] => [get(vector), get(index + 2), call(d.push)]).flat(),
-      get(0),
-      get(1),
-      get(vector),
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-      call(d.callVector),
-    ],
+    body: buildBuiltinVectorCall(d, [get(0)], [get(1)], {
+      vector: arity + 2,
+      values: Array.from({ length: arity }, (_, index) => [get(index + 2)]),
+    }),
   };
 }
 export function buildBuiltinFunctionSlotDefinition(

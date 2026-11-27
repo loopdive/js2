@@ -9,7 +9,7 @@ import {
   functionLikeReferencesOwnThis,
   readsAmbientThisGlobal,
 } from "../../shared/body-references-own-this.js";
-import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
+import { isStrictFunction, isSimpleParameterList } from "../../shared/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
@@ -80,6 +80,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { emitClassStaticSidecar } from "../class-static-sidecar.js"; // (#5195 Step 2)
+import { emitClassStaticF64UndefinedSeeds } from "../declarations/module-var-undefined-seed.js"; // (#7464)
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
 import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
@@ -129,7 +130,7 @@ import {
   annexBUpdatesExistingVarBinding,
   enclosingVarScope,
   hasInterveningLexicalBinder,
-} from "../annexb-cancel.js";
+} from "../../shared/annexb-block-functions.js";
 import { emitArgumentsVecTail, emitRestArgs, prepareRestArgs } from "../arguments-vector-tail.js";
 import {
   beginNestedFunctionNameScope,
@@ -139,25 +140,8 @@ import {
 } from "../nested-function-name-scope.js"; // (#4456) lexical scope for the flat funcMap namespace
 import { collectBlockScopedNames } from "./shared.js";
 import { classifyReferencedSiblingFns } from "./nested-sibling-visibility.js";
+import { parameterMayBeOmitted } from "../../shared/omittable-param.js";
 import { requireHelper } from "../helpers/required-helper.js";
-
-/**
- * Mirror declarations.ts' omitted-parameter ABI rule for lifted nested
- * declarations. An optional parameter without an initializer must preserve
- * JavaScript `undefined`; a scalar Wasm slot would instead receive the numeric
- * missing-argument sentinel. Explicit native annotations intentionally retain
- * their scalar ABI.
- */
-function nestedParameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
-  const jsdocType = ts.getJSDocType(param);
-  const jsdocTags = ts.getJSDocParameterTags(param);
-  return (
-    param.initializer === undefined &&
-    (param.questionToken !== undefined ||
-      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
-      jsdocTags.some((tag) => tag.isBracketed === true))
-  );
-}
 
 /**
  * Mirror declarations.ts' bindingPatternParamNeedsWiden (#862) for lifted
@@ -240,9 +224,7 @@ function preserveOmittedNestedParameter(
   // lifted declaration makes an otherwise valid closure fail its guarded cast
   // and become null. Omitted booleans are instead tracked through `__argc`
   // below, which preserves the ABI while retaining undefined-vs-false.
-  return wasmType.kind === "f64" &&
-    nestedParameterMayBeOmitted(param) &&
-    nativeTypeOfDeclaration(ctx.checker, param) === null
+  return wasmType.kind === "f64" && parameterMayBeOmitted(param) && nativeTypeOfDeclaration(ctx.checker, param) === null
     ? { kind: "externref" }
     : wasmType;
 }
@@ -294,7 +276,7 @@ function registerNestedOmissionTrackedScalarParams(
     if (
       type?.kind !== "i32" ||
       type.boolean !== true ||
-      !nestedParameterMayBeOmitted(param) ||
+      !parameterMayBeOmitted(param) ||
       nativeTypeOfDeclaration(ctx.checker, param) !== null ||
       (!nestedParameterIsComparedToUndefined(ctx, owner, param) &&
         !nestedParameterIsTrailingForwardedArgument(ctx, owner, param))
@@ -411,6 +393,7 @@ function emitNestedDeclarationStaticInitializers(
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): void {
   if (!ts.isClassDeclaration(decl) || ts.isSourceFile(decl.parent)) return;
+  emitClassStaticF64UndefinedSeeds(ctx, fctx.body, decl);
   for (const entry of ctx.staticInitExprs) {
     if (staticInitOwner(entry) !== decl) continue;
     const savedEnclosing = fctx.enclosingClassName;
@@ -431,9 +414,7 @@ function emitNestedDeclarationStaticInitializers(
       compileExpression(ctx, fctx, entry.initializer, globalDef?.type);
       // Lowering the initializer may add late imports. Consult the mutable
       // collector entry after it runs so this new store uses the shifted index.
-      if (entry.globalIdx !== undefined) {
-        fctx.body.push({ op: "global.set", index: entry.globalIdx });
-      }
+      fctx.body.push({ op: "global.set", index: entry.globalIdx });
     } finally {
       fctx.enclosingClassName = savedEnclosing;
       fctx.isStaticContext = savedIsStatic;

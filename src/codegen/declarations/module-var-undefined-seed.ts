@@ -42,13 +42,11 @@
  *   entirely by `computeElidableTopLevelTdzNames`, which only elides when no
  *   read can observe the pre-init value). Seeding them `undefined` would be
  *   dead at best and a wrong answer at worst.
- * - **Only externref slots.** A slot the type inference narrowed to a primitive
- *   (`var n = 42` ⇒ `(mut f64)`, `var s = "a"` ⇒ a native-string ref) cannot
- *   physically hold the singleton and keeps its wasm zero-init. That is the
- *   module-scope twin of #684 (which the function-local hoister answers by
- *   seeding `f64.const NaN`) and of #4264 point 2 (which answers it by WIDENING
- *   the slot to externref for `with`-body vars). Both remedies are slot-type
- *   changes with their own blast radius; recorded as this issue's residual.
+ * - **Only externref slots here.** A slot the type inference narrowed to a
+ *   primitive (`var s = "a"` ⇒ a native-string ref) cannot physically hold the
+ *   singleton and keeps its wasm zero-init. An f64 slot that can hold
+ *   `undefined` is seeded with the f64 sentinel by
+ *   {@link emitModuleF64UndefinedSeeds} below (#7366/#7464).
  *
  * This SUBSUMES the #4264 `with`-body seed rather than sitting beside it:
  * `scriptVarBindingNames` walks the same region (top-level code, never a
@@ -63,6 +61,7 @@
 import { ts } from "../../ts-api.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import type { Instr } from "../../ir/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { forEachScriptVarDeclaration, scriptVarBindingNames } from "../source-scan-predicates.js";
 import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
@@ -123,17 +122,41 @@ export function emitModuleF64UndefinedSeeds(
   }
 }
 
-/** (#7366) `staticProps` keys of the static fields {@link emitModuleF64UndefinedSeeds} seeds, per compile. */
-const staticF64UndefinedSeedKeys = new WeakMap<CodegenContext, Set<string>>();
+/**
+ * (#7366) The static fields {@link emitModuleF64UndefinedSeeds} seeds, per compile: `staticProps` key → declaration.
+ */
+const staticF64UndefinedSeeds = new WeakMap<CodegenContext, Map<string, ts.PropertyDeclaration>>();
 
 /**
  * Record a static field whose f64 global starts as `undefined`. Keyed by its `staticProps` name, not its global
  * index: a late import shifts the index, and `staticProps` is the map that shift keeps current.
  */
-export function noteStaticF64UndefinedSeed(ctx: CodegenContext, staticPropKey: string): void {
-  let keys = staticF64UndefinedSeedKeys.get(ctx);
-  if (keys === undefined) staticF64UndefinedSeedKeys.set(ctx, (keys = new Set()));
-  keys.add(staticPropKey);
+export function noteStaticF64UndefinedSeed(
+  ctx: CodegenContext,
+  staticPropKey: string,
+  declaration: ts.PropertyDeclaration,
+): void {
+  let seeds = staticF64UndefinedSeeds.get(ctx);
+  if (seeds === undefined) staticF64UndefinedSeeds.set(ctx, (seeds = new Map()));
+  seeds.set(staticPropKey, declaration);
+}
+
+/**
+ * (#7464) Re-seed the `undefined` statics of a class declared in a function body. Each evaluation of the declaration
+ * creates a fresh class (§15.7.14 ClassDefinitionEvaluation), but its statics share one global, so the module
+ * prologue's seed alone would let one call see the value an earlier call assigned.
+ */
+export function emitClassStaticF64UndefinedSeeds(
+  ctx: CodegenContext,
+  body: Instr[],
+  decl: ts.ClassLikeDeclaration,
+): void {
+  for (const [staticPropKey, declaration] of staticF64UndefinedSeeds.get(ctx) ?? []) {
+    const globalIdx = ctx.staticProps.get(staticPropKey);
+    if (declaration.parent !== decl || globalIdx === undefined) continue;
+    pushUndefF64(body);
+    body.push({ op: "global.set", index: globalIdx });
+  }
 }
 
 /**
@@ -146,6 +169,26 @@ export function noteStaticF64UndefinedSeed(ctx: CodegenContext, staticPropKey: s
  * - the static fields recorded by {@link noteStaticF64UndefinedSeed}.
  */
 export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): Set<number> {
+  const globals = new Set<number>();
+  for (const { name } of seedCandidateDeclarations(ctx, sourceFile)) {
+    if (!ts.isIdentifier(name)) continue;
+    const globalIdx = ctx.moduleGlobals.get(name.text);
+    const type = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+    if (globalIdx !== undefined && type && f64MayHoldUndefined(ctx, name, type)) globals.add(globalIdx);
+  }
+  for (const staticPropKey of staticF64UndefinedSeeds.get(ctx)?.keys() ?? []) {
+    const globalIdx = ctx.staticProps.get(staticPropKey);
+    if (globalIdx !== undefined) globals.add(globalIdx);
+  }
+  return globals;
+}
+
+/** The declarations {@link moduleF64UndefinedSeedGlobals} considers. Walked once per compile: its two callers ask
+ * at different stages, but the source text they walk does not change between them. */
+const seedCandidates = new WeakMap<CodegenContext, readonly ts.VariableDeclaration[]>();
+function seedCandidateDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile): readonly ts.VariableDeclaration[] {
+  const cached = seedCandidates.get(ctx);
+  if (cached) return cached;
   const declarations: ts.VariableDeclaration[] = [];
   const scriptRecordOwnsVars = ctx.standaloneScriptVarBindings && !ctx.sourceIsModule;
   for (const source of ctx.callableSourceFiles ?? [sourceFile]) {
@@ -155,18 +198,8 @@ export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: t
       if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Let) !== 0)
         declarations.push(...statement.declarationList.declarations.filter((declaration) => !declaration.initializer));
   }
-  const globals = new Set<number>();
-  for (const { name } of declarations) {
-    if (!ts.isIdentifier(name)) continue;
-    const globalIdx = ctx.moduleGlobals.get(name.text);
-    const type = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
-    if (globalIdx !== undefined && type && f64MayHoldUndefined(ctx, name, type)) globals.add(globalIdx);
-  }
-  for (const staticPropKey of staticF64UndefinedSeedKeys.get(ctx) ?? []) {
-    const globalIdx = ctx.staticProps.get(staticPropKey);
-    if (globalIdx !== undefined) globals.add(globalIdx);
-  }
-  return globals;
+  seedCandidates.set(ctx, declarations);
+  return declarations;
 }
 
 /**

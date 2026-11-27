@@ -11,7 +11,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { sourceWritesPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { TypeOracle } from "../checker/oracle.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 
 export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
@@ -500,30 +500,6 @@ export function scriptVarBindingNames(sourceFile: ts.SourceFile): ReadonlySet<st
   if (!sourceFile.isDeclarationFile) recordScriptVarBindingNames(names, sourceFile);
   scriptVarBindingNameCache.set(sourceFile, names);
   return names;
-}
-
-/** Names owned by the declarative half of a Script's GlobalEnvironmentRecord.
- * Only declarations that are direct SourceFile children participate: a
- * block/loop lexical has its own nested environment and must not collide with
- * a later indirect-eval `var` declaration. */
-export function recordScriptGlobalLexicalBindingNames(target: Set<string>, sourceFile: ts.SourceFile): void {
-  const recordName = (name: ts.BindingName): void => {
-    if (ts.isIdentifier(name)) {
-      target.add(name.text);
-      return;
-    }
-    for (const element of name.elements) {
-      if (!ts.isOmittedExpression(element)) recordName(element.name);
-    }
-  };
-  for (const statement of sourceFile.statements) {
-    if (ts.isVariableStatement(statement)) {
-      if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue;
-      for (const declaration of statement.declarationList.declarations) recordName(declaration.name);
-    } else if (ts.isClassDeclaration(statement) && statement.name) {
-      target.add(statement.name.text);
-    }
-  }
 }
 
 /**

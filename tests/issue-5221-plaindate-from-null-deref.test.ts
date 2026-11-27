@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * (#5221) `Temporal.PlainDate.from(…)` traps with "dereferencing a null
@@ -81,9 +81,7 @@ async function run(source: string, lane: Lane): Promise<unknown> {
     ...(lane === "standalone" ? { target: "standalone" as const } : {}),
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 

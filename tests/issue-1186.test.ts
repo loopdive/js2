@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { expectHostStringsRemoved } from "./helpers/removed-host-strings.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -37,8 +38,9 @@ async function runOnce(
   fnName: string,
   experimentalIR: boolean,
   nativeStrings: boolean,
+  target?: "standalone",
 ): Promise<Outcome> {
-  const r = await compile(source, { experimentalIR, nativeStrings });
+  const r = await compile(source, { experimentalIR, nativeStrings, target });
   if (!r.success) {
     return { kind: "compile_fail", first: r.errors[0]?.message ?? "" };
   }
@@ -168,11 +170,7 @@ describe("#1186 — legacy ↔ IR equivalence in nativeStrings mode (#1183 dual-
 });
 
 describe("#1186 — host-strings (default) for-of string iteration still works", () => {
-  // Sanity check: the fix should be a no-op in host-strings mode (no
-  // __str_charAt is registered there). Just confirm host-mode still
-  // compiles and runs cleanly.
-  it("host: count chars in 'hello'", async () => {
-    const source = `
+  const source = `
       export function fn(): number {
         const s = "hello";
         let n = 0;
@@ -180,8 +178,18 @@ describe("#1186 — host-strings (default) for-of string iteration still works",
         return n;
       }
     `;
-    const r = await runOnce(source, "fn", false, false);
-    if (r.kind !== "ok") throw new Error(`host run failed: ${JSON.stringify(r)}`);
+
+  // The host-strings mode (`nativeStrings: false`) was removed by #6979 S7 and
+  // is now a compile error, so the "no-op in host mode" check has no mode left
+  // to run in.
+  it("host: count chars in 'hello'", async () => {
+    await expectHostStringsRemoved(source, { experimentalIR: false });
+  });
+
+  // The same for-of string iteration on the no-host standalone target.
+  it("standalone: count chars in 'hello'", async () => {
+    const r = await runOnce(source, "fn", false, true, "standalone");
+    if (r.kind !== "ok") throw new Error(`standalone run failed: ${JSON.stringify(r)}`);
     expect(r.value).toBe(5);
   });
 });

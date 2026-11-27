@@ -53,7 +53,7 @@ import { ensureObjectNativeProtoGlue } from "../array-object-proto.js";
 import { standaloneClassProtoObjectApplies } from "../class-proto-object.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { emitThrowTypeError } from "../js-errors.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { noteReflectSetReceiverCall, REFLECT_SET_RECEIVER } from "../object-runtime-ordinary-set.js";

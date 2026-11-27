@@ -1,10 +1,11 @@
 ---
 id: 7408
 title: "tests/issue-7144-operand-admissibility.test.ts has 4 tests red on main since 2026-11-06/07"
-status: ready
+status: done
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
+completed: 2026-11-26
 priority: high
 horizon: s
 feasibility: medium
@@ -13,6 +14,11 @@ task_type: bugfix
 area: ir, tests
 goal: ir-full-coverage
 related: [7144, 7133, 7282, 7358, 7375]
+loc-budget-allow:
+  # 2026-11-26 (#7408): select.ts +11. The #7282 refusal site needs the
+  # selector's own local tracing (`unannotatedLocal`, `dynamicShapedValue`),
+  # which lives only in select.ts; one predicate and its call.
+  - src/ir/select.ts
 ---
 
 # #7408 — the #7144 selector⇔from-ast sweep is red on main
@@ -59,8 +65,31 @@ Per row, which side is right: the selector (claim and run) or the predicate/expe
 checked by the sweep's own runtime comparison against node, so the fix is whichever makes claim, predicate and
 node agree. Out of scope for #7375, which leaves these four exactly as on main.
 
-## Suspended Work
+## Resolution (2026-11-26)
 
-Filed 2026-11-20 at the budget window's end; not started. It rides on branch `claude/7375-compound-rhs` until that
-PR opens (docs only). Next step: per row, decide whether the selector or the predicate is right, by the sweep's own
-comparison against node.
+Decided per row by the sweep's own comparison against node, plus probes with the #7282 refusal switched off.
+
+| row | right side | change |
+| --- | --- | --- |
+| `n - true`, `n \| true`, `n < true` | node and from-ast | selector |
+| `var u; n = u = 4` | the selector | expectation |
+| (unmasked) `true - m`, `true \| m`, `true < m`, `m` a dynamic param | the selector | expectation |
+
+- **Rows 1–3.** `binaryOperandFamily` gives the unannotated closure local `n` the family `unknown`, because it
+  leaves initializer tracing to its caller. #7282's `booleanReadBesideCarrier` counts `unknown` as a possible carrier
+  (meant for an `any` module binding), so it refused. With the refusal off, a boolean beside a number or string
+  local is claimed and matches node on every lane, with no post-claim error. The selector now skips the refusal when
+  an operand is an unannotated local whose slot is not the carrier (`readsNonCarrierLocal` on the operand beside the boolean: not a dynamic-shaped local, `dynamicShapedValue`).
+  Carrier locals (`var x;`, `var x = m`) and carrier params stay refused, as #7282 intends.
+- **Row 4.** Since #7133 an assignment's value is its right-hand side, so `n = u = 4` writes a number into `n`,
+  whatever `u` held. The expectation now asks `slotWriteVerdict("number", "number")`.
+- **Unmasked rows.** Once rows 1–3 passed, the sweep reached `true - m`. The harness is an ES module, so its closure
+  is a prepared component and #7282 refuses a boolean beside the carrier there. The expectation now carries
+  `!booleanReadBesideCarrier` (whether lifting that refusal inside closures is safe is unproven; not done here).
+- `tests/issue-7282-boolean-numeric-operands.test.ts` stays 39/39. Its 6 module rows fail with the refusal fully
+  off, which is why only the local case is narrowed.
+- (RV7442) Follow-up, not done here: `binaryOperandFamily` could trace an unannotated local's initializer family once,
+  as `provenIrFamily`'s doc says the caller does. `booleanReadBesideCarrier` would then never see `unknown` for such a
+  local, and this exemption would go. Locals whose slot is the carrier but that `dynamicShapedValue` does not
+  recognise (`var n = (0, m)`, `var n = x = m`, `var n = m.x`) are claimed now; RV7442's probe found them giving
+  node's answer.
