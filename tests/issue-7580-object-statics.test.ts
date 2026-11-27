@@ -55,8 +55,8 @@ dp(o, { y: { value: 3, enumerable: true } });
 var out = String(o.q) + String(o.y);`,
   ],
   [
-    "a static stored in an object and called as its method ignores this",
-    'var h = { f: Object.defineProperty }, o = {};\nh.f(o, "z", { value: 7 });\nvar out = String(o.z);',
+    "a static stored in an object and called as its method of the same name ignores this",
+    'var h = { defineProperty: Object.defineProperty }, o = {};\nh.defineProperty(o, "z", { value: 7 });\nvar out = String(o.z);',
   ],
   [
     "a static passed as an argument and called in a closure",
@@ -133,6 +133,10 @@ var out = String(Object.getOwnPropertyDescriptor({ a: 1 }, "a"));`,
     [
       "written through an alias, then read and called",
       "var O = Object, f = function () { return 1; }; O.create = f;\nvar out = String(Object.create === f) + String(Object.create());",
+    ],
+    [
+      "a static called as a method of another name (the dispatcher's built-in arm)",
+      'var h = { f: Object.defineProperty }, o = {};\nh.f(o, "z", { value: 7 });\nvar out = String(o.z);',
     ],
     [
       "getOwnPropertyNames called through the value",

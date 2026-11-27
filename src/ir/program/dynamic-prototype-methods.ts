@@ -14,9 +14,10 @@
  * so it is never `undefined` or `null` (that [[Get]] threw). A detached call (`var h = o.m; h(v)`) has another
  * receiver and takes the dispatcher. (#7352) `Array.isArray` reads no `this` and no key, so a call whose callee is it
  * is IsArray in either shape: `X.isArray(v)`, or detached (`var f = Array.isArray; f(v)`). A method read under another
- * name (`o.m = Array.isArray; o.m(v)`) takes the dispatcher, whose built-in arm aborts. (#7580) A native `Object`
- * static the program reads as a value (`staticValues`) ignores `this` too: any call whose callee is it, under any name
- * (`var d = Object.defineProperty; d(o, k, v)`, `({ f: d }).f(o, k, v)`), is its algorithm.
+ * name (`o.m = Array.isArray; o.m(v)`) takes the dispatcher, whose built-in arm aborts. (#7580) So does a native
+ * `Object` static the program reads as a value (`staticValues`): `var d = Object.defineProperty; d(o, k, v)` and
+ * `({ defineProperty: d }).defineProperty(o, k, v)` are its algorithm, `({ f: d }).f(o, k, v)` the abort. Testing
+ * every name would inline each static's algorithm at every method call of the program.
  *
  * Where the program creates no source function no dispatcher exists, and a call that is none of these built-ins is the
  * run-time abort (a built-in the dispatcher could only abort for).
@@ -145,17 +146,21 @@ export function dynamicPrototypeMethodCall(
   const method = name === undefined ? undefined : nativeObjectPrototypeMethod(name);
   const algorithm = (r: IrValueId): IrInstr[] =>
     method === "isPrototypeOf" ? prototypeOf(b, instr, r) : ownProperty(b, instr, method === "propertyIsEnumerable", r);
+  // A static reads no `this`: a call may be it where it is detached or names it.
+  const reads = (key: string): boolean => name === undefined || name === key;
   const tests = [
     ...(method === undefined ? [] : [() => identityTest(b, instr, objectPrototypeMethodId(method), callee, algorithm)]),
     ...(name === undefined
       ? []
       : conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2)),
-    ...(holdsFamily(b.program, "array") && (name === undefined || name === "isArray")
+    ...(holdsFamily(b.program, "array") && reads("isArray")
       ? [() => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))]
       : []),
     ...[...b.program.objects.staticValues].flatMap((value) => {
       const native = nativeObjectStatic(value)?.name;
-      return native === undefined ? [] : [() => objectStaticTest(b, instr, native, callee, instr.args.slice(2))];
+      return native !== undefined && reads(native)
+        ? [() => objectStaticTest(b, instr, native, callee, instr.args.slice(2))]
+        : [];
     }),
   ];
   if (tests.length === 0) return undefined;
