@@ -166,6 +166,52 @@ g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
   read (legacy's `needsImplicitArgumentsObject` reads nothing there either).
   Prepared output identical on 3 programs without `arguments`.
 
+### Review r2 (2026-11-27)
+
+- Blocking, fixed: an inner non-arrow function read an OUTER binding named
+  `arguments` (`function p(arguments){ var q = function(b){ return
+  arguments.length } … }` gave "undefined", with an outer `let arguments =
+  'abcde'` gave "5"; node "1" both). The `arguments.length` arm skipped itself
+  on `cx.scope.has("arguments")`, and a closure inherits the outer scope.
+- The fix is one scope-correct resolution instead of name tests in three
+  places. `argumentsObjectOwner(reference)` (`src/ir/analysis/ast-scope.ts`,
+  beside `resolvesToSourceBinding`) walks out from an `arguments` reference:
+  the first non-arrow function owns it unless a nearer scope declares the name
+  (a block's `let`/`const`/class/function declaration, a loop head's, a catch
+  binding, a parameter incl. destructured, an arrow's `var`). A function's own
+  `var arguments` does not end the walk (it starts as the object).
+  `ownArgumentsObjectUse(fn)` summarises it: `none`, `length` (only
+  `arguments.length` reads) or `other` (the value, an index, a write, `var
+  arguments`, a read inside `with`); property names, object keys and labels
+  are not references. Consumers: the entry read and a direct call's
+  publication (`!== "none"`), the `arguments.length` lowering and the Prepared
+  abort for `other` (`src/ir/arguments-object.ts`, new), and the selector's
+  `phase1ArgumentsLengthRead`. Gone: `functionBodyReferencesArguments`,
+  `readsOwnArgumentsObject`, the `cx.scope.has("arguments")` test, and r1's
+  `arguments` entry in `isRepeatedVarBinding` (reverted: the `var arguments`
+  abort is now the Prepared `other` rule, so the ordinary pipeline keeps its
+  merge-base handling).
+- `src/ir/from-ast.ts`: 17396 → 17381 lines.
+- Probes vs node (wrong twin each): the two blocking programs, the same with
+  a nested declaration, through a value, as a method, with `new`, three
+  levels deep, a `let arguments` block with an arrow, an arrow over a
+  parameter `arguments`, `eval("var arguments = 1")`, `with`, `arguments = 5`,
+  an inner write of the outer `arguments.length`: all end at the run-time
+  abort, none wrong. `a.arguments`, `{arguments: 1}` and a label `arguments`
+  agree with node and no longer take the count at entry: their Prepared code
+  is identical to an `argumentz` control (only the string pool differs, since
+  the runtime already holds the literal "arguments"). `function p({arguments})`
+  refuses. Prepared bytes identical to the merge base on 3 programs without
+  `arguments`.
+- Ordinary pipeline, 14 programs × standalone/gc/wasi against the merge base
+  (`a27936f5b2`): 11 programs identical, including r1's
+  `function v(a){ var arguments = 4; return arguments }` (difference (b) is
+  gone). Three differ, every result equal before, after and in node: a formal
+  named `arguments` (`p(4)`: 4/4/4) and the property-name users `a.arguments`
+  (3/3/3) and `{arguments: 1}` (3/3/3). All three drop a dead
+  `__ir_arguments_length` entry read, since none reads an arguments object.
+- Test file: 27 rows, exit 0.
+
 ### Next (follow-up issues)
 
 1. `arguments[i]` and `typeof arguments`: needs the entry read to keep
