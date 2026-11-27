@@ -178,7 +178,7 @@ function rewrittenStringLocal(checker: ts.TypeChecker, declaration: ts.VariableD
     initializer !== undefined &&
     syntacticAnnotation(declaration) === undefined &&
     !isTopLevelStatementDeclaration(declaration) &&
-    !isModuleInitVarList(declaration.parent) &&
+    !isModuleInitVarList(declaration.parent, "with-for-in-heads") &&
     (checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.StringLike) !== 0 &&
     preparedBindingRewritten(checker, name)
   );
