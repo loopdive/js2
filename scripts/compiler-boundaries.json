@@ -17352,6 +17352,24 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/runtime/wasmgc/values/realm-array-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-arrays.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/prepared-array-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source lowering of an array literal on the Prepared path (#7354 A1) through the function-object host; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/builtin-global-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
