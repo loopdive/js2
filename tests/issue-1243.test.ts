@@ -16,14 +16,12 @@
  */
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors.map((e) => e.message).join("; "));
-  const imps = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imps);
-  if (imps.setInstance) imps.setInstance(instance);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { test: () => unknown }).test();
 }
 

@@ -20,11 +20,10 @@
 // compileObjectLiteralWithAccessors will emit.
 
 import { describe, it, expect } from "vitest";
-
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function runTest(src: string): Promise<unknown> {
-  const exports = await compileAndInstantiate(src);
+  const exports = await compileToWasm(src);
   return (exports as Record<string, () => unknown>).test?.();
 }
 
