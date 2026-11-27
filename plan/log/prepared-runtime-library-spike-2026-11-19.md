@@ -259,6 +259,14 @@ bridge → M, instead of seven native slices.
 
 ### Decisions for the lead
 
+**Decided by the owner, 2026-11-27: not pursued.** The Prepared path keeps its
+own runtime (the realm kernel of #7354) and does not link the legacy-compiled
+library. Question 1 is answered with no: built-in semantics from
+legacy-compiled code do not count toward "IR-only". Questions 2 and 3 fall
+away with it. This file stays as the record of what the spike measured.
+
+The questions as they were put:
+
 1. **Does a library compiled by the legacy front-end count toward "IR-only"?**
    The test file and prelude would be compiled by the IR, but built-in
    semantics would come from legacy-compiled code, so the legacy front-end
