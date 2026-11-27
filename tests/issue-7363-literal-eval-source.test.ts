@@ -65,13 +65,13 @@ describe("#7363 A2 — a qualifying site adds a called source and refuses by nam
   });
 
   // (A4) A statement site, or one whose value is discarded, is a call of its source; a site whose completion value is
-  // used refuses by A5's name.
-  it("lowers a statement site and refuses an expression-position site by A5's name", async () => {
+  // used is no site (A5's), so it refuses as on main.
+  it("lowers a statement site and makes no source of an expression-position site", async () => {
     expect(await gaps('eval("1");')).toEqual([]);
     expect(await gaps('void eval("1");')).toEqual([]);
-    expect(literalEvalTexts("test.js", 'var v = eval("1");')).toEqual(["1"]);
+    expect(literalEvalTexts("test.js", 'var v = eval("1");')).toEqual([]);
     expect(await gaps('var v = eval("1");')).toEqual([
-      `${EVAL_LITERAL} its completion value needs #7363 A5 in <module-init>`,
+      'ir/from-ast: direct call to "eval" has no exact AST-site plan in <module-init>',
     ]);
   });
 

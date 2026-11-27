@@ -379,11 +379,11 @@ type GraphCompile = (graph: Record<string, string>, ast: MultiTypedAST, added: n
  * at select. A script fails the gates exactly as a JavaScript entry does: a syntax error outside the tolerated list, a
  * hard type error or an ES early error. Any other diagnostic of a text, such as a read of an undeclared global, is
  * tolerated as in an entry. A text reaches another source's diagnostics when a member store in it declares a JS
- * expando property of a caller binding; such a change names no text, so then none joins. (A4, A5) A site that does not
- * lower refuses the program at select by its own code, and that refusal is the answer: without the texts the program
- * only refuses the same site by slice 1's label. Any other failure with the texts does not name its cause: a text the
- * IR cannot lower fails the program even where its site never runs, so the program is then the one without them. When
- * that fails too, the failure with the texts is the answer: it shows how far the program with its texts got.
+ * expando property of a caller binding; such a change names no text, so then none joins. A failure with the texts
+ * falls back to the program without them, which is main's: a text the IR cannot lower fails the program even where its
+ * site never runs, and so does (A4) a site refused at select for a global `eval` that may not be pristine, which a site
+ * in dead code must not do either. When that fails too, the failure with the texts is the answer: it names the site's
+ * own refusal.
  */
 function withLiteralEvalSources(
   files: Record<string, string>,
@@ -420,13 +420,9 @@ function withLiteralEvalSources(
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
   if (!quiet) return compileGraph(files, without, 0);
   const joined = compileGraph(graph, ast, texts.length);
-  if (joined.success || refusesLiteralEvalSite(joined)) return joined;
+  if (joined.success) return joined;
   const alone = compileGraph(files, without, 0);
   return alone.success ? alone : joined;
-}
-function refusesLiteralEvalSite(result: CompileResult): boolean {
-  const failure = requiredPreparedFailure(result);
-  return failure?.kind === "unsupported" && failure.failure.code === "literal-eval-site-unsupported";
 }
 function present(
   files: Record<string, string>,

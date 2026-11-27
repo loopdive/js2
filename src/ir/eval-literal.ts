@@ -99,48 +99,41 @@ export function verifyLiteralEvalSources(
 }
 
 /**
- * (#7363 A4, A5) Admission of a related site, before any unit lowers: the select-time refusal of the program when the
- * site's value is used (A5), or else when the global `eval` may not be the realm's %eval% there (A4): a source rebinds
- * it (`isPristineBuiltinGlobal`, absent off the native lane), or a sloppy function lets its ambient `this`, the global
- * object, escape and write it unseen. Otherwise nothing, and lowering emits the site as the call of its text. The label
- * keeps the text the lowering gave it, so census rows compare across the move.
+ * (#7363 A4) Admission of a related site, before any unit lowers: the select-time refusal of the program when the
+ * global `eval` may not be the realm's %eval% there: a source rebinds it (`isPristineBuiltinGlobal`, absent off the
+ * native lane), or a sloppy function lets its ambient `this`, the global object, escape and write it unseen. Otherwise
+ * nothing, and lowering emits the site as the call of its text. The label keeps the text the lowering gave it, so
+ * census rows compare across the move.
  */
 export function literalEvalSiteRefusal(
   call: ts.CallExpression,
   contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
 ): IrUnsupportedError | undefined {
-  const gap = !discardsValue(call)
-    ? "its completion value needs #7363 A5"
-    : contracts.resolver.isPristineBuiltinGlobal?.(call.expression as ts.Identifier) !== true ||
-        contracts.ambientThisMayBeGlobal
-      ? "the global eval is not pristine (#7363 A4)"
-      : undefined;
-  return gap === undefined
+  return contracts.resolver.isPristineBuiltinGlobal?.(call.expression as ts.Identifier) === true &&
+    !contracts.ambientThisMayBeGlobal
     ? undefined
     : new IrUnsupportedError(
         "literal-eval-site-unsupported",
         "select",
-        `ir/from-ast: eval literal: ${gap} in ${MODULE_INIT_UNIT_NAME}`,
+        `ir/from-ast: eval literal: the global eval is not pristine (#7363 A4) in ${MODULE_INIT_UNIT_NAME}`,
       );
 }
 
 /**
- * The call's value is discarded: through parentheses, it is the expression of an expression statement, the operand
- * of `void`, or the left operand of a comma. from-ast lowers each of these in statement position
- * (`lowerDiscardedExpression`), which a site needs: its call returns nothing. from-ast's other statement positions
- * are left out because their value goes on: a comma's right operand and a conditional's arm are the value of the
- * enclosing expression. A for head's expressions are values there, and so is each clause of an incrementor's comma
- * list (`lowerForUpdateExpr` splits it before `lowerDiscardedExpression` could see the comma), so a left operand there
- * is not discarded either.
+ * The expression's value is discarded: through parentheses, it is the expression of an expression statement, the
+ * operand of `void`, the left operand of a comma, or the right operand of a comma or an arm of a conditional whose own
+ * value is discarded. from-ast lowers each of these in statement position (`lowerDiscardedExpression`), which a site
+ * needs: its call returns nothing (A5 gives it a value). A for head's expressions are values, and so is each clause of
+ * an incrementor's comma list (`lowerForUpdateExpr` splits it before `lowerDiscardedExpression` could see the comma).
  */
-export function discardsValue(call: ts.CallExpression): boolean {
-  let node: ts.Expression = call;
+export function discardsValue(expression: ts.Expression): boolean {
+  let node = expression;
   while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
   const parent = node.parent;
   if (ts.isExpressionStatement(parent) || ts.isVoidExpression(parent)) return true;
-  return (
-    ts.isBinaryExpression(parent) && isCommaExpression(parent) && parent.left === node && !incrementorClause(parent)
-  );
+  if (ts.isBinaryExpression(parent) && isCommaExpression(parent))
+    return !incrementorClause(parent) && (parent.left === node || discardsValue(parent));
+  return ts.isConditionalExpression(parent) && parent.condition !== node && discardsValue(parent);
 }
 
 /** The comma is the for incrementor or, through unparenthesized commas, one of its clauses. */
@@ -173,7 +166,8 @@ function literalEvalText(call: ts.CallExpression): string | undefined {
     call.arguments.length !== 1 ||
     !ts.isStringLiteralLike(argument!) ||
     resolvesToSourceBinding(call.expression) ||
-    !runsInSloppyGlobalCode(call)
+    !runsInSloppyGlobalCode(call) ||
+    !discardsValue(call)
   )
     return undefined;
   return textRunsAsScript(call, argument.text) ? argument.text : undefined;
