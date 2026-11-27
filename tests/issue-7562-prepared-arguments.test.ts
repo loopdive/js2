@@ -37,10 +37,11 @@ describe("#7562 — arguments.length", () => {
         " var out = '' + g(3, 5, 6) + r(0, 1) + k(1, 2)() + c()();",
     ],
     [
-      "`arguments` shadowed by a parameter and by a var, and dead code naming it",
-      "function p(arguments) { return arguments; } function v() { var arguments = { length: 7 }; return arguments.length; }" +
-        " function d(a) { if (false) { arguments.length; } return 1; } var g = p, w = v, e = d;" +
-        " var out = '' + g(4, 5) + v() + w(1, 2) + (d(4) + e(5, 6));",
+      "`arguments` shadowed by a parameter and by a catch binding, and dead code naming it",
+      "function p(arguments) { return arguments; } function d(a) { if (false) { arguments.length; } return 1; }" +
+        " function c(a) { var n; try { throw { length: 9 }; } catch (arguments) { n = arguments.length; }" +
+        " return n + ',' + arguments.length; } var g = p, e = d, h = c;" +
+        " var out = String(p(4)) + g(4, 5) + (d(4) + e(5, 6)) + h(1, 2);",
     ],
   ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
 
@@ -52,6 +53,28 @@ describe("#7562 — arguments.length", () => {
     ["an arrow's inherited arguments", "function f(a) { return (() => arguments.length)(); } var g = f; g(1, 2);"],
     ["typeof arguments", "function f(a) { return typeof arguments; } var g = f; g(1);"],
     ["an indexed read", "function f(a, b) { return arguments[0]; } var g = f; g(1, 2);"],
+    // A `var arguments` starts as the arguments object (§10.2.11 step 27), which is not a block-local `undefined`.
+    [
+      "a `var arguments` without initializer",
+      "function f(a) { var arguments; return arguments.length; } var g = f; g(1);",
+    ],
+    ["a `var arguments` read before it", "function f() { return arguments.length; var arguments; } var g = f; g(1);"],
+    [
+      "a `var arguments` then assigned",
+      "function f(a) { var arguments; arguments = 5; return arguments; } var g = f; g();",
+    ],
+    [
+      "a `var arguments` with initializer in a block, read after it",
+      "function f(a) { if (a) { var arguments = 4; } return arguments.length; } var g = f; g(1, 2);",
+    ],
+    [
+      "a for-head `var arguments`",
+      "function f(a) { for (var arguments in { x: 1 }) {} return arguments; } var g = f; g(1);",
+    ],
+    [
+      "a function expression's `var arguments`",
+      "var g = function (a) { var arguments; return arguments.length; }; g(1, 2);",
+    ],
   ])("%s ends at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
 
   it.each([

@@ -358,8 +358,7 @@ import {
   mixedPrimitiveConditionalArms,
   type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
   effectiveIrParamTypeNode,
-  functionBodyReferencesArguments,
-  directCallPublishesArgc,
+  readsOwnArgumentsObject,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -1988,7 +1987,7 @@ export function lowerFunctionAstToIr(
   const cx: LowerCtx = {
     ...sourceScope,
     builder,
-    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && functionBodyReferencesArguments(fn.body)
+    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && readsOwnArgumentsObject(fn)
       ? { argumentsLength: {} }
       : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
@@ -7988,8 +7987,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // time to one IR arg per literal element. The pre-expansion arity
   // check below counts spread elements as their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
-  const underArity = planUnderArityDirectCall(expr, direct, expandedArgExprs.length, cx);
-  if (expandedArgExprs.length !== calleeSig.params.length && underArity === null) {
+  const argumentCount = planDirectCallArgumentCount(expr, direct, expandedArgExprs.length, cx);
+  if (expandedArgExprs.length !== calleeSig.params.length && argumentCount === null) {
     demoteToLegacy(
       "call-arity-unsupported",
       `ir/from-ast: call to ${calleeName} has ${expandedArgExprs.length} args, expected ${calleeSig.params.length} in ${cx.funcName}`,
@@ -8062,13 +8061,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     }
     args.push(argVal);
   }
-  if (underArity !== null) {
+  if (argumentCount !== null) {
     // (#7106 S1i) Legacy's order: supplied arguments, the `undefined` pads,
     // then `__argc` (emitSetArgc) immediately before the call.
     for (let i = args.length; i < calleeSig.params.length; i++) {
       args.push(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined));
     }
-    if (underArity.publishArgc) cx.builder.emitDynPublishArgc(expandedArgExprs.length);
+    if (argumentCount.publishArgc) cx.builder.emitDynPublishArgc(expandedArgExprs.length);
   }
   const result = cx.builder.emitCall(direct.target, args, calleeSig.returnType);
   if (result === null) {
@@ -8084,22 +8083,23 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
 }
 
 /**
- * (#7106 S1i) An under-arity direct call (`isWritable(obj, name)` on four
- * formals): legacy pads each missing formal with `undefined` and publishes
- * `__argc = actual` when the callee reads its own `arguments`. Admitted only
- * when every missing formal is the dynamic carrier (not legacy's `0` sentinel)
- * and the exact callee declaration is known. (#7562) Unselected (Prepared), an
- * exact-arity call plans too: a dispatched caller's count is still installed.
+ * (#7106 S1i) How a direct call supplies its argument count: an under-arity
+ * call (`isWritable(obj, name)` on four formals) pads each missing formal with
+ * `undefined`, as legacy does, and publishes `__argc = actual` when the callee
+ * reads its own `arguments`; (#7562) unselected (Prepared), an exact-arity call
+ * publishes too, as a dispatched caller's count is still installed. Missing
+ * formals must be the dynamic carrier (not legacy's `0` sentinel) and the
+ * exact callee declaration known. `null` = the call is not planned here.
  */
-function planUnderArityDirectCall(
+function planDirectCallArgumentCount(
   expr: ts.CallExpression,
   direct: IrDirectCallLoweringPlan,
   actual: number,
   cx: LowerCtx,
 ): { readonly publishArgc: boolean } | null {
   const params = direct.signature.params;
-  if (actual > params.length || (actual < params.length ? expr.arguments.some(ts.isSpreadElement) : !cx.unselected))
-    return null;
+  const underArity = actual < params.length;
+  if (actual > params.length || (underArity ? expr.arguments.some(ts.isSpreadElement) : !cx.unselected)) return null;
   for (let i = actual; i < params.length; i++) if (params[i]!.kind !== "dynamic") return null;
   const binding = direct.target.binding;
   const declaration = binding.kind === "unit" ? cx.identityContext?.declarationByUnitId.get(binding.unitId) : undefined;
@@ -8111,7 +8111,7 @@ function planUnderArityDirectCall(
   ) {
     return null;
   }
-  return { publishArgc: directCallPublishesArgc(declaration) };
+  return { publishArgc: readsOwnArgumentsObject(declaration) };
 }
 
 /**

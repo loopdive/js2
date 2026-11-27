@@ -3019,7 +3019,7 @@ let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
 let currentClaimTypeMap: TypeMap | undefined;
 
 /** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
-export function functionBodyReferencesArguments(body: ts.Node): boolean {
+function functionBodyReferencesArguments(body: ts.Node): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -3090,17 +3090,10 @@ function underArityDirectCallIsBuildable(
   // A callee that can reach direct `eval` consumes `__argc` even without a
   // lexical `arguments` read (legacy's `reachesDirectEval`); keep it legacy.
   if (subtreeMentionsIdentifier(declaration.body, "eval")) return false;
-  if (!directCallPublishesArgc(declaration)) return true;
+  if (!readsOwnArgumentsObject(declaration)) return true;
   return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
-/**
- * (#7106 S1i) Does an under-arity direct call to `declaration` have to publish
- * `__argc`? Exactly when the callee's own entry prologue consumes it — its
- * body reads its own `arguments` (legacy's `needsImplicitArgumentsObject` for
- * fixed formals; a formal named `arguments` is excluded by
- * `hasFixedIrParameters`' identifier check only when it shadows, so test it).
- */
 function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -3112,10 +3105,15 @@ function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   return found;
 }
 
-export function directCallPublishesArgc(declaration: ts.FunctionDeclaration): boolean {
-  if (!declaration.body) return false;
-  if (declaration.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
-  return functionBodyReferencesArguments(declaration.body);
+/**
+ * (#7106 S1i, #7562) Does `fn` read its own arguments object (legacy's `needsImplicitArgumentsObject` for fixed
+ * formals)? Its body names `arguments` and no formal shadows it. The one test for both halves of the count protocol:
+ * such a function takes `__argc` at entry, and every direct call to it publishes the count first.
+ */
+export function readsOwnArgumentsObject(fn: ts.FunctionLikeDeclaration): boolean {
+  if (!fn.body) return false;
+  if (fn.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
+  return functionBodyReferencesArguments(fn.body);
 }
 
 function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeMap | undefined): boolean {
