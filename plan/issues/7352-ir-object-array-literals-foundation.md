@@ -1,7 +1,8 @@
 ---
 id: 7352
 title: "IR foundation: object literals are open objects; array literals share the typed vec slot"
-status: in-progress
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-16
 updated: 2026-11-27
@@ -346,3 +347,60 @@ Not in this order and not owned here: `Math.pow` (line 35), `arguments.length` (
 for-in, the JSDoc flow rule, `JSON`.
 
 New ids for this plan: PR B, #7557's second half, the join / push bodies; with #7574's two, five in all.
+
+### PR A result (2026-11-27, branch `claude/7352-arrays-a`, base `claude/7561-wrappers` `611e0ecf4b`)
+
+**Built** (+1,267 / −214 under `src/`, of which 582 are the three new class (a) files taken unchanged):
+
+- Catalog: `arrayRows()` in `wrapperRows`' shape; the prototype object row is one helper (`familyPrototype`) both
+  builders use. `%Array%` is an identity row (`length`, `name`, `isArray`, `prototype`); `%Array.prototype%` is an array
+  (`array: true`, own `length` 0); `isArray` is native, `from` / `of` and the 38 methods `unavailable`.
+  `NATIVE_VALUE_INTRINSICS` appends `%Array%`, `%Array.prototype%`, `%Array.isArray%` and the 38 methods.
+- `REALM_BRAND` is the flag bit itself (`error` 0x800, `array` 0x1000); `ORDINARY_OBJECT_DESCRIPTOR_ENCODING` reads it,
+  and `js.object.has-brand(o, brand)` is `flags & brand` (requirement 5). `markObjectFlag` now also serves the
+  identity-only mark and ErrorCreate (same bytes as before).
+- Holding: an `array` row of `REALM_CONSTRUCTORS` and of `HELD_FAMILIES`; one pin function `pinnedMembers` over the
+  wrapper prototypes and %Array.prototype% (`pinnedWrapperMembers` is gone); a family's `throws` (Array's RangeError,
+  held where the Error family is) replaces A1a's special case.
+- IR: `dynamic-array-constructors.ts` (`Array(…)` / `new Array(…)`, one `arrayOf`); `Array.isArray` by identity in
+  `dynamicPrototypeMethodCall`, for `X.isArray(v)` and a detached call (`var f = Array.isArray; f(v)`), with the run-time
+  abort as the fallback where the program has no dispatcher; a constant number key is its canonical string
+  (`constantKey`); `Array.prototype` reads the realm's object; the "Array" tag; ToPrimitive's brand-first abort
+  (requirement 1); `staticPredicatePlan` takes `realmHolds` without a default (requirement 6).
+- Folded: `WRAPPER` (member access) into `WRAPPER_OF_PRIMITIVE`; the two `BOOLEAN` IrTypes and chains' `F64` into
+  `dynamic-value-types.ts`.
+
+**Refuses or aborts as on the base** (`tests/issue-7352-arrays.test.ts`): an array literal (refuses at module level,
+aborts in a function), a computed key, for-of / for-in over an array (abort), every Array.prototype method call (abort,
+`.call` too), `Array.from` (refuses by name), ToPrimitive of an array (abort, an own `toString` too), a string `length`
+value (abort), `Array.isArray = f` on the global (refuses: `Array` is not pristine), `Object.getOwnPropertyNames` and
+`Function` (refuse: not values on this base). A method moved under another name (`n.isA = Array.isArray; n.isA(5)`)
+aborts; `var A = Array; A.isArray = f; Array.isArray(1)` calls `f`.
+
+**Proof** (local node 22, load 2–8 from other agents):
+
+- Probes in a fresh realm, each agreement with a wrong twin: 34 programs, right 12, refused 9, aborted 13, wrong 0,
+  invalid 0, exceptions 0 (the test file adds 13 agreements, 13 aborts and 4 refusals).
+- Harness: the 12 `propertyHelper.js` programs of `built-ins/Object/defineProperty` first stopped at line 27
+  (`Array`); all 12 now stop at line 28 (`identifier "Object" is not in scope`).
+- Prelude (`assert.js` + `sta.js` + one assertion): 79,830 → 90,242 B (+10.4 KB: `compareArray.format` now lowers,
+  holding `Array`, `Array.prototype`, `join`, `map`, `toString` and RangeError); median of 3 compiles 6.7 → 6.9 s and
+  6.1 → 6.3 s (two interleaved sessions). Above the brief's +8 KB budget, under the plan's 15 KB bar.
+- Pin rule: a program that only holds `Array.isArray` holds no prototype row (45,203 B); with `Array.prototype` held and
+  `hasOwnProperty("join")` it pins one method (51,666 B), with a computed key all 38 (80,972 B): +29.3 KB, about 790 B
+  per method row.
+- test262, own runner (`assert.js` + `sta.js` + includes, no eval provider): the 91 ES5 files under
+  `built-ins/Array/` without a literal or an include, base → head pass 3 → 23, fail 9 → 53 (run-time aborts: methods),
+  compile error 79 → 15, no pass lost; `mw-00` of the 411-row sample (87 rows) pass 18 → 18, fail 8 → 11, compile error
+  61 → 58, no pass lost. `mw-01`…`mw-03` (324 rows) not run (time).
+- Bytes: ordinary pipeline 30 programs × 2 targets identical; Prepared programs that hold no array family identical,
+  except one whose `Object.prototype.toString` tests the error brand (+9 B: `has-brand` takes the brand operand).
+- `src/ir/from-ast.ts` 17,396 → 17,395; import-cycles and ir-layering gates unchanged.
+- Gates at the merge base: all pass. With `LOC_GATE_BASE=origin/main`, LOC and function budgets fail only on files
+  this branch does not touch (`src/codegen/declarations*.ts`, `nested-declarations.ts`, `array-methods.ts`,
+  `closures.ts`, `eval-inline.ts`, `param-return-inference.ts`): main moving.
+
+Pins moved (each a shape this slice changes): `issue-7354-t2` (Array is a value), `issue-7354-m-prototype-premise`
+(Array.prototype is obtainable), `issue-7354-m-refusals` and `issue-7354-u-abort-bodies` (a constant number key is a
+key; their rows now use a computed key), `issue-7354-u-prelude` (compareArray.format lowers),
+`issue-3518-ordinary-object-callable-contracts` (has-brand).
