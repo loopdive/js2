@@ -141,7 +141,6 @@ import { irCallableBindingKey } from "./callable-bindings.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "./lower.js";
 import type { IrFuncRef, IrFunction, IrGlobalRef } from "./nodes.js";
-import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap, type ProgramAbiFinalIndex } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
 import {
@@ -151,14 +150,13 @@ import {
   type PhysicalSignatureType,
 } from "./program-physical-plan.js";
 import {
-  preparedIrProgramOwner,
+  locatedFailure,
   PreparedIrProgramInvariantError,
   type AcceptedPreparedIrProgram,
   type EmittedPreparedIrProgram,
   type PreparedIrBackendAcceptance,
   type PreparedIrBackendOptions,
   type PreparedIrProgram,
-  type PreparedIrProgramFailure,
   type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
 import { createEmptyModule, type Instr, type ValType, type WasmFunction } from "./types.js";
@@ -203,13 +201,6 @@ const startupAdapters = new WeakMap<EmittedPreparedIrProgram, EmissionObservatio
 
 function programInvariant(code: PreparedIrProgramInvariantError["code"], detail: string): never {
   throw new PreparedIrProgramInvariantError(code, `program consumer: ${detail}`);
-}
-
-function locate(program: PreparedIrProgram, unitId: IrUnitId, failure: IrPreparationFailure): PreparedIrProgramFailure {
-  const owner = preparedIrProgramOwner(program, unitId);
-  if (!owner) programInvariant("invalid-prepared-data", `cannot locate ${unitId}: ${failure.detail}`);
-  const { cause: _cause, ...diagnostic } = failure;
-  return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
 }
 
 function selectProjection(
@@ -326,7 +317,7 @@ export function acceptPreparedIrProgram(
     const available = program.runtime.map((projection) => `${projection.backend}:${projection.target}`).join(", ");
     const unitId = program.ir.functions[0]?.unitId ?? program.inventory.terminalUnits[0]?.id;
     if (!unitId) programInvariant("invalid-prepared-data", "program carries no unit to locate a projection failure");
-    return locate(program, unitId, {
+    return locatedFailure(program, unitId, {
       kind: "unsupported",
       code: "body-shape-rejected",
       stage: "build",
@@ -348,7 +339,7 @@ export function acceptPreparedIrProgram(
       else if (instruction.kind === "closure.new") check(instruction.liftedFunc, "captures");
     });
     if (missing !== undefined) {
-      return locate(program, fn.unitId, {
+      return locatedFailure(program, fn.unitId, {
         kind: "invariant",
         code: "unknown-function-ref",
         stage: "resolve",
@@ -360,7 +351,7 @@ export function acceptPreparedIrProgram(
   for (const fn of runtime.prepared.functions) {
     const errors = verifyIrBackendLegality(fn, options.backend);
     if (errors.length > 0) {
-      return locate(program, fn.unitId, {
+      return locatedFailure(program, fn.unitId, {
         kind: "unsupported",
         code: "body-shape-rejected",
         stage: "build",

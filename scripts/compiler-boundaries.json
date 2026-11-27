@@ -12411,6 +12411,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/shared/ambient-declarations.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "AST-only test for an ambient (declare / .d.ts) declaration, shared by the unit inventory, the Prepared select refusals (#7500) and the restricted-global-lexical predicate (#7519); moves with the AST inventory to frontend/ts."
+    },
+    {
       "path": "src/ir/ambient-global-function-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12505,6 +12513,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/class-definition-expressions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "AST-only list of the expressions a class definition evaluates, shared by the inventory and the Prepared select refusals (#7488); moves with the AST inventory to frontend/ts."
     },
     {
       "path": "src/ir/class-field-call-planning.ts",
@@ -12865,6 +12881,14 @@
       "destination": "ir-core",
       "owner": "7106",
       "nextBoundary": "Pure-AST proof that a script var is declared without a value and never written, shared by the IR selector and builder; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/shared/script-lexical-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7499",
+      "nextBoundary": "Pure-AST BoundNames of a Script's top-level lexical declarations, shared by the IR selector and codegen's global environment; becomes a frontend fact when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/shared/ambient-intrinsics.ts",
@@ -13625,6 +13649,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/prepared-select-refusals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Prepared producer select-stage refusals over the AST and the unit inventory (#7446/#7488); moves with program-source.ts under frontend/ts."
     },
     {
       "path": "src/ir/prepared-vector-support.ts",

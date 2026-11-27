@@ -47,7 +47,8 @@ import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import { preparedIrProgramOwner } from "./program.js";
+import { locatedFailure } from "./program/owner.js";
+import { preparedSelectRefusal } from "./prepared-select-refusals.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -1545,6 +1546,8 @@ export function prepareIrProgramSources(
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
+  const refused = preparedSelectRefusal(inventory, identity);
+  if (refused) return refused;
   const sourceMapCatalog =
     sourceMapRequest === undefined
       ? undefined
@@ -1733,15 +1736,12 @@ export function prepareIrProgramSources(
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
     return prepared;
   } catch (error) {
-    const owner = diagnostic.active
-      ? preparedIrProgramOwner({ inventory, derivedUnits }, diagnostic.active)
-      : undefined;
-    if (!owner)
+    const failure = classifyIrFailure(error, "build");
+    if (!diagnostic.active)
       throw new PreparedIrProgramInvariantError(
         "invalid-prepared-data",
-        `source preparation failed without an original owner: ${String(error)}`,
+        `source preparation failed without an original owner: ${failure.detail}`,
       );
-    const { cause: _cause, ...failureDiagnostic } = classifyIrFailure(error, "build");
-    return { ...failureDiagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile };
+    return locatedFailure({ inventory, derivedUnits }, diagnostic.active, failure);
   }
 }
