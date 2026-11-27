@@ -70,16 +70,24 @@ const constant =
  * Boolean's wrapper owns none; a string's own `length` and indices need the String exotic the realm lacks: the run-time
  * abort.
  */
-function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, result: IrValueId): IrInstr[] {
+function ownProperty(
+  b: ObjectStaticBuilders,
+  instr: Call,
+  method: "hasOwnProperty" | "propertyIsEnumerable",
+  result: IrValueId,
+): IrInstr[] {
   const [receiver, , argument] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
   const [text, key] = [b.fresh(), b.fresh()];
+  const enumerable = method === "propertyIsEnumerable";
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_ACCESS_ARM[kind]) {
       case "object":
       case "function":
         return boxed(b, instr, (s) => b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), s), r);
       default:
-        return kind === "number" || kind === "boolean" ? boxed(b, instr, constant(false), r) : b.abort(instr, r);
+        return kind === "number" || kind === "boolean"
+          ? boxed(b, instr, constant(false), r)
+          : b.abort(instr, `Object.prototype.${method} on a string: needs its own length and index properties`, r);
     }
   };
   return [
@@ -122,7 +130,7 @@ export function dynamicPrototypeMethodCall(b: ObjectStaticBuilders, instr: Call,
       ? [realmCall("js.object.error-to-string", [instr.args[0]!], r)]
       : method === "isPrototypeOf"
         ? prototypeOf(b, instr, r)
-        : ownProperty(b, instr, method === "propertyIsEnumerable", r);
+        : ownProperty(b, instr, method, r);
   return [
     ...b.realmIntrinsic(methodId(method), builtin),
     b.intrinsic(instr, "js.value.strict_eq", [instr.args[1]!, builtin], same),

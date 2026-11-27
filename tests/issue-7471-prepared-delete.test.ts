@@ -117,11 +117,27 @@ describe("#7471 slice 1 — delete of an object's or a function's member", () =>
   // A string's own `length` and indices need the String exotic the realm lacks; a receiver that may also hold
   // `undefined` answers that kind, so the string's arm is the run-time abort.
   it.each([
-    ["a string's length", 'var s = "ab"; var x = delete s.length;'],
-    ["a string's index", 'var s = "ab"; var x = delete s["0"];'],
+    [
+      "a string's length",
+      'var s = "ab"; var x = delete s.length;',
+      "member delete 'length' of a string needs its own length and index properties",
+    ],
+    [
+      "a string's index",
+      'var s = "ab"; var x = delete s["0"];',
+      "member delete '0' of a string needs its own length and index properties",
+    ],
     // (#7489) The same for a function's own `arguments` on a receiver that may also be an object.
-    ["a function's own arguments", "function f() {} var o = {}; if (o) o = f; var x = delete o.arguments;"],
-  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), 180_000);
+    [
+      "a function's own arguments",
+      "function f() {} var o = {}; if (o) o = f; var x = delete o.arguments;",
+      "member delete 'arguments' of a function needs a sloppy function's own arguments object",
+    ],
+  ])(
+    "ends %s at the run-time abort (#7486: its reason)",
+    (_label, source, reason) => abortsAtRunTime(source, runnerOptions(), reason),
+    180_000,
+  );
 
   it.each([
     [

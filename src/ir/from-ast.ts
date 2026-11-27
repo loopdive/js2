@@ -275,7 +275,7 @@ import {
   tryLowerVecPush,
 } from "./array-element-lowering.js";
 import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
-import { F64_UNDEFINED_BITS } from "./f64-undefined-marker.js";
+import { emitF64ToNumber, emitUndefinedStringOr, F64_UNDEFINED_BITS } from "./f64-undefined-marker.js";
 import {
   lowerStaticPredicateCall,
   staticPredicatePlan,
@@ -6106,7 +6106,7 @@ function lowerTypeOfValue(operand: ts.Expression, cx: LowerCtx): IrValueId {
       `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
     );
   }
-  return cx.builder.emitStringConst(tag);
+  return emitUndefinedStringOr(cx.builder, inner, () => cx.builder.emitStringConst(tag));
 }
 
 /** The `typeof` tag every value of an IR type has, or `null` when it varies (unions, boxed, references). */
@@ -7736,9 +7736,8 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
   // Extra arguments still run, in source order, though Number ignores them; getter conversion follows their effects.
   for (const argument of expr.arguments.slice(1)) lowerDiscardedExpression(argument, cx);
   const type = cx.builder.typeOf(first);
-  if (type.kind === "val" && type.val.kind === "f64") return first;
-  if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
-    return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
+  // A number (a branded f64's `undefined` marker reads as NaN) or a boolean: the unary ToNumber, which has both arms.
+  if (asVal(type)?.kind === "f64" || irTypeIsBoolean(type)) return emitUnaryToNumber(first, type, cx)!;
   if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
     demoteToLegacy("operand-coercion-unsupported", "Number argument requires an exact logical value carrier");
   const external = coerceIrValueToExternref(cx.builder, first);
@@ -13860,16 +13859,12 @@ function convertMixedPrimitiveArm(
 
   // The representation matches the family, so the conversion exists.
   if (kind === "String") return lowerPrimitiveToString(cx.builder, value, family)!;
-  if (family === "number") return value;
-  if (family === "boolean") {
-    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-  }
   const number = emitUnaryToNumber(value, type, cx);
   if (number === null) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "build",
-      `ir/from-ast: #5092 Number ${arm} string arm lost its ToNumber route in ${cx.funcName}`,
+      `ir/from-ast: #5092 Number ${arm} ${family} arm lost its ToNumber route in ${cx.funcName}`,
     );
   }
   return number;
@@ -14314,9 +14309,11 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
 }
 
 /**
- * (#3168) ToNumber(operand) → f64 for a unary `+`/`-` operand that is not
- * statically a number. Handles the scope the #3153 census flagged (§7.1.4):
+ * (#3168) ToNumber(operand) → f64 for a unary `+`/`-` operand. Handles the
+ * scope the #3153 census flagged (§7.1.4):
  *
+ *   - **number (f64)** → the value itself, except that a branded f64's
+ *     `undefined` marker becomes a plain NaN (#7464, `emitF64ToNumber`).
  *   - **boolean (i32)** → `f64.convert_i32_s` (0/1 → 0.0/1.0; boolean is 0/1
  *     so signed/unsigned agree — matches legacy `expressions/unary.ts`).
  *   - **string** → box the string into the boxed-any carrier and reuse the
@@ -14336,6 +14333,7 @@ function emitUnaryToNumber(
   cx: LowerCtx,
   stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"],
 ): IrValueId | null {
+  if (asVal(randType)?.kind === "f64") return emitF64ToNumber(cx.builder, rand);
   if (asVal(randType)?.kind === "i32") {
     // boolean (the only i32-typed IR operand reaching a `+`/`-` — a native
     // `type i32 = number` operand is already numeric and takes the f64 path).
@@ -14398,6 +14396,15 @@ function emitUnaryToNumber(
   return null;
 }
 
+/** A unary `+`/`-` operand with no ToNumber route: an unsupported coercion when the checker proves the gap. */
+function throwUnaryNotNumber(expr: ts.PrefixUnaryExpression, operator: "+" | "-", cx: LowerCtx): never {
+  const detail = `ir/from-ast: unary '${operator}' expects number in ${cx.funcName}`;
+  if (checkerProvesUnaryCoercionGap(expr, cx)) {
+    throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
+  }
+  throw new Error(detail);
+}
+
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
@@ -14433,21 +14440,12 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
         const n = cx.builder.emitDynToNumber(rand);
         return cx.builder.emitUnary("f64.neg", n, irVal({ kind: "f64" }));
       }
-      // (#3168) `-x` on a non-number operand is `-ToNumber(x)` (§13.5.5 →
+      // (#3168) `-x` is `-ToNumber(x)` (§13.5.5 →
       // §7.1.4). ToNumber the operand to f64, then `f64.neg` — sign-correct for
       // `-0` (`-"" === -0`), unlike `0 - x`. Mirrors legacy `expressions/unary.ts`.
       const negToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (negToNumber !== null) {
-        return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
-      }
-      if (asVal(randType)?.kind !== "f64") {
-        const detail = `ir/from-ast: unary '-' expects number in ${cx.funcName}`;
-        if (checkerProvesUnaryCoercionGap(expr, cx)) {
-          throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-        }
-        throw new Error(detail);
-      }
-      return cx.builder.emitUnary("f64.neg", rand, irVal({ kind: "f64" }));
+      if (negToNumber === null) throwUnaryNotNumber(expr, "-", cx);
+      return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
     }
     case ts.SyntaxKind.PlusToken: {
       const randType = typeOfValue(rand, cx);
@@ -14457,20 +14455,11 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
         refuseBigIntDynamicOperand(cx, expr.operand);
         return cx.builder.emitDynToNumber(rand);
       }
-      // (#3168) `+x` IS `ToNumber(x)` (§13.5.4). A boolean / string operand
-      // ToNumbers to f64 (boolean → 0/1; string → §7.1.4.1 StringToNumber).
+      // (#3168) `+x` IS `ToNumber(x)` (§13.5.4): boolean → 0/1, string →
+      // §7.1.4.1 StringToNumber, a branded f64's `undefined` marker → NaN.
       const plusToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (plusToNumber !== null) {
-        return plusToNumber;
-      }
-      if (asVal(randType)?.kind !== "f64") {
-        const detail = `ir/from-ast: unary '+' expects number in ${cx.funcName}`;
-        if (checkerProvesUnaryCoercionGap(expr, cx)) {
-          throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-        }
-        throw new Error(detail);
-      }
-      return rand;
+      if (plusToNumber === null) throwUnaryNotNumber(expr, "+", cx);
+      return plusToNumber;
     }
     case ts.SyntaxKind.ExclamationToken: {
       const randType = typeOfValue(rand, cx);

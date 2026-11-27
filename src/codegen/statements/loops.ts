@@ -159,6 +159,25 @@ function forOfIdentifierHeadLocal(fctx: FunctionContext, varName: string, type: 
   return allocLocal(fctx, `__forof_head_${fctx.locals.length}`, type);
 }
 
+/**
+ * The local a `for` head binding `name` stores into, and its type: a `var`'s hoisted slot retyped to `type`, else a
+ * fresh local of `type`. (#7464) A hoisted externref slot keeps its type: it already holds the `undefined` stored at
+ * function entry (`hoistVarDeclarations`), which a narrower type would invalidate.
+ */
+function forHeadLocal(
+  fctx: FunctionContext,
+  name: string,
+  isVar: boolean,
+  type: ValType,
+): { index: number; type: ValType } {
+  const index = fctx.localMap.get(name);
+  const slot =
+    isVar && index !== undefined && index >= fctx.params.length ? fctx.locals[index - fctx.params.length] : undefined;
+  if (index === undefined || slot === undefined) return { index: allocLocal(fctx, name, type), type };
+  if (slot.type.kind !== "externref" && !valTypesMatch(type, slot.type)) slot.type = type;
+  return { index, type: slot.type };
+}
+
 /** Build the canonical TypeError for synchronous for-of's ToObject(nullish) guard. */
 function forOfToObjectTypeError(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
   return buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", { flush: fctx });
@@ -717,24 +736,13 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
           const actualType = compileExpression(ctx, fctx, decl.initializer);
           const closureType = actualType ?? { kind: "externref" as const };
           if (isVar && tryStoreBoxedVarHead(ctx, fctx, name, closureType)) continue; // (#6939) never re-type a cell
-          // Reuse existing local for var re-declaration
-          const existingIdx = fctx.localMap.get(name);
-          const localIdx =
-            isVar && existingIdx !== undefined && existingIdx >= fctx.params.length
-              ? existingIdx
-              : allocLocal(fctx, name, closureType);
-          // Update local type if hoisted slot has a less precise type
-          if (isVar && existingIdx !== undefined && existingIdx >= fctx.params.length) {
-            const localSlot = fctx.locals[localIdx - fctx.params.length];
-            if (localSlot) localSlot.type = closureType;
-          }
-          emitCoercedLocalSet(ctx, fctx, localIdx, closureType);
+          emitCoercedLocalSet(ctx, fctx, forHeadLocal(fctx, name, isVar, closureType).index, closureType);
           continue;
         }
 
         if (isVar && tryStoreBoxedVarHead(ctx, fctx, name, decl.initializer)) continue; // (#6939) keep the cell
         const varType = ctx.checker.getTypeAtLocation(decl);
-        let wasmType = resolveWasmType(ctx, varType);
+        const resolvedType = resolveWasmType(ctx, varType);
 
         // Integer loop inference: if this variable is detected as an integer loop
         // counter (e.g. for (let i = 0; i < n; i++)), use i32 instead of f64.
@@ -744,28 +752,19 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
         // emits i32 ops and another f64 ops against the same local (invalid
         // wasm — see varCounterRedeclarationBlocksI32).
         const i32LoopInfo = detectI32LoopVar(stmt);
-        const isI32LoopVar =
+        const i32Candidate =
           i32LoopInfo !== null &&
           i32LoopInfo.name === name &&
-          wasmType.kind === "f64" &&
+          resolvedType.kind === "f64" &&
           !(isVar && varCounterRedeclarationBlocksI32(stmt, name));
-        if (isI32LoopVar) {
-          wasmType = { kind: "i32" };
-        }
-
-        // Reuse existing local for var re-declaration
-        const existingIdx = fctx.localMap.get(name);
-        const localIdx =
-          isVar && existingIdx !== undefined && existingIdx >= fctx.params.length
-            ? existingIdx
-            : allocLocal(fctx, name, wasmType);
-        // If reusing a pre-hoisted slot, update the local's type to match
-        if (isVar && existingIdx !== undefined && existingIdx >= fctx.params.length) {
-          const localSlot = fctx.locals[localIdx - fctx.params.length];
-          if (localSlot && !valTypesMatch(wasmType, localSlot.type)) {
-            localSlot.type = wasmType;
-          }
-        }
+        const { index: localIdx, type: wasmType } = forHeadLocal(
+          fctx,
+          name,
+          isVar,
+          i32Candidate ? { kind: "i32" } : resolvedType,
+        );
+        // A hoisted externref slot stays externref, so the counter is not promoted.
+        const isI32LoopVar = i32Candidate && wasmType.kind === "i32";
         if (decl.initializer) {
           if (isI32LoopVar) {
             // Emit i32.const directly for the integer init value
