@@ -1,10 +1,10 @@
 ---
 id: 7537
-title: "CI test262 scope: IR per merge measures the current edition only, legacy test262 leaves the merge queue, the site shows IR per edition"
+title: "test262 after #7551: legacy ES5 on every push, post-merge regression path with a 24 h revert, daily full run, IR as the site's default view"
 status: in-progress
 sprint: current
 created: 2026-11-26
-updated: 2026-11-26
+updated: 2026-11-27
 priority: high
 horizon: m
 feasibility: medium
@@ -12,250 +12,283 @@ reasoning_effort: high
 task_type: infrastructure
 area: ci
 goal: test-infrastructure
-related: [3431, 3448, 3467, 1956, 2178, 6760, 7354]
+related: [7551, 7552, 7558, 7354, 2178, 6760]
 ---
 
-# #7537 — CI test262 scope: current edition per merge, legacy off the queue
+# #7537 — the delta left after #7551
 
-## Problem (project-lead decision, 2026-11-26)
+## Scope
 
-1. The IR measurement runs the full corpus (102 shards) on every push to main.
-   Per merge it should measure only the **current ES edition** (today ES5); the
-   full corpus stays on the daily `schedule`.
-2. The legacy standalone test262 matrix runs in `merge_group`. It leaves the
-   queue and runs post-merge (push to main) and/or daily. The required contexts
-   `merge shard reports` and `check for test262 regressions` must still publish
-   a check run on every PR and merge group.
-3. The website must show IR-only test262 numbers per ES edition, refreshed per
-   merge for the current edition and daily for all editions.
+#7551 (PRs #7518, #7523) already delivered most of the original brief:
 
-## Measurements (2026-11-26, origin/main `a9cdc885`)
+- the merge queue gates on IR × the current edition (ES5, 102 shards,
+  `scripts/test262-current-edition.json`);
+- push re-runs nothing that the queue measured;
+- the full legacy matrix and the full-corpus IR run are weekly (and
+  `full_run=true` on dispatch);
+- the staleness alert is alert-only.
+
+This issue is what the owner decided on 2026-11-27 that is not on main yet.
+
+1. A **legacy ES5 run on every push** to main (~16 shards).
+2. The **post-merge regression path**:
+   - red main;
+   - the `post-merge-regression` label on the merged PR;
+   - a **revert after 24 h** without a fix-forward PR.
+3. The full legacy run (with the full-corpus IR run) **daily** instead of
+   weekly.
+4. **IR as the website's default view**, with the toggle always visible.
+5. Accurate `reason` text in the two `test262-*-ir-status.json` placeholders.
+6. Matching `CLAUDE.md` and `docs/ci-policy.md` updates.
+
+Owner answers that bound it (2026-11-27):
+
+- **Cadence:** the full run is daily (this overturns #7551's weekly schedule).
+- **Compile timeouts:** a `compile_timeout` is not an immediate regression;
+  #7551's exemption on the IR gate stays.
+
+The #7354 lane owns `test262-sharded.yml`. Before any change to it, the
+planned edits below are posted on coordination PR #7526.
+
+## Measurements (2026-11-27, origin/main `4caef358`)
 
 | What | Source | Value |
 | --- | --- | --- |
-| IR lane per push | run 45779984142 (push, `6694a8b`) | 102 shards, **295 runner-min** (avg 173 s; ~45 s fixed setup + ~128 s test work per shard); merge job 47 s |
-| Legacy lane per merge-group attempt | run 45776708512 (merge_group, `6694a8b`) | 102 shards, **647 runner-min** (avg 380 s), wall ≈ 25 min; plus 2 provider builds ≈ 2 min |
-| Legacy lane on the following push | run 45779984142 | skipped (#3448 probe HIT reuses the merge-group artifact) |
-| Merge-group wall time, last 10 runs | runs 45769092415 … 45803974240 | 1 min (no shards) to 118 min |
-| test262 files in checkout `b363f29d` | `walkTestFiles` + `classifyEdition` (`.tmp` probe, 0.65 s) | 53,575 files; **ES5 = 9,174 files** (17.1 %) |
-| ES5 row in the published editions | live `ir/test262-standalone-editions.json` (`6694a8b`) and `scripts/test262-edition-ratchet-baseline.json` | **9,029 rows** (the 145 ES5-classified files the runner scopes as proposals land in the Proposals row) |
-| IR ES5 today | same live file | 1,754 pass / 784 fail / 6,491 CE of 9,029 (19 %) |
+| Legacy shard cost | run 45776708512, 102 standalone shards | avg 380 s per shard: ~45 s setup and ~335 s tests; 570 test-min over ~52.6k rows ≈ 0.65 s per row |
+| ES5 files | `classifyEdition` over test262 `b363f29d` | 9,174 files (the 9,029-row ES5 bucket plus 145 proposal-scoped files) |
+| Legacy ES5 per push, 16 shards | estimate from the two rows above | ≈ 100 test-min + 16 × 45 s ≈ **110 runner-min**, ≈ 7 min wall per shard |
+| Former daily cron `23 2 * * *` | 30 schedule runs, 2026-10-28 … 11-26 | started 08:33–12:40 UTC, i.e. **6.2–10.3 h late** |
+| Queue load by hour (UTC) | 100 merge_group runs, 2026-11-26 09:06 … 11-27 21:09 (36 h only) | 03–07 h: 3–6 runs/h; 08–12 h: 5–7; 19 h: 11 (peak); 21–02 h: 0–2 |
+| Full-run duration to promotion | #7551 record | 2–4 h |
 
-The comment above `compiler-path-measurement-plan` says the IR matrix costs
-"about 2 runner-hours"; the measured figure is 4.9 runner-hours.
+## Design
 
-### Per merge, before and after
+### 1. Legacy ES5 on every push
 
-| | Before | After, option A (legacy per push) | After, option B (legacy daily) |
-| --- | --- | --- | --- |
-| merge_group test262 shards | 102 legacy (647 runner-min per attempt; repeated on every group rebuild) | 0 | 0 |
-| push: legacy shards | 0 on HIT, 102 on MISS | 102 (647 runner-min) | 0 |
-| push: IR shards | 102 full (295 runner-min) | 16 ES5 (**≈ 49 runner-min, estimate**: 17.1 % of 218 test-min + 16 × 45 s setup) | 16 ES5 (≈ 49) |
-| per merge, total | ≈ 942 runner-min + rebuild repeats | ≈ 700 | ≈ 49 |
-| daily schedule | 102 IR full (295) | 102 IR full (295) | 102 IR full (295) + 102 legacy (647) |
-| queue wall time spent on test262 | ≈ 25 min per entry | 0 | 0 |
+**Scope = the completed editions, not the current one.** The legacy lane on
+push guards what is finished. It reads `completed: true` from
+`scripts/test262-edition-ratchet-baseline.json` (read only; that file is never
+edited here). Today that is ES5.
 
-**Recommendation: option A.** Per-merge attribution stays exact, the baseline
-keeps advancing per SHA, and promote-baseline keeps working as today. Option B
-saves ~650 runner-min per merge, but a daily red run then covers a day of
-merges and needs a bisect. Lead decides.
+When the IR's current edition moves to ES2015, the push lane still guards ES5.
+When ES2015 completes on the legacy lane, it joins automatically. The shard
+count is one new field, `"completedChunks": 16`, in
+`scripts/test262-current-edition.json`, beside the IR's `chunks`.
 
-## Why the site does not show the IR numbers
+**File list = one classifier.** `scripts/test262-edition-scope.ts paths`
+already writes an edition's file list with `classifyTest262File`, the
+ratchet's own classifier. It gains `--completed`, which lists the files of
+every completed edition. There is no second walk and no second classifier.
 
-The data is published. `deploy-pages.yml` (step "Fetch separate completed IR
-standalone measurements") downloads the newest `test262-ir-standalone-measurement`
-artifact and the live site serves it: `test262-standalone-ir-status.json` reads
-`measured`, source `6694a8b`, and `ir/test262-standalone-editions.json` carries
-all 16 edition rows. Two things hide it:
+**Jobs in `test262-sharded.yml`:**
 
-1. **The IR view is gated behind a URL switch.** `website/components/t262-view-state.js`
-   `bindIrToggle` hides the IR toggle unless the URL already contains `?ir`;
-   only `?ir=1` selects it. Nothing links there.
-2. **Main's committed IR status files are placeholders.** `benchmarks/results/test262-standalone-ir-status.json`
-   and `test262-ir-status.json` say `unavailable` on purpose
-   (`scripts/test262-compiler-path.test.mjs` "historical unavailable artifacts
-   remain historical"); the deploy step overwrites the standalone one at build
-   time. Reading main therefore shows "unavailable" while the site has numbers.
-   Their `reason` text is stale (it still says the IR front door does not exist).
+- **`compiler-path-measurement-plan`**: a second, separate step "Select the
+  legacy lane's scope" (the IR program is untouched). It emits:
+  - `legacy_scope`: `completed` on push, `full` on schedule and dispatch;
+  - `legacy_matrix`: `[1..16]` or `[1..102]`;
+  - `legacy_chunks`.
+- **`test262-shard`**:
+  - gains the push arm: push by a non-bot actor; schedule and dispatch as
+    today;
+  - the matrix and `TEST262_CHUNK_TOTAL` come from the plan;
+  - with scope `completed`, one step writes the file list and exports
+    `TEST262_PATH_FILTER_FILE`, the same mechanism the IR shards use;
+  - `max-parallel` 40 stays for the full run; scoped runs are never
+    throttled.
+- **`merge-report`** gains the push arm:
+  - **Under every scope:** merge, completeness validation and the per-edition
+    ratchet. A partial run is still checked row by row for completed editions.
+  - **Under `full` only:** the high-water floor (#2097), the stale-high-water
+    report, the #1897 net guard and the "commits since the last green full
+    run" step. They need whole-corpus counts.
+  - **Not affected:** `promote-baseline` already admits only schedule and
+    dispatch, so a scoped run never promotes.
+- **Compile timeouts on push:** the ratchet gets `--timeouts-listed`, used
+  only under `completed` scope. A completed-edition row that is
+  `compile_timeout` is listed, not failed; the owner's rule for the IR gate
+  carries over. The daily full run keeps the strict rule, so a timeout that
+  persists still fails there.
 
-## Decisions the lead must acknowledge
+### 2. Post-merge regression path
 
-1. **Completed-edition rule moves post-merge.** Today the ES5 rule (every ES5
-   row passes on the legacy lane) blocks the merge in `merge shard reports`.
-   After change 2 a legacy ES5 regression lands on main and is caught by the
-   push run (option A: ~25–100 min after the merge) or the daily run
-   (option B). Proposed handling:
-   - The push run's `merge shard reports` fails as today: **red status on the
-     main commit**. promote-baseline is skipped, so the floor does not move and
-     every later push stays red until the regression is fixed or reverted
-     (sticky by construction; the completed-edition check is absolute).
-   - New job `post-merge regression alert` (push only, when `merge-report`
-     failed): comments on the merged PR (number from the merge commit
-     subject) with the failing gate, the regressed rows and the run link, and
-     adds label `post-merge-regression` to that PR.
-   - **Who reverts:** proposed: the lead opens a revert PR unless the authoring
-     lane posts a fix-forward PR within 2 hours. Lead to confirm.
-   - `baseline-floor-staleness-alert.yml` must not auto-heal over this: its
-     auto-heal dispatches `refresh-baseline.yml`, which force-promotes, so
-     after 25 lagging commits it would silently bank the regression. Change:
-     when the newest completed push run's `merge shard reports` concluded
-     `failure`, alert only, never auto-heal.
-2. **Should the IR current-edition result gate?** Today it is informational
-   (`promotion: false`). Option: run the 16-shard IR ES5 measurement in
-   `merge_group` (~49 runner-min, ~5 min wall) and fail a group when an ES5
-   row that passed in main's latest IR measurement stops passing. Not in this
-   PR unless the lead says so; it would be a follow-up with its own plan.
-3. **IR view default.** This PR makes the IR toggle always visible. Whether IR
-   becomes the default view is a product call; proposed default unchanged
-   (legacy standalone) until the lead says otherwise.
+**Red main.** A completed-edition breach fails `merge shard reports` in the
+push run, and the main commit shows red. It stays red: the completed rule is
+absolute, so every later push run fails on the same rows until they pass again.
 
-## What Session B loses (coordination thread loopdive/js2#6583)
+**Label and comment (new job `post-merge regression`).** It runs on push,
+after `merge-report`, only when the ratchet step failed. An infrastructure
+failure never triggers it.
 
-- No test262 gate in the merge queue: a legacy conformance regression is no
-  longer bounced before merge; it lands and turns main red.
-- No `auto-park` hold for test262 failures (auto-park only sees merge_group).
-- While main is red from such a regression, the legacy baseline and the
-  published legacy numbers freeze until it is fixed or reverted.
-- Per-merge IR numbers cover ES5 only; other editions refresh daily (the
-  site's IR history was already one point per day).
-- Merge-group runs no longer produce `test262-group-<sha>` artifacts, so
-  anything reading them (the #3448 push reuse, #1956 predecessor diffing) gets
-  a miss.
-- Gains: ~25 min less queue latency per entry, no test262 rerun on group
-  rebuilds.
+1. It writes the run's non-passing completed-edition rows to an artifact,
+   `test262-completed-edition-failures`.
+2. It compares them with the previous push run's artifact:
+   - only rows that are **new** in this run are attributed to this push;
+   - this run's commit names the PR ("Merge pull request #N");
+   - while main is already red, a later unrelated merge is not labelled.
+3. It adds `post-merge-regression` to that PR and comments:
+   - the new rows;
+   - the run link;
+   - the 24 h deadline;
+   - the fix-forward marker: a PR whose body contains
+     `post-merge-regression-fix: #N`.
+4. Permissions are job-level `pull-requests: write` and `issues: write`, using
+   `GITHUB_TOKEN`.
 
-## Implementation Plan
+**Revert after 24 h (new workflow `post-merge-regression-revert.yml`, hourly
+cron).** For each PR labelled `post-merge-regression`:
 
-### Target structure
+- **Resolved:** if the newest completed push run on main has none of that PR's
+  rows, it removes the label and comments "resolved".
+- **Revert due:** otherwise, if the label is more than 24 h old and no open or
+  merged PR carries the fix-forward marker for it, it opens a revert PR. It
+  reuses the npm-compat promotion pattern:
+  - `git revert -m 1 <merge commit>` on branch `revert/pr-<N>`;
+  - the branch is pushed with `MAIN_DEPLOY_KEY` (environment
+    `baseline-promote`);
+  - the PR is opened with the existing GitHub App token, so CI fires;
+  - the original PR gets `post-merge-regression-reverted`.
+- **Revert conflicts:** it comments on the PR and stops; the lead resolves it.
 
-- **One configured value** — new `scripts/test262-current-edition.json`:
-  `{ "edition": "ES5" }`. Advancing it is a one-line reviewed diff. Read by the
-  manifest script below and by the plan job; the ratchet baseline is not edited
-  (never edit `scripts/*-baseline.json`).
-- **Edition selection reuses the classifier** — new
-  `scripts/test262-edition-manifest.ts` (~40 lines): `--edition <label>|current
-  --output <file>`; writes test-relative paths whose
-  `classifyEdition(parseFrontmatter(f), "test/" + f)` equals the edition. It
-  imports `parseFrontmatter`, `classifyEdition`, `editionStringToYear` and
-  `walkTestFiles` from `scripts/generate-editions.ts` (export `walkTestFiles`;
-  no second classifier, no second file walk). The output feeds the runner's
-  existing `TEST262_PATH_FILTER_FILE` (exact-match set, filtered before shard
-  balancing in `tests/test262-shared.ts`), so no runner change.
-- **IR fetch for the site moves out of YAML** — the ~100-line inline
-  `IR_MEASUREMENT_FETCH` program in `deploy-pages.yml` becomes
-  `scripts/fetch-ir-measurements.mjs`, parameterised by artifact name, so the
-  full and current-edition artifacts share one validated download path instead
-  of a copy. `scripts/test262-ir-pages-artifacts.test.mjs` imports the module
-  instead of slicing YAML.
+The revert PR goes through the queue like any other PR, and auto-enqueue picks
+it up. No push to main.
 
-### Change 1 — IR per merge: current edition only (`test262-sharded.yml`)
+**Staleness alert.** It stays alert-only. The threshold changes from 192 h to
+**48 h**:
 
-- `compiler-path-measurement-plan`: sparse-checkout
-  `scripts/test262-current-edition.json`; outputs `run`, `scope`
-  (`current-edition` on push, `full` on schedule and dispatch), `edition`,
-  `chunk_total` (16 or 102) and `chunks` (JSON list). Fix the "2 runner-hours"
-  comment with the measured figure.
-- `test262-ir-measurement-shard`: `matrix.chunk: ${{ fromJson(needs.compiler-path-measurement-plan.outputs.chunks) }}`,
-  `TEST262_CHUNK_TOTAL` from `chunk_total`. New step before "Run shard", only
-  when `scope == current-edition`: run the manifest script and export
-  `TEST262_PATH_FILTER_FILE`. Each shard computes the list from its own
-  checkout (0.65 s, deterministic for the SHA), so no artifact hand-off.
-- `merge-ir-measurement`: `--expected-shards` from `chunk_total`; the
-  `IR_MEASUREMENT_ARTIFACTS` program adds `scope: { kind, edition? }` to status
-  and every envelope. Artifact name: `test262-ir-standalone-measurement` (full,
-  unchanged) or `test262-ir-standalone-edition-measurement` (current edition,
-  14-day retention).
-- Add `scripts/test262-current-edition.json` and
-  `scripts/test262-edition-manifest.ts` to `&test262-paths`.
+- 24 h of cadence;
+- 10.3 h of the worst measured start delay;
+- 4 h to promotion;
+- about 10 h of slack.
 
-### Change 2 — legacy test262 off the merge queue
+### 3. Daily full run
 
-- Delete job `test262-shard-mg`, the `changes` step `mg_matrix` and its output,
-  `scripts/gen-test262-mg-matrix.mjs` and `tests/issue-3431-mg-matrix.test.ts`;
-  drop the path from `scripts/check-baseline-floor-staleness.mjs` and
-  `tests/test262-per-lane-gating.test.ts`.
-- `changes`, `runtime-eval-provider`, `temporal-provider`: drop the
-  `merge_group` arms (they only fed the deleted matrix). `changes` keeps PR
-  scope detection; its merge_group detect branch and
-  `scripts/manifest-version-only.mjs` (merge_group-only consumer) are removed.
-- `merge-report` (`merge shard reports`): stays `always()`; `SHARD_SKIP_OK`
-  becomes true for every `merge_group`, so it publishes the no-op pass. It
-  keeps running the full gate set on push. `needs` drops `test262-shard-mg`.
-- `regression-gate` (`check for test262 regressions`): already a no-op
-  (`HOST_RAN` is always false); only its `needs` changes.
-- Option A: nothing else — `test262-shard` already runs on push; the probe now
-  always misses. Option B: `test262-shard`, `merge-report` and
-  `promote-baseline` gain a `schedule` arm and lose the push arm.
-- New job `post-merge-regression-alert` (see decision 1), job-level
-  `pull-requests: write`, `issues: write`.
-- `baseline-floor-staleness-alert.yml`: no auto-heal while the newest push
-  run's `merge shard reports` failed.
+- **Cron:** `schedule` becomes `17 21 * * *`, every day at 21:17 UTC.
+  - At the measured 6.2–10.3 h delay it starts around 03:30–07:35 UTC. The
+    queue ran 3–6 groups per hour then, against 5–7 in the 08–12 window that
+    the 02:23 cron landed in.
+  - Minute 17 avoids the top-of-hour and half-hour rush.
+- **Known limit:** the delay was measured only for the 02:23 slot, and the
+  queue profile for only 36 hours. This issue records the first seven starts
+  at the new slot. The 48 h threshold tolerates a delay of up to about 20 h.
+- **Wording:** every "weekly" stays true only for what remains weekly. The
+  full-run wording becomes "daily" in:
+  - `test262-sharded.yml`: header, schedule comment, `test262-shard` comment,
+    plan comment;
+  - `baseline-floor-staleness-alert.yml` and `refresh-baseline.yml`;
+  - `scripts/test262-edition-scope.ts`, `scripts/test262-last-full-run.mjs`
+    and `scripts/check-baseline-floor-staleness.mjs`;
+  - `docs/ci-policy.md` and `docs/releasing.md`;
+  - `CLAUDE.md`;
+  - the tests that pin the cron or the word, listed below.
 
-**Phase 2 (follow-up issue, id from the lead):** delete the now-dead
-merge-group artifact hand-off — `mg-artifact-probe`, the HIT branches in
-`promote-baseline`, the merge_group "Publish group results for predecessor
-diffing (#1956)" step and their tests (#3448/#3467/#3611). Kept out of this PR
-so the behaviour flip stays reviewable; the probe still answers correctly
-(always MISS) meanwhile.
+### 4. IR as the website's default view
 
-### Change 3 — the site shows IR per edition, kept current
+`website/components/t262-view-state.js`:
 
-- `scripts/fetch-ir-measurements.mjs` (moved from `deploy-pages.yml`): base =
-  newest valid full measurement (status, report, categories, editions, daily
-  history, as today). Overlay = newest valid current-edition measurement newer
-  than the base: its row replaces the same edition's row in
-  `ir/test262-standalone-editions.json`, carrying its own `sourceSha`,
-  `measuredAt` and `runId`; the envelope keeps the base run's identity. An
-  overlay older than the base is ignored.
-- `t262-view-state.js`: the IR toggle is always visible (no `?ir` gate);
-  `irMeasurementLabel` names the overlaid edition's source when it differs.
-- `deploy-pages.yml` already redeploys on every completed `Test262 Sharded`
-  run on main, so per-merge ES5 and daily full refresh need no new trigger.
-- Placeholder `benchmarks/results/test262-standalone-ir-status.json`: reason
-  text rewritten to say it is replaced at deploy by the latest measurement.
+- `read()`: `irAvailable` is always true. `ir` is true unless the URL says
+  `?ir=0`.
+- `write()`: drops the parameter for the default (IR) and writes `ir=0` for
+  the legacy view.
+- `bindIrToggle`: no longer hides the label.
 
-### Docs
+The inline early check in `website/index.html` (line 6) and
+`website/public/benchmarks/report.html` reads the same rule from
+`t262ViewState.read()` instead of its own `URLSearchParams` test.
 
-- `CLAUDE.md`: the IR-migration paragraph ("the figure the site publishes and
-  CI measures on every merge to main") → full corpus daily, current edition
-  per merge; the per-edition ratchet section → enforced post-merge on push
-  (or daily), with the red-main / alert / revert procedure; the merge-protocol
-  notes that call `merge_group` the test262 gate.
-- `docs/ci-policy.md` §3 and the required-checks table: `merge shard reports`
-  is a no-op in `merge_group`; where the completed-edition gates now run.
+### 5. Placeholder reason text
 
-### Tests
+`benchmarks/results/test262-standalone-ir-status.json` and
+`test262-ir-status.json` keep `state: "unavailable"`; the test pins it. Their
+`reason` says:
 
-- New `tests/test262-edition-manifest.test.ts`: the manifest for an edition
-  equals the set `generate-editions` buckets into that edition on a small
-  fixture tree; `current` resolves through the config file.
-- Update workflow-structure tests that pin the removed merge_group pieces:
-  `tests/issue-4153-test262-sharded-pr-gating.test.ts`,
-  `tests/test262-per-lane-gating.test.ts`,
-  `tests/issue-5383-standalone-temporal-provider.test.ts`,
-  `tests/issue-3451-linked-harness-lane.test.ts`,
-  `tests/issue-3522-test262-shard-completion.test.ts`,
-  `scripts/test262-ir-pages-artifacts.test.mjs` (plan selection: push →
-  16-chunk edition scope, schedule → 102 full; fetch overlay cases),
-  `scripts/website-ir-view-state.test.mjs` (toggle visible).
-- `actionlint` on both workflows if available; a `workflow_dispatch` dry run
-  only with the lead's approval.
+- **standalone:** a placeholder that `deploy-pages` replaces with the latest
+  completed IR measurement;
+- **host:** the JS-host lane is retired and has no IR measurement.
 
-### Acceptance criteria
+### 6. Docs
 
-- On push to main the IR lane runs 16 shards over exactly the files
-  `classifyEdition` assigns to the configured edition; schedule runs 102 over
-  the full corpus. Changing the config file to `ES2015` is the only edit
-  needed to move the per-merge scope.
-- A merge_group run starts no test262 shard, and both required contexts
-  publish a successful check run on PR and merge_group events.
-- A push run with a completed-edition regression fails `merge shard reports`,
-  comments on and labels the merged PR, and does not trigger an auto-heal.
-- The deployed `ir/test262-standalone-editions.json` carries the newest
-  per-merge ES5 row and the newest daily row for every other edition; the IR
-  toggle is visible without a URL parameter.
-- **Code quality:** one edition classifier (no copy of the walk or the rules);
-  one IR fetch path for both artifact kinds, as a tested module rather than
-  inline YAML; no job, step or script left that only merge_group test262
-  consumed, except the Phase 2 hand-off listed above; no new inline program
-  in YAML longer than the plan job's existing one.
+- **`CLAUDE.md`**:
+  - the "goal is measured" paragraph;
+  - the Test262 cadence block;
+  - the edition-ratchet section: completed editions are checked on every push
+    to main, after the merge; the full ratchet is checked daily;
+  - the red-main → label → 24 h → revert procedure and the fix-forward marker;
+  - the baseline table: "as of the last green daily run".
+- **`docs/ci-policy.md`**:
+  - §3: which gate runs where;
+  - §10: the release dispatch;
+  - the required-checks table, which is unchanged in content.
+
+## What Session B loses or gains
+
+- Gains:
+  - a legacy ES5 regression is caught within one push run (~10 min), not
+    within a week;
+  - every regression names its PR;
+  - full numbers refresh daily.
+- Loses:
+  - about 110 runner-min per test262-relevant merge, plus about 940 a day
+    instead of a week;
+  - an automated revert PR can appear for a merge whose author did not post a
+    fix-forward PR within 24 h.
+
+## Tests
+
+- **`tests/issue-7551-ir-edition-scope.test.ts`:**
+  - `paths --completed` equals the union of the completed editions' files on a
+    fixture tree;
+  - an edition without `completed` is excluded.
+- **`tests/test262-edition-ratchet.test.ts`:**
+  - `--timeouts-listed` lists, and does not fail, a completed-edition
+    `compile_timeout` row;
+  - without the flag, it fails.
+- **Workflow-structure tests:**
+  - `tests/test262-per-lane-gating.test.ts`: the push arm and the scoped
+    matrix;
+  - `tests/issue-7551-job-skip-propagation.test.ts`: the push arm of
+    `test262-shard` and `merge-report`;
+  - `tests/issue-4350-baseline-refresh-cron.test.ts` and
+    `scripts/test262-ir-pages-artifacts.test.mjs`: the daily cron;
+  - `tests/issue-3611-promote-baseline-runs-on-hit-path.test.ts`: push still
+    never promotes.
+- **New `tests/issue-7537-post-merge-regression.test.ts`:**
+  - attribution of new rows only;
+  - the PR number from the merge-commit subject;
+  - detection of the fix-forward marker;
+  - the 24 h deadline arithmetic;
+  - a mocked `gh` for the label, resolve and revert decisions.
+- **`scripts/website-ir-view-state.test.mjs`:**
+  - the default is IR;
+  - `?ir=0` gives the legacy view;
+  - the toggle is visible without a parameter.
+- **Tooling checks:**
+  - `actionlint` on the changed workflows if it is available;
+  - a `workflow_dispatch` dry run only with the lead's approval.
+
+## Acceptance criteria
+
+- **Push:** a test262-relevant push to main runs 16 legacy shards over exactly
+  the completed editions' files.
+  - `merge shard reports` fails when a completed-edition row does not pass,
+    except a `compile_timeout`, which is listed.
+  - The run never promotes.
+- **Labelling:** the first push run with a new completed-edition failure
+  labels and comments on its PR. A later merge while main is already red is
+  not labelled unless it adds rows.
+- **Revert:**
+  - a labelled PR without a fix-forward PR gets a revert PR 24 h after the
+    label;
+  - a resolved one loses the label;
+  - a conflicting revert is reported, not forced.
+- **Daily run:** the full legacy matrix, the full-corpus IR run and promotion
+  run daily at 21:17 UTC. The staleness alert breaches after 48 h.
+- **Website:** the site opens on the IR view without a URL parameter, the
+  toggle is always visible, and `?ir=0` shows the legacy view.
+- **Code quality:**
+  - one edition classifier and one file-list writer, extended rather than
+    copied;
+  - the push lane reuses `test262-shard`, `merge-report` and the
+    current-edition config instead of adding parallel jobs;
+  - the attribution and revert decisions live in one tested script, with the
+    workflows only calling it;
+  - no new inline program in YAML.
