@@ -1,10 +1,11 @@
 {
   "id": "7550",
   "assignee": "ttraenkler/c-lead",
-  "requested_by": "ttraenkler/c-lead",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-7550-prepared-dynamic-operators",
   "claimed_at": "2026-11-26T14:02:35Z",
-  "updated_at": "2026-11-26T14:02:35Z",
-  "write_id": "3627-xqstmrlc"
+  "updated_at": "2026-11-27T21:11:34Z",
+  "write_id": "2022-brrhleq7",
+  "released_at": "2026-11-27T21:11:35Z"
 }
