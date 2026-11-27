@@ -156,15 +156,22 @@ A new step in `merge-report` runs on push, after the ratchet.
      annotation format.
    - The comment holds the confirmed rows, the flakes, the run link, the PR
      set, and whether the latest completed push run on current main still
-     fails them.
+     fails them, and the 24 h revert deadline.
    - A job-summary block goes to the lead, and a message on coordination PR
      #7526: one comment per incident, marker-guarded.
 7. **Repeated failures.** A later push that finds the same rows still failing
    adds nothing. It labels only PRs that add new confirmed rows.
 
-**The lead reverts by hand**, using a plain revert PR through the queue. In
-phase 1 nothing opens a revert PR, and nothing reads a marker or a label to
-act on it.
+**The lead reverts by hand, after a 24 h window** (owner, 2026-11-27: "Ja,
+aber 24 h Frist").
+
+- The labelled PR's author has 24 h from the label to land a fix-forward PR.
+- When the window has passed and the latest completed push run on current
+  main still fails the confirmed rows, the lead opens a plain revert PR
+  through the queue.
+- The comment states the deadline, the label time + 24 h in UTC.
+- In phase 1 nothing opens a revert PR automatically, and nothing reads a
+  marker or a label to act on it.
 
 **False-positive record.** The issue file gets a table, kept by the lead for
 the week from the first labelled incident. Each incident gets a row:
@@ -324,7 +331,7 @@ reason text says:
   - it labels the single PR (k = 1) or all k PRs as unattributed (k > 1);
   - it comments idempotently and posts one alarm on #7526;
   - a flake that passes on re-run labels nothing;
-  - nothing reverts automatically.
+  - the comment names the 24 h deadline, and nothing reverts automatically.
 - **Timeouts:** a first pass → `compile_timeout` is listed and blocks nothing,
   on the IR queue gate and on the legacy lane. The same row timing out in the
   next measurement is gated.
