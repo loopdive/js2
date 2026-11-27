@@ -32,6 +32,8 @@ export interface ToPrimitiveAnswer {
    * text. Also the never-produced value of the TypeError arm (`""`).
    */
   readonly text: (value: string | undefined, result: IrValueId) => IrInstr[];
+  /** (#7354 A1) The run-time abort, as the answer it never produces: the abort's text is the answer's operand. */
+  readonly unsupported: (result: IrValueId) => IrInstr[];
   /** The answer from the primitive a source method returned, a carrier value of a primitive kind. */
   readonly primitive: (value: IrValueId, result: IrValueId) => IrInstr[];
 }
@@ -64,18 +66,8 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
    */
   readonly builtinOnly?: (result: IrValueId) => IrInstr[];
-  /**
-   * (#7354 A1) Where a value may be an array: an array's absent `toString` is Array.prototype's (`join`), which the
-   * realm does not hold yet: the run-time abort where `object` is an array (then `unread`, the value no code reads),
-   * else `otherwise`, into `result`.
-   */
-  readonly unlessArray?: (
-    object: IrValueId,
-    unread: (result: IrValueId) => IrInstr[],
-    otherwise: (result: IrValueId) => IrInstr[],
-    result: IrValueId,
-    resultType: IrType,
-  ) => IrInstr[];
+  /** (#7354 A1) Where the program holds arrays: whether `object` is one (its brand), into the i32 `result`. */
+  readonly isArray?: (object: IrValueId, result: IrValueId) => IrInstr[];
 }
 
 /**
@@ -114,21 +106,25 @@ export function ordinaryToPrimitive(
     if (name !== "toString") return [...named, ...method(r)];
     // Only an absent `toString` has an answer of its own; an absent `valueOf` is skipped like any non-callable one.
     const held = b.fresh();
-    const absent = (s: IrValueId) =>
-      kind === "object"
-        ? b.unlessArray
-          ? b.unlessArray(
-              object,
-              (t) => answer.text("", t),
-              (t) => answer.text("[object Object]", t),
-              s,
-              answer.type,
-            )
-          : answer.text("[object Object]", s)
-        : answer.text(undefined, s);
+    const absent =
+      kind === "object" ? objectAbsentToString(b, object, answer) : (s: IrValueId) => answer.text(undefined, s);
     return [...named, realmCall("js.object.has", [object, key], held), b.branch(held, method, absent, r, answer.type)];
   };
   return step(0, result);
+}
+
+/**
+ * An ordinary object's answer where it has no `toString`: Object.prototype's text, but (#7354 A1) an array's absent
+ * `toString` is Array.prototype's (`join`), which the realm does not hold yet: the run-time abort.
+ */
+function objectAbsentToString(b: ToPrimitiveBuilders, object: IrValueId, answer: ToPrimitiveAnswer) {
+  const text = (s: IrValueId) => answer.text("[object Object]", s);
+  const isArray = b.isArray;
+  if (!isArray) return text;
+  return (s: IrValueId): IrInstr[] => {
+    const array = b.fresh();
+    return [...isArray(object, array), b.branch(array, answer.unsupported, text, s, answer.type)];
+  };
 }
 
 /**

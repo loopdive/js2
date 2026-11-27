@@ -6,13 +6,14 @@ import {
   type OrdinaryAccessorDescriptorResources,
 } from "./ordinary-object-descriptor-accessor.js";
 import {
-  ORDINARY_OBJECT_DESCRIPTOR_ENCODING,
   descriptorFlagBit,
   descriptorTypeError,
+  ifArrayBrand,
   type OrdinaryDescriptorResources,
   type OrdinaryDescriptorErrors,
 } from "./ordinary-object-descriptor-common.js";
 import { buildClosureUndefinedTest } from "./closure-receiver-bodies.js";
+import { FULL_DATA_DESCRIPTOR } from "../../../shared/contracts/descriptor-word.js";
 
 /** Exact local coordinates of the retained return-object donor bodies. */
 function locals(d: OrdinaryDescriptorResources): LocalDef[] {
@@ -78,28 +79,17 @@ function undefinedValue(d: OrdinaryDescriptorCallBindings): Instr[] {
  */
 function arrayDefine(d: OrdinaryDescriptorCallBindings, operands: readonly Instr[], word: number): Instr[] {
   if (d.arrayDefineIdx === undefined) return [];
-  return [
+  const array: Instr[] = [
     { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: d.objectTypeIdx },
-    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-    { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.arrayExotic },
-    { op: "i32.and" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 0 },
-        { op: "local.get", index: 1 },
-        ...operands,
-        { op: "local.get", index: word },
-        { op: "i32.const", value: 1 },
-        { op: "call", funcIdx: d.arrayDefineIdx },
-        { op: "drop" },
-        { op: "return" },
-      ],
-    },
+    { op: "local.get", index: 1 },
+    ...operands,
+    { op: "local.get", index: word },
+    { op: "i32.const", value: 1 },
+    { op: "call", funcIdx: d.arrayDefineIdx },
+    { op: "drop" },
+    { op: "return" },
   ];
+  return ifArrayBrand(d.objectTypeIdx, [{ op: "local.get", index: 0 }], { kind: "empty" }, array, []);
 }
 function preflight(d: OrdinaryDescriptorCallBindings, flagLocal: number, allowed: number): Instr[] {
   return [
@@ -139,7 +129,7 @@ export function buildOrdinaryDefineDataDefinition(d: OrdinaryDescriptorCallBindi
   return {
     locals: [{ name: "flags", type: { kind: "i32" } }],
     body: [
-      ...preflight(d, 3, 191),
+      ...preflight(d, 3, FULL_DATA_DESCRIPTOR),
       { op: "local.get", index: 3 },
       { op: "i32.trunc_f64_s" },
       { op: "local.set", index: 4 },

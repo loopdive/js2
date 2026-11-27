@@ -12,7 +12,7 @@ import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from 
 import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
-import { realmCall } from "./dynamic-realm-calls.js";
+import { arrayLiteralOf, realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, F64, I32, STRING, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
@@ -36,7 +36,8 @@ const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signatur
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
- * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, and
+ * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, (A1) an
+ * array literal an object, and
  * the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
  * (`learn`). Any other value may hold every admitted kind.
  */
@@ -56,7 +57,7 @@ export function knownKinds(
             ? carrierKindOf(i.value, types, definitions, i.toType.tag)
             : projected !== undefined
               ? carrierKindOf(projected, types, definitions)
-              : i.kind === "global.get"
+              : i.kind === "global.get" || arrayLiteralOf(i) !== undefined
                 ? carrierKindOf(i.result!, types, definitions)
                 : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, [kind]);
@@ -326,20 +327,8 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
       ...(families.arrays
         ? {
-            unlessArray: (
-              object: IrValueId,
-              unread: (r: IrValueId) => IrInstr[],
-              otherwise: (r: IrValueId) => IrInstr[],
-              r: IrValueId,
-              resultType: IrType,
-            ) => {
-              const array = fresh();
-              const aborted = (s: IrValueId) => [...builders.abort(instr, fresh()), ...unread(s)];
-              return [
-                ...builders.selectorCall("js.object.has-brand", [object], REALM_BRAND.array, array),
-                branch(array, aborted, otherwise, r, resultType),
-              ];
-            },
+            isArray: (object: IrValueId, r: IrValueId) =>
+              builders.selectorCall("js.object.has-brand", [object], REALM_BRAND.array, r),
           }
         : {}),
     };
@@ -376,6 +365,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         return toPrimitive(instr, value, "string", result, kind, {
           type: STRING,
           text: (source, r) => [source === undefined ? unsupported(instr, r) : text(source, r)],
+          unsupported: (r) => [unsupported(instr, r)],
           primitive: (primitive, r) => stringOf(instr, primitive, r, primitives),
         });
     }
@@ -395,7 +385,15 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
     if (converted.length === 0) return unbox(value, result);
     const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
-      toPrimitive(instr, value, "number", r, kind, { type: F64, text: (_, s) => [nan(s)], primitive: unbox });
+      toPrimitive(instr, value, "number", r, kind, {
+        type: F64,
+        text: (_, s) => [nan(s)],
+        unsupported: (s) => {
+          const [string, carrier] = [fresh(), fresh()];
+          return [unsupported(instr, string), carried(string, carrier), ...unbox(carrier, s)];
+        },
+        primitive: unbox,
+      });
     const convert = (r: IrValueId) => kindChain(instr, value, r, arm, converted, F64);
     if (converted.length === held.length) return convert(result);
     const cond = fresh();
@@ -414,6 +412,10 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       text: (source, r) => {
         const string = fresh();
         return [source === undefined ? unsupported(instr, string) : text(source, string), carried(string, r)];
+      },
+      unsupported: (r) => {
+        const string = fresh();
+        return [unsupported(instr, string), carried(string, r)];
       },
       primitive: (primitive, r) => [carried(primitive, r)],
     };

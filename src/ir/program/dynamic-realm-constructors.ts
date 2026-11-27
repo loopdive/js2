@@ -45,8 +45,8 @@ import {
   errorConstructorSelector,
   wrapperConstructorSelector,
 } from "./builtin-prototype-keys.js";
-import { realmCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
-import { CREATE_DATA_PROPERTY_WORD } from "../runtime/ordinary-object-callables.js";
+import { realmCall, realmIntrinsicOfHelper, type ArrayLiteralShape } from "./dynamic-realm-calls.js";
+import { FULL_DATA_DESCRIPTOR } from "../../shared/contracts/descriptor-word.js";
 import type { ChainBuilders, ConvertingBuilders } from "./dynamic-value-chains.js";
 import { BOOLEAN, CARRIER, F64, carried } from "./dynamic-value-types.js";
 import { gap } from "./dynamic-value-gap.js";
@@ -200,31 +200,42 @@ function objectConstruction(b: ConvertingBuilders, instr: IrInstr, value: IrValu
 
 /** `Array(…args)` / `new Array(…args)` into the instruction's result (§23.1.1.1). */
 function arrayConstruction(b: ConvertingBuilders, instr: IrInstr, args: readonly IrValueId[]): IrInstr[] {
-  const create = (length: IrValueId, r: IrValueId): IrInstr => realmCall("js.object.create-array", [length], r);
-  /** An array of `elements`, each CreateDataPropertyOrThrow under its index. */
-  const of = (elements: readonly IrValueId[], r: IrValueId): IrInstr[] => {
-    const length = b.fresh();
-    return [
-      { kind: "const", value: { kind: "f64", value: elements.length }, result: length, resultType: F64 },
-      create(length, r),
-      ...elements.flatMap((element, index): IrInstr[] => {
-        const [text, key, word] = [b.fresh(), b.fresh(), b.fresh()];
-        return [
-          b.text(String(index), text),
-          carried(text, key),
-          { kind: "const", value: { kind: "f64", value: CREATE_DATA_PROPERTY_WORD }, result: word, resultType: F64 },
-          realmCall("js.object.define-data", [r, key, element, word]),
-        ];
-      }),
-    ];
-  };
-  if (args.length !== 1) return of(args, instr.result!);
+  const dense = (r: IrValueId) => arrayOf(b, { length: args.length, indices: args.map((_, index) => index) }, args, r);
+  if (args.length !== 1) return dense(instr.result!);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
-    if (kind !== "number") return of(args, r);
+    if (kind !== "number") return dense(r);
     const length = b.fresh();
-    return [...b.toNumber(instr, args[0]!, length), create(length, r)];
+    return [...b.toNumber(instr, args[0]!, length), realmCall("js.object.create-array", [length], r)];
   };
   return b.kindChain(instr, args[0]!, instr.result!, arm, b.kinds.kindsOf(args[0]!), CARRIER);
+}
+
+/**
+ * (#7354 A1) ArrayCreate(`shape.length`), then each of `values` CreateDataPropertyOrThrow under its index in `shape`
+ * (§13.2.4.1 ArrayAccumulation, §23.1.1.1 step 7), into `r`: an array literal (the front end's helper call, whose
+ * elements it evaluated in source order; defining them after is the same, since a fresh array runs no program code on
+ * a define) and `Array(…values)`.
+ */
+export function arrayOf(
+  b: ChainBuilders,
+  shape: ArrayLiteralShape,
+  values: readonly IrValueId[],
+  r: IrValueId,
+): IrInstr[] {
+  const length = b.fresh();
+  return [
+    { kind: "const", value: { kind: "f64", value: shape.length }, result: length, resultType: F64 },
+    realmCall("js.object.create-array", [length], r),
+    ...values.flatMap((value, at): IrInstr[] => {
+      const [text, key, word] = [b.fresh(), b.fresh(), b.fresh()];
+      return [
+        b.text(String(shape.indices[at]), text),
+        carried(text, key),
+        { kind: "const", value: { kind: "f64", value: FULL_DATA_DESCRIPTOR }, result: word, resultType: F64 },
+        realmCall("js.object.define-data", [r, key, value, word]),
+      ];
+    }),
+  ];
 }
 
 /**

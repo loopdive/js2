@@ -39,6 +39,13 @@ import { localIsRewritten } from "../lattice-param-facts.js";
 import { effectiveIrReturnTypeNode } from "../select-expression-structure.js";
 import { LOWERED_FAMILIES, staticPredicateLiteralFamily, staticPredicatePlan, unsignedOperand } from "./lowering.js";
 
+/**
+ * (#7354 A1) The lowering's `realmHolds` on the ordinary pipeline, the only one selection plans: it has no realm, so
+ * no static is held as a value and both decide alike which call is a static predicate. The Prepared program
+ * (`program-source.ts`), whose realm holds `Array.isArray`, is lowered without selection.
+ */
+const ORDINARY_PIPELINE_REALM = (): boolean => false;
+
 export interface IrStaticPredicateSelection {
   /** The receiver is the unshadowed ambient namespace. */
   readonly isAmbientNamespace: (receiver: ts.Identifier) => boolean;
@@ -86,7 +93,7 @@ export function selectStaticPredicateCall(
   call: ts.CallExpression,
   options: IrStaticPredicateSelection,
 ): IrStaticPredicateVerdict | undefined {
-  const plan = staticPredicatePlan(call, options.isAmbientNamespace);
+  const plan = staticPredicatePlan(call, options.isAmbientNamespace, ORDINARY_PIPELINE_REALM);
   if (plan === undefined) return undefined;
   if (call.arguments.length > plan.arity || call.arguments.some(ts.isSpreadElement)) {
     return { admitted: false, reason: "call-arity-unsupported", arm: "expr-static-predicate-arity", node: call };
@@ -150,7 +157,10 @@ function expressionFamily(
   if (ts.isConditionalExpression(candidate)) {
     return conditionalJoinFamily(family(candidate.whenTrue), family(candidate.whenFalse));
   }
-  if (ts.isCallExpression(candidate) && staticPredicatePlan(candidate, options.isAmbientNamespace) !== undefined) {
+  if (
+    ts.isCallExpression(candidate) &&
+    staticPredicatePlan(candidate, options.isAmbientNamespace, ORDINARY_PIPELINE_REALM) !== undefined
+  ) {
     return "boolean";
   }
   return options.family(candidate);

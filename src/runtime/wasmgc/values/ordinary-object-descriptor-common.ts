@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncHandle, Instr, TypeHandle } from "../../../wasm/model/instructions.js";
+import { DESCRIPTOR_WORD } from "../../../shared/contracts/descriptor-word.js";
+import { OBJECT_FIELD } from "./object-layouts.js";
 
 /**
  * The ordinary object's encodings, in one table: a property entry's flags (`writable` … `tombstone`), the object's own
  * flags (`nonExtensible` … `nullPrototype`, then the realm's brands (#7354 G1) [[ErrorData]] and (A1) the Array exotic
- * object, bits no legacy object flag uses: those stop at 0x400), and a descriptor word (`writableSpecified` …
- * `setterSpecified`). Presence bits do not encode an operand value.
+ * object, bits no legacy object flag uses: those stop at 0x400), and (`DESCRIPTOR_WORD`, shared with the IR) a
+ * descriptor word's presence bits. Presence bits do not encode an operand value.
  */
 export const ORDINARY_OBJECT_DESCRIPTOR_ENCODING = Object.freeze({
   writable: 1,
@@ -20,13 +22,56 @@ export const ORDINARY_OBJECT_DESCRIPTOR_ENCODING = Object.freeze({
   errorData: 0x800,
   arrayExotic: 0x1000,
   noneHeap: -18,
-  writableSpecified: 8,
-  enumerableSpecified: 16,
-  configurableSpecified: 32,
-  hasValue: 128,
-  getterSpecified: 256,
-  setterSpecified: 512,
+  writableSpecified: DESCRIPTOR_WORD.writableSpecified,
+  enumerableSpecified: DESCRIPTOR_WORD.enumerableSpecified,
+  configurableSpecified: DESCRIPTOR_WORD.configurableSpecified,
+  hasValue: DESCRIPTOR_WORD.hasValue,
+  getterSpecified: DESCRIPTOR_WORD.getterSpecified,
+  setterSpecified: DESCRIPTOR_WORD.setterSpecified,
 });
+
+/** The `$Object` of the externref on the stack. */
+export const asOrdinaryObject = (objectTypeIdx: number): Instr[] => [
+  { op: "any.convert_extern" },
+  { op: "ref.cast", typeIdx: objectTypeIdx },
+];
+/** The own flags word (`OBJECT_FIELD.flags`) of the object whose externref `object` pushes. */
+export function objectFlags(objectTypeIdx: number, object: readonly Instr[]): Instr[] {
+  return [
+    ...object,
+    ...asOrdinaryObject(objectTypeIdx),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OBJECT_FIELD.flags },
+  ];
+}
+/** (#7354 G1, A1) `bit` (a realm brand) set in the flags of the object whose externref `object` pushes. */
+export function markObjectFlag(objectTypeIdx: number, object: readonly Instr[], bit: number): Instr[] {
+  return [
+    ...object,
+    ...asOrdinaryObject(objectTypeIdx),
+    ...objectFlags(objectTypeIdx, object),
+    { op: "i32.const", value: bit },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: OBJECT_FIELD.flags },
+  ];
+}
+/**
+ * (#7354 A1) The realm's one brand dispatch of a define: `array` (the realm's ArrayDefineOwnProperty) where the object
+ * whose externref `object` pushes is an Array exotic object, else `ordinary`, as one `if` of `blockType`.
+ */
+export function ifArrayBrand(
+  objectTypeIdx: number,
+  object: readonly Instr[],
+  blockType: Extract<Instr, { op: "if" }>["blockType"],
+  array: Instr[],
+  ordinary: Instr[],
+): Instr[] {
+  return [
+    ...objectFlags(objectTypeIdx, object),
+    { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.arrayExotic },
+    { op: "i32.and" },
+    { op: "if", blockType, then: array, ...(ordinary.length > 0 ? { else: ordinary } : {}) },
+  ];
+}
 export interface OrdinaryDescriptorFlags {
   readonly writable: number;
   readonly enumerable: number;

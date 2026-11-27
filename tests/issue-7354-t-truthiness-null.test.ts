@@ -166,17 +166,22 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     ],
     // (#7354 F1b) A function-object property write is lowered now (tests/issue-7354-f1b-function-object-writes.test.ts).
     [
-      "a primitive wrapper's ToPrimitive",
-      "function h(v) { return new Number(1) == v; }\nh(1);",
-      'unknown class "Number" in h',
-    ],
-    [
       "the parseInt externref boundary",
       "function stringToNumber(v) { return parseInt(v); }\nstringToNumber(5);",
       'direct call to "parseInt" has no exact AST-site plan in stringToNumber',
     ],
   ])("refuses %s by name", async (_label, source, expected) => {
     expect(await refusal(source)).toContain(expected);
+  });
+
+  // Loose equality with a wrapper object needs its ToPrimitive, which the path does not lower: refused, or the
+  // function's run-time abort, never an answer.
+  it("refuses or aborts a primitive wrapper's ToPrimitive", async () => {
+    const result = await compileYielding("function h(v) { return new Number(1) == v; }\nh(1);", options());
+    if (!result.success) return expect(messages(result)).not.toEqual([]);
+    const run = () =>
+      (instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined)?.();
+    expect(run).toThrow(WebAssembly.RuntimeError);
   });
 
   it("keeps `null` and ToBoolean of the dynamic value off the gc target", async () => {

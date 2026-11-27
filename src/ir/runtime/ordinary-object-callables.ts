@@ -98,12 +98,6 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
 });
 
 /**
- * (#7354 A1) CreateDataProperty's descriptor word for `js.object.define-data`: writable, enumerable and configurable,
- * each specified, and a value (an array element, an object literal's data property).
- */
-export const CREATE_DATA_PROPERTY_WORD = 191;
-
-/**
  * (#7354 O2) The contracts that can store a function value as an accessor half: the object literal's `get` / `set`
  * and the descriptor statics. The realm calls such a half on a later [[Get]] / [[Set]].
  */

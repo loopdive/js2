@@ -112,6 +112,7 @@ import {
 } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 import { lowerPreparedArrayLiteral } from "./prepared-array-literal.js";
+import { FULL_DATA_DESCRIPTOR } from "../shared/contracts/descriptor-word.js";
 import { realmHoldsStatic } from "./program/builtin-prototype-keys.js";
 import { tryLowerRealmStaticCall } from "./realm-static-call.js";
 
@@ -6782,7 +6783,7 @@ function lowerOrdinaryObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerC
     else if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
       demoteToLegacy("body-shape-rejected", "ordinary descriptor value has no exact boxing contract");
     value = cx.builder.emitCoerceToExternref(value);
-    const flags = cx.builder.emitConst({ kind: "f64", value: 191 }, IR_F64);
+    const flags = cx.builder.emitConst({ kind: "f64", value: FULL_DATA_DESCRIPTOR }, IR_F64);
     cx.builder.emitCall(irIntrinsicFuncRef("js.object.define-data"), [object, key, value, flags], null);
   }
   return object;
@@ -6906,13 +6907,6 @@ interface ElementSlot {
 /** (#7106 S1c, #7354 O3) A raw externref receiver, which a member read or write boxes onto the dynamic carrier. */
 function isRawExternrefReceiver(recvType: IrType, cx: LowerCtx): boolean {
   return asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true;
-}
-
-/** (#7354 A1) `value`, boxed onto the carrier where it is a Prepared function-local array or object (a raw externref). */
-function preparedReceiver(value: IrValueId, cx: LowerCtx): IrValueId {
-  const raw =
-    isRawExternrefReceiver(cx.builder.typeOf(value), cx) && functionObjects.createsFunctionObjects(cx.resolver);
-  return raw ? cx.builder.emitBox(value, irDynamic()) : value;
 }
 
 /** `recv.<propName>` through the dynamic reader, the name boxed as a string key. */
@@ -7084,14 +7078,13 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
       throw new Error("element store lost its source assignment");
     return lowerPropertyAssignment(assignment, cx, recv);
   }
-  // (#3795 / #7260) A literal key and a concrete value are boxed onto the carrier; a known sloppy function code ignores
-  // a failed `[[Set]]`. (#7354 A1) A raw externref receiver (a Prepared function-local array) is boxed too.
-  const target = preparedReceiver(recv, cx);
-  if (cx.builder.typeOf(target).kind === "dynamic") {
+  if (recvType.kind === "dynamic") {
+    // (#3795 / #7260) A literal key and a concrete value are boxed onto the
+    // carrier; a known sloppy function code ignores a failed `[[Set]]`.
     const key = lowerDynamicStoreOperand(lhs.argumentExpression, cx);
     const result = lowerExpr(rhs, cx, irDynamic());
     const value = boxDynamicStoreOperand(result, rhs, cx);
-    cx.builder.emitDynMemberSet(target, key, value, cx.functionCodeStrict === false);
+    cx.builder.emitDynMemberSet(recv, key, value, cx.functionCodeStrict === false);
     return result;
   }
   const recvVal = asVal(recvType);
@@ -7461,14 +7454,28 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
     }
   }
 
-  // #3053 U1 / #2949 S5.4 — indexed read `recv[key]` on a boxed-any (dynamic) receiver: the unified reader, a
-  // string-literal key as `.k`'s, any other boxed concrete. (#7354 A1) So is a raw externref receiver (a Prepared
-  // function-local array), boxed onto the carrier.
-  const target = preparedReceiver(recv, cx);
-  if (cx.builder.typeOf(target).kind === "dynamic") {
-    if (!isStringLitKey) return dynamicIndexedRead(target, arg, cx);
-    const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
-    return dynamicNamedPropertyRead(target, propName, cx);
+  // #3053 U1 / #2949 S5.4 — indexed read `recv[key]` on a boxed-any (dynamic)
+  // receiver: route through the unified reader primitive
+  // `__dyn_member_get(recv, key)` (#3053 U0). A string-literal key boxes as a
+  // tag-5 string carrier; any other key is lowered concrete and boxed
+  // (`boxConcreteToDynamic` — a numeric index boxes tag-3, and the helper's own
+  // `__any_to_extern(key)` converts it to the decimal property key). `null` box
+  // (an ambiguous key kind) demotes cleanly to the throw below.
+  //
+  // MECHANISM ONLY (see the twin arm in `lowerPropertyAccess`): the selector's
+  // move-only scan rejects a dyn receiver in an element read until S5.P (U2),
+  // so this arm is unreached in a claimed function today — byte-inert.
+  if (recvType.kind === "dynamic") {
+    let key: IrValueId | null;
+    if (isStringLitKey) {
+      const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
+      key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
+    } else {
+      return dynamicIndexedRead(recv, arg, cx);
+    }
+    if (key !== null) {
+      return cx.builder.emitDynMemberGet(recv, key);
+    }
   }
 
   // (#3565) DESIGNED slice-12 residual demote — an element READ on a
@@ -9831,7 +9838,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return cx.builder.emitClassStaticCall(shape, methodName, args, method.returnType, method.target);
   }
 
-  const recv = preparedReceiver(lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" })), cx);
+  const recv = lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
 
   if (methodName === "filter" && cx.resolver?.isHoleyArrayFilterCall?.(expr) === true) {
@@ -16077,10 +16084,7 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   }
   // (#7354 O2) An object literal the Prepared path builds as an ordinary object.
   const literal = peelParensExpr(operand);
-  if (
-    (ts.isObjectLiteralExpression(literal) || ts.isArrayLiteralExpression(literal)) &&
-    cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true
-  )
+  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true)
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
   return null;
 }

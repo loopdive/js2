@@ -24,6 +24,16 @@ export function createObjectPropertyMapDeclaration(entryKey: string): NativeDecl
   return { kind: "array", name: "$PropMap", element: { kind: "ref_null", typeKey: entryKey }, mutable: true };
 }
 
+/** (#7354 A1) An `$Object` field's index, by its name in {@link createOpenObjectDeclaration}. */
+export const OBJECT_FIELD = Object.freeze({
+  proto: 0,
+  props: 1,
+  count: 2,
+  tombstones: 3,
+  flags: 4,
+  nextSeq: 5,
+} as const);
+
 /** Self is symbolic until the physical ledger issues this final, parentless type. */
 export function createOpenObjectDeclaration(objectKey: string, mapKey: string): NativeDeclaredType {
   return {

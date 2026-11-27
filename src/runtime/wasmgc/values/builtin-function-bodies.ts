@@ -12,7 +12,8 @@ import {
   BUILTIN_FUNCTION_PROTOTYPE_FIELD,
   BUILTIN_FUNCTION_INITIAL_NAME_FIELD,
 } from "./builtin-function-layouts.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags, asOrdinaryObject } from "./ordinary-object-descriptor-common.js";
+import { OBJECT_FIELD } from "./object-layouts.js";
 import { realmFamilyAllocation, realmFamilySeed, type RealmFamilyOperands } from "./realm-family-bodies.js";
 
 export interface BuiltinFunctionEntryOperands {
@@ -267,10 +268,9 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
         { op: "f64.const", value: 32 },
         call(d.defineAttributes),
         ...bag(),
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: d.objectTypeIdx },
-        { op: "i32.const", value: 0x81 },
-        { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        ...asOrdinaryObject(d.objectTypeIdx),
+        { op: "i32.const", value: flags.nonExtensible | flags.nullPrototype },
+        { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: OBJECT_FIELD.flags },
       );
     return body;
   });

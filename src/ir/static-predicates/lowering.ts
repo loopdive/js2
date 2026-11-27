@@ -54,7 +54,7 @@ const IR_STATIC_PREDICATE_TABLE: Readonly<Record<string, IrStaticPredicatePlan>>
 export function staticPredicatePlan(
   call: ts.CallExpression,
   isAmbientNamespace: (receiver: ts.Identifier) => boolean,
-  realmHolds: (path: string) => boolean = () => false,
+  realmHolds: (path: string) => boolean,
 ): IrStaticPredicatePlan | undefined {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;

@@ -10,8 +10,12 @@
  * an array but %Array.prototype%, whose own `length` they create.
  */
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
-import { PROP_ENTRY_FIELD } from "./object-layouts.js";
+import {
+  ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags,
+  asOrdinaryObject,
+  markObjectFlag,
+} from "./ordinary-object-descriptor-common.js";
+import { OBJECT_FIELD, PROP_ENTRY_FIELD } from "./object-layouts.js";
 import { buildClosureUndefinedTest } from "./closure-receiver-bodies.js";
 
 /** The realm string literals the array bodies read. */
@@ -52,27 +56,9 @@ const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
 const i32 = (value: number): Instr => ({ op: "i32.const", value });
 const f64 = (value: number): Instr => ({ op: "f64.const", value });
 const empty = { kind: "empty" } as const;
-const asObject = (objectTypeIdx: number): Instr[] => [
-  { op: "any.convert_extern" },
-  { op: "ref.cast", typeIdx: objectTypeIdx },
-];
 
 /** Every field of a data descriptor present: writable, enumerable, configurable and value specified. */
 const WHOLE = flags.writableSpecified | flags.enumerableSpecified | flags.configurableSpecified | flags.hasValue;
-
-/** The array brand set on the object (externref) in the local `object` (an array, or the initializer's prototype). */
-export function markArray(objectTypeIdx: number, object: readonly Instr[]): Instr[] {
-  return [
-    ...object,
-    ...asObject(objectTypeIdx),
-    ...object,
-    ...asObject(objectTypeIdx),
-    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-    i32(flags.arrayExotic),
-    { op: "i32.or" },
-    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
-  ];
-}
 
 /** The RangeError unless the f64 in `local` is an array length: ToUint32(n) = n, an integer in 0 .. 2^32 - 1. */
 function requireArrayLength(d: RealmArrayOperands, local: number): Instr[] {
@@ -107,7 +93,7 @@ export function buildArrayCreateDefinition(d: RealmArrayOperands): Definition {
       ...requireArrayLength(d, 0),
       call(d.initializer),
       { op: "global.get", index: d.prototype },
-      ...asObject(d.objectTypeIdx),
+      ...asOrdinaryObject(d.objectTypeIdx),
       call(d.createWithPrototype),
       tee(array),
       ...d.lengthKey,
@@ -116,7 +102,7 @@ export function buildArrayCreateDefinition(d: RealmArrayOperands): Definition {
       f64(flags.writable | WHOLE),
       call(d.defineDataBody),
       { op: "drop" },
-      ...markArray(d.objectTypeIdx, [get(array)]),
+      ...markObjectFlag(d.objectTypeIdx, [get(array)], flags.arrayExotic),
       get(array),
     ],
   };
@@ -197,7 +183,7 @@ function eachIndexFromNewLength(d: RealmArrayOperands, visit: readonly Instr[]):
   ];
   return [
     get(L.obj),
-    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: OBJECT_FIELD.props },
     set(L.map),
     i32(0),
     set(L.cursor),
@@ -407,7 +393,7 @@ export function buildArrayDefineDefinition(d: RealmArrayOperands): Definition {
     ],
     body: [
       get(L.object),
-      ...asObject(d.objectTypeIdx),
+      ...asOrdinaryObject(d.objectTypeIdx),
       set(L.obj),
       get(L.obj),
       ...d.lengthKey,

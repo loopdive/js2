@@ -11,9 +11,13 @@
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { REALM_BRAND, type NativeRealmPrimitive } from "../../contracts/native-realm-catalog.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import {
+  ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags,
+  asOrdinaryObject,
+  markObjectFlag,
+  objectFlags,
+} from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
-import { markArray } from "./realm-array-bodies.js";
 
 /** A family property: a string, (#7354 W2) a number, or a realm entry or object by catalog id. */
 export interface RealmFamilyProperty {
@@ -56,10 +60,7 @@ export interface RealmFamilyOperands {
 }
 
 const global = (index: number): Instr => ({ op: "global.get", index });
-const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => [
-  { op: "any.convert_extern" },
-  { op: "ref.cast", typeIdx: d.objectTypeIdx },
-];
+const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => asOrdinaryObject(d.objectTypeIdx);
 
 /** The externref of the realm's entry or object `id` ((#7354 W2) its Object.prototype too). */
 function intrinsic(d: RealmFamilyOperands, id: string): Instr[] {
@@ -91,7 +92,7 @@ export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
     return [
       ...created,
       { op: "global.set", index: object.global },
-      ...(object.array ? markArray(d.objectTypeIdx, [global(object.global)]) : []),
+      ...(object.array ? markObjectFlag(d.objectTypeIdx, [global(object.global)], flags.arrayExotic) : []),
     ];
   });
 }
@@ -148,7 +149,6 @@ export interface ErrorCreateOperands extends RealmFamilyOperands {
  */
 export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: LocalDef[]; body: Instr[] } {
   const error = 2;
-  const flagsField = 4;
   return {
     locals: [{ name: "error", type: { kind: "externref" } }],
     body: [
@@ -168,14 +168,7 @@ export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: Lo
           ],
         },
       ]),
-      { op: "local.get", index: error },
-      ...asObject(d),
-      { op: "local.get", index: error },
-      ...asObject(d),
-      { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: flagsField },
-      { op: "i32.const", value: flags.errorData },
-      { op: "i32.or" },
-      { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: flagsField },
+      ...markObjectFlag(d.objectTypeIdx, [{ op: "local.get", index: error }], flags.errorData),
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
       {
@@ -196,6 +189,10 @@ export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: Lo
   };
 }
 
+type RealmBrand = keyof typeof REALM_BRAND;
+/** Each realm brand's bit of the object's flags. */
+const BRAND_FLAG: Readonly<Record<RealmBrand, number>> = { error: flags.errorData, array: flags.arrayExotic };
+
 /**
  * `js.object.has-brand(object, selector) -> i32`: the realm brand `selector` (`REALM_BRAND`: [[ErrorData]], (#7354 A1)
  * the Array exotic object) in an ordinary object's flags (the caller tests the kind).
@@ -204,18 +201,18 @@ export function buildHasBrandDefinition(d: { readonly objectTypeIdx: number }): 
   return {
     locals: [],
     body: [
-      { op: "local.get", index: 0 },
-      ...asObject(d),
-      { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-      { op: "local.get", index: 1 },
-      { op: "i32.const", value: REALM_BRAND.array },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: flags.arrayExotic }],
-        else: [{ op: "i32.const", value: flags.errorData }],
-      },
+      ...objectFlags(d.objectTypeIdx, [{ op: "local.get", index: 0 }]),
+      // The selector's bit: the union over the brands of each one's bit where the selector is that brand.
+      { op: "i32.const", value: 0 },
+      ...Object.entries(REALM_BRAND).flatMap(([brand, selector]): Instr[] => [
+        { op: "i32.const", value: BRAND_FLAG[brand as RealmBrand] },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: 1 },
+        { op: "i32.const", value: selector },
+        { op: "i32.eq" },
+        { op: "select" },
+        { op: "i32.or" },
+      ]),
       { op: "i32.and" },
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },

@@ -29,6 +29,38 @@ describe("#7354 A1 — array limits", () => {
     ["an object key", "var a = [1]; var k = {}; var v = a[k];"],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
 
+  // A function-local array is the same dynamic value as a script-level one: for-of needs the iteration protocol, so
+  // the function aborts at run time, and compile() never throws.
+  it.each([
+    ["var", "function f() { var a = [1, 2]; var n = 0; for (var x of a) n = n + 1; return n; } f();"],
+    ["const", "function f() { var a = [1, 2]; var n = 0; for (const x of a) n = n + 1; return n; } f();"],
+    ["let", "function f() { var a = [1, 2]; var n = 0; for (let x of a) n++; return n; } f();"],
+    ["over a literal", "function f() { var n = 0; for (var v of [1, 2, 3]) n = n + 1; return n; } f();"],
+    ["with a sum", "function f() { var a = [1, 2]; var s = 0; for (var v of a) s = s + v; return s; } f();"],
+  ])(
+    "ends for-of %s over a function-local array at the run-time abort",
+    (_label, source) => abortsAtRunTime(source, runnerOptions()),
+    SLOW,
+  );
+
+  it.each([
+    ["typeof", "function f() { var a = [1, 2]; return typeof a; } var out = f();"],
+    ["===", "function f() { var a = [1, 2]; var b = a; return (a === b) + ':' + (a === null); } var out = f();"],
+    ["! and ?:", "function f() { var a = [1, 2]; return !a ? 'n' : 'y'; } var out = f();"],
+    [
+      "a closure capture",
+      "function f() { var a = [1, 2]; var g = function () { return a.length; }; return g(); } var out = String(f());",
+    ],
+    [
+      "Array.isArray and instanceof",
+      "function f() { var a = [1]; return Array.isArray(a) + ':' + (a instanceof Array); } var out = f();",
+    ],
+    [
+      "an index write past the end",
+      "function f() { var a = [1, 2]; a[5] = 7; return a.length + ':' + a[1]; } var out = f();",
+    ],
+  ])("answers %s of a function-local array", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
+
   it.each([
     ["an object's ToPrimitive beside an array", "var a = [1]; var o = {}; var out = '' + o + a.length;"],
     ["a computed read through parameters", "function f(o, k) { return o[k]; } var out = String(f({ a: 1 }, 'a'));"],

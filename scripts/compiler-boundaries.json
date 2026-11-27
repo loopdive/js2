@@ -31,7 +31,8 @@
         "src/shared/contracts/string-surrogate.ts",
         "src/shared/contracts/linear-memory-layout.ts",
         "src/shared/contracts/f64-value-markers.ts",
-        "src/shared/contracts/prepared-validation.ts"
+        "src/shared/contracts/prepared-validation.ts",
+        "src/shared/contracts/descriptor-word.ts"
       ],
       "minModules": 12
     },
@@ -17350,6 +17351,11 @@
       "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/shared/contracts/descriptor-word.ts",
+      "state": "clean",
+      "layer": "foundation"
     },
     {
       "path": "src/runtime/wasmgc/values/realm-array-bodies.ts",

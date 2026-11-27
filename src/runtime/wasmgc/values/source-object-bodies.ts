@@ -4,7 +4,7 @@
  * of the realm kernel's own algorithm, so no object algorithm is written twice.
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags, ifArrayBrand } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
 import { buildAccessorCall } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
@@ -202,29 +202,22 @@ export function buildSourceObjectSetDefinition(
   const define = (word: number): Instr[] =>
     arrayDefine === undefined
       ? ordinaryDefine(word)
-      : [
-          { op: "local.get", index: storage },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: d.objectTypeIdx },
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          { op: "i32.const", value: flags.arrayExotic },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: storage },
-              { op: "local.get", index: 1 },
-              { op: "local.get", index: 2 },
-              { op: "ref.null.extern" },
-              { op: "ref.null.extern" },
-              { op: "f64.const", value: word },
-              { op: "i32.const", value: 0 },
-              { op: "call", funcIdx: arrayDefine },
-            ],
-            else: ordinaryDefine(word),
-          },
-        ];
+      : ifArrayBrand(
+          d.objectTypeIdx,
+          [{ op: "local.get", index: storage }],
+          { kind: "val", type: { kind: "i32" } },
+          [
+            { op: "local.get", index: storage },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "ref.null.extern" },
+            { op: "ref.null.extern" },
+            { op: "f64.const", value: word },
+            { op: "i32.const", value: 0 },
+            { op: "call", funcIdx: arrayDefine },
+          ],
+          ordinaryDefine(word),
+        );
   return {
     locals: [
       { name: "status", type: { kind: "i32" } },
