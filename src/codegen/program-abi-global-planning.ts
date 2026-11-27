@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irGlobalBindingKey, irRetainedImportGlobalRef, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import { ts } from "../ts-api.js";
 import type { IrSourceId } from "../ir/identity.js";
 import type { IrGlobalRef } from "../ir/nodes.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { GlobalDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { type ModuleBindingDeclaration, moduleBindingOf } from "./module-binding-table.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import type { ProgramAbiSession, ProgramAbiSlotLocator } from "./program-abi-session.js";
 
@@ -21,9 +21,9 @@ export interface ProgramAbiModuleBindingObservation {
   readonly displayName: string;
   readonly value: GlobalDef;
   readonly tdz?: GlobalDef;
+  /** (#7470) Decided to need no TDZ flag, though a same-named binding elsewhere keeps the name's TDZ tracking. */
+  readonly tdzOmitted?: boolean;
 }
-
-type ProgramAbiModuleDeclaration = ts.VariableDeclaration | ts.BindingElement;
 
 function displayName(name: string, finalIndex: number): string {
   return name.length > 0 ? name : `global#${finalIndex}`;
@@ -39,7 +39,6 @@ function displayName(name: string, finalIndex: number): string {
  * the final Wasm global index space without consulting moduleGlobals or names.
  */
 export class ProgramAbiGlobalRegistry {
-  private readonly moduleBindings = new Map<ProgramAbiModuleDeclaration, ProgramAbiModuleBindingObservation>();
   private planned = false;
 
   constructor(
@@ -49,44 +48,26 @@ export class ProgramAbiGlobalRegistry {
     session.assertModule(ctx.mod);
   }
 
-  /** Observe one exact module declaration's allocator-owned value global. */
-  observeModuleValue(declaration: ProgramAbiModuleDeclaration, displayName: string, value: GlobalDef): void {
-    this.observeModuleBinding(declaration, displayName, value, "value");
-  }
-
-  /** Observe one exact module declaration's allocator-owned TDZ state global. */
-  observeModuleTdz(declaration: ProgramAbiModuleDeclaration, displayName: string, value: GlobalDef): void {
-    this.observeModuleBinding(declaration, displayName, value, "tdz");
-  }
-
-  /**
-   * True when this exact declaration already owns a value global.
-   *
-   * (#1282) A TDZ flag may only be attached to the declaration that owns the
-   * VALUE global. `ctx.moduleGlobals` / `ctx.tdzLetConstNames` are keyed by BARE
-   * NAME across every module, while the declaration is resolved per source
-   * file, so in a multi-package graph two different modules can each declare
-   * `minimatch` — the value global belongs to whichever was seen first, and the
-   * TDZ would otherwise be observed against the other one. Callers use this to
-   * skip that mismatched pairing instead of tripping the ordering invariant.
-   * Deliberately a cheap map probe: the caller runs it per TDZ name per module,
-   * so it must not do the `mod.globals.includes` scan `moduleBinding` performs.
-   */
-  hasModuleValue(declaration: ProgramAbiModuleDeclaration): boolean {
-    return this.moduleBindings.has(declaration);
-  }
-
-  /** Resolve one exact module declaration without consulting compatibility names. */
-  moduleBinding(declaration: ProgramAbiModuleDeclaration): ProgramAbiModuleBindingObservation | undefined {
-    const observation = this.moduleBindings.get(declaration);
-    if (!observation || !this.ctx.mod.globals.includes(observation.value)) return undefined;
-    if (observation.tdz && !this.ctx.mod.globals.includes(observation.tdz)) {
-      return Object.freeze({
-        displayName: observation.displayName,
-        value: observation.value,
-      });
+  /** Module bindings feed retained planning, so none may be added or given a TDZ flag after it. */
+  assertModuleBindingsOpen(displayName: string): void {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot observe module global ${displayName} after retained global planning`,
+      );
     }
-    return observation;
+  }
+
+  /** Resolve one exact module declaration through the module-binding table, never through compatibility names. */
+  moduleBinding(declaration: ModuleBindingDeclaration): ProgramAbiModuleBindingObservation | undefined {
+    const binding = moduleBindingOf(this.ctx, declaration);
+    if (!binding || !this.ctx.mod.globals.includes(binding.value)) return undefined;
+    return Object.freeze({
+      displayName: binding.name,
+      value: binding.value,
+      ...(binding.tdz && this.ctx.mod.globals.includes(binding.tdz) ? { tdz: binding.tdz } : {}),
+      ...(binding.tdzOmitted ? { tdzOmitted: true } : {}),
+    });
   }
 
   /**
@@ -220,60 +201,5 @@ export class ProgramAbiGlobalRegistry {
       );
     }
     seen.add(value);
-  }
-
-  private observeModuleBinding(
-    declaration: ProgramAbiModuleDeclaration,
-    displayName: string,
-    value: GlobalDef,
-    role: "value" | "tdz",
-  ): void {
-    if (this.planned) {
-      throw new ProgramAbiInvariantError(
-        "planning-sealed",
-        `cannot observe module ${role} global ${displayName} after retained global planning`,
-      );
-    }
-    const expectedName = role === "value" ? `__mod_${displayName}` : `__tdz_${displayName}`;
-    if (!this.ctx.mod.globals.includes(value) || value.name !== expectedName) {
-      throw new ProgramAbiInvariantError(
-        "missing-required-locator",
-        `module ${role} global ${displayName} has no exact allocator object named ${expectedName}`,
-      );
-    }
-
-    const existing = this.moduleBindings.get(declaration);
-    if (
-      existing &&
-      (existing.displayName !== displayName ||
-        (role === "value" ? existing.value !== value : existing.tdz !== undefined && existing.tdz !== value))
-    ) {
-      throw new ProgramAbiInvariantError(
-        "duplicate-slot-locator",
-        `module declaration ${displayName} was observed with contradictory ${role} global allocator objects`,
-      );
-    }
-    if (existing) {
-      if (role === "tdz" && existing.tdz === undefined) {
-        this.moduleBindings.set(
-          declaration,
-          Object.freeze({
-            displayName,
-            value: existing.value,
-            tdz: value,
-          }),
-        );
-      }
-      return;
-    }
-
-    if (role === "value") {
-      this.moduleBindings.set(declaration, Object.freeze({ displayName, value }));
-      return;
-    }
-    throw new ProgramAbiInvariantError(
-      "missing-required-locator",
-      `module TDZ global ${displayName} was observed before its value global`,
-    );
   }
 }

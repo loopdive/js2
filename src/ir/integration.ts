@@ -6314,7 +6314,7 @@ function resolveModuleBindingGlobal(
   let tdzGlobal: GlobalDef | undefined;
   if (ctx.programAbiGlobals) {
     tdzGlobal = observed?.tdz;
-    if (ctx.tdzLetConstNames.has(name) && !tdzGlobal) {
+    if (ctx.tdzLetConstNames.has(name) && !observed?.tdzOmitted && !tdzGlobal) {
       throw new IrInvariantError(
         "unknown-global-ref",
         "build",

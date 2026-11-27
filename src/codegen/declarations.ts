@@ -195,7 +195,6 @@ import { undefinedCapableSlotType } from "./value-tags.js"; // (#7464)
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
-  isHoistedScriptVar,
   prepareModuleTdzGlobals,
   prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
@@ -203,6 +202,13 @@ import {
   registerModuleTdzGlobal,
   scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
+import { absoluteGlobalIdx } from "./global-space.js";
+import {
+  moduleNameState,
+  type ModuleNameState,
+  setModuleNameState,
+  withSourceBindings,
+} from "./source-binding-projection.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
@@ -1683,11 +1689,6 @@ function runtimeModuleGlobals(ctx: CodegenContext, block: ts.ModuleBlock): Map<s
   return globals;
 }
 
-function exactRuntimeModuleGlobalIndex(ctx: CodegenContext, global: GlobalDef): number | undefined {
-  const position = ctx.mod.globals.indexOf(global);
-  return position < 0 ? undefined : ctx.numImportGlobals + position;
-}
-
 /**
  * Runtime namespace bodies are ordinary emitted JavaScript, unlike ambient
  * declarations and string-literal external modules. Keep their direct
@@ -1762,30 +1763,11 @@ function withDirectRuntimeModuleBindings<T>(
   entries: readonly RuntimeModuleFunctionEntry[],
   action: () => T,
 ): T {
-  const savedGlobals = new Map<
-    string,
-    {
-      readonly hadValue: boolean;
-      readonly value?: GlobalDef;
-      readonly hadTdz: boolean;
-      readonly tdz?: GlobalDef;
-    }
-  >();
+  const savedGlobals = new Map<string, ModuleNameState>();
   for (const [name, entry] of runtimeModuleGlobals(ctx, group.block)) {
-    const value = exactRuntimeModuleGlobalIndex(ctx, entry.value);
-    if (value === undefined) continue;
-    const savedValueIdx = ctx.moduleGlobals.get(name);
-    const savedTdzIdx = ctx.tdzGlobals.get(name);
-    savedGlobals.set(name, {
-      hadValue: ctx.moduleGlobals.has(name),
-      value: savedValueIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, savedValueIdx)],
-      hadTdz: ctx.tdzGlobals.has(name),
-      tdz: savedTdzIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, savedTdzIdx)],
-    });
-    ctx.moduleGlobals.set(name, value);
-    const tdz = entry.tdz ? exactRuntimeModuleGlobalIndex(ctx, entry.tdz) : undefined;
-    if (tdz !== undefined) ctx.tdzGlobals.set(name, tdz);
-    else ctx.tdzGlobals.delete(name);
+    if (absoluteGlobalIdx(ctx, entry.value) === undefined) continue;
+    savedGlobals.set(name, moduleNameState(ctx, name));
+    setModuleNameState(ctx, name, entry);
   }
   try {
     return withRuntimeModuleCallableBindings(
@@ -1794,14 +1776,7 @@ function withDirectRuntimeModuleBindings<T>(
       action,
     );
   } finally {
-    for (const [name, prior] of savedGlobals) {
-      const value = prior.value ? exactRuntimeModuleGlobalIndex(ctx, prior.value) : undefined;
-      if (prior.hadValue && value !== undefined) ctx.moduleGlobals.set(name, value);
-      else ctx.moduleGlobals.delete(name);
-      const tdz = prior.tdz ? exactRuntimeModuleGlobalIndex(ctx, prior.tdz) : undefined;
-      if (prior.hadTdz && tdz !== undefined) ctx.tdzGlobals.set(name, tdz);
-      else ctx.tdzGlobals.delete(name);
-    }
+    for (const [name, state] of savedGlobals) setModuleNameState(ctx, name, state);
   }
 }
 
@@ -3535,7 +3510,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     for (const decl of list.declarations) {
       if (ts.isIdentifier(decl.name)) {
         const wasmType = moduleGlobalWasmType(decl, moduleVarDeclType(decl));
-        registerModuleGlobal(ctx, decl.name.text, wasmType, isHoistedScriptVar(decl) ? decl : undefined);
+        registerModuleGlobal(ctx, decl.name.text, wasmType, decl);
       } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
         registerBindingNames(decl.name);
       }
@@ -5669,21 +5644,19 @@ export function compileDeclarations(
     );
   }
 
-  /** Compile one complete top-level entry without changing its source order. */
+  /**
+   * Compile one complete top-level entry without changing its source order. One `__module_init` holds every
+   * module's statements, so each compiles under its own module's bindings (#7470).
+   */
   function compileOrderedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
-    if (initEntry.kind === "static") {
-      emitModuleStaticInitialization(ctx, fctx, initEntry.entry);
-      return;
-    }
-
-    const group = runtimeModuleGroupForStatement(initEntry.statement);
-    if (group) {
+    withSourceBindings(ctx, initEntry.node.getSourceFile(), () => {
+      if (initEntry.kind === "static") return emitModuleStaticInitialization(ctx, fctx, initEntry.entry);
+      const group = runtimeModuleGroupForStatement(initEntry.statement);
+      if (!group) return compileStatement(ctx, fctx, initEntry.statement);
       withRuntimeModuleBindings(ctx, group, exactRuntimeModuleFunctionEntries(ctx, group), () => {
         compileStatement(ctx, fctx, initEntry.statement);
       });
-    } else {
-      compileStatement(ctx, fctx, initEntry.statement);
-    }
+    });
   }
 
   /**

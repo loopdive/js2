@@ -140,7 +140,7 @@ export function emitModuleInitPrologue(
 export function moduleInitPrologueMayEmit(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
   if (ctx.restrictedGlobalLexicalName !== undefined) return true;
   if ((ctx.liveFuncBindingGlobals?.size ?? 0) > 0) return true;
-  if (scriptVarBindingNames(sourceFile).size > 0) return true;
+  if ((ctx.callableSourceFiles ?? [sourceFile]).some((source) => scriptVarBindingNames(source).size > 0)) return true;
   if (moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0) return true;
   if (ctx.sourceIsModule) return false;
   return ctx.topLevelFunctionNames.size > 0 || (ctx.globalObjectVarBindings?.size ?? 0) > 0;

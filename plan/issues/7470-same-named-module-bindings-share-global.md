@@ -4,7 +4,7 @@ title: "Same-named top-level bindings in different files share one module global
 status: in-progress
 sprint: current
 created: 2026-11-26
-updated: 2026-11-26
+updated: 2026-11-27
 priority: medium
 horizon: m
 feasibility: medium
@@ -133,8 +133,9 @@ action)`. It applies, for that file:
 All of it is restored afterwards. Saved state is held as allocator objects (`GlobalDef`, defined `Func`), never
 as indices, because a late import shifts both index spaces during a body pass (`shiftLateImportIndices`). Today's
 `ownFuncIdxBySource` keeps raw indices across passes, a latent hazard this removes. The restore replaces
-`snapshotNativeGeneratorEndState` / `restoreNativeGeneratorEndState`: restoring after each file gives the same
-end state as today's last-wins order. The globals half is `withProjectedModuleGlobals`, which
+`snapshotNativeGeneratorEndState` / `restoreNativeGeneratorEndState`. After the loop the maps hold the
+collect-and-alias state, not the last file's projection (see "Implementation notes" for the readers that remain
+after the loop). The globals half is `withProjectedModuleGlobals`, which
 `withDirectRuntimeModuleBindings` (`declarations.ts:1759`) also uses in place of its own save/restore loop.
 
 **TDZ per declaration.**
@@ -252,6 +253,97 @@ No context-type change. Estimate: +350 / −250 lines in `src/`.
   `withRuntimeModuleCallableBindings`, kept for the reason given above.
 - **One `absoluteGlobalIdx`.** No index-holding saved state.
 - No budget grants, no dead parameters, no branches for states the table cannot reach.
+
+## Implementation notes (2026-11-27)
+
+Where the code departs from revision 2 of the plan, and why:
+
+- **The binding key is scope + name, not an oracle-canonical declaration.** A module scope holds one binding per
+  name, and every Script shares one global environment record, so `(module SourceFile | Script realm, name)`
+  identifies a binding exactly: `var g; var g;` and a `var` merged with a lib `declare var` both collapse to one
+  binding, as the oracle key would have done, without an oracle query per registration. Every declaration is then
+  mapped to its binding.
+- **Three new files instead of one.** Each holds one concern, and each has several users:
+  - `module-binding-table.ts` is the table itself, pure data. The plan put it in `module-global-registration.ts`.
+    But `ProgramAbiGlobalRegistry` must read it, and `module-global-registration.ts` is inside the 708-file import
+    SCC (a cycle of files that all import each other; it imports `expressions/identifiers.ts`), while
+    `program-abi-global-planning.ts` is outside it. Reading the table from there would pull the registry into the
+    SCC and fail the `check:import-cycles` ratchet. It is a leaf with 6 importers.
+  - `global-space.ts` is the defined-global twin of `func-space.ts`: `absoluteGlobalIdx` and `definedGlobalAt`.
+    The plan put the folded index helper in `registry/imports.ts`, but that module is inside the SCC too, and
+    importing it would pull in `object-model/global-var-binding-exotic.ts` (kept out of the SCC on purpose) and the
+    projection module. Measured: one such edge grew the largest SCC from 708 to 709 files. It has 7 importers.
+  - `source-binding-projection.ts` is the planned per-file projection.
+- **The shared projection primitive is `moduleNameState` / `setModuleNameState`.** The plan called it
+  `withProjectedModuleGlobals`. `withDirectRuntimeModuleBindings` and `withSourceBindings` both use it. A name with
+  more than one binding is captured as its binding object, so a TDZ flag that binding receives while another view is
+  applied is still restored.
+- **End state after the body loop.** The maps now hold the collect-and-alias state, not the last file's projection.
+  - The readers left after the loop that use a user binding's bare name are the entry's function exports and the
+    deferred `export default <var>`.
+  - The exports bind their function index during the entry's collect pass, not after the loop, so they are
+    unaffected.
+  - The deferred default export now resolves the entry's own binding.
+- **The TDZ field is named `tdzOmitted`.** Set when a binding of a colliding name needs no flag, either because its
+  module elides it or because it is not lexical. The registry exposes it, and `integration.ts:6317` tests it, so
+  `src/ir` does not import the codegen table.
+- **One extra edit for #7531.** `moduleInitPrologueMayEmit` (`declarations/module-init-prologue.ts`) asks about
+  every file's `var`s, now that the seed walks them all.
+- **The pin test runs the namespace rows with the IR path on only.** With the IR path off, `import * as d` +
+  `d.bump()` throws even in a graph without a collision, both before and after this change. That is a separate
+  defect, not yet filed.
+
+## Results (2026-11-27)
+
+Measured on a6c397ab5d (#7490 at b9fa72a84f, merged with origin/main), with and without this change.
+
+### Pin test
+
+`tests/issue-7470-same-named-module-bindings.test.ts`: 23 rows × gc/standalone × IR on/off (namespace rows IR on
+only), 88 cases. Each row is compared with node 22's answer for the same sources.
+
+| | base | new |
+| --- | --- | --- |
+| cases passing | 4 (the "third file never written" row, ×4) | 88 |
+
+| shape | node | base | new |
+| --- | --- | --- | --- |
+| `let g: number \| undefined`, dep writes its own | 46 | 66 | 46 |
+| `let g = 0` / `var g = 0` | 6 / 6 | 66 / 66 | 6 / 6 |
+| `let g = 1` / `let g = 2` and `const` | 12 | 11 | 12 |
+| string-typed `let` | 1 | 0 | 1 |
+| number in one file, string in the other | 16 | trap: `illegal cast` | 16 |
+| closure / class method reading its own module's `g` | 36 | 33 | 36 |
+| each module's `undefined` seed | 75 | 77 | 75 |
+| named import + third file (both orders) | 23 | 22 | 23 |
+| named import, third file never written | 20 | 20 | 20 |
+| renamed import beside an own `g` | 253 | 222 | 253 |
+| default import of `export { g as default }` | 253 | 222 | 253 |
+| re-export chain | 23 | 22 | 23 |
+| namespace `d.g` + third file / + own `g` | 23 / 253 | 22 / 222 | 23 / 253 |
+| three files: number / string / number | 71 | trap: `illegal cast` | 71 |
+| TDZ in both modules | -89 | 201 | -89 |
+| TDZ in one module only | 17 | 16 | 17 |
+| closure over a function-local `let g` in a colliding file | 142 | 141 | 142 |
+| (#7531) a non-last module's `var` reads `undefined` | 11 | 1 | 11 |
+
+### Other checks
+
+- **Single-file bytes: identical.** 389 test262 files × gc/standalone = 778 compiles, base vs new, 0 differences:
+  the 240-file sample plus 149 module-goal files (`flags: [module]`, with `export`/`import`, no fixture) from
+  `language/module-code`, `language/export` and `language/import`.
+- **compileMulti tests: no change.** The 48 related test files that call `compileMulti` (#4133, #3505, #2930, #2931,
+  #6669, #6684, #3364, #4204, #1282, #4018, #4182, namespace, lodash, …) give the same 34 failures on base and new;
+  all are environment failures (missing FYI fixtures and packages). The other 337 tests pass on both.
+- **lodash-es: no change.**
+  - The upstream suite (`tests/dogfood/lodash-upstream-suite.mjs --package=lodash-es`) compiles and validates on
+    both. The binary shrinks from 3,241,627 to 3,229,910 bytes.
+  - It passes 0/62 on both, because this container does not provide the `js2wasm:runtime-eval` import.
+  - `tests/lodash-es-e2e.test.ts`, `tests/issue-6985-lodash-es-o4.test.ts` and
+    `tests/issue-3995-lodash-es-global-builtin-alias.test.ts` pass, with 12 passed and 2 skipped.
+- **Scoped test262 diff, per test** (`language/module-code|language/import|language/export`, 731 verdicts):
+  - standalone: 437 pass before and after, 0 status changes;
+  - `TEST262_COMPILER_PATH=ir`: 176 pass before and after, 0 status changes.
 
 ## Acceptance criteria
 

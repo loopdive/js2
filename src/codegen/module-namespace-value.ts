@@ -13,6 +13,9 @@ import { ensureLateImport, flushLateImportShifts } from "./expressions/late-impo
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { absoluteGlobalIdx } from "./global-space.js";
+import { type ModuleBinding, moduleBindingOf } from "./module-binding-table.js";
+import { moduleBindingState } from "./source-binding-projection.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { withRuntimeModuleCallableBindings } from "./runtime-module-callable-metadata.js";
@@ -46,7 +49,7 @@ interface NamespaceFunctionExport {
 interface NamespaceGlobalExport {
   readonly kind: "global";
   readonly key: string;
-  readonly globalName: string;
+  readonly binding: ModuleBinding;
 }
 
 /**
@@ -83,7 +86,7 @@ interface NamespaceHostMemberExport {
 interface NamespaceLiveExport {
   readonly kind: "live";
   readonly key: string;
-  readonly globalName: string;
+  readonly binding: ModuleBinding;
 }
 
 /**
@@ -227,15 +230,17 @@ function nodeBuiltinReexport(symbol: ts.Symbol): { moduleName: string; propertyN
   return undefined;
 }
 
-/** The module-global cell of a simple or destructured top-level binding. */
+/**
+ * The module binding of a simple or destructured top-level declaration — the exporting module's own, which the
+ * importer's bare names may not show (#7470).
+ */
 function topLevelVariableBinding(
   ctx: CodegenContext,
   node: ts.Declaration,
-): { name: string; list: ts.VariableDeclarationList } | undefined {
+): { binding: ModuleBinding; list: ts.VariableDeclarationList } | undefined {
   if (!(ts.isVariableDeclaration(node) || ts.isBindingElement(node)) || !ts.isIdentifier(node.name)) {
     return undefined;
   }
-  const name = node.name.text;
   let owner: ts.Node = node;
   // Nested object/array patterns still belong to one VariableDeclaration.
   // Do not admit parameters, catch bindings, or function-local variables.
@@ -247,27 +252,28 @@ function topLevelVariableBinding(
   if (!ts.isVariableDeclarationList(list)) return undefined;
   const statement = list.parent;
   if (!ts.isVariableStatement(statement) || statement.parent !== statement.getSourceFile()) return undefined;
-  return ctx.moduleGlobals.has(name) ? { name, list } : undefined;
+  const binding = moduleBindingOf(ctx, node);
+  return binding ? { binding, list } : undefined;
 }
 
 /** `const` module exports, including destructured bindings. */
-function immutableTopLevelConstName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
-  const binding = topLevelVariableBinding(ctx, node);
-  return binding !== undefined && (binding.list.flags & ts.NodeFlags.Const) !== 0 ? binding.name : undefined;
+function immutableTopLevelConstBinding(ctx: CodegenContext, node: ts.Declaration): ModuleBinding | undefined {
+  const found = topLevelVariableBinding(ctx, node);
+  return found !== undefined && (found.list.flags & ts.NodeFlags.Const) !== 0 ? found.binding : undefined;
 }
 
 /**
  * (#6651 N1) `export var x` / `export let x` at the top level of the exporting
  * module, when the binding lives in a module global this compilation can read.
  *
- * Deliberately the same shape as {@link immutableTopLevelConstName} minus the
+ * Deliberately the same shape as {@link immutableTopLevelConstBinding} minus the
  * `const` requirement: the difference between the two is not whether the
  * namespace can carry the binding, but whether the slot may hold a SNAPSHOT
  * (const) or must hold a live getter (var/let).
  */
-function mutableTopLevelBindingName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
-  const binding = topLevelVariableBinding(ctx, node);
-  return binding !== undefined && (binding.list.flags & ts.NodeFlags.Const) === 0 ? binding.name : undefined;
+function mutableTopLevelBinding(ctx: CodegenContext, node: ts.Declaration): ModuleBinding | undefined {
+  const found = topLevelVariableBinding(ctx, node);
+  return found !== undefined && (found.list.flags & ts.NodeFlags.Const) === 0 ? found.binding : undefined;
 }
 
 /**
@@ -430,19 +436,19 @@ function moduleSymbolNamespaceExports(
       // exporting module's global is a correct namespace property. Without this
       // arm a single `export const` in the module declined the WHOLE namespace
       // object, and `ns.CONSTANT` trapped even though `ns.fn()` worked.
-      const constName = immutableTopLevelConstName(ctx, declarationNode);
+      const constBinding = immutableTopLevelConstBinding(ctx, declarationNode);
       // (#6651 V6) …unless the const still has a TDZ flag: a self-importing
       // module can read `ns.X` before the initializer runs, which must throw
       // (§10.4.6.8 step 12), so the slot needs the live, TDZ-checked getter.
-      if (constName !== undefined && ctx.tdzGlobals.has(constName)) {
-        exports.push({ kind: "live", key: exportedSymbol.getName(), globalName: constName });
+      if (constBinding !== undefined && moduleBindingState(ctx, constBinding).tdz) {
+        exports.push({ kind: "live", key: exportedSymbol.getName(), binding: constBinding });
         continue;
       }
-      if (constName !== undefined) {
+      if (constBinding !== undefined) {
         exports.push({
           kind: "global",
           key: exportedSymbol.getName(),
-          globalName: constName,
+          binding: constBinding,
         });
         continue;
       }
@@ -460,12 +466,12 @@ function moduleSymbolNamespaceExports(
       }
       // (#6651 N1) …and a mutable top-level `var`/`let` gets a LIVE getter
       // rather than declining the whole object.
-      const liveName = mutableTopLevelBindingName(ctx, declarationNode);
-      if (liveName !== undefined) {
+      const liveBinding = mutableTopLevelBinding(ctx, declarationNode);
+      if (liveBinding !== undefined) {
         exports.push({
           kind: "live",
           key: exportedSymbol.getName(),
-          globalName: liveName,
+          binding: liveBinding,
         });
         continue;
       }
@@ -725,10 +731,10 @@ function runtimeNamespaceFunctionSurface(
   return surface;
 }
 
-/** A baked `global.get` over a NAMED module global, re-resolved after the flush. */
+/** A baked `global.get` over a module global, re-resolved after the flush. */
 interface NamedGlobalRead {
   readonly instr: { op: "global.get"; index: number };
-  readonly name: string;
+  readonly global: GlobalDef;
 }
 
 /**
@@ -740,16 +746,11 @@ interface NamedGlobalRead {
  */
 function rebaseNamespaceGlobalReads(ctx: CodegenContext, globalReads: readonly NamedGlobalRead[]): boolean {
   for (const read of globalReads) {
-    const current = ctx.moduleGlobals.get(read.name);
+    const current = absoluteGlobalIdx(ctx, read.global);
     if (current === undefined) return false;
     read.instr.index = current;
   }
   return true;
-}
-
-function absoluteGlobalIndex(ctx: CodegenContext, global: GlobalDef): number | undefined {
-  const localIndex = ctx.mod.globals.indexOf(global);
-  return localIndex < 0 ? undefined : ctx.numImportGlobals + localIndex;
 }
 
 function currentNamespaceFunctionHandle(ctx: CodegenContext, entry: NamespaceFunctionExport): number | undefined {
@@ -804,10 +805,7 @@ function ensureLiveBindingGetters(
       value = entry.global;
       flag = entry.initialized;
     } else {
-      const globalIdx = ctx.moduleGlobals.get(entry.globalName);
-      value = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx - ctx.numImportGlobals];
-      const flagIdx = ctx.tdzGlobals.get(entry.globalName);
-      flag = flagIdx === undefined ? undefined : ctx.mod.globals[flagIdx - ctx.numImportGlobals];
+      ({ value, tdz: flag } = moduleBindingState(ctx, entry.binding));
     }
     if (value === undefined) return undefined;
     const name = `__module_namespace_live_${ctx.mod.functions.length}`;
@@ -826,7 +824,7 @@ function ensureLiveBindingGetters(
     };
     ctx.liveBodies.add(fctx.body);
     if (flag !== undefined) {
-      const flagIdx = absoluteGlobalIndex(ctx, flag);
+      const flagIdx = absoluteGlobalIdx(ctx, flag);
       if (flagIdx === undefined) {
         ctx.liveBodies.delete(fctx.body);
         return undefined;
@@ -834,7 +832,7 @@ function ensureLiveBindingGetters(
       emitTdzCheckAtGlobal(ctx, fctx, flagIdx, entry.key, true);
     }
     // Resolved AFTER the check: building the throw can shift the global space.
-    const valueIdx = absoluteGlobalIndex(ctx, value);
+    const valueIdx = absoluteGlobalIdx(ctx, value);
     if (valueIdx === undefined) {
       ctx.liveBodies.delete(fctx.body);
       return undefined;
@@ -980,7 +978,7 @@ function ensureNamespaceObjectGetter(
     init: [{ op: "ref.null.extern" }],
   };
   ctx.mod.globals.push(cacheGlobal);
-  const cacheGlobalIdx = absoluteGlobalIndex(ctx, cacheGlobal);
+  const cacheGlobalIdx = absoluteGlobalIdx(ctx, cacheGlobal);
   if (cacheGlobalIdx === undefined) return undefined;
   return buildNamespaceObjectGetterBody(ctx, {
     cacheKey,
@@ -1132,7 +1130,7 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
     boxSymbolIdx: finalBoxSymbolIdx,
     definePropertyValueIdx: finalDefinePropertyValueIdx,
   } = plan.helpers;
-  const cacheGlobalIdx = absoluteGlobalIndex(ctx, cacheGlobal);
+  const cacheGlobalIdx = absoluteGlobalIdx(ctx, cacheGlobal);
   if (cacheGlobalIdx === undefined) return undefined;
 
   const getterName = `__get_module_namespace_${ctx.mod.functions.length}`;
@@ -1247,15 +1245,15 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
       getterFctx.body.push({ op: "call", funcIdx: classIdx });
       valueType = { kind: "externref" };
     } else if (entry.kind === "global") {
-      const globalIdx = ctx.moduleGlobals.get(entry.globalName);
-      const global = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx - ctx.numImportGlobals];
-      if (global === undefined) {
+      const global = entry.binding.value;
+      const globalIdx = absoluteGlobalIdx(ctx, global);
+      if (globalIdx === undefined) {
         popBody(getterFctx, savedBody);
         return undefined;
       }
-      const instr = { op: "global.get" as const, index: globalIdx! };
+      const instr = { op: "global.get" as const, index: globalIdx };
       getterFctx.body.push(instr);
-      globalReads.push({ instr, name: entry.globalName });
+      globalReads.push({ instr, global });
       valueType = global.type;
     } else if (entry.kind === "host-member") {
       // `__extern_get(__node_<mod>(), "<member>")` — the host module object's
@@ -1298,7 +1296,7 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
     popBody(getterFctx, savedBody);
     return undefined;
   }
-  const finalCacheGlobalIdx = absoluteGlobalIndex(ctx, cacheGlobal);
+  const finalCacheGlobalIdx = absoluteGlobalIdx(ctx, cacheGlobal);
   if (finalCacheGlobalIdx === undefined) {
     popBody(getterFctx, savedBody);
     return undefined;
