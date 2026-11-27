@@ -28,12 +28,12 @@ const options = (): Test262CompileOptions =>
 
 const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not in scope in f`;
 // (#7561) A wrapper prototype is obtainable (`String.prototype`, `new String(…)`): a primitive of that kind then reads
-// through the realm's prototype (tests/issue-7561-wrappers.test.ts). Every other built-in prototype is not.
+// through the realm's prototype (tests/issue-7561-wrappers.test.ts). (#7352) So is `Array.prototype`, which is on no
+// primitive's and no function's chain (tests/issue-7352-arrays.test.ts). Every other built-in prototype is not.
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
     ["Object.prototype as a value", "function f(){ return Object.prototype; } f();", notInScope("Object")],
     ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
-    ["Array.prototype", "function f(){ return Array.prototype; } f();", notInScope("Array")],
     ["Object.getPrototypeOf", "function f(){ return Object.getPrototypeOf(1); } f();", notInScope("Object")],
     ["Reflect.getPrototypeOf", "function f(){ return Reflect.getPrototypeOf({}); } f();", notInScope("Reflect")],
     ["globalThis", "function f(){ return globalThis; } f();", notInScope("globalThis")],
