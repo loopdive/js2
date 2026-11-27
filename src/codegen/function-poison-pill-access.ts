@@ -16,7 +16,7 @@ import {
   sourceFunctionForValue,
 } from "./function-poison-pill.js";
 import { isDynamicGeneratorFunctionBinding } from "./generator-function-dynamic.js"; // (#6651 A14)
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { isStrictFunction } from "../shared/is-strict-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { isStaticFunctionSelfName } from "./static-function-self-names.js";
 import { compileExpression, skipTransparentExpressions, type InnerResult } from "./shared.js";

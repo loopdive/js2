@@ -21,6 +21,7 @@ import { ts } from "../ts-api.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
+import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
@@ -62,10 +63,14 @@ export function sourceDynamicProvenance(
   };
   // Every store after the declaration. Fail-closed: without a write list (`with`, direct `eval`) anything may be
   // stored, and only a ToNumeric update (`++`, `-=`) is known to store a number.
+  // (#7372 2a-3) An Annex B block function of the name stores a function object.
   const storesCarry = (declaration: ts.VariableDeclaration): boolean =>
-    scriptVarWrites(checker, declaration)?.some((write) =>
+    (ts.isIdentifier(declaration.name) &&
+      annexBWritesScriptBinding(declaration.getSourceFile(), declaration.name.text)) ||
+    (scriptVarWrites(checker, declaration)?.some((write) =>
       write.kind === "value" ? carries(write.expr, declaration) : write.kind !== "numeric",
-    ) ?? true;
+    ) ??
+      true);
   const classify = irOwnedScriptVarHome(checker, sourceFiles, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));

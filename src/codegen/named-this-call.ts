@@ -25,7 +25,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { bodyReferencesOwnThis } from "../shared/body-references-own-this.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";

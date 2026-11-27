@@ -1,4 +1,9 @@
 /**
+ * (#7372 slice 2) Lifted from `src/codegen/annexb-cancel.ts` into `src/shared/`, beside the strictness helpers it
+ * asks, so the legacy pipeline and the IR ask one Annex B analysis with no import edge between them. Pure AST: a
+ * `ts.Node` in, an answer out. The one behaviour change of the lift is the CaseBlock rule below
+ * (`blockScopeStatements`).
+ *
  * (#3980) Annex B B.3.3 — "the web-compat extension is NOT observed when
  * creating the var binding would produce an Early Error".
  *
@@ -37,8 +42,8 @@
  * create a *new* binding and the existing one is still readable
  * (`*-skip-param`, `*-skip-early-err` without a suffix).
  */
-import ts from "typescript";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "./is-strict-function.js";
+import { ts } from "../ts-api.js";
 
 export interface AnnexBCancelSite {
   /** The cancelled function-declaration name. */
@@ -96,6 +101,17 @@ function listBindsLexically(stmts: readonly ts.Statement[], name: string): boole
     if (ts.isClassDeclaration(s) && s.name?.text === name) return true;
   }
   return false;
+}
+
+/**
+ * (#7372) The statements whose declarations a block-like scope binds: a Block's own, or every clause of a `switch`'s
+ * CaseBlock, whose LexicallyDeclaredNames span all its clauses (a `let F` in a sibling clause binds `F` for the whole
+ * CaseBlock). `undefined` for any other node.
+ */
+function blockScopeStatements(node: ts.Node): readonly ts.Statement[] | undefined {
+  if (ts.isBlock(node)) return node.statements;
+  if (ts.isCaseBlock(node)) return node.clauses.flatMap((clause) => clause.statements);
+  return undefined;
 }
 
 /** Does a `for`/`for-in`/`for-of` head lexically bind `name`? */
@@ -205,19 +221,16 @@ function scopeBindsNameAsParameter(scope: ts.Node, name: string): boolean {
  * binding; the existing one stays readable, so nothing is cancelled.
  */
 export function scopeBindsName(scope: ts.Node, name: string): boolean {
-  if (!ts.isSourceFile(scope) && !ts.isModuleBlock(scope)) {
-    const params = (scope as ts.FunctionLikeDeclarationBase).parameters;
-    if (params) {
-      for (const p of params) {
-        const names = new Set<string>();
-        collectBoundNames(p.name, names);
-        if (names.has(name)) return true;
-      }
-    }
-  }
-  const stmts = scopeStatements(scope);
-  if (listBindsLexically(stmts, name)) return true;
-  for (const s of stmts) {
+  return (
+    scopeBindsNameAsParameter(scope, name) ||
+    listBindsLexically(scopeStatements(scope), name) ||
+    scopeDeclaresVarOrFunction(scope, name)
+  );
+}
+
+/** Does the var scope declare `name` with a scope-top-level `function` or a `var` anywhere inside it? */
+function scopeDeclaresVarOrFunction(scope: ts.Node, name: string): boolean {
+  for (const s of scopeStatements(scope)) {
     if (ts.isFunctionDeclaration(s) && s.name?.text === name) return true;
   }
   // A `var name` ANYWHERE in the scope (var declarations are function-scoped).
@@ -249,8 +262,8 @@ export function hasInterveningLexicalBinder(from: ts.Node, name: string, scope: 
   let node: ts.Node | undefined = from;
   let child: ts.Node | undefined;
   while (node && node !== scope) {
-    if (ts.isBlock(node) && listBindsLexically(node.statements, name)) return true;
-    if ((ts.isCaseClause(node) || ts.isDefaultClause(node)) && listBindsLexically(node.statements, name)) return true;
+    const statements = blockScopeStatements(node);
+    if (statements && listBindsLexically(statements, name)) return true;
     // A loop head only binds inside the loop BODY, not in its own initializer.
     if (child && (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node))) {
       if ((node as ts.IterationStatement).statement === child && loopHeadBindsLexically(node, name)) return true;
@@ -314,11 +327,11 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
   if (listBindsLexically(block.statements, name)) return block;
 
   // Walk up from the holding block to the enclosing fn/global, checking each
-  // intervening Block / case clause for a lexical binding.
+  // intervening Block / CaseBlock for a lexical binding.
   let node: ts.Node = block.parent;
   while (node && !isVarScopeBoundary(node)) {
-    if (ts.isBlock(node) && listBindsLexically(node.statements, name)) return block;
-    if ((ts.isCaseClause(node) || ts.isDefaultClause(node)) && listBindsLexically(node.statements, name)) return block;
+    const statements = blockScopeStatements(node);
+    if (statements && listBindsLexically(statements, name)) return block;
     node = node.parent;
   }
   return null;
@@ -505,11 +518,7 @@ function boundByInterveningScope(id: ts.Identifier, name: string, scopeStart: nu
     // by a SAME-NAMED Annex B site in a DIFFERENT sibling function (react's
     // repeated ParentComponent/ComponentRendering* test components), throwing
     // "X is not defined" for a perfectly bound read.
-    const blockStatements = ts.isBlock(node)
-      ? node.statements
-      : ts.isCaseClause(node) || ts.isDefaultClause(node)
-        ? node.statements
-        : undefined;
+    const blockStatements = blockScopeStatements(node);
     if (blockStatements !== undefined) {
       if (listBindsLexically(blockStatements, name)) return true;
       for (const stmt of blockStatements) {
@@ -602,4 +611,67 @@ export function annexBReadEscapesFunctionScope(id: ts.Identifier): boolean {
     return true;
   }
   return false;
+}
+
+/** (#7372 slice 2) One Annex B block function of a var scope and what §B.3.2 gives it. */
+export interface AnnexBBlockFunction {
+  readonly declaration: ts.FunctionDeclaration & { readonly name: ts.Identifier };
+  /** The scope its block binding belongs to ({@link annexBDeclaringRange}): a Block, a CaseBlock, or the `if` clause. */
+  readonly scope: ts.Node;
+  /**
+   * Whether evaluating the declaration writes the var scope's binding of its name (§B.3.2.1 / §B.3.2.2): sloppy code,
+   * `var F` in its place would raise no early error, and the name is not a parameter's.
+   */
+  readonly writesVar: boolean;
+  /** Whether the var scope already declares the name (a `var`, or a function at its top level): no new var binding. */
+  readonly varExists: boolean;
+}
+
+const BLOCK_FUNCTIONS_CACHE = new WeakMap<ts.Node, readonly AnnexBBlockFunction[]>();
+
+/**
+ * (#7372 slice 2) The Annex B block functions of the var scope `varScope` (a function or a source file) in source
+ * order, outside nested var scopes.
+ */
+export function annexBBlockFunctions(varScope: ts.Node): readonly AnnexBBlockFunction[] {
+  const cached = BLOCK_FUNCTIONS_CACHE.get(varScope);
+  if (cached) return cached;
+  const found: AnnexBBlockFunction[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      const scope = annexBDeclaringRange(node);
+      if (scope) {
+        const varExists = scopeDeclaresVarOrFunction(varScope, node.name.text);
+        found.push({
+          declaration: node as AnnexBBlockFunction["declaration"],
+          scope,
+          writesVar: writesVar(node, varScope),
+          varExists,
+        });
+      }
+    }
+    if (isVarScopeBoundary(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(varScope, visit);
+  BLOCK_FUNCTIONS_CACHE.set(varScope, found);
+  return found;
+}
+
+function writesVar(declaration: ts.FunctionDeclaration, varScope: ts.Node): boolean {
+  const name = declaration.name!.text;
+  return (
+    !isStrictContext(declaration) &&
+    !hasInterveningLexicalBinder(declaration.parent, name, varScope) &&
+    !listBindsLexically(scopeStatements(varScope), name) &&
+    !scopeBindsNameAsParameter(varScope, name)
+  );
+}
+
+/**
+ * (#7372 slice 2a-3) Whether evaluating an Annex B block function of the script `sourceFile` writes its var scope's
+ * binding of `name` (§B.3.2.2): a write no identifier spells.
+ */
+export function annexBWritesScriptBinding(sourceFile: ts.SourceFile, name: string): boolean {
+  return annexBBlockFunctions(sourceFile).some((entry) => entry.writesVar && entry.declaration.name.text === name);
 }
