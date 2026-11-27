@@ -113,7 +113,6 @@ import {
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 import { lowerPreparedArrayLiteral } from "./prepared-array-literal.js";
 import { FULL_DATA_DESCRIPTOR } from "../shared/contracts/descriptor-word.js";
-import { realmHoldsStatic } from "./program/builtin-prototype-keys.js";
 import { tryLowerRealmStaticCall } from "./realm-static-call.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -4534,12 +4533,8 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     annotated = irVec(irVal(elementValType), true);
   }
   let inferredEmptyArrayHint: IrType | undefined;
-  if (
-    annotated === undefined &&
-    ts.isArrayLiteralExpression(d.initializer) &&
-    d.initializer.elements.length === 0 &&
-    cx.resolver?.preparedOrdinaryObjectLiteral?.(d.initializer) !== true
-  ) {
+  const emptyLiteral = ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0;
+  if (annotated === undefined && emptyLiteral && !cx.resolver?.preparedOrdinaryObjectLiteral?.(d.initializer)) {
     const inference = cx.emptyArrayInference.resultForLiteral(d.initializer);
     if (inference?.kind === "rejected") {
       demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
@@ -5616,7 +5611,6 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       countedPush?.capacity,
     );
   }
-  // (#7354 A1) The Prepared backend has no vec home for a literal it owns: it is the realm's array.
   if (cx.resolver?.preparedOrdinaryObjectLiteral?.(expr) === true)
     return lowerPreparedArrayLiteral(expr, functionObjectLoweringHost(cx));
   // Elision stays out of scope. Spread is adopted (#4487) only for operands
@@ -9779,7 +9773,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const staticPredicate = staticPredicatePlan(
     expr,
     (receiver) => isAmbientReceiver(receiver, receiverIsDirectModuleBinding, cx),
-    (path) => functionObjects.createsFunctionObjects(cx.resolver) && realmHoldsStatic(path),
+    functionObjects.realmStatics(cx.resolver),
   );
   if (staticPredicate !== undefined) return lowerStaticPredicateCall(expr, staticPredicate, staticPredicateHost(cx));
 
@@ -11381,8 +11375,10 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
     return;
   }
 
-  // Iter-host arm: externref / class / object iterables.
-  const isIterHostEligible = valTy?.kind === "externref" || iterableT.kind === "class" || iterableT.kind === "object";
+  // Iter-host arm: externref / class / object iterables. (#7354) The Prepared program has no host iterator protocol.
+  const isIterHostEligible =
+    (valTy?.kind === "externref" || iterableT.kind === "class" || iterableT.kind === "object") &&
+    !functionObjects.createsFunctionObjects(cx.resolver);
   if (!isIterHostEligible) {
     demoteToLegacy(
       "body-shape-rejected",

@@ -7451,3 +7451,101 @@ Nobody owns them today.
 - `Array.isArray` reassigned.
 
 All of these are aborts or refusals.
+
+## Slice A1a review r1 (2026-11-27, branch `claude/7354-a1`, #7352)
+
+### Root cause of the blocker, and the fix
+
+- `compile()` threw on for-of over a function-local array (`callable __iterator (runtime) was not reserved`), and
+  on `s = s + v` in its body (`Phase 1 requires matching operand types for '+'`).
+- Cause: the literal lowered to `js.object.create-array`'s raw externref. A script var boxed it on store, but a
+  function-local `var` kept the raw externref, which A1a boxed at three receiver sites only (`preparedReceiver`).
+  Every other consumer saw an externref: for-of took the host iterator arm, `+` saw mismatched operands.
+- Fix (one representation): the literal is a dynamic value at its source. The front end emits one helper call over
+  the present elements, `__ir_array_literal:<length>:<indices>` (`arrayLiteralHelper` in `dynamic-realm-calls.ts`),
+  typed `irDynamic()`. The legalization writes it with `arrayOf` (`dynamic-realm-constructors.ts`), the one
+  ArrayCreate-then-CreateDataProperty helper, which `Array(…)` also uses. `carrierKindOf` / `knownKinds` read the
+  call as an object. Defining after all elements are evaluated is the same as defining each in turn: nothing in a
+  fresh array's defines runs program code.
+- `preparedReceiver` and the array arm of `boxConcreteToDynamic` are gone; the three receiver sites are W2's again.
+- A function-local **object** (W2's representation, still a raw externref) had the same throw for for-of. The
+  iter-host arm now refuses on the lane (`createsFunctionObjects`): the Prepared program has no host iterator.
+
+### Consumer sweep (120 programs, each against node with a wrong twin; 0 wrong, 0 invalid, 0 exception)
+
+`abort` is the run-time abort (mostly a refused function's abort body); `abort (node throws)` was checked again
+under a `try`/`catch`: node catches a TypeError, the module aborts.
+
+| consumer | function-local array | script array | literal | function-local object |
+|---|---|---|---|---|
+| for-of var | abort | abort | abort | abort (node throws) |
+| for-of const | abort | abort | abort | abort (node throws) |
+| for-of let ++ | abort | abort | abort | abort (node throws) |
+| for-of sum | abort | abort | abort | abort (node throws) |
+| typeof | ok | ok | ok | abort |
+| === | ok | ok | ok | abort |
+| == | abort | abort | abort | abort |
+| ! | ok | ok | ok | abort |
+| ternary | ok | ok | ok | abort |
+| String | abort | abort | abort | abort |
+| + str | abort | abort | abort | abort |
+| + num | abort | abort | abort | abort |
+| closure | ok | ok | ok | abort |
+| return | abort | abort | abort | ok |
+| argument | abort | abort | abort | abort |
+| for-in | abort | abort | abort | abort |
+| spread | abort | abort | abort | abort (node throws) |
+| destructure arr | abort | abort | abort | abort (node throws) |
+| destructure obj | abort | abort | abort | abort |
+| in | abort | abort | abort | abort |
+| delete | abort | abort | abort | abort |
+| isArray | ok | ok | ok | ok |
+| instanceof | ok | ok | ok | ok |
+| index read | ok | ok | ok | abort |
+| index write | ok | ok | ok | abort |
+| length | ok | ok | ok | ok |
+| toString tag | ok | ok | ok | abort |
+| && | ok | ok | ok | abort |
+| || | ok | ok | ok | abort |
+| ?? | abort | abort | abort | abort |
+
+The object column's aborts match W2, except index read and write, which A1a's `preparedReceiver` had answered.
+
+### Quality points
+
+1. One create-and-define helper: `arrayOf`. `prepared-array-literal.ts` only lowers the elements and emits the call.
+2. One descriptor-word table, `src/shared/contracts/descriptor-word.ts` (`DESCRIPTOR_WORD`, `FULL_DATA_DESCRIPTOR`),
+   read by the IR and by the runtime's encoding table. `CREATE_DATA_PROPERTY_WORD`, from-ast's `191` and
+   `preflight(d, 3, 191)` are gone. (It lives under `src/shared` because a `src/runtime` home added two ir→runtime
+   import edges.)
+3. `$Object` fields by name (`OBJECT_FIELD` in `object-layouts.ts`). One brand dispatch, `ifArrayBrand`, used by the
+   descriptor pack and by OrdinarySet. One flag mark, `markObjectFlag`, used by ArrayCreate, %Array.prototype% and
+   ErrorCreate. One `asOrdinaryObject`, replacing two local copies.
+4. `js.object.has-brand` reads a `REALM_BRAND` → bit table (`BRAND_FLAG`). %ThrowTypeError%'s `0x81` is
+   `flags.nonExtensible | flags.nullPrototype`, the same bits.
+5. `staticPredicatePlan`'s `realmHolds` has no default. Lowering passes `realmStatics(resolver)`
+   (`function-object-lowering.ts`). Selection passes `ORDINARY_PIPELINE_REALM`: it plans only the ordinary pipeline,
+   which has no realm; the Prepared program is lowered without selection, so the two agree.
+6. OrdinaryToPrimitive takes `isArray` (the brand test) instead of the five-parameter `unlessArray`.
+   `ToPrimitiveAnswer` gains `unsupported`, the abort as the answer itself: its text is the answer's operand, so it
+   cannot be dropped as dead code, and no fake text follows it. The nested ternary is `objectAbsentToString`.
+7. See the root cause above.
+
+Also: `tests/issue-7354-t-truthiness-null.test.ts`'s wrapper ToPrimitive case (red since W2) asserts
+"refuses or aborts" instead of a message.
+
+### Proof (local node 22)
+
+- 152 probes: 145 OK (all twins throw), 4 ABORT, 3 REFUSED, 0 wrong / invalid / exception. Against A1a: two
+  more OK (a closure over a function-local array; `typeof` of one).
+- Ordinary pipeline: 32/32 binaries identical to the base.
+- Prelude: 95,918 B → 103,439 B (+7.5 KB); the median goes from 7.7 s to 8.2 s (3 runs each, same session).
+- `from-ast.ts`: 17,328 lines, as at the base.
+
+### Follow-ups (not fixed here)
+
+- A function-local object literal is still a raw externref (W2). Its element read and write abort, and most other
+  consumers too. Making it a dynamic value at the literal, like the array, is the clean fix.
+- An object captured by a closure aborts ("box of a non-primitive value has no Prepared intrinsic"). A captured
+  array now works.
+- `o[k]` for an absent non-numeric key on a plain object aborts.

@@ -43,6 +43,12 @@ describe("#7354 A1 — array limits", () => {
     SLOW,
   );
 
+  // A function-local object is a raw externref, and the Prepared program has no host iterator protocol to take it.
+  it("refuses for-of over a function-local object by name", async () => {
+    const source = "function f() { var o = { a: 1 }; var n = 0; for (var x of o) n = n + 1; return n; } f();";
+    expect(await refusal(source, runnerOptions())).toContain("for-of iterable type externref");
+  });
+
   it.each([
     ["typeof", "function f() { var a = [1, 2]; return typeof a; } var out = f();"],
     ["===", "function f() { var a = [1, 2]; var b = a; return (a === b) + ':' + (a === null); } var out = f();"],
