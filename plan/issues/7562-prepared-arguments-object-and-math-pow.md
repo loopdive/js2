@@ -112,3 +112,65 @@ Code quality:
 5. One count protocol (the dispatcher's), one count body shared with legacy,
    the new arms beside their siblings in the same shape; `src/ir/from-ast.ts`
    does not grow; no new IR→runtime or IR→codegen import edges.
+
+## Progress (2026-11-27, step 1 done; steps 2–4 open)
+
+### Built (step 1, `arguments.length`)
+
+As planned: `js.closure.arguments-length` / `js.closure.publish-argc` in the
+invocation pack (`native-invocation.ts`), declared in
+`src/ir/runtime/closure-invocation-callables.ts` (one signature table, the
+program validation enforces it), required in
+`native-invocation-requirements.ts`, legalized in
+`dynamic-function-operations.ts` (`argumentsCount`). The count body is
+`buildArgumentsCountBody` (`closure-invocation-bodies.ts`), now also legacy's
+`__ir_arguments_length` body. from-ast: one condition in
+`planUnderArityDirectCall` (line count unchanged).
+
+Example: `function f(a, b) { return arguments.length; } var g = f;
+g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
+
+### Refused / aborted
+
+- Over-arity direct call (`f(1, 2)` on one formal): refused, as on main.
+- A reader in a program with no function value: refused (no invocation pack,
+  so the plan cannot reserve the count callables).
+- Getter `arguments`: refused. Function-expression and arrow `arguments`,
+  `typeof arguments`, `arguments[i]`: run-time abort.
+
+### Measured
+
+- Probes vs node (wrong twin each): 16 right, 0 wrong, 0 invalid, 0 compile
+  exceptions; the rest refuse or abort as listed. Two mutations (publish not
+  clearing the extras; no exact-arity publication) each turn the
+  dispatched-caller probe wrong and fail the test.
+- Ordinary pipeline: 86 compiles (30 programs × standalone/gc/wasi, including
+  legacy `__ir_arguments_length` users) byte-identical before/after.
+- Prepared, programs not naming `arguments`: byte-identical, compile time
+  unchanged.
+- propertyHelper rows (47 in the 419-row lists): on main all stop before
+  `arguments.length` — 43 at `identifier "Array" is not in scope`, 4 at
+  `direct call to "Function"`. With `Array`/`Function` stubbed in the harness,
+  the next stop is `identifier "Object" is not in scope` (16 of 20 checked) or
+  `Function` (4). So this slice moves no row on main by itself; it pays off once
+  the lane's built-in branches land.
+- 411-row sample: not run (1-min load 7–13 during the session, rule is < 3).
+
+### Next session
+
+1. Step 4, Math.pow: provide self-hosted providers (`Math_pow`, `Math_exp`,
+   `Math_log`, from `src/stdlib/math.ts`) on the Prepared plan. The precedent
+   is the number-formatter support batch
+   (`src/frontend/builtins/prepare-number-format.ts` →
+   `IrRuntimeSupport` → `program-physical-plan.ts` formatter arm): build each
+   body with `buildSelfHostedIrBody` and add a runtime-support batch kind
+   rather than a second pow. `missingIntrinsicMaterialization` is where
+   `math.pow` is refused today. The same batch frees every `self-hosted`
+   provider in `src/ir/runtime/manifest.ts` (exp, log, log2, log10, sin, cos,
+   tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh, cbrt,
+   expm1, log1p, round, sign) and `x ** y`.
+2. Step 2, `arguments[i]` and `typeof arguments`: needs the entry read to keep
+   the extras vector (a second result of the count call or a sibling
+   callable), formals all dynamic, and a refusal when a parameter is assigned.
+3. Over-arity direct calls to readers: publish the extras (a vector operand to
+   `js.closure.publish-argc`).
