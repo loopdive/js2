@@ -119,6 +119,8 @@ describe("#7471 slice 1 — delete of an object's or a function's member", () =>
   it.each([
     ["a string's length", 'var s = "ab"; var x = delete s.length;'],
     ["a string's index", 'var s = "ab"; var x = delete s["0"];'],
+    // (#7489) The same for a function's own `arguments` on a receiver that may also be an object.
+    ["a function's own arguments", "function f() {} var o = {}; if (o) o = f; var x = delete o.arguments;"],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), 180_000);
 
   it.each([
@@ -130,9 +132,7 @@ describe("#7471 slice 1 — delete of an object's or a function's member", () =>
     [
       "a function's own arguments",
       "function f() {} var x = delete f.arguments;",
-      gapText(
-        "member delete 'arguments' of a value that may be a function needs a sloppy function's own arguments object",
-      ),
+      gapText("member delete 'arguments' of a function needs a sloppy function's own arguments object"),
     ],
     ["`this`'s member", "var x = delete this.x;", "ir/from-ast: 'this' reference outside an instance method body"],
   ])("refuses %s by name", async (_label, source, reason) => {
