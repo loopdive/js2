@@ -22,6 +22,9 @@ export interface PlatformCapabilityAdapterContext {
   getNodeRequire(): ((id: string) => any) | undefined;
   wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
   wrapUnknownCallable(value: unknown): unknown;
+  /** A native primitive (string, symbol, boxed number) as its host value, or `nativeMiss` for any other value. */
+  nativePrimitiveToHost(value: unknown): unknown;
+  nativeMiss: unknown;
 }
 
 function makeWebStoragePolyfill(): Storage {
@@ -72,7 +75,13 @@ function makeNodeBuiltinFunctionAdapter(
       return new Uint8Array(0);
     };
   }
-  return (...args: any[]) => raw(...args.map((arg) => context.wrapUnknownCallable(arg)));
+  // (#7504) Native-first: a string argument is a native string struct, which a builtin would read as an empty options
+  // object (`fs.readFile({})` throws; `https.get({})` connects to localhost:443).
+  const toHost = (arg: unknown) => {
+    const primitive = context.nativePrimitiveToHost(arg);
+    return primitive === context.nativeMiss ? context.wrapUnknownCallable(arg) : primitive;
+  };
+  return (...args: any[]) => raw(...args.map(toHost));
 }
 
 let warnedNodeBuiltinFallback = false;

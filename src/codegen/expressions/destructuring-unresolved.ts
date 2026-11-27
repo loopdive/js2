@@ -6,7 +6,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { ensureExnTag } from "../registry/imports.js";
 import { ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { findUnresolvableInArrayPattern } from "./unresolvable-assign.js";
 import { coerceType } from "../shared.js";
 import { emitThrowReferenceError } from "./helpers.js";

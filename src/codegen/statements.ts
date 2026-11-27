@@ -20,7 +20,7 @@ import {
   annexBUpdatesExistingVarBinding,
   enclosingVarScope,
   hasInterveningLexicalBinder,
-} from "./annexb-cancel.js";
+} from "../shared/annexb-block-functions.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
 import { mintScopedClassIdentity } from "./class-bodies.js";
 import { emitLinkedDynamicParentCaptureForNames } from "./standalone-dynamic-parent-class.js"; // (#6644)

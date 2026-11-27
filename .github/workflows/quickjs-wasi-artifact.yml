@@ -3,9 +3,9 @@
 # (#4238/#4245/#4307).
 #
 # NON-REQUIRED: it is not in the branch-protection ruleset (docs/ci-policy.md §7
-# stays at six required checks). Pull requests that touch the QuickJS artifact,
+# stays at six required checks). Pushes to main that touch the QuickJS artifact,
 # provider, membrane, parity gate, or this workflow get semantic coverage; the
-# path filter keeps unrelated PRs free of this long build. Manual dispatch plus
+# path filter keeps unrelated merges free of this long build. Manual dispatch plus
 # a weekly cron remain the artifact and semantic anti-rot floor.
 #
 # Modelled on the `runtime-eval-provider` job in test262-sharded.yml (#4013):
@@ -26,7 +26,10 @@
 name: quickjs-wasi-artifact
 
 on:
-  pull_request:
+  # (#7558) Post-merge on push to main, not on PRs: the merge queue is the only
+  # pre-merge gate.
+  push:
+    branches: [main]
     paths:
       - ".github/workflows/quickjs-wasi-artifact.yml"
       - ".github/workflows/test262-sharded.yml"
@@ -68,8 +71,10 @@ env:
 
 concurrency:
   # Long build, and the artifact is content-keyed, so let a newer dispatch win.
+  # (#7558) Never on push: a run is ~25 minutes, longer than the interval
+  # between merges, so cancelling would let no post-merge run finish.
   group: quickjs-wasi-artifact-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   build:

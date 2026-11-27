@@ -18,6 +18,8 @@
  *   `crash`.
  * - A compiled file is run: instantiate, then `__module_init`. Returning is
  *   `pass`, throwing `fail`. Async tests are compiled but not run (`compiled`).
+ * - Every row of a compiled file lists the refusals of all its abort bodies (#7354 U, `requiredPreparedAbortBodies`:
+ *   `aborts`), so a file's other blockers are visible before they trap.
  * - Negative tests are skipped: a compile failure is their expected outcome,
  *   so they say nothing about the path.
  * - `--tree <dir>` measures another checkout, as in census.mts.
@@ -86,12 +88,21 @@ interface Assembly {
   readonly unmodelled?: boolean;
 }
 
+/**
+ * The harness parts in assembly order. The body is passed because the harness
+ * may elide parts the body does not use (#7376's runtime shim on demand); an
+ * older harness ignores the third argument.
+ */
+function harnessParts(harness: Harness, meta: ReturnType<Runner["parseMeta"]>, body: string) {
+  return harness.harnessSourceParts(meta, meta.flags?.includes("async") === true, body);
+}
+
 function realAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner["parseMeta"]>): Assembly {
   const variant = tools.harness.assembleOriginalHarness(source, meta).primary;
   const starts: [number, string][] = [];
   let line = variant.strict ? 2 : 1;
   if (variant.bodyLineOffset > 0) {
-    for (const part of tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true)) {
+    for (const part of harnessParts(tools.harness, meta, source)) {
       starts.push([line, part.name]);
       line += part.source.split("\n").length - 1;
     }
@@ -102,7 +113,7 @@ function realAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner[
 function standInAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner["parseMeta"]>): Assembly {
   const strict = meta.flags?.includes("onlyStrict") === true;
   if (meta.flags?.includes("raw")) return { source, starts: [], bodyLine: 1 };
-  const parts = tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true);
+  const parts = harnessParts(tools.harness, meta, source);
   return assembleStandIn(source, parts, strict);
 }
 
@@ -165,14 +176,16 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
   if (!tools.entry.requiredPreparedEmission(result) || !result.success) {
     return { file, status: "compile_error", ...flags, ...gapRow(tools, result, assembly) };
   }
-  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags };
+  const details = (tools.entry.requiredPreparedAbortBodies?.(result) ?? []).map((row) => row.detail);
+  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags, aborts: details };
   let instance: WebAssembly.Instance | undefined;
   try {
     instance = tools.runtime.instantiatePreparedArtifact(result).instance;
     (instance.exports.__module_init as (() => void) | undefined)?.();
-    return { file, status: "pass", ...flags };
+    return { file, status: "pass", ...flags, aborts: details };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, instance, error) };
+    const trap = trapOf(tools, result, instance, error);
+    return { file, status: "fail", ...flags, detail: errorText(error), ...trap, aborts: details };
   }
 }
 

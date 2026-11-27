@@ -108,10 +108,12 @@ function harnessPartStarts(
   harness: Harness,
   meta: ReturnType<Runner["parseMeta"]>,
   strict: boolean,
+  body: string,
 ): [number, string][] {
   const starts: [number, string][] = [];
   let line = 1 + (strict ? 1 : 0);
-  for (const part of harness.harnessSourceParts(meta, meta.flags?.includes("async") === true)) {
+  // The body lets a harness that elides unused parts (#7376) report the parts it really assembled.
+  for (const part of harness.harnessSourceParts(meta, meta.flags?.includes("async") === true, body)) {
     starts.push([line, part.name]);
     line += newlines(part.source);
   }
@@ -164,7 +166,7 @@ async function measureFile(tools: Toolchain, file: string, run: RunMode): Promis
   if (!result.success) {
     return { file, status: "compile_error", error: result.errors.map((e) => e.message).join("; ").slice(0, 300) };
   }
-  const starts = harnessPartStarts(harness, meta, variant.strict);
+  const starts = harnessPartStarts(harness, meta, variant.strict, source);
   const executable = (result.irOutcomes ?? []).filter((outcome) => outcome.kind !== "non-executable");
   const legacy = executable
     .filter((outcome) => !outcome.irBodyEmitted)

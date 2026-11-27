@@ -297,7 +297,7 @@ function isTopOfFrameDeclaration(decl: ts.FunctionDeclaration): boolean {
  *
  * Both sides block-level ⇒ DECLINE, and that is the other regression:
  * `block-decl-nested-blocks-with-fun-decl.js` has no top-of-frame declaration
- * at all, so §B.3.3's own applicability machinery (`annexb-cancel.ts`) owns the
+ * at all, so §B.3.3's own applicability machinery (`src/shared/annexb-block-functions.ts`) owns the
  * answer and this gate must not interfere. Note that test is the
  * Annex-B-INAPPLICABLE variant; for *applicable* sibling blocks B.3.3 rebinds
  * at each declaration's evaluation, so last-executed-wins is equally correct

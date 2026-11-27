@@ -14,7 +14,7 @@
 // reproduce the exact nested-rest-tag-with-tdz-capture shape.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileGc(src: string) {
   return (await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as any)) as any;
@@ -23,9 +23,7 @@ async function compileGc(src: string) {
 async function runExport(src: string, name = "test"): Promise<unknown> {
   const r = await compileGc(src);
   expect(r.success).toBe(true);
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports as unknown as WebAssembly.Imports);
-  (imports as { setExports?: (e: unknown) => void }).setExports?.(instance.exports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => unknown>)[name]!();
 }
 

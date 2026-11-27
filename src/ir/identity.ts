@@ -25,6 +25,7 @@ export type {
 } from "../shared/contracts/ir-identity.js";
 
 import { ts } from "../ts-api.js";
+import { isAmbientDeclaration } from "../shared/ambient-declarations.js";
 import {
   createDerivedIrUnitId,
   createIrBindingId,
@@ -41,6 +42,7 @@ import {
 } from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
+import { classDefinitionExpressions } from "./class-definition-expressions.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import type {
   IrSourceKind,
@@ -469,18 +471,6 @@ function hasStaticModifier(node: ts.Node): boolean {
   return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Static) !== 0;
 }
 
-function hasDeclareModifier(node: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node; current; current = current.parent) {
-    const modifiers = (current as { modifiers?: readonly ts.Node[] }).modifiers;
-    if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
-  }
-  return node.getSourceFile().isDeclarationFile;
-}
-
-function decoratorExpressions(node: ts.Node): readonly ts.Expression[] {
-  return ts.canHaveDecorators(node) ? (ts.getDecorators(node)?.map((decorator) => decorator.expression) ?? []) : [];
-}
-
 /**
  * (#3522 W1-A) The single spelling for a `PrivateIdentifier`-named class member,
  * on every naming path: `#secret` → `__priv_secret`.
@@ -801,7 +791,7 @@ class SourceInventoryBuilder {
               kind: "unsupported",
               code: "static-class-initialization",
               stage: "select",
-              detail: "class static initialization is still emitted by the direct module-init path",
+              detail: "a class static block or static field initializer has no IR module-init lowering",
             }
           : undefined,
       );
@@ -1057,22 +1047,7 @@ class SourceInventoryBuilder {
     const fieldCallInventoryCandidate = directNestedClass && isNestedOrdinaryClassFieldCallInventoryCandidate(node);
     const fieldCallTerminalMembers: IrNestedClassFieldCallTerminalCandidate[] = [];
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
-    const definitionExpressions: ts.Expression[] = [...decoratorExpressions(node)];
-    for (const clause of node.heritageClauses ?? []) {
-      for (const heritageType of clause.types) definitionExpressions.push(heritageType.expression);
-    }
-    for (const member of node.members) {
-      definitionExpressions.push(...decoratorExpressions(member));
-      if (
-        ts.isConstructorDeclaration(member) ||
-        ts.isMethodDeclaration(member) ||
-        ts.isGetAccessorDeclaration(member) ||
-        ts.isSetAccessorDeclaration(member)
-      ) {
-        for (const parameter of member.parameters) definitionExpressions.push(...decoratorExpressions(parameter));
-      }
-      if (member.name && ts.isComputedPropertyName(member.name)) definitionExpressions.push(member.name.expression);
-    }
+    const definitionExpressions = classDefinitionExpressions(node).map((entry) => entry.expression);
     const scanDefinitionExpressions = (terminalOwnerId: IrUnitId | null): void => {
       for (const expression of definitionExpressions) this.scanNode(expression, classRecord.id, terminalOwnerId);
     };
@@ -1083,7 +1058,7 @@ class SourceInventoryBuilder {
           kind: "unsupported",
           code: "anonymous-class",
           stage: "select",
-          detail: `${displayName} has no stable direct-codegen class identity for IR patching`,
+          detail: `${displayName} is an anonymous class, which has no stable IR class identity`,
         }
       : undefined;
     let explicitConstructor: IrUnitRecord | undefined;
@@ -1244,7 +1219,7 @@ class SourceInventoryBuilder {
       if (fieldCallInventoryCandidate && explicitConstructor.terminal) {
         fieldCallTerminalMembers.push({ declaration: node, record: explicitConstructor });
       }
-    } else if (!hasExecutableConstructor && !hasDeclareModifier(node)) {
+    } else if (!hasExecutableConstructor && !isAmbientDeclaration(node)) {
       explicitConstructor = this.addSupportUnit(
         "class-implicit-constructor",
         classRecord.id,

@@ -73,7 +73,7 @@ import {
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { coercionInstrs } from "./type-coercion.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 
 /**
  * `{ writable: true, enumerable: true, configurable: false }` — the bit layout

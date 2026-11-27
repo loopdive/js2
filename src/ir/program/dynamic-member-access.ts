@@ -10,14 +10,15 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import {
   BUILTIN_REACHABLE_KEYS,
-  FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
+  identityOnlyKeyRefusal,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
+  functionOwnKeyGap,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, article, type CarrierKind } from "./dynamic-value-kinds.js";
-import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
 /** The legalization builders a member access is written with. */
@@ -35,7 +36,7 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly admitted: readonly CarrierKind[];
   /** (#7354 P1, G1) The realm's built-in function object `id` into `result`. */
   readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
-  /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
+  /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsFamily`). */
   readonly errors: boolean;
   readonly branch: (
     cond: IrValueId,
@@ -87,9 +88,16 @@ export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key:
   return text?.kind === "string.const" ? text.value : undefined;
 }
 
-/** The access's constant key; any other key refuses by name. */
+/**
+ * The access's constant key; any other key refuses by name. (#7350 B3a) So does a key the receiver, a pristine realm
+ * constructor the catalog models only as an identity (`String.prototype`), does not own: the realm lacks it, and the
+ * kernel would abort the access at run time.
+ */
 function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): string {
-  return constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
+  const key = constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
+  const ctor = realmConstructorOf(instr.recv, b.definitions);
+  const miss = ctor === undefined ? undefined : identityOnlyKeyRefusal(ctor, key);
+  return miss === undefined ? key : gap(miss);
 }
 
 /**
@@ -183,7 +191,10 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       if (kind === "object")
         return OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name) ? "Object.prototype's accessor" : undefined;
       if (kind === "function")
-        return BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined;
+        return (
+          functionOwnKeyGap(name) ??
+          (BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined)
+        );
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       // A string's own `length` and indexed characters come with arrays (#7352).
@@ -240,14 +251,12 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     resultType: b.carrier,
     // (#7354 F1, D4) Every key Object.prototype holds but its accessor is a writable data property, so OrdinarySet
     // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only an accessor's setter
-    // would run code the realm lacks: Object.prototype's, and (#7354 G1) a function's Function.prototype `caller` /
-    // `arguments`, whose setter throws (a write that silently landed would answer wrong).
+    // would run code the realm lacks: Object.prototype's. (#7489) A function's `caller` is the realm's: a sloppy
+    // function's own read-only one, else Function.prototype's %ThrowTypeError% setter; its `arguments` refuses.
     missing: (kind) => {
       if (MEMBER_ACCESS_ARM[kind] === "type-error") return undefined;
       if (OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)) return "Object.prototype's accessor";
-      return kind === "function" && FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(name)
-        ? "Function.prototype's accessor"
-        : undefined;
+      return kind === "function" ? functionOwnKeyGap(name) : undefined;
     },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,

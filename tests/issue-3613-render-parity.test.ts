@@ -56,7 +56,8 @@ export function test(): number {
 `;
 
 async function instantiateStandalone() {
-  const r = await compile(THROWING_MODULE, { target: "standalone" });
+  // (#7453) The test262 lanes compile with the kind export the runtime-negative verdict reads.
+  const r = await compile(THROWING_MODULE, { target: "standalone", exceptionKindExport: true });
   expect(r.success, r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   return instance;
@@ -94,8 +95,9 @@ describe("#3613 both lanes render the SAME thrown payload identically", () => {
     const { kinds, text } = readThrownValue(caught, { instance });
     expect(text).toContain("PARITY-MARKER-42");
     expect(text).not.toContain("non-stringifiable payload");
-    // The error KIND must survive too — the runtime-negative verdict matches it.
-    expect(kinds).toEqual(["TypeError"]);
+    // The error KINDS must survive too — the runtime-negative verdict matches them. Its `name` and its
+    // `constructor.name`, as a host TypeError reads (below).
+    expect(kinds).toEqual(["TypeError", "TypeError"]);
   });
 
   it("the native renderer is the mechanism (removing it reproduces the opaque label)", async () => {

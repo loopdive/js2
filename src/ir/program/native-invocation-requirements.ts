@@ -58,6 +58,10 @@ export interface NativeInvocationRequirements {
   readonly applyVector: boolean;
   /** (#7354 C2) Some unit reads the installed receiver (`js.closure.receiver`). */
   readonly receiver: boolean;
+  /** (#7562) Some unit reads its own `arguments.length` (`js.closure.arguments-length`). */
+  readonly argumentsLength: boolean;
+  /** (#7562) Some direct call publishes its count to such a unit (`js.closure.publish-argc`). */
+  readonly publishArgc: boolean;
   /**
    * (#7354 O2) The realm may call a source closure stored as an accessor half (`definesAccessors`): through method 0
    * (a getter) and method 1 (a setter), whose arms are the dispatchable source closures. A closure that is not
@@ -237,6 +241,11 @@ function calculate(
       if (!fn) fail("invocation occurrence has no actual selected owner");
       typeMaps.set(unitId, (types = nativeAsyncCallableValueTypes(fn)));
     }
+    // (#7562) The program validation holds these calls to their declarations (`closure-invocation-callables.ts`).
+    if (kind === "arguments-length" || kind === "publish-argc") {
+      uses.push({ occurrence, ownerUnitId: unitId, kind });
+      continue;
+    }
     if (call.result === null || !external(call.resultType ?? undefined))
       fail("semantic invocation result is not externref");
     if (kind === "undefined" || kind === "receiver") {
@@ -340,6 +349,8 @@ function calculate(
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
     receiver: uses.some((use) => use.kind === "receiver"),
+    argumentsLength: uses.some((use) => use.kind === "arguments-length"),
+    publishArgc: uses.some((use) => use.kind === "publish-argc"),
     ...(realmAccessors ? { realmAccessors: { units: dispatch.dispatchable } } : {}),
     gaps,
   };

@@ -16,8 +16,11 @@
  * §13.2.4.1 / §8.6.2: both are GetIterator consumers, exactly like for-of.
  *
  * This module exposes a "drain the iterable into a fresh vec via the iterator
- * protocol" emitter so spread and destructuring route through the same
- * `__iterator`/`__iterator_next` primitives for-of uses.
+ * protocol" emitter so spread routes through the same
+ * `__iterator`/`__iterator_next` primitives for-of uses. Destructuring does
+ * NOT use it (#7424): a pattern takes only `elements.length` steps and must
+ * IteratorClose an unfinished iterator, which the bounded
+ * `__array_from_iter_n` drive does and this full drain cannot.
  *
  * Scope: this targets the JS-host iterator bridge (`__iterator` /
  * `__iterator_next`), which handles arbitrary iterable shapes (arrow-`next`
@@ -55,6 +58,25 @@ export function isCustomIterable(ctx: CodegenContext, srcType: ValType): boolean
   if (!structName) return false;
   // A registered `@@iterator` method is the brand of a user-defined iterable.
   return ctx.funcMap.has(`${structName}_@@iterator`);
+}
+
+/**
+ * (#7424) When `type` is a user-defined iterable, copy an externref view of the
+ * value in `local` into a fresh local and return that local; otherwise return
+ * `undefined` and emit nothing. Array destructuring hands the view to its
+ * externref lane, whose bounded `__array_from_iter_n` drive steps the pattern
+ * and IteratorCloses an unfinished iterator.
+ */
+export function customIterableExternrefView(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  local: number,
+  type: ValType,
+): number | undefined {
+  if (!isCustomIterable(ctx, type)) return undefined;
+  const view = allocLocal(fctx, `__dparam_iter_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.get", index: local }, { op: "extern.convert_any" }, { op: "local.set", index: view });
+  return view;
 }
 
 /**

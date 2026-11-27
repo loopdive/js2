@@ -86,9 +86,10 @@ describe("#7106 S1i — under-arity direct calls", () => {
     expect(await call(result.binary, "ok")).toBe(12);
   });
 
-  // A missing CONCRETE formal is legacy's `0` sentinel (not `undefined`, so
-  // `add(3)` is 3 there and NaN in node): it stays legacy, and is not compared.
-  it("keeps concrete missing formals, spread and over-arity calls on legacy", async () => {
+  // Spread and over-arity calls stay legacy. (#7448) `add`'s `@param {number} b`
+  // is no concrete formal: `add(x)` omits it, so legacy widens the slot and
+  // `add(3)` is NaN, as in node, where it used to read the `0` pad as 3.
+  it("keeps spread and over-arity calls on legacy, and an omitted JSDoc number is undefined", async () => {
     const source = `
       /** @param {number} a @param {number} b */
       function add(a, b) { return a + b; }
@@ -104,10 +105,12 @@ describe("#7106 S1i — under-arity direct calls", () => {
       export function keep() { return concrete(3); }
     `;
     const result = await compileOk(source, "issue-7106-s1i-legacy.js");
-    for (const name of ["concrete", "spread", "over"]) {
+    for (const name of ["spread", "over"]) {
       expect(outcome(result, name)?.code, name).toBe("call-arity-unsupported");
     }
     expect(node(source, "ok")).toBe(310);
     expect(await call(result.binary, "ok")).toBe(310);
+    expect(node(source, "keep")).toBeNaN();
+    expect(await call(result.binary, "keep")).toBeNaN();
   });
 });

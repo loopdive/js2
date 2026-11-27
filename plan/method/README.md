@@ -16,7 +16,7 @@ Contents:
 - `pre-merge-checklist.md` — merge gate
 - `session-start-checklist.md` — tech-lead session bootstrap
 - `velocity-template.md` — sprint velocity section template
-- `file-locks.md` — active file-claim coordination table
+- `file-locks.md` — retired lock table; points at `node scripts/pr-file-overlap.mjs` (#7559)
 - `agent-sessions.md` — session registry conventions
 
 These are method/process docs. They are distinct from:

@@ -12,8 +12,8 @@
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
-import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { errorConstructorId } from "./program/builtin-prototype-keys.js";
+import { nativeObjectStaticCall, realmConstantRead } from "./realm-static-call.js";
+import { realmConstructorId, type RealmFamily } from "./program/builtin-prototype-keys.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -21,7 +21,8 @@ const isMemberName = (node: ts.Identifier): boolean =>
   ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
 
 /**
- * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`).
+ * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`),
+ * or (#7372 2a) an Annex B block function is made as one (`annexb-block-function-values.ts`).
  * Such a function, like a function expression, is a constructor whose `prototype` is an ordinary object the source
  * spells nowhere, so either one admits the object kind too.
  */
@@ -33,15 +34,20 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
-  let namesErrors = false;
+  const realmFamilies = new Set<RealmFamily>();
+  // (#7354 G1) The family of the realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it
+  // the same way, through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such
+  // read, nor (#7350 B3a) the receiver of a constant the front end folds (`realmConstantRead`).
+  const familyRead = (node: ts.Identifier): RealmFamily | undefined => {
+    const family = realmConstructorId(node.text)?.family;
+    if (family === undefined || isMemberName(node) || !isPristineGlobal(node)) return undefined;
+    const access = node.parent;
+    const folded = ts.isPropertyAccessExpression(access) && realmConstantRead(access, isPristineGlobal) !== undefined;
+    return folded ? undefined : family;
+  };
   const visit = (node: ts.Node): void => {
-    // (#7354 G1) A read of the unchanged global Error constructor (`identifier-read.ts` reads it the same way, through
-    // `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such read.
-    namesErrors ||=
-      ts.isIdentifier(node) &&
-      errorConstructorId(node.text) !== undefined &&
-      !isMemberName(node) &&
-      isPristineGlobal(node);
+    const family = ts.isIdentifier(node) ? familyRead(node) : undefined;
+    if (family !== undefined) realmFamilies.add(family);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -51,5 +57,5 @@ export function programObjects(
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
+  return { present: present || realmFamilies.has("error"), functions, namesSymbol, realmFamilies };
 }

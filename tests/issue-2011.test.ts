@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, fn = "test"): Promise<unknown> {
   const r = await compile(source);
@@ -27,9 +27,7 @@ async function run(source: string, fn = "test"): Promise<unknown> {
   // Accessor callbacks dispatch through __cb_N exports — the imports object
   // must be wired back to the instance via setExports or every getter/setter
   // bridge silently returns undefined.
-  const imports = buildImports(r.imports, {}, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  (imports as { setExports?: (e: object) => void }).setExports?.(instance.exports as object);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as any)[fn]();
 }
 

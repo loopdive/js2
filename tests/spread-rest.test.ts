@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compileAndRunStubs as compileAndRun } from "./helpers/compile.js";
+import { compileAndRunBuildImportsExpect as compileAndRun } from "./helpers/compile.js";
 
 // ── Rest parameters ────────────────────────────────────────────────────
 
