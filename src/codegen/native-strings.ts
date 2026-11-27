@@ -36,6 +36,7 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { bigIntToStringIdx } from "./bigint-string-context.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { liteExnRenderPrepareBody, usesLiteExnRender } from "./exn-render-lite.js"; // (#6666)
+import { exnRenderKindBody, pushExnRenderKindExport } from "./exn-render-kind.js";
 import { pendingStringConstantGlobalGet } from "./registry/imports.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
@@ -237,16 +238,9 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
   const L_NAME = 3;
   const L_MSG = 4;
 
-  const returnName: Instr[] = [{ op: "local.get", index: L_NAME }, { op: "ref.as_non_null" }, { op: "return" }];
-  const returnMsg: Instr[] = [{ op: "local.get", index: L_MSG }, { op: "ref.as_non_null" }, { op: "return" }];
-
-  const body: Instr[] = [
-    { op: "local.get", index: L_V },
-    { op: "ref.cast", typeIdx: errStructIdx },
-    { op: "local.set", index: L_E },
-    // name = ($name is a native string) ? it : "Error"   (steps 3-4)
-    { op: "local.get", index: L_E },
-    { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 2 }, // $name (externref)
+  // The `$Error_struct` on the stack's externref field `fieldIdx` when it is a native string, else `fallback`.
+  const stringFieldOr = (fieldIdx: number, fallback: string): Instr[] => [
+    { op: "struct.get", typeIdx: errStructIdx, fieldIdx },
     { op: "any.convert_extern" },
     { op: "local.tee", index: L_TMP },
     { op: "ref.test", typeIdx: anyStrTypeIdx },
@@ -257,8 +251,20 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
         { op: "local.get", index: L_TMP },
         { op: "ref.cast", typeIdx: anyStrTypeIdx },
       ],
-      else: litStr("Error"),
+      else: litStr(fallback),
     },
+  ];
+
+  const returnName: Instr[] = [{ op: "local.get", index: L_NAME }, { op: "ref.as_non_null" }, { op: "return" }];
+  const returnMsg: Instr[] = [{ op: "local.get", index: L_MSG }, { op: "ref.as_non_null" }, { op: "return" }];
+
+  const body: Instr[] = [
+    { op: "local.get", index: L_V },
+    { op: "ref.cast", typeIdx: errStructIdx },
+    { op: "local.set", index: L_E },
+    // name = ($name is a native string) ? it : "Error"   (steps 3-4)
+    { op: "local.get", index: L_E },
+    ...stringFieldOr(2, "Error"), // $name
     { op: "local.set", index: L_NAME },
     // msg = ($message is a native string) ? it : ""      (steps 5-6)
     // (#4485) An absent / non-string message is the EMPTY STRING, not "return
@@ -270,19 +276,7 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
     // A non-string message remains the documented construction-time-ToString
     // residual — §20.5.1.1 stores ToString(message), our ctor stores the raw arg.
     { op: "local.get", index: L_E },
-    { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 1 }, // $message (externref)
-    { op: "any.convert_extern" },
-    { op: "local.tee", index: L_TMP },
-    { op: "ref.test", typeIdx: anyStrTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: strRef },
-      then: [
-        { op: "local.get", index: L_TMP },
-        { op: "ref.cast", typeIdx: anyStrTypeIdx },
-      ],
-      else: litStr(""),
-    },
+    ...stringFieldOr(1, ""), // $message
     { op: "local.set", index: L_MSG },
     // (#4485) step 7 — empty NAME → the message alone. `new Error("m")` with
     // `e.name = ""` is `"m"`, not `": m"` (.../toString/15.11.4.4-8-1.js).
@@ -1838,6 +1832,8 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
     mutable: true,
     init: [{ op: "ref.null", typeIdx: flatTypeIdx }],
   });
+  // (#7453) Harness opt-in; its literals are interned here, before any export is minted.
+  const kindBody = ctx.exceptionKindExport ? exnRenderKindBody(ctx, bufGlobalIdx, flattenIdx, flatTypeIdx) : undefined;
 
   // __exn_render_prepare(payload: externref) -> i32
   {
@@ -1955,6 +1951,7 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
     } as WasmFunction);
     mod.exports.push({ name: "__exn_render_char", desc: { kind: "func", index: funcIdx } });
   }
+  if (kindBody) pushExnRenderKindExport(ctx, kindBody);
 }
 
 /**

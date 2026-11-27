@@ -57,6 +57,9 @@ const maxForks = isTest262Run
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    // (#7509) Only under the known-failures gate, which sets KNOWN_FAILURES_PROGRESS: hold each file open briefly so an
+    // error a test schedules after its last hook still fires inside the worker and reaches the gate.
+    setupFiles: process.env.KNOWN_FAILURES_PROGRESS ? ["./scripts/lib/known-failures-late-errors.mjs"] : [],
     // The dogfood upstream suites extract a real npm/git checkout under
     // `tests/dogfood/.<name>-upstream-suite/` (#3958 React, #3977 lit). Those
     // trees contain hundreds of the upstream project's OWN `*.test.ts` files,

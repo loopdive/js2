@@ -20,7 +20,7 @@
 // __make_callback continuations). Method shapes are phase 3 (not covered here).
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { ASYNC_CPS_ENABLED } from "../src/codegen/async-cps.js";
 
 async function compileRun(src: string, fn: string, ...args: number[]): Promise<unknown> {
@@ -28,10 +28,8 @@ async function compileRun(src: string, fn: string, ...args: number[]): Promise<u
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  const instance = await instantiateWithRuntime(result);
   const exports = instance.exports as Record<string, (...a: number[]) => unknown>;
-  if (imports.setExports) imports.setExports(exports as Record<string, Function>);
   return await exports[fn]!(...args);
 }
 
