@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 C2) The dynamic-value legalization of the three operations a plain function takes part in as an object:
- * `this` (`dyn.current_this`), `new` (`dyn.construct`) and `instanceof` (`dyn.instanceof`). Each is a chain over the
+ * `this` (`dyn.current_this`), `new` (`dyn.construct`) and `instanceof` (`dyn.instanceof`), and (#7562) the count of
+ * its arguments (`dyn.arguments_length`, `dyn.publish_argc`). Each is a chain over the
  * kinds its operands may hold (`dynamic-value-kinds.ts`) around the realm's function objects (`js.object.*`) and the
  * native dispatcher (`js.closure.*`): the dispatcher installs a call's receiver in `__current_this`, pads and drops
  * arguments and throws its TypeError for a value that is no source closure, so [[Construct]] is its call with the new
@@ -9,10 +10,15 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
-import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
+import {
+  IR_CLOSURE_ARGUMENTS_LENGTH,
+  IR_CLOSURE_PUBLISH_ARGC,
+  IR_CLOSURE_RECEIVER,
+  irClosureMethodReference,
+} from "../core/closure-invocation-callables.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { BOOLEAN, CARRIER, boolean, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, I32, boolean, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
   holdsFamily,
@@ -25,6 +31,7 @@ import { functionChainAnswer } from "./dynamic-error-constructors.js";
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
+type ArgumentsCount = Extract<IrInstr, { kind: "dyn.arguments_length" | "dyn.publish_argc" }>;
 
 /**
  * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects
@@ -70,6 +77,36 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
       instr.result!,
       CARRIER,
     ),
+  ];
+}
+
+/**
+ * (#7562) The dispatcher's count protocol (`__argc`, `__extra_args`) outside it. A function that reads its own
+ * `arguments.length` takes the count at entry; a direct call to one publishes its count, and no extras, first: from-ast
+ * emits that publication at every such call on this path, because a caller the dispatcher entered still has its own
+ * count installed.
+ */
+export function argumentsCount(b: Builders, instr: ArgumentsCount): IrInstr[] {
+  if (instr.kind === "dyn.arguments_length")
+    return [
+      {
+        kind: "call",
+        target: irIntrinsicFuncRef(IR_CLOSURE_ARGUMENTS_LENGTH),
+        args: [],
+        result: instr.result,
+        resultType: instr.resultType,
+      },
+    ];
+  const count = b.fresh();
+  return [
+    { kind: "const", value: { kind: "i32", value: instr.count }, result: count, resultType: I32 },
+    {
+      kind: "call",
+      target: irIntrinsicFuncRef(IR_CLOSURE_PUBLISH_ARGC),
+      args: [count],
+      result: null,
+      resultType: null,
+    },
   ];
 }
 

@@ -43,7 +43,7 @@ read the results and decide.
 3. `git status && git branch --show-current && git log --oneline origin/main -10`
 4. `gh pr list --state open --limit 20` — snapshot of inherited open PRs
 5. `ls .claude/worktrees/` — inherited worktrees (may contain WIP)
-6. Read `plan/method/file-locks.md` if it exists — active dev claims
+6. Before dispatching, `node scripts/pre-dispatch-gate.mjs <N>` — its FILE OVERLAP section names open PRs that change the files the issue's plan names (`plan/method/file-locks.md` is retired, #7559)
 7. Read `.claude/memory/MEMORY.md` top section — critical rules + feedback index
 8. **`TaskList` — if empty, create tasks from `plan/issues/sprints/{N}/` (current sprint dir, filter by `status: ready`) before touching any dev.**
 

@@ -29,6 +29,12 @@ import { fileURLToPath } from "node:url";
 import { findCategoryTestFiles, TEST_CATEGORIES } from "../tests/test262-categories.ts";
 import { classifyTest262File, editionStringToYear } from "./generate-editions.ts";
 import { ghWithRetry } from "./lib/gh-api-retry.mjs";
+import {
+  type NonPassReasons,
+  buildNonPassReasons,
+  propertyHelperReader,
+  renderNonPassReasons,
+} from "./lib/test262-nonpass-reasons.ts";
 import { REGRESSION_ANNOTATION_TITLE } from "./lib/regression-annotation.mjs";
 
 /** `report` exit code for "a test of the edition regressed" — distinct from a crash (1). */
@@ -113,11 +119,16 @@ function baselineMismatch(baseline: ScopeMeta, current: ScopeMeta): string | nul
 
 export type StatusMap = Map<string, string>;
 
-function readStatuses(path: string): StatusMap {
+function readRows(path: string): unknown[] {
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
+}
+
+function statusesOf(rows: readonly unknown[]): StatusMap {
   const out: StatusMap = new Map();
-  for (const line of readFileSync(path, "utf-8").split("\n")) {
-    if (!line.trim()) continue;
-    const row = JSON.parse(line);
+  for (const row of rows as { file?: unknown; status?: unknown }[]) {
     if (typeof row.file === "string" && typeof row.status === "string") out.set(row.file, row.status);
   }
   return out;
@@ -256,6 +267,8 @@ export interface Report {
   /** Set exactly when `baseline` is null: why nothing was compared. */
   noBaselineReason?: string;
   diff?: EditionDiff;
+  /** #7568: why the edition's rows do not pass; absent when building it failed. */
+  nonPassReasons?: NonPassReasons;
 }
 
 const LIST_LIMIT = 200;
@@ -447,7 +460,8 @@ function cmdFetchBaseline(args: string[]): void {
 function cmdReport(args: string[]): void {
   const meta: ScopeMeta = JSON.parse(readFileSync(required(args, "--meta"), "utf-8"));
   const { year } = readCurrentEdition();
-  const paths = new Set(editionPaths(required(args, "--test262"), year));
+  const test262 = required(args, "--test262");
+  const paths = new Set(editionPaths(test262, year));
   const dir = arg(args, "--baseline-dir");
   let baseline: Parameters<typeof buildReport>[0]["baseline"];
   if (dir && existsSync(join(dir, "results.jsonl")) && existsSync(join(dir, "scope.json"))) {
@@ -455,20 +469,22 @@ function cmdReport(args: string[]): void {
       ? JSON.parse(readFileSync(join(dir, "baseline-ref.json"), "utf-8"))
       : {};
     baseline = {
-      statuses: readStatuses(join(dir, "results.jsonl")),
+      statuses: statusesOf(readRows(join(dir, "results.jsonl"))),
       meta: JSON.parse(readFileSync(join(dir, "scope.json"), "utf-8")),
       runId: ref.runId,
       distance: ref.distance,
     };
   }
-  const report = buildReport({
-    run: readStatuses(required(args, "--results")),
-    meta,
-    paths,
-    baseline,
-    reclassified: readReclassified(),
-  });
-  const summary = renderSummary(report);
+  const rows = readRows(required(args, "--results"));
+  const report = buildReport({ run: statusesOf(rows), meta, paths, baseline, reclassified: readReclassified() });
+  let summary = renderSummary(report);
+  // Informational only: building it must never change the verdict or the exit code.
+  try {
+    report.nonPassReasons = buildNonPassReasons(rows, paths, propertyHelperReader(test262));
+    summary += "\n" + renderNonPassReasons(report.nonPassReasons).join("\n");
+  } catch (err) {
+    console.log(`non-pass reasons section skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
   writeFileSync(required(args, "--summary"), summary);
   writeFileSync(required(args, "--json"), JSON.stringify(report, null, 2) + "\n");
   console.log(summary);

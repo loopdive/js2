@@ -179,7 +179,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
-- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory single-fork (~9 min) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
+- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory in parallel forks (`VITEST_MAX_FORKS`, else cores − 1 capped by free RAM, #7565) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
 - **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)-1` (min 1 — one core is left for the shell/editor/sshd; boxes are not all 4-core, so never hardcode it). Baseline 2026-05-20 on a 4-core/16GB container, then at pool 4: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
 
@@ -830,6 +830,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
   - **Do NOT rely on `git log --grep="#N"` alone.** PR numbers and issue ids share ONE sequence, so it matches `Merge pull request #N` and reads as "already merged" when it is not (hit 2026-07-25 on #3571).
   - **It caught nothing that day because the old gate could not.** All three hand checks PASSED for #3571 while #3603's S1 slice was the same work, actively claimed by another lane — overlap by _idiom_, not by id, with neither issue citing the other.
   - **REMAINING BLIND SPOT the script cannot close:** a lane that has started but not yet claimed or pushed leaves no trace in main, open PRs, or the claim ref. **Claim at DISPATCH time** (`claim-issue.mjs <id> <agent> --branch <b>`), not at first push, or the next dispatcher is unprotected. `claim-issue.mjs` exit 0 is advisory (shared slug). Push branches to the **`fork`** so GitHub rejects dup PRs. This is the fix for the 2026-07-17 duplication (#3310/#3311/#3341/#3308 re-implemented by both lanes).
+- **Open-PR file overlap — advisory, automatic (#7559).** `node scripts/pr-file-overlap.mjs` lists every open PR that changes the files of your branch (default), of `--paths a b` (before you start), or of an issue's Implementation Plan (`--issue <id>`). It never blocks: the pre-dispatch gate reports an overlap as a caution (exit 2) and the pre-push hook prints a ≤10-line summary; a last line `NOT CHECKED` means GitHub was unreachable and you do not know. Example: on 2026-11-27 two PRs that changed `src/ir/from-ast.ts` landed first and put four PRs of another lane into conflict, and neither lane knew. Settle an overlap with the other lane on the standing coordination PR #7526. It replaces the retired lock table `plan/method/file-locks.md`.
 - **Tech lead populates TaskList** — devs self-serve from it. No per-task dispatch messages needed.
 - **Owner pins + scope are how the auto-dispatcher is steered.** The native agent-teams auto-dispatcher only auto-offers tasks with **no `owner`**, and it does **not** read role. So the tech lead encodes routing in two places the dispatcher/agents actually honor:
   - **Set `owner` immediately** on any task pinned to a specific agent (e.g. an in-flight `[CONFLICT]` for a named senior-dev, or a one-PR migration). An ownerless `in_progress` task is the #1 mis-route cause — the dispatcher re-offers it. Reconcile (`TaskUpdate status=completed` the moment a PR merges) so stale entries never get re-offered.
@@ -927,6 +928,17 @@ tail does not.** "Always get PRs into the queue" is satisfied by making them
 *enqueueable* and confirming they were taken — see the shepherd's one-shot
 backstop rules under "PR-queue shepherd" for the only sanctioned manual enqueue,
 which is one-shot, PAT-authenticated, and never repeated.
+
+**One issue per PR (project-lead order, 2026-11-27).** Every code PR has its
+own issue file, `plan/issues/<id>-<slug>.md`, with the plan and the result of
+that PR. Do not add a slice as a new section of a collection issue: #7354's
+file grew to hold a dozen slices, and nobody could tell from an issue what a PR
+did.
+
+- Allocate the id with `claim-issue.mjs --allocate` before coding (see
+  "Project Structure").
+- A larger effort keeps one parent issue that only lists its child issues.
+- A docs-only PR is the exception, per the rule below.
 
 **Docs-only changes go in ONE open PR — check before opening a second.** If a
 docs-only PR is already open (issue files under `plan/issues/`, `plan/` notes,

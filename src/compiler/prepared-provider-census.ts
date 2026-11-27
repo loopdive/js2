@@ -469,11 +469,14 @@ function nativeRows(
     slots: { types: indices("type"), globals: indices("global") },
   };
 }
+const inlineBackendProvider = ({ implementation: { kind } }: RuntimeProviderDefinition) =>
+  kind === "backend-op" || kind === "backend-sequence" || kind === "backend-composite";
 /**
  * The runtime census of a numeric presentation. The selected providers and the completed support population join
  * one to one: each remainder its completed resource, each native provider a runtime callable of the native setup
  * (standalone only), and every support receipt exactly one of those rows or a function the native setup plan
- * declares. Answers the native setup's slots when there is one, an empty census when there is none (then every
+ * declares. (#7564) A canonical backend op, sequence or composite (`Math.abs`, `Math.max`, …) is emitted in place of
+ * its intrinsic, so it joins no support row. Answers the native setup's slots when there is one, an empty census when there is none (then every
  * support function is a remainder), and undefined when anything joins nothing.
  */
 export function runtimeCensus(
@@ -484,7 +487,8 @@ export function runtimeCensus(
 ): { readonly native?: NativeSetupSlots } | undefined {
   const isRemainder = (row: RuntimeProviderDefinition) =>
     NUMBER_REMAINDER_RUNTIME_PROVIDERS.some((canonical) => canonical.id === row.id);
-  const natives = providers.filter((row) => !isRemainder(row));
+  const inline = providers.filter(inlineBackendProvider);
+  const natives = providers.filter((row) => !isRemainder(row) && !inline.includes(row));
   const remainders = remainderRows(program, emission, providers.filter(isRemainder));
   const plan = emittedPhysicalSetupPlan(emission);
   const setup = plan.nativeStrings;
@@ -496,7 +500,8 @@ export function runtimeCensus(
     setup && projection && backend.target === "standalone"
       ? nativeRows(projection, program, emission, setup, plan.nativeNumberFormat, natives, realmCallables, backend)
       : undefined;
-  if (!remainders || (!native && natives.length)) return undefined;
+  if (!remainders || !inline.every((row) => canonicalProvider(RUNTIME_PROVIDERS, row)) || (!native && natives.length))
+    return undefined;
   if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])], realm)) return undefined;
   if (!native) return {};
   // (#7354 O1) The realm's types and globals are native setup slots too: its completion check authenticated them.

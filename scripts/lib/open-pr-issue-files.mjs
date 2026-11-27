@@ -26,6 +26,9 @@
 
 import { execFileSync } from "node:child_process";
 
+/** The canonical upstream repository (renamed from `loopdive/js2wasm`; GitHub still resolves the old name). */
+export const UPSTREAM_REPO = "loopdive/js2";
+
 export const ISSUE_ID_RE = /(?:^|\/)plan\/issues\/(\d+)[a-z]?-[^/]*\.md$/;
 
 const PR_SCAN_CALL_TIMEOUT_MS = Number(process.env.CLAIM_PR_SCAN_CALL_TIMEOUT_MS) || 12000;
@@ -73,7 +76,7 @@ export function liveIssuePaths(fileNodes) {
  *   `complete: false` means the scan failed/timed out and the result is a
  *   FLOOR, not the truth — callers must degrade loudly, never silently.
  */
-export function openPrIssueFiles({ repo = process.env.CLAIM_PR_REPO || "loopdive/js2wasm" } = {}) {
+export function openPrIssueFiles({ repo = process.env.CLAIM_PR_REPO || UPSTREAM_REPO } = {}) {
   const [owner, name] = repo.split("/");
   const deadline = Date.now() + PR_SCAN_TOTAL_TIMEOUT_MS;
   const ghBounded = (args) => {
