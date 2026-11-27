@@ -16042,10 +16042,10 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
   }
 }
 
-/** A value `void x` (through parens and a comma's right side): the f64 NaN sentinel for `undefined`. */
+/** A value `void x` (through parens, #7515 TS wrappers, a comma's right side): the f64 NaN sentinel for `undefined`. */
 function isValueVoid(operand: ts.Expression): boolean {
-  let candidate = peelParensExpr(operand);
-  while (isCommaExpression(candidate)) candidate = peelParensExpr(candidate.right);
+  let candidate = skipOuterExpressions(operand);
+  while (isCommaExpression(candidate)) candidate = skipOuterExpressions(candidate.right);
   return ts.isVoidExpression(candidate);
 }
 

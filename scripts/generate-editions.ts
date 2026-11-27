@@ -570,6 +570,16 @@ export function classifyEdition(fm: Frontmatter, filePath: string): number {
   return UNCLASSIFIED_LEGACY;
 }
 
+/**
+ * Edition of one test262 file, keyed the way result rows are (`test/...`,
+ * relative to the checkout). The edition ratchet and the current-edition
+ * scope (#7551) both classify through this, so they cannot disagree.
+ */
+export function classifyTest262File(test262Root: string, relFile: string): number {
+  const abs = join(test262Root, relFile);
+  return classifyEdition(parseFrontmatter(abs), abs);
+}
+
 // ---------------------------------------------------------------------------
 // Status normalisation
 // ---------------------------------------------------------------------------
