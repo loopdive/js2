@@ -159,7 +159,8 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     [
       "a primitive wrapper's ToPrimitive",
       "function h(v) { return new Number(1) == v; }\nh(1);",
-      'unknown class "Number" in h',
+      // (#7350 B3a) `Number` is the realm's value; its wrapper object waits for B3bc.
+      "new Number (a wrapper object; #7350 B3bc)",
     ],
     [
       "the parseInt externref boundary",

@@ -1,63 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compile, type CompileResult } from "../src/index.js";
-
-function buildImports(result: CompileResult): WebAssembly.Imports {
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_bool: () => {},
-    __box_number: (v: number) => v,
-    __unbox_number: (v: unknown) => Number(v),
-    __box_boolean: (v: number) => Boolean(v),
-    __unbox_boolean: (v: unknown) => (v ? 1 : 0),
-    __is_truthy: (v: unknown) => (v ? 1 : 0),
-    __typeof: (v: unknown) => typeof v,
-    __typeof_number: (v: unknown) => (typeof v === "number" ? 1 : 0),
-    __typeof_string: (v: unknown) => (typeof v === "string" ? 1 : 0),
-    __typeof_boolean: (v: unknown) => (typeof v === "boolean" ? 1 : 0),
-    __make_callback: () => null,
-    number_toString: (v: number) => String(v),
-    parseFloat: (s: any) => parseFloat(String(s)),
-    string_compare: (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0),
-    Math_pow: Math.pow,
-    Math_sin: Math.sin,
-    Math_cos: Math.cos,
-    Math_random: Math.random,
-    Math_exp: Math.exp,
-    Math_log: Math.log,
-    Math_log2: Math.log2,
-    Math_log10: Math.log10,
-    Math_tan: Math.tan,
-    Math_asin: Math.asin,
-    Math_acos: Math.acos,
-    Math_atan: Math.atan,
-    Math_atan2: Math.atan2,
-    Math_acosh: Math.acosh,
-    Math_asinh: Math.asinh,
-    Math_atanh: Math.atanh,
-    Math_cbrt: Math.cbrt,
-    Math_expm1: Math.expm1,
-    Math_log1p: Math.log1p,
-  };
-  const imports: WebAssembly.Imports = { env };
-  imports["wasm:js-string"] = {
-    concat: (a: string, b: string) => a + b,
-    length: (s: string) => s.length,
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => s.substring(start, end),
-    charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-    fromCharCode: (c: number) => String.fromCharCode(c),
-    cast: (s: unknown) => String(s),
-    test: (v: unknown) => (typeof v === "string" ? 1 : 0),
-  };
-  return imports;
-}
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) throw new Error(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n"));
-  const imports = buildImports(result);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  return (instance.exports as any)[fn](...args);
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("finally block execution count", () => {

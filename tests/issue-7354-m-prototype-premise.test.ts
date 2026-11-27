@@ -9,6 +9,7 @@
 // The slice that makes any of these routes compile (`Object.getPrototypeOf`, a wrapper or Object as a value, ...) must
 // reintroduce a program-wide gate on the primitive arm, or populate the realm's prototypes and read through them.
 // (#7354 G1) The Error family is a value now, and no route from it reaches one of these prototypes (the rows below).
+// (#7350 B3a) So are `String`, `Number` and `Boolean`, whose `prototype` refuses by name (a static read) or aborts.
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { abortBodies, abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
@@ -26,12 +27,15 @@ const options = (): Test262CompileOptions =>
   }) as Test262CompileOptions;
 
 const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not in scope in f`;
+/** (#7350 B3a) A wrapper constructor is a value; its `prototype` is a key the realm's identity row lacks. */
+const unreachable = (name: string) =>
+  `dynamic operation ${name}.prototype is not reachable on this path yet (#7350 B3bc) has no Prepared intrinsic`;
 
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
-    ["String.prototype", "function f(){ return String.prototype; } f();", notInScope("String")],
-    ["Number.prototype", "function f(){ return Number.prototype; } f();", notInScope("Number")],
-    ["Boolean.prototype", "function f(){ return Boolean.prototype; } f();", notInScope("Boolean")],
+    ["String.prototype", "function f(){ return String.prototype; } f();", unreachable("String")],
+    ["Number.prototype", "function f(){ return Number.prototype; } f();", unreachable("Number")],
+    ["Boolean.prototype", "function f(){ return Boolean.prototype; } f();", unreachable("Boolean")],
     ["Object.prototype as a value", "function f(){ return Object.prototype; } f();", notInScope("Object")],
     ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
     ["Array.prototype", "function f(){ return Array.prototype; } f();", notInScope("Array")],

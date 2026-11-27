@@ -72,7 +72,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { type HostNoiseQuarantineManifest, validateHostNoiseQuarantineManifest } from "./diff-test262.ts";
-import { classifyEdition, editionStringToYear, parseFrontmatter } from "./generate-editions.ts";
+import { classifyTest262File, editionStringToYear } from "./generate-editions.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -174,8 +174,7 @@ function editionOf(relFile: string): number {
   const cached = editionCache.get(relFile);
   if (cached !== undefined) return cached;
   // JSONL rows carry paths like `test/built-ins/Array/...`, relative to test262/.
-  const abs = join(TEST262_ROOT, relFile);
-  const ed = classifyEdition(parseFrontmatter(abs), abs);
+  const ed = classifyTest262File(TEST262_ROOT, relFile);
   editionCache.set(relFile, ed);
   return ed;
 }

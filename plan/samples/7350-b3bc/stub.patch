@@ -1,0 +1,263 @@
+diff --git a/scripts/ir-census/prepared-census.mts b/scripts/ir-census/prepared-census.mts
+index 443b8d2443..a43bb721e7 100644
+--- a/scripts/ir-census/prepared-census.mts
++++ b/scripts/ir-census/prepared-census.mts
+@@ -144,6 +144,14 @@ function gapRow(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>,
+ }
+ 
+ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Promise<object> {
++  // B3BC-STUB: the stub hooks that fired while this row compiled.
++  const hooks = new Set<string>();
++  (globalThis as { __b3bcHooks?: Set<string> }).__b3bcHooks = hooks;
++  const row = await measureRow(tools, file, standIn);
++  return { ...row, hooks: [...hooks] };
++}
++
++async function measureRow(tools: Toolchain, file: string, standIn: boolean): Promise<object> {
+   const abs = join(tools.tree, "test262/test", file);
+   const source = readFileSync(abs, "utf8");
+   const meta = tools.runner.parseMeta(source);
+diff --git a/src/ir/module-bindings.ts b/src/ir/module-bindings.ts
+index e5e164b76a..2cd8552373 100644
+--- a/src/ir/module-bindings.ts
++++ b/src/ir/module-bindings.ts
+@@ -503,6 +503,16 @@ export function makeIrAmbientBindingPredicate(
+       );
+       const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
+       if (quantifier === "some") return declarations.some(isLib);
++      // B3BC-STUB: a JavaScript expando statement (`X.k = v;`, `Object.defineProperty(X, "k", d);`) merges a source
++      // declaration into the lib symbol; it does not bind the name.
++      const expando = (declaration: ts.Declaration): boolean =>
++        ts.isIdentifier(declaration) &&
++        ((ts.isPropertyAccessExpression(declaration.parent) && declaration.parent.expression === declaration) ||
++          (ts.isCallExpression(declaration.parent) && declaration.parent.arguments[0] === declaration));
++      if (declarations.some(isLib) && declarations.some((d) => !isLib(d)) && declarations.every((d) => isLib(d) || expando(d))) {
++        (globalThis as { __b3bcHooks?: Set<string> }).__b3bcHooks?.add("expando");
++        return true;
++      }
+       return (quantifier === "no-user" || declarations.length > 0) && declarations.every(isLib);
+     } catch {
+       return false;
+diff --git a/src/ir/program/builtin-prototype-keys.ts b/src/ir/program/builtin-prototype-keys.ts
+index db2efce371..0f96c19f2f 100644
+--- a/src/ir/program/builtin-prototype-keys.ts
++++ b/src/ir/program/builtin-prototype-keys.ts
+@@ -10,6 +10,7 @@
+  * reader, `src/ir/realm-keys.ts` re-exports them); the wrapper prototypes are not in the catalog yet, so their keys
+  * are listed here from the specification.
+  */
++import { stubHook } from "./dynamic-value-gap.js";
+ import {
+   NATIVE_ERROR_CONSTRUCTORS,
+   NATIVE_REALM_CATALOG,
+@@ -127,9 +128,8 @@ const IDENTITY_ONLY_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  */
+ export function identityOnlyKeyRefusal(ctor: RealmConstructor, key: string): string | undefined {
+   const own = IDENTITY_ONLY_KEYS.get(ctor.id);
+-  return own === undefined || own.has(key)
+-    ? undefined
+-    : `${ctor.name}.${key} is not reachable on this path yet (#7350 B3bc)`;
++  if (own !== undefined && !own.has(key)) stubHook(`static-key:${ctor.name}.${key}`);
++  return undefined;
+ }
+ 
+ /**
+diff --git a/src/ir/program/dynamic-member-access.ts b/src/ir/program/dynamic-member-access.ts
+index 988fa083c2..06a0b7e5f1 100644
+--- a/src/ir/program/dynamic-member-access.ts
++++ b/src/ir/program/dynamic-member-access.ts
+@@ -19,7 +19,7 @@ import {
+ } from "./builtin-prototype-keys.js";
+ import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
+ import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+-import { gap } from "./dynamic-value-gap.js";
++import { gap, stubHook } from "./dynamic-value-gap.js";
+ 
+ /** The legalization builders a member access is written with. */
+ export interface MemberAccessBuilders extends TypeErrorBuilders {
+@@ -100,6 +100,16 @@ function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): str
+   return miss === undefined ? key : gap(miss);
+ }
+ 
++/** B3BC-STUB: a value through its externref coercions. */
++const uncoerced = (b: MemberAccessBuilders, value: IrValueId): IrValueId => {
++  let definition = b.definitions.get(value);
++  while (definition?.kind === "coerce.to_externref") {
++    value = definition.value;
++    definition = b.definitions.get(value);
++  }
++  return value;
++};
++
+ /** "a number", "an object". */
+ const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
+ const WRAPPER: Readonly<Partial<Record<CarrierKind, string>>> = {
+@@ -192,9 +202,10 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
+       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
+       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
+       // A string's own `length` and indexed characters come with arrays (#7352).
+-      if (kind === "string" && (name === "length" || isArrayIndexKey(name)))
+-        return "its own length and index properties";
+-      return reachable.has(name) ? `${WRAPPER[kind]}.prototype's properties` : undefined;
++      // B3BC-STUB: a wrapper prototype's key no longer refuses; its primitive arm is the run-time abort.
++      if ((kind === "string" && (name === "length" || isArrayIndexKey(name))) || reachable.has(name))
++        stubHook(`prim-read:${kind}.${name}`);
++      return undefined;
+     },
+     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
+     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
+@@ -208,8 +219,25 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
+       return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
+     },
+     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
+-    primitive: (_kind, r) => inherited(r),
++    primitive: (kind, r) =>
++      (kind === "string" && (name === "length" || isArrayIndexKey(name))) ||
++      BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS].has(name)
++        ? b.abort(instr, r)
++        : inherited(r),
+   };
++  // B3BC-STUB: `.call` / `.apply` / `.bind` read off a built-in wrapper method (`X.prototype.m`) stays G4's.
++  if (name === "call" || name === "apply" || name === "bind") {
++    const method = b.definitions.get(uncoerced(b, instr.recv));
++    const proto = method?.kind === "dyn.member_get" ? b.definitions.get(uncoerced(b, method.recv)) : undefined;
++    const wrapperCtor = (value: IrValueId) => realmConstructorOf(value, b.definitions)?.family === "wrapper";
++    if (
++      wrapperCtor(instr.recv) ||
++      (proto?.kind === "dyn.member_get" &&
++        constantKeyOf(b.definitions, proto.key) === "prototype" &&
++        wrapperCtor(proto.recv))
++    )
++      gap(`STUB-G4 .${name} on a built-in wrapper method`);
++  }
+   return memberAccess(b, instr, access, result);
+ }
+ 
+diff --git a/src/ir/program/dynamic-prototype-methods.ts b/src/ir/program/dynamic-prototype-methods.ts
+index 014f37ea6b..dd4dccf39f 100644
+--- a/src/ir/program/dynamic-prototype-methods.ts
++++ b/src/ir/program/dynamic-prototype-methods.ts
+@@ -17,9 +17,15 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
+ import type { IrType } from "../core/types.js";
+ import { closureMethodArity } from "../core/closure-invocation-callables.js";
+ import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
+-import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
++import {
++  BUILTIN_REACHABLE_KEYS,
++  ERROR_TO_STRING_ID,
++  nativeObjectPrototypeMethod,
++  objectPrototypeMethodId,
++} from "./builtin-prototype-keys.js";
+ import { constantKeyOf } from "./dynamic-member-access.js";
+-import { realmCall } from "./dynamic-realm-calls.js";
++import { realmCall, realmConstructorOf } from "./dynamic-realm-calls.js";
++import { gap } from "./dynamic-value-gap.js";
+ import { CARRIER, carried } from "./dynamic-value-chains.js";
+ import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
+ import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
+@@ -135,3 +141,24 @@ export function dynamicPrototypeMethodCall(b: ObjectStaticBuilders, instr: Call,
+     b.branch(same, algorithm, (r) => [{ ...instr, result: r, resultType: CARRIER }], instr.result!, CARRIER),
+   ];
+ }
++
++/**
++ * B3BC-STUB: the calls B3bc keeps refusing: a static call `X.m(…)` of a wrapper constructor other than
++ * Object.prototype's methods, and (once a stub hook fired) a call of a wrapper prototype method without an algorithm.
++ */
++export function stubCallRefusal(call: Call, definitions: ReadonlyMap<IrValueId, IrInstr>): void {
++  let callee = definitions.get(call.args[1]!);
++  while (callee?.kind === "coerce.to_externref") callee = definitions.get(callee.value);
++  if (callee?.kind !== "dyn.member_get") return;
++  const name = constantKeyOf(definitions, callee.key);
++  if (name === undefined) return;
++  const ctor = realmConstructorOf(callee.recv, definitions);
++  if (ctor?.family === "wrapper" && nativeObjectPrototypeMethod(name) === undefined)
++    gap(`STUB-B3D static call ${ctor.name}.${name}`);
++  const hooks = (globalThis as { __b3bcHooks?: Set<string> }).__b3bcHooks;
++  const wrapperOnly =
++    (BUILTIN_REACHABLE_KEYS.string.has(name) || BUILTIN_REACHABLE_KEYS.number.has(name)) &&
++    !BUILTIN_REACHABLE_KEYS.object.has(name) &&
++    name !== "length";
++  if (wrapperOnly && hooks !== undefined && hooks.size > 0) gap(`STUB-B3D method call .${name}`);
++}
+diff --git a/src/ir/program/dynamic-value-gap.ts b/src/ir/program/dynamic-value-gap.ts
+index fe7f1360ec..5c7a492f74 100644
+--- a/src/ir/program/dynamic-value-gap.ts
++++ b/src/ir/program/dynamic-value-gap.ts
+@@ -7,3 +7,10 @@ export class DynamicValueGap extends Error {}
+ export function gap(operation: string): never {
+   throw new DynamicValueGap(`dynamic operation ${operation} has no Prepared intrinsic`);
+ }
++
++/** B3BC-STUB (measurement only, never committed): record a stub hook for the census row. */
++export const stubHook = (hook: string): void => {
++  (globalThis as { __b3bcHooks?: Set<string> }).__b3bcHooks?.add(hook);
++};
++/** B3BC-STUB: which stand-in `new X(v)` answers: "object" (an ordinary object) or "primitive" (the converted value). */
++export const STUB_MODE = process.env.B3BC_STUB === "object" ? "object" : "primitive";
+diff --git a/src/ir/program/dynamic-value-legalization.ts b/src/ir/program/dynamic-value-legalization.ts
+index 5b329ae4e3..566548feb6 100644
+--- a/src/ir/program/dynamic-value-legalization.ts
++++ b/src/ir/program/dynamic-value-legalization.ts
+@@ -38,7 +38,7 @@ import { gap } from "./dynamic-value-gap.js";
+ import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
+ import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
+ import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
+-import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
++import { dynamicPrototypeMethodCall, prototypeMethodOfCall, stubCallRefusal } from "./dynamic-prototype-methods.js";
+ import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
+ import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
+ import {
+@@ -277,6 +277,7 @@ export function legalizeDynamicValues(
+         const dispatched = closureMethodArity(instr.target.name) !== undefined;
+         const ctor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
+         if (ctor !== undefined) return realmConstruction(instr, ctor, instr.args.slice(2));
++        if (dispatched) stubCallRefusal(instr, definitions);
+         // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
+         // (G1) a built-in's run-time abort.
+         if (dispatched && !program.objects.functions)
+diff --git a/src/ir/program/dynamic-wrapper-constructors.ts b/src/ir/program/dynamic-wrapper-constructors.ts
+index e7f46f465e..b955eb912e 100644
+--- a/src/ir/program/dynamic-wrapper-constructors.ts
++++ b/src/ir/program/dynamic-wrapper-constructors.ts
+@@ -14,9 +14,9 @@
+ import type { IrInstr, IrValueId } from "../core/nodes.js";
+ import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
+ import { WRAPPER_CONVERSIONS, type RealmConstructor } from "./builtin-prototype-keys.js";
+-import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
++import { realmCall, type RealmConstruction, type RealmConstructionBuilders } from "./dynamic-realm-calls.js";
+ import { carried } from "./dynamic-value-chains.js";
+-import { gap } from "./dynamic-value-gap.js";
++import { STUB_MODE, stubHook } from "./dynamic-value-gap.js";
+ 
+ type WrapperBuilders = RealmConstructionBuilders & {
+   readonly toNumber: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
+@@ -29,12 +29,23 @@ export function dynamicWrapperConstruction(
+   ctor: RealmConstructor,
+   args: readonly IrValueId[],
+ ): IrInstr[] {
+-  if (instr.kind === "dyn.construct") gap(`new ${ctor.name} (a wrapper object; #7350 B3bc)`);
++  const constructs = instr.kind === "dyn.construct";
++  if (constructs) stubHook(`construct:${ctor.name}`);
+   const [value, converted] = [args[0], b.fresh()];
+-  const into = (instrs: IrInstr[], box: "js.number.box" | "js.boolean.box" | undefined): IrInstr[] => [
+-    ...instrs,
+-    box === undefined ? carried(converted, instr.result!) : b.intrinsic(instr, box, [converted], instr.result!),
+-  ];
++  const into = (instrs: IrInstr[], box: "js.number.box" | "js.boolean.box" | undefined): IrInstr[] => {
++    if (constructs && STUB_MODE === "object") {
++      const boxed = b.fresh();
++      return [
++        ...instrs,
++        box === undefined ? carried(converted, boxed) : b.intrinsic(instr, box, [converted], boxed),
++        realmCall("js.object.create-default", [], instr.result!),
++      ];
++    }
++    return [
++      ...instrs,
++      box === undefined ? carried(converted, instr.result!) : b.intrinsic(instr, box, [converted], instr.result!),
++    ];
++  };
+   const constant = (value: number | boolean): IrInstr => ({
+     kind: "const",
+     value: typeof value === "number" ? { kind: "f64", value } : { kind: "bool", value },

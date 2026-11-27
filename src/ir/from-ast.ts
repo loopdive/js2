@@ -110,7 +110,7 @@ import {
   resolveOrdinaryObjectClosureSignature,
 } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
-import { tryLowerRealmStaticCall } from "./realm-static-call.js";
+import { constantMemberRead, lowerRealmConversionCall, tryLowerRealmStaticCall } from "./realm-static-call.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -1002,6 +1002,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** (#7354 T) Exact source-bound `isNaN` call: `Number(v)`'s conversion, then the NaN test. */
   preparedIsNaNCall?(call: ts.CallExpression): boolean;
+  /** (#7350 B3a) Exact source-bound `Boolean` call: ToBoolean of the first argument. */
+  preparedBooleanCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
   preparedObjectCreateCall?(call: ts.CallExpression): "null" | undefined;
   /** Source-owned ordinary descriptor read; actual allocation provenance is revalidated downstream. */
@@ -6384,16 +6386,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     }
     return entry;
   }
-  // (#7106 module-init lever A) `Number.<CONST>` / `Math.<CONST>` on the
-  // unshadowed ambient namespace folds to legacy's own constant.
-  if (
-    ts.isIdentifier(expr.expression) &&
-    !cx.scope.has(expr.expression.text) &&
-    cx.resolver?.isAmbientBinding?.(expr.expression) === true
-  ) {
-    const constant = cx.resolver?.ambientNamespaceConstant?.(expr);
-    if (constant !== undefined) return cx.builder.emitConst({ kind: "f64", value: constant }, irVal({ kind: "f64" }));
-  }
+  const constant = constantMemberRead(expr, (name) => cx.scope.has(name), cx.resolver, functionObjectLoweringHost(cx));
+  if (constant !== undefined) return cx.builder.emitConst({ kind: "f64", value: constant }, irVal({ kind: "f64" }));
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
   if (ordinary !== null) return ordinary;
   // #3000 — private-field read (`this.#x`). A PrivateIdentifier is not an
@@ -7771,29 +7765,34 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPreparedNumberCall(expr, cx, absent));
   if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      "Number call plan has unsupported argument syntax",
-    );
+    throw new IrInvariantError("selection-preparation-mismatch", "build", "Number call plan has unsupported syntax");
+  // (#7354 T, #7350 B3a) The Prepared lane binds no `js.number.from-value`: the realm's conversion call.
+  if (functionObjects.createsFunctionObjects(cx.resolver))
+    return lowerRealmConversionCall(expr, functionObjectLoweringHost(cx), "Number", absent);
   if (expr.arguments.length === 0) return cx.builder.emitConst({ kind: "f64", value: absent }, IR_F64);
   const first = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
-  // Extra arguments still run, in source order, even though Number ignores
-  // their values. In particular, getter conversion follows these effects.
+  // Extra arguments still run, in source order, though Number ignores them; getter conversion follows their effects.
   for (const argument of expr.arguments.slice(1)) lowerDiscardedExpression(argument, cx);
   const type = cx.builder.typeOf(first);
   if (type.kind === "val" && type.val.kind === "f64") return first;
   if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
     return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
-  // (#7354 T) The Prepared lane binds no `js.number.from-value`; its carrier's ToNumber is the legalized one.
-  if (type.kind === "dynamic" && functionObjects.onPreparedDynamicLane(cx.resolver))
-    return cx.builder.emitDynToNumber(first);
   if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
     demoteToLegacy("operand-coercion-unsupported", "Number argument requires an exact logical value carrier");
   const external = coerceIrValueToExternref(cx.builder, first);
   const result = cx.builder.emitCall(irIntrinsicFuncRef("js.number.from-value"), [external], IR_F64);
   if (result === null) throw new Error("Number conversion contract returned no value");
   return result;
+}
+
+/** A source-bound conversion plan's call: `Number(v)`, (#7350 B3a) `Boolean(v)`, (#7354 T) `isNaN(v)`; else `null`. */
+function lowerPreparedConversionCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
+  if (cx.resolver?.preparedBooleanCall?.(expr) === true)
+    return lowerRealmConversionCall(expr, functionObjectLoweringHost(cx), "Boolean");
+  return cx.resolver?.preparedIsNaNCall?.(expr) === true
+    ? emitIsNaN(cx.builder, lowerPreparedNumberCall(expr, cx, NaN))
+    : null;
 }
 
 function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjectLoweringHost {
@@ -7931,9 +7930,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // — the same order as the selector's `preparedNumberConversionCall`.
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
-  if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
-  if (cx.resolver?.preparedIsNaNCall?.(expr) === true)
-    return emitIsNaN(cx.builder, lowerPreparedNumberCall(expr, cx, NaN));
+  const conversion = lowerPreparedConversionCall(expr, cx);
+  if (conversion !== null) return conversion;
   const functionAccess = expr.expression;
   if (functionObjects.isPreparedFunctionObjectAccess(functionAccess, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
@@ -13843,6 +13841,7 @@ function boxMixedConditionalArm(
 /** (#7106 S1b) from-ast's half of the `typeof <ambient>` fold proof (see `lowerTypeOf`). */
 function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "object" | "function" | undefined {
   if (cx.scope.get(id.text) !== undefined) return undefined;
+  if (classifyIdentifierRead(id, cx).kind === "realm-intrinsic") return "function"; // (#7350 B3a) a constructor
   const tag = AMBIENT_TYPEOF_TAGS[id.text];
   if (tag === undefined) return undefined;
   if (cx.resolver?.isAmbientBinding?.(id) !== true) return undefined;
@@ -16021,10 +16020,10 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
   }
 }
 
-/** A value `void x` (through parens and a comma's right side): the f64 NaN sentinel for `undefined`. */
+/** A value `void x` (through parens, #7515 TS wrappers, a comma's right side): the f64 NaN sentinel for `undefined`. */
 function isValueVoid(operand: ts.Expression): boolean {
-  let candidate = peelParensExpr(operand);
-  while (isCommaExpression(candidate)) candidate = peelParensExpr(candidate.right);
+  let candidate = skipOuterExpressions(operand);
+  while (isCommaExpression(candidate)) candidate = skipOuterExpressions(candidate.right);
   return ts.isVoidExpression(candidate);
 }
 

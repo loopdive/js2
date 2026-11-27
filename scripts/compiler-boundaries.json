@@ -17344,6 +17344,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-wrapper-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/backend/wasmgc/program/native-realm-families.ts",
       "state": "clean",
       "layer": "backend-wasmgc"

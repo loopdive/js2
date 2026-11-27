@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import * as ts from "typescript";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { analyzeAsyncBody, ASYNC_CPS_ENABLED, type AsyncCpsPlan } from "../src/codegen/async-cps.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 
@@ -159,10 +159,8 @@ describe.skipIf(!ASYNC_CPS_ENABLED)("#1042 Slice 2A — single-await CPS resolve
       result.success,
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
-    const imports = buildImports(result.imports, {}, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as Record<string, (...a: number[]) => unknown>;
-    if (imports.setExports) imports.setExports(exports as Record<string, Function>);
     return await exports[fn]!(...args);
   }
 

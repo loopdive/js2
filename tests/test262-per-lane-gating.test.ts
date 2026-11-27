@@ -281,12 +281,13 @@ describe("test262 per-lane gating — workflow wiring", () => {
     expect(s).toContain('if [ "$RUN_STANDALONE" != "false" ]');
   });
 
-  it("the merge_group matrix cannot cascade-skip through the provider's skipped probe ancestor", () => {
-    const shardJob = job("test262-shard-mg");
-    expect(shardJob).toContain("needs: [changes, runtime-eval-provider, temporal-provider]");
-    expect(shardJob).toMatch(/if: \|\n\s+always\(\) &&/);
-    expect(shardJob).toContain("needs.changes.result == 'success'");
-    expect(shardJob).toContain("needs.runtime-eval-provider.result == 'success'");
+  it("the weekly legacy matrix cannot cascade-skip through `changes`, which does not run on schedule (#7551)", () => {
+    expect(job("test262-shard-mg")).toContain("if: false");
+    const shardJob = job("test262-shard");
+    expect(shardJob).toMatch(/if: \|\n\s+!cancelled\(\) &&/);
+    expect(shardJob).toMatch(/strategy:\n\s+fail-fast: false\n\s+max-parallel: 40\n/);
+    for (const dep of ["mg-artifact-probe", "runtime-eval-provider", "temporal-provider", "admit-measurement-baseline"])
+      expect(shardJob).toContain(`needs.${dep}.result == 'success'`);
   });
 
   it("every lane flag treats a missing output as 'ran' (`!= 'false'`, never `== 'true'`)", () => {
@@ -341,14 +342,8 @@ describe("test262 per-lane gating — workflow wiring", () => {
     }
   });
 
-  it("publishes only measured standalone rows for queue promotion", () => {
-    const artifact = step("merge-report", "Publish group results for predecessor diffing (#1956)");
-    expect(stepIf("merge-report", "Publish group results for predecessor diffing (#1956)")).toBe(
-      "env.STANDALONE_RAN == 'true' && github.event_name == 'merge_group'",
-    );
-    expect(artifact).toContain("merged-reports/test262-standalone-results-merged.jsonl");
-    expect(artifact).not.toContain("merged-reports/test262-results-merged.jsonl");
-    expect(artifact).toContain("if-no-files-found: error");
+  it("no longer publishes legacy group results: the queue does not run the legacy matrix (#7551)", () => {
+    expect(job("merge-report")).not.toContain("Publish group results for predecessor diffing (#1956)");
   });
 
   it("the required-check decision still keys off SHARDS_RAN, not a single lane", () => {
@@ -359,8 +354,11 @@ describe("test262 per-lane gating — workflow wiring", () => {
       "env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK != 'true'",
     );
     expect(stepIf("merge-report", "No-op pass (shards intentionally skipped)")).toBe(
-      "env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true'",
+      "env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true' && github.event_name == 'pull_request'",
     );
+    // (#7551) In the merge queue the required context carries the IR
+    // current-edition verdict instead of the legacy shards'.
+    expect(stepIf("merge-report", "IR current-edition gate (#7551)")).toBe("github.event_name == 'merge_group'");
   });
 
   it("the push/workflow_dispatch matrix carries only standalone", () => {

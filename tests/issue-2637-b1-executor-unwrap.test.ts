@@ -16,16 +16,13 @@
 // addressed by B2); B1 is gated on this unit test + a no-regression sweep.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function instantiate(src: string): Promise<WebAssembly.Exports> {
   const r = await compile(src);
   if (!r.success) throw new Error("compile failed: " + JSON.stringify(r.errors));
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const m = await WebAssembly.instantiate(r.binary, imports);
-  const setExports = (imports as unknown as { setExports?: (e: WebAssembly.Exports) => void }).setExports;
-  if (typeof setExports === "function") setExports(m.instance.exports);
-  return m.instance.exports;
+  const instance = await instantiateWithRuntime(r);
+  return instance.exports;
 }
 
 describe("#2637 B1 — executor unwrap at super(builtin Promise)", () => {
