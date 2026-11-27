@@ -11,33 +11,45 @@ import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 import { enclosingFunctionBody } from "./function-declaration-values.js";
 
-/** Where a hoisted name lives: a cell when a function inside the body reaches it, else a slot of the function. */
+/**
+ * Where a hoisted name lives: a cell when a function inside the body names it (a capture needs the cell), else a slot
+ * of the function.
+ */
 export type HoistedStorage = "cell" | "slot";
+
+const analysed = new WeakMap<ts.Block, ReadonlyMap<string, HoistedStorage>>();
 
 /**
  * The names `body` binds at entry besides its top-level function declarations: a `var` that a function declaration
  * of the body reads or writes, or that code reaches outside the statement declaring it or before its declaration
  * (from-ast binds a declaration where it stands), and the var binding of each Annex B function (B.3.3.1). A `var`
- * also declared by a `for-in`/`for-of` head is left out: the loop binds its own slot.
+ * also declared by a `for-in`/`for-of` head is left out: the loop binds its own slot. Analysed once per body.
  */
 export function hoistedBodyNames(body: ts.Block, checker: ts.TypeChecker): ReadonlyMap<string, HoistedStorage> {
+  const known = analysed.get(body);
+  if (known !== undefined) return known;
   const declarations = new Map<ts.Symbol, ts.VariableDeclaration[]>();
   const references = new Map<ts.Symbol, ts.Identifier[]>();
   const readByDeclaration = new Set<ts.Symbol>();
-  const captured = new Set<ts.Symbol>();
-  const names = new Map<string, HoistedStorage>();
+  const namedInFunction = new Set<string>();
+  const hoisted = new Set<string>();
+  const add = <K, V>(map: Map<K, V[]>, key: K, value: V): void => {
+    const list = map.get(key);
+    if (list === undefined) map.set(key, [value]);
+    else list.push(value);
+  };
   const visit = (node: ts.Node, inDeclaration: boolean, inFunction: boolean): void => {
     const symbol = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined;
     if (symbol !== undefined) {
-      references.set(symbol, [...(references.get(symbol) ?? []), node as ts.Identifier]);
+      add(references, symbol, node as ts.Identifier);
       if (inDeclaration) readByDeclaration.add(symbol);
-      if (inFunction) captured.add(symbol);
     }
+    if (ts.isIdentifier(node) && inFunction && !isOwnName(node)) namedInFunction.add(node.text);
     // The checker gives a `var` in a `with` body no symbol: it keeps its own lowering.
     const own = isBodyVar(node, body) ? checker.getSymbolAtLocation(node.name) : undefined;
-    if (own !== undefined) declarations.set(own, [...(declarations.get(own) ?? []), node as ts.VariableDeclaration]);
+    if (own !== undefined) add(declarations, own, node as ts.VariableDeclaration);
     if (ts.isFunctionDeclaration(node) && enclosingFunctionBody(node) === body && annexBApplies(node))
-      names.set(node.name!.text, "cell");
+      hoisted.add(node.name!.text);
     ts.forEachChild(node, (child) =>
       visit(child, inDeclaration || ts.isFunctionDeclaration(node), inFunction || ts.isFunctionLike(node)),
     );
@@ -48,10 +60,28 @@ export function hoistedBodyNames(body: ts.Block, checker: ts.TypeChecker): Reado
     if (declared.some((d) => ts.isForInStatement(d.parent.parent) || ts.isForOfStatement(d.parent.parent)))
       loopHeads.push(symbol.name);
     else if (readByDeclaration.has(symbol) || references.get(symbol)!.some((r) => declared.some((d) => outside(r, d))))
-      names.set(symbol.name, names.get(symbol.name) ?? (captured.has(symbol) ? "cell" : "slot"));
+      hoisted.add(symbol.name);
   }
-  for (const name of loopHeads) names.delete(name);
+  for (const name of loopHeads) hoisted.delete(name);
+  const names = new Map([...hoisted].map((name) => [name, namedInFunction.has(name) ? "cell" : "slot"] as const));
+  analysed.set(body, names);
   return names;
+}
+
+/** A function's own name: no reference to the binding the function is assigned to. */
+function isOwnName(identifier: ts.Identifier): boolean {
+  return ts.isFunctionLike(identifier.parent) && identifier.parent.name === identifier;
+}
+
+/** A `var` declaration whose function body binds its name at entry: the provenance's dynamic local. */
+export function isHoistedVar(declaration: ts.VariableDeclaration, checker: ts.TypeChecker): boolean {
+  const body = enclosingFunctionBody(declaration);
+  return (
+    body !== undefined &&
+    ts.isBlock(body) &&
+    isBodyVar(declaration, body) &&
+    hoistedBodyNames(body, checker).has(declaration.name.text)
+  );
 }
 
 /** A `var` declarator with a plain name whose function is `body`'s. */

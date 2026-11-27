@@ -18,17 +18,12 @@
  * own direct read inside the values it stores (`x = x + 1`): if every other value is typed, so is that one.
  */
 import { ts } from "../ts-api.js";
-import {
-  isModuleInitVarList,
-  isTopLevelStatementDeclaration,
-  isVarDeclarationList,
-} from "../shared/var-declaration-lists.js";
+import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
-import { enclosingFunctionBody } from "./function-declaration-values.js";
-import { hoistedBodyNames } from "./function-hoisting.js";
+import { isHoistedVar } from "./function-hoisting.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 
 type Carries = (expression: ts.Expression) => boolean;
@@ -90,7 +85,7 @@ export function sourceDynamicProvenance(
           localNeedsDynamicCarrier(declaration)),
     );
   const localNeedsDynamicCarrier = (declaration: ts.VariableDeclaration): boolean =>
-    dynamicCarrier && (rewrittenStringLocal(checker, declaration) || hoistedBodyVar(checker, declaration));
+    dynamicCarrier && (rewrittenStringLocal(checker, declaration) || isHoistedVar(declaration, checker));
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
@@ -159,19 +154,6 @@ export function sourceDynamicProvenance(
     }
   };
   return { scriptVarHome, carries: (expression) => carries(expression), localNeedsDynamicCarrier };
-}
-
-/** (#7354 L0c) A function's `var` whose name its body binds at entry (`hoistedBodyNames`). */
-function hoistedBodyVar(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
-  const body = enclosingFunctionBody(declaration);
-  return (
-    body !== undefined &&
-    ts.isBlock(body) &&
-    ts.isIdentifier(declaration.name) &&
-    ts.isVariableDeclarationList(declaration.parent) &&
-    isVarDeclarationList(declaration.parent) &&
-    hoistedBodyNames(body, checker).has(declaration.name.text)
-  );
 }
 
 /**

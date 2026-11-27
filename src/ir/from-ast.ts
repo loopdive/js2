@@ -2281,7 +2281,7 @@ function hoistFunctionBody(body: ts.Block, cx: LowerCtx): ReadonlySet<ts.Stateme
   ]);
   for (const [name, storage] of names) {
     if (parameters.has(name)) continue;
-    if (storage === "cell") bindHoistedCell(name, body, undefined, cx);
+    if (storage === "cell") bindHoistedCell(name, { bodyVar: body }, cx);
     else bindUndefinedDynamicSlot(name, (initialize) => initialize(), cx, body);
   }
   assignFunctionValues(declarations, cx);
@@ -2291,8 +2291,8 @@ function hoistFunctionBody(body: ts.Block, cx: LowerCtx): ReadonlySet<ts.Stateme
 /**
  * (#7354 L0c) A block's entry on the Prepared lane (its statements, or a case block's clauses together): each function
  * declaration is a fresh cell of the block shadowing the outer name, valued like a body's. An Annex B one (B.3.3.1)
- * records its function's var cell, which its evaluation assigns (`lowerBlockFunctionEvaluation`). A block function of
- * global code, or one whose var cell a catch parameter of the name shadows, refuses.
+ * records its function's var binding, which its evaluation assigns (`lowerBlockFunctionEvaluation`). A block function
+ * of global code, or one whose var binding a catch parameter of the name shadows, refuses.
  */
 function hoistBlockFunctions(statements: readonly ts.Statement[], cx: LowerCtx): void {
   if (!functionObjects.onPreparedDynamicLane(cx.resolver)) return;
@@ -2304,22 +2304,26 @@ function hoistBlockFunctions(statements: readonly ts.Statement[], cx: LowerCtx):
       demoteToLegacy("body-shape-rejected", `ir/from-ast: block function ${name} is not hoisted in ${cx.funcName}`);
     const outer = cx.scope.get(name);
     // A sloppy block may repeat a function (B.3.3.4): the name is bound once.
-    if (outer?.kind === "local" && outer.hoisted === blockFunctionScope(declaration)) continue;
-    let varCell: IrValueId | undefined;
+    const scope = blockFunctionScope(declaration);
+    if (outer?.kind === "local" && outer.blockFunction?.scope === scope) continue;
+    let varBinding: HoistedVarBinding | undefined;
     if (annexBApplies(declaration)) {
-      if (outer?.kind !== "local" || outer.hoisted !== body)
+      if ((outer?.kind !== "local" && outer?.kind !== "slot") || outer.bodyVar !== body)
         demoteToLegacy("body-shape-rejected", `ir/from-ast: the var binding of block function ${name} is shadowed`);
-      varCell = outer.value;
+      varBinding = outer;
     }
-    bindHoistedCell(name, blockFunctionScope(declaration), varCell, cx);
+    bindHoistedCell(name, { blockFunction: { scope, ...(varBinding ? { varBinding } : {}) } }, cx);
   }
   assignFunctionValues(declarations, cx);
 }
 
-function bindHoistedCell(name: string, hoisted: ts.Node, annexB: IrValueId | undefined, cx: LowerCtx): void {
+function bindHoistedCell(
+  name: string,
+  role: { readonly bodyVar: ts.Block } | { readonly blockFunction: BlockFunctionBinding },
+  cx: LowerCtx,
+): void {
   const cell = cx.builder.emitRefCellNew(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined), irDynamic());
-  const type: IrType = { kind: "boxed", inner: irDynamic() };
-  cx.scope.set(name, { kind: "local", value: cell, type, hoisted, ...(annexB === undefined ? {} : { annexB }) });
+  cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: irDynamic() }, ...role });
 }
 
 function assignFunctionValues(declarations: readonly ts.FunctionDeclaration[], cx: LowerCtx): void {
@@ -2334,22 +2338,22 @@ function assignFunctionValues(declarations: readonly ts.FunctionDeclaration[], c
 }
 
 /**
- * (#7354 L0c) Evaluating a block function declaration: an Annex B one copies its block cell into its function's var
- * cell (B.3.3.1 b.ii); any other does nothing. An `if` arm is a block of its own (B.3.4); a function statement anywhere
- * else (a constructor body, global code) is not hoisted and refuses.
+ * (#7354 L0c) Evaluating a block function declaration, which its block bound at entry: an Annex B one copies its block
+ * cell into its function's var binding (B.3.3.1 b.ii); any other does nothing. A function statement its block did not
+ * bind (a constructor body, global code) refuses.
  */
 function lowerBlockFunctionEvaluation(declaration: ts.FunctionDeclaration, cx: LowerCtx): void {
   const binding = cx.scope.get(declaration.name!.text);
-  if (binding?.kind === "local" && binding.hoisted === blockFunctionScope(declaration)) {
-    if (binding.annexB !== undefined)
-      cx.builder.emitRefCellSet(binding.annexB, cx.builder.emitRefCellGet(binding.value, irDynamic()));
-  } else if (ts.isIfStatement(declaration.parent))
-    lowerBlockStatements([declaration], { ...cx, scope: new Map(cx.scope) });
-  else
+  if (binding?.kind !== "local" || binding.blockFunction?.scope !== blockFunctionScope(declaration))
     demoteToLegacy(
       "body-shape-rejected",
       `ir/from-ast: unsupported body statement FunctionDeclaration in ${cx.funcName}`,
     );
+  const target = binding.blockFunction.varBinding;
+  if (target === undefined) return;
+  const value = cx.builder.emitRefCellGet(binding.value, irDynamic());
+  if (target.kind === "slot") cx.builder.emitSlotWrite(target.slotIndex, value);
+  else cx.builder.emitRefCellSet(target.value, value);
 }
 
 /**
@@ -3025,6 +3029,14 @@ function bindEntryThis(scope: Map<string, ScopeBinding>, builder: IrFunctionBuil
   scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(strict), type: irDynamic() });
 }
 
+/** (#7354 L0c) A block function's cell: the scope that binds it and, for Annex B, the var binding it assigns. */
+interface BlockFunctionBinding {
+  readonly scope: ts.Node;
+  readonly varBinding?: HoistedVarBinding;
+}
+
+type HoistedVarBinding = Extract<ScopeBinding, { kind: "local" | "slot" }>;
+
 type ScopeBinding =
   | {
       kind: "local";
@@ -3032,12 +3044,12 @@ type ScopeBinding =
       type: IrType;
       stringEncoding?: Encoding;
       /**
-       * (#7354 L0c) A cell bound at entry to this function body for a hoisted function or `var` (a `var` declaration
-       * of the name in that function is a write), or to this block for a block function.
+       * (#7354 L0c) A cell bound at this function body's entry for a hoisted function or `var`: a `var` declaration of
+       * the name in that body is a write.
        */
-      hoisted?: ts.Node;
-      /** (#7354 L0c) The var cell an Annex B block function's evaluation assigns (B.3.3.1). */
-      annexB?: IrValueId;
+      bodyVar?: ts.Block;
+      /** (#7354 L0c) The cell of a block function, bound at its block's entry. */
+      blockFunction?: BlockFunctionBinding;
     }
   | {
       /**
@@ -3117,8 +3129,8 @@ type ScopeBinding =
        */
       i32Storage?: true;
       stringEncoding?: Encoding;
-      /** (#7354 L0c) As a `local`'s: a hoisted `var` no function captures. */
-      hoisted?: ts.Node;
+      /** (#7354 L0c) As a `local`'s: a hoisted `var` no function names. */
+      bodyVar?: ts.Block;
     };
 
 /**
@@ -4438,7 +4450,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const hoisted = cx.scope.get(name);
   if (
     (hoisted?.kind === "local" || hoisted?.kind === "slot") &&
-    hoisted.hoisted === enclosingFunctionBody(d) &&
+    hoisted.bodyVar === enclosingFunctionBody(d) &&
     ts.isVariableDeclarationList(d.parent) &&
     isVarDeclarationList(d.parent)
   ) {
@@ -4796,7 +4808,7 @@ function bindUndefinedDynamicSlot(
   name: string,
   place: (initialize: () => void) => void,
   cx: LowerCtx,
-  hoisted?: ts.Node,
+  bodyVar?: ts.Block,
 ): void {
   const representation = resolveMutableLocalRepresentation(irDynamic(), true, cx);
   if (!representation)
@@ -4808,7 +4820,7 @@ function bindUndefinedDynamicSlot(
     slotIndex,
     type: representation.bindingType,
     ...(representation.asType ? { asType: representation.asType } : {}),
-    ...(hoisted ? { hoisted } : {}),
+    ...(bodyVar ? { bodyVar } : {}),
   });
 }
 
@@ -12532,8 +12544,11 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     joinScopeStringEncodingFacts(cx.scope, [childCx.scope]);
     return;
   }
+  // (#7354 L0c) An `if` arm's function statement is the sole statement of a block of its own (B.3.4).
   if (ts.isFunctionDeclaration(stmt) && functionObjects.onPreparedDynamicLane(cx.resolver)) {
-    lowerBlockFunctionEvaluation(stmt, cx);
+    const blockCx: LowerCtx = ts.isIfStatement(stmt.parent) ? { ...cx, scope: new Map(cx.scope) } : cx;
+    if (ts.isIfStatement(stmt.parent)) hoistBlockFunctions([stmt], blockCx);
+    lowerBlockFunctionEvaluation(stmt, blockCx);
     return;
   }
   if (ts.isVariableStatement(stmt)) {
