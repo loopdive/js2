@@ -11,8 +11,8 @@ import {
   hasExactIrNativeCountedStringRepeatProviderAbi,
   IR_NATIVE_STRING_REPEAT_PROVIDER_FN,
   IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE,
+  NATIVE_STRING_LENGTH_RANGE_ERROR_MESSAGE,
 } from "../src/codegen/ir-native-string-repeat.js";
-import { NATIVE_STRING_LENGTH_RANGE_ERROR_MESSAGE } from "../src/codegen/native-string-length-limit.js";
 import { addRuntime } from "../src/codegen-linear/runtime.js";
 import {
   authenticateLinearStringRepeatProvider,

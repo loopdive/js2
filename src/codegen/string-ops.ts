@@ -28,8 +28,7 @@ import {
   emitToNumber,
   emitToString,
 } from "./coercion-engine.js";
-import { ensureIrNativeStringRepeatProvider } from "./ir-native-string-repeat.js";
-import { ensureNativeStringPadProvider } from "./native-string-length-limit.js";
+import { ensureIrNativeStringRepeatProvider, ensureNativeStringPadProvider } from "./ir-native-string-repeat.js";
 import { registerStringHelperEmitters } from "./string-emitter-registry.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";

@@ -170,9 +170,10 @@ import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-run
 import {
   ensureIrNativeCountedStringRepeatProvider,
   ensureIrNativeStringRepeatProvider,
+  ensureNativeStringPadProvider,
   hasExactIrNativeCountedStringRepeatProviderAbi,
+  isNativeStringPadKernel,
 } from "../codegen/ir-native-string-repeat.js";
-import { ensureNativeStringPadProvider, isNativeStringPadKernel } from "../codegen/native-string-length-limit.js";
 import {
   ensureIrHostStringRepeatProvider,
   hasExactIrStringRepeatProviderAbi,

@@ -12,9 +12,9 @@ task_type: bug
 area: runtime, strings
 goal: core-semantics
 related: [7380]
-# 2026-11-26 (#7442): one provider-ladder arm (+2) and its import (+1) resolve the IR pad helpers to the checked pad
-# provider, in the same one-arm-per-provider shape as the repeat arms beside it; the ladder has no shared arm to fold
-# it into.
+# 2026-11-26 (#7442): one provider-ladder arm (+2) and its import (+2 names, 2026-11-27: on the existing
+# ir-native-string-repeat.js import) resolve the IR pad helpers to the checked pad provider, in the same
+# one-arm-per-provider shape as the repeat arms beside it; the ladder has no shared arm to fold it into.
 loc-budget-allow:
   - src/ir/integration.ts
 func-budget-allow:
@@ -104,4 +104,9 @@ Implemented as planned. Measured against `origin/main` c3b7be66:
 
 Sites that now use the shared limit: the IR repeat provider (`ir-native-string-repeat.ts`), the legacy repeat arm
 (through that provider), the counted-repeat kernel proof (`irCountedStringRepeatFitsNativeKernel`), and padStart /
-padEnd in the legacy arms and the IR provider ladder (`native-string-length-limit.ts`).
+padEnd in the legacy arms and the IR provider ladder (`ir-native-string-repeat.ts` since 2026-11-27).
+
+**As built (2026-11-27, quality fix).** `native-string-length-limit.ts` is folded into `ir-native-string-repeat.ts`:
+the message, the check and the pad provider now sit beside the repeat provider, whose shape and helpers they share.
+As its own module it gave `src/ir/integration.ts` a 55th `src/codegen/` import line (ir-layering ratchet, 54) and
+joined the largest import SCC with a new `codegen -> ir` edge (import-cycles ratchet).
