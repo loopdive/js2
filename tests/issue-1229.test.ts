@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { createEvalShim } from "../src/runtime-eval.js";
 
 async function compileAndInstantiate(source: string): Promise<Record<string, Function>> {
@@ -22,9 +22,7 @@ async function compileAndInstantiate(source: string): Promise<Record<string, Fun
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }
-  const built = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, built);
-  if (built.setExports) built.setExports(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(r);
   return instance.exports as Record<string, Function>;
 }
 

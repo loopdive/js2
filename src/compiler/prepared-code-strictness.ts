@@ -5,7 +5,7 @@
  * unit under one rule. A source file stands for its script or module code.
  */
 import type { ts } from "../ts-api.js";
-import { isStrictContext } from "../codegen/helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 
 /** `inferModuleStrictArguments` is the compile option: whether a top-level `import`/`export` makes code strict. */
 export function preparedCodeStrictness(

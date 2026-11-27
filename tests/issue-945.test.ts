@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { readFileSync } from "fs";
+import { resolve } from "path";
 import { parseMeta, wrapTest } from "./test262-runner.ts";
 import { buildImports } from "../src/runtime.ts";
 
-const T262 = "/workspace/test262";
+const T262 = resolve(__dirname, "../test262");
 const SAMPLES = [
   `${T262}/test/built-ins/ArrayBuffer/isView/invoked-as-a-fn.js`,
   `${T262}/test/built-ins/TypedArray/prototype/copyWithin/bit-precision.js`,

@@ -208,6 +208,7 @@ async function child(root, output) {
         identityContext: identity,
         target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
         deferTopLevelInit: input.deferTopLevelInit,
+        scriptVarModel: "with-for-in-heads",
       }),
     );
     for (const plan of startup) {

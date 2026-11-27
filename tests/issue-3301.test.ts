@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #3301 — an eval-inlined regex literal (`eval("/abc/i")`, the #1163 constant-
 // string splice) produced a value whose dynamic property reads (`.flags`,
@@ -19,11 +19,7 @@ async function run(source: string, fn = "test"): Promise<unknown> {
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as unknown as { setExports?: (e: Record<string, Function>) => void }).setExports?.(
-    instance.exports as Record<string, Function>,
-  );
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]!();
 }
 

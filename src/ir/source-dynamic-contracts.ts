@@ -30,6 +30,7 @@
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
 import type { IrFunction } from "./core/nodes.js";
+import { irIntrinsicFuncRef } from "./core/callable-bindings.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { ownRefusal } from "./abort-bodies.js";
 import type { IrUnitId } from "./identity.js";
@@ -60,6 +61,8 @@ import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.j
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
+import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
+import { scriptBlockFunctions } from "./annexb-block-function-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 
@@ -70,6 +73,16 @@ type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target" | "stringCo
 type DynamicLane = "host-async" | "native" | undefined;
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+/**
+ * (#7377) The realm's for-in contracts: the key snapshot (EnumerateObjectProperties), its list, and HasProperty for
+ * per-visit liveness.
+ */
+const FOR_IN_PLAN = Object.freeze({
+  keys: irIntrinsicFuncRef("js.object.for-in-keys"),
+  len: irIntrinsicFuncRef("js.object.key-list-length"),
+  get: irIntrinsicFuncRef("js.object.key-list-get"),
+  has: irIntrinsicFuncRef("js.object.has"),
+});
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
 export function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
@@ -219,7 +232,7 @@ function sourceDynamicClosureSignature(
   const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
-    !(ts.isFunctionExpression(expression) || ts.isAccessor(expression)) ||
+    !(ts.isFunctionExpression(expression) || ts.isFunctionDeclaration(expression) || ts.isAccessor(expression)) ||
     (descriptorLiteral &&
       dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||
@@ -274,6 +287,8 @@ export function nativeDynamicLane(policy: SourcePolicy): boolean {
 export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   /** (#7354 F1b) The top-level function declarations read as values (`function-declaration-values.ts`). */
   readonly functionDeclarationValues: readonly ts.FunctionDeclaration[];
+  /** (#7372 2a) The script's Annex B block functions (`annexb-block-function-values.ts`). */
+  readonly blockFunctions: readonly AnnexBBlockFunction[];
   /** The dynamic (or host Promise) contract of a parameter of `declaration`, if any. */
   readonly parameter: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => IrType | undefined;
   /** The dynamic result contract of `declaration`, or natively its Boolean carrier, if any. */
@@ -314,8 +329,12 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
      */
     readonly closuresBindReceivers?: () => boolean;
+    /** (#7354 O7) A dynamic value's named member takes a compound write (from-ast `lowerDynamicMemberCompound`). */
+    readonly dynamicCompoundMemberWrites?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
+    /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
+    readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
   };
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
@@ -325,8 +344,9 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    */
   readonly codeStrictness: CodeStrictness;
   /**
-   * {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. `converts` names a call that converts
-   * its arguments itself (#7354 T: an admitted `isNaN(v)`), so an argument has no implicit flow into its parameter.
+   * {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. `converts` names an admitted conversion
+   * call (#7354 T `isNaN(v)`, #7350 B3a `Number(v)`, `String(v)`, `Boolean(v)`): it converts its arguments itself, so an
+   * argument has no implicit flow into its parameter, and its value is the conversion's primitive, never dynamic.
    */
   readonly legalize: (
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
@@ -362,9 +382,10 @@ export function programDynamicContracts(
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
+  const blockFunctions = functionObjects ? scriptBlockFunctions(sourceFiles) : [];
   const objects = programObjects(
     sourceFiles,
-    functionDeclarationValues.length > 0,
+    functionDeclarationValues.length > 0 || blockFunctions.length > 0,
     pristineBuiltinGlobal(checker, sourceFiles),
   );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
@@ -391,6 +412,7 @@ export function programDynamicContracts(
   return {
     ...provenance,
     functionDeclarationValues,
+    blockFunctions,
     codeStrictness,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
@@ -402,9 +424,11 @@ export function programDynamicContracts(
           staticFunctionValue: (declaration) =>
             !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
+          dynamicCompoundMemberWrites: () => true,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
+          dynamicForInPlan: () => FOR_IN_PLAN,
         }
       : {},
     result: (declaration) =>
@@ -478,7 +502,8 @@ function refuseImplicitDynamicFlows(
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
-    const exempt = (e: ts.Expression) => passedOn(e) || converted || realmBuiltinOperand(e, isPristineGlobal);
+    const exempt = (e: ts.Expression) =>
+      passedOn(e) || converted || (ts.isCallExpression(e) && converts(e)) || realmBuiltinOperand(e, isPristineGlobal);
     if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))

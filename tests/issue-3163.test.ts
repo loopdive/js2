@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 describe("#3163 — new (Fn as any)() constructs the fnctor instance", () => {
   it("single as-any cast returns the instance", async () => {
@@ -27,7 +27,7 @@ describe("#3163 — new (Fn as any)() constructs the fnctor instance", () => {
         return p === null ? "NULL" : ("ok v=" + (p.v as number));
       }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("ok v=7");
   });
 
@@ -39,7 +39,7 @@ describe("#3163 — new (Fn as any)() constructs the fnctor instance", () => {
         return p === null ? "NULL" : ("ok v=" + (p.v as number));
       }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("ok v=7");
   });
 
@@ -51,7 +51,7 @@ describe("#3163 — new (Fn as any)() constructs the fnctor instance", () => {
         return c === null ? "NULL" : ("ok x=" + (c.x as number));
       }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("ok x=3");
   });
 
@@ -63,7 +63,7 @@ describe("#3163 — new (Fn as any)() constructs the fnctor instance", () => {
         return p === null ? "NULL" : ("ok v=" + (p.v as number));
       }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("ok v=7");
   });
 
@@ -77,7 +77,7 @@ describe("#3163 — new (Fn as any)() constructs the fnctor instance", () => {
         return out;
       }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("TypeError|TypeError");
   });
 });

@@ -41,7 +41,7 @@ export function usesLiteExnRender(ctx: CodegenContext): boolean {
 }
 
 /** Store the flattened `$AnyString` on the stack into the buffer and return its length. */
-function storeAndReturnLen(flattenIdx: number, bufGlobalIdx: number, flatTypeIdx: number): Instr[] {
+export function storeAndReturnLen(flattenIdx: number, bufGlobalIdx: number, flatTypeIdx: number): Instr[] {
   return [
     { op: "call", funcIdx: flattenIdx },
     { op: "global.set", index: bufGlobalIdx },

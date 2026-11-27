@@ -9,14 +9,16 @@
 // control: a gate that failed on everything would satisfy the other cases).
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   bankBaseline,
   evaluateGate,
+  fileDurations,
   fromPartial,
+  listEquivalenceFiles,
   mergeSummaries,
   summarizeReport,
   toPartial,
@@ -187,6 +189,54 @@ describe("#6785 equivalence gate — sharded CI layout", () => {
     expect(v.ok).toBe(false);
     expect(v.unexplained).toContain("no partial for shard 1/2");
     expect(bankBaseline(merged, {}).refusals).toContain("no partial for shard 1/2");
+  });
+});
+
+describe("#7565 forked shards — partition and per-file times", () => {
+  /** The shard count ci.yml's `equivalence-shard` matrix passes as `SHARD=i/N`. */
+  function ciShardCount(): number {
+    const yml = readFileSync(join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8");
+    const job = yml.slice(yml.indexOf("\n  equivalence-shard:"), yml.indexOf("\n  equivalence-gate:"));
+    const matrix = /shard: \[([\d, ]+)\]/.exec(job)![1]!.split(",").map(Number);
+    const total = Number(/SHARD: \$\{\{ matrix\.shard \}\}\/(\d+)/.exec(job)![1]);
+    expect(matrix).toEqual(Array.from({ length: total }, (_, i) => i + 1));
+    return total;
+  }
+
+  it.each([
+    ["CI", 0],
+    ["8", 8],
+  ] as const)(
+    "vitest's own --shard slicing puts every equivalence file in exactly one shard (%s)",
+    async (_label, fixed) => {
+      const count = fixed || ciShardCount();
+      const { BaseSequencer } = await import("vitest/node");
+      const files = listEquivalenceFiles()!;
+      expect(files.length).toBeGreaterThan(0);
+      const specs = files.map((f) => ({ moduleId: join(REPO_ROOT, f) }));
+      const owner = new Map<string, number[]>();
+      for (let index = 1; index <= count; index++) {
+        const sequencer = new BaseSequencer({ config: { root: REPO_ROOT, shard: { index, count } } } as never);
+        for (const spec of await sequencer.shard(specs as never)) {
+          const id = (spec as { moduleId: string }).moduleId;
+          owner.set(id, [...(owner.get(id) ?? []), index]);
+        }
+      }
+      const misplaced = specs.filter((s) => owner.get(s.moduleId)?.length !== 1).map((s) => s.moduleId);
+      expect(misplaced).toEqual([]);
+      expect(owner.size).toBe(files.length);
+    },
+  );
+
+  it("per-file wall time comes from the report's start/end, slowest first", () => {
+    const timed = (name: string, startTime: number, endTime: number) => ({ ...file(name, {}), startTime, endTime });
+    const durations = fileDurations({
+      testResults: [timed("fast.test.ts", 1_000, 3_000), timed("slow.test.ts", 0, 95_000), file("untimed.test.ts", {})],
+    });
+    expect(durations).toEqual([
+      { file: "tests/equivalence/slow.test.ts", seconds: 95 },
+      { file: "tests/equivalence/fast.test.ts", seconds: 2 },
+    ]);
   });
 });
 

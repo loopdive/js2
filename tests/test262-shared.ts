@@ -45,6 +45,7 @@ import { instantiateTest262Module, TEST262_DYNAMIC_CODE_POLICY } from "../script
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { isRecordedVerdictSentinel } from "../scripts/verdict-once.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
+import { normalizeErrorSignature } from "./test262-error-signature.js";
 import { ORACLE_FAST_REV, ORACLE_VERSION } from "./test262-oracle-version.js";
 import {
   classifyError,
@@ -370,20 +371,6 @@ type RecordMetadata = {
   // parity report can histogram the misses. Linked lane only; absent everywhere else.
   linkedFallbackReason?: string;
 };
-
-function normalizeErrorSignature(status: string, errorCategory: string | undefined, error: string | undefined) {
-  if (!error) return undefined;
-  const normalized = error
-    .replace(/\bL\d+:\d+/g, "L#:##")
-    .replace(/\bL\d+\b/g, "L#")
-    .replace(/@\+\d+/g, "@+#")
-    .replace(/0x[0-9a-f]+/gi, "0x#")
-    .replace(/\b\d+(?:\.\d+)?\b/g, "#")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 240);
-  return `${errorCategory ?? status}:${normalized}`;
-}
 
 function summarizeImportName(desc: any): string | undefined {
   if (!desc || typeof desc !== "object") return undefined;
@@ -1006,6 +993,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // execute at instantiation, and the test records fail
                   // (import-attribute-key-string-* flipped pass→fail this way).
                   allowJs: !isNegative,
+                  // (#7453) The runtime-negative verdict reads a thrown payload's kind through `__exn_render_kind`.
+                  exceptionKindExport: true,
                 });
                 const compileRecordMetadata = metadataFromImports(result.imports, false);
                 const reachedRecordMetadata = metadataFromImports(result.imports, true);
@@ -1218,7 +1207,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     isRuntimeNegative &&
                     runtimeNegativeThrowAccepted(execErr, readThrownValue(execErr, { instance: fixtureInstance }), {
                       expectedErrorType: meta.negative!.type,
-                      originalHarness: true,
                       prepared: REQUIRED_PREPARED,
                     })
                   ) {

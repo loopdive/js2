@@ -39,7 +39,7 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     // result-bearing trampoline.
     expect(source).toContain("__runtime_eval_provider_injected_parse: DynamicParser");
     expect(source).toContain("const ast = parse(source, options)");
-    expect(source).toContain("const ast: JSValue = parse(dynamicFunctionSource(paramString, bodyString), options)");
+    expect(source).toContain("const ast: JSValue = parse(source, options)");
     expect(source).not.toContain("function __runtime_eval_provider_parse(");
     // Build-time positive controls must be present so the prebuild can refuse
     // a broken provider before caching it.

@@ -46,12 +46,11 @@ import { wasmDateHostView } from "./runtime/date-host-method.js";
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 export { buildStringConstants, buildStringConstants16 };
 export { _installIteratorHelperPolyfills, _resetIteratorRuntimeIntrinsicsForRealmIsolation };
-// (#6492 r5 / #5967) The test262 worker primes the await-dictionary statics
-// BEFORE its realm-canary snapshot, so the one-time install onto `Promise` is
-// part of the baseline instead of drift that recycles the worker after every
-// test (measured: 922 drift lines and 868 provider re-loads in one shard,
-// aggregate compile time +345 % — merge-group run 35313398232).
-export { _installPromiseKeyedCombinators } from "./runtime/promise-keyed-combinators.js";
+// (#6492 r5 / #5967, #7431) The test262 worker primes the selected Promise
+// installs (keyed statics; Promise.try below Node 23) BEFORE its realm-canary
+// snapshot, so they are baseline, not drift that recycles every test (922 drift
+// lines, compile time +345 % in one shard — merge-group run 35313398232).
+export { _installSelectedPromiseCompatibility } from "./runtime/promise-try-polyfill.js";
 import {
   compiledClosureNativeSource,
   installNativeFunctionSourceFacade,
@@ -2445,6 +2444,13 @@ function _nativeErrorToHost(value: any, exports: Record<string, Function> | unde
   }
 }
 
+/** (#7491) An exception escaping a module export, as JS sees it: tag removed, native error struct → JS Error. */
+export function moduleExceptionToHost(error: unknown, exports: Record<string, Function>): unknown {
+  const payload = normalizeModuleCallbackException(error, { getExports: () => exports }, "module-tag-payload");
+  const translated = _nativeErrorToHost(payload, exports);
+  return translated === _MISS ? payload : translated;
+}
+
 function _isNativeOpenObject(value: any, exports: Record<string, Function> | undefined): boolean {
   const classify = exports?.__object_is_native_open as ((value: any) => number) | undefined;
   if (typeof classify !== "function") return false;
@@ -3864,6 +3870,8 @@ function resolveImport(
     getNodeRequire,
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
+    nativePrimitiveToHost: (value) => _nativePrimitiveToHost(value, marshalExports(callbackState)),
+    nativeMiss: _MISS,
   });
   if (capability)
     return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS, _nativeDynamicFromHost);
@@ -4575,13 +4583,7 @@ export function wrapExports(
         result = (val as Function).apply(this, marshalled);
         scheduleNativeMicrotaskCheckpoint(exportsForMarshal); // (#6982)
       } catch (error) {
-        const payload = normalizeModuleCallbackException(
-          error,
-          { getExports: () => exportsForMarshal },
-          "module-tag-payload",
-        );
-        const translated = _nativeErrorToHost(payload, exportsForMarshal);
-        throw translated === _MISS ? payload : translated;
+        throw moduleExceptionToHost(error, exportsForMarshal);
       }
       if (sig?.result === "boolean") {
         if (typeof result !== "number" || (result !== 0 && result !== 1) || Object.is(result, -0)) {

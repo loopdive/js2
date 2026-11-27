@@ -11,6 +11,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { customIterableExternrefView } from "./custom-iterable.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import {
   addUnionImports,
@@ -1760,13 +1761,12 @@ export function destructureParamArray(
   paramType: ValType,
   opts: DestructureOpts = {},
 ): void {
-  // #1719 S2 gate-site (second of two): this is the shared vec/tuple lowering
-  // that `compileArrayDestructuring` delegates to (and the parameter-dstr
-  // lane). When the ITER_OVERRIDDEN brand is set and `paramType` is a real
-  // array (not a string), S2 routes the typed-vec/tuple path below through the
-  // host-Array reflection + host GetIterator (see `arrayDstrNeedsIdentity` in
-  // statements/destructuring.ts). S1 does not wire it here — placement note
-  // only; the typed path stays byte-identical when the brand is clear.
+  // (#7424) A typed user iterable (`f([a]: It)`) is a GetIterator source, not a tuple: take its externref view.
+  const iterView = customIterableExternrefView(ctx, fctx, paramIdx, paramType);
+  if (iterView !== undefined) {
+    destructureParamArray(ctx, fctx, iterView, pattern, { kind: "externref" }, opts);
+    return;
+  }
   const isDecl = isDeclMode(opts);
   if (shouldEnsureLetConstFlags(opts)) {
     ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);

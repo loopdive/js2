@@ -153,6 +153,8 @@ const {
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 import { callbackClosureInfo } from "./closures/closure-type-sources.js"; // (#6913)
+import { registerCallbackBoxNumber } from "./array/array-callback-box-number.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
 import { canBuildSpreadArgList } from "./spread-arg-list.js"; // (#5361)
@@ -6107,6 +6109,7 @@ function setupArrayCallback(
 
   // #2152 — compile the optional thisArg AFTER the callback (spec arg order).
   const thisArgSlots = compileThisArg(ctx, fctx, callExpr, tag, thisArgIndex);
+  registerCallbackBoxNumber(ctx, fctx, closureInfo, bridgeArgType); // (#7465) before the loop's detached lists
 
   return {
     closureInfo,
@@ -6467,15 +6470,6 @@ function emitArrayCallbackArgsPlumbing(
   //   numParams=2 → [arr]
   const extrasCount = specArity - numParams;
   instrs.push({ op: "i32.const", value: extrasCount });
-  const boxIdx = ctx.funcMap.get("__box_number");
-  const pushBoxed = (): void => {
-    if (boxIdx !== undefined) {
-      instrs.push({ op: "call", funcIdx: boxIdx });
-    } else {
-      instrs.push({ op: "drop" });
-      instrs.push({ op: "ref.null.extern" });
-    }
-  };
   if (numParams < 1) {
     // Push the element. Inline-load from data[i], coerced to externref.
     instrs.push({ op: "local.get", index: loop.dataTmp });
@@ -6490,7 +6484,7 @@ function emitArrayCallbackArgsPlumbing(
   if (numParams < 2) {
     instrs.push({ op: "local.get", index: loop.iTmp });
     instrs.push({ op: "f64.convert_i32_s" });
-    pushBoxed();
+    instrs.push({ op: "call", funcIdx: requireHelper(ctx, "__box_number") });
   }
   if (numParams < 3) {
     instrs.push({ op: "local.get", index: loop.vecTmp });
@@ -6527,14 +6521,9 @@ function emitElemBoxToExternref(ctx: CodegenContext, arrTypeIdx: number, getOp: 
   if (!elem) return undefFallback;
   if (elem.kind === "externref") return [];
   if (elem.kind === "ref" || elem.kind === "ref_null") return [{ op: "extern.convert_any" }];
-  const boxIdx = ctx.funcMap.get("__box_number");
   const loadsAsI32 = elem.kind === "i32" || getOp === "array.get_s" || getOp === "array.get_u";
-  if (elem.kind === "f64") {
-    return boxIdx !== undefined ? [{ op: "call", funcIdx: boxIdx }] : undefFallback;
-  }
-  if (loadsAsI32) {
-    return boxIdx !== undefined ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }] : undefFallback;
-  }
+  if (elem.kind === "f64") return [{ op: "call", funcIdx: requireHelper(ctx, "__box_number") }];
+  if (loadsAsI32) return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: requireHelper(ctx, "__box_number") }];
   // Unboxable element kind (i64/v128/…) — keep the undefined placeholder.
   return undefFallback;
 }

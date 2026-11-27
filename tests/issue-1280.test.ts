@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { nodeModulesBin } from "./helpers/repo-paths.js";
 
 async function runIr(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
@@ -48,7 +49,7 @@ async function watIr(src: string): Promise<string> {
   const wasmPath = join(dir, "module.wasm");
   await writeFile(wasmPath, r.binary);
   return await new Promise<string>((resolve, reject) => {
-    execFile("/workspace/node_modules/.bin/wasm-dis", [wasmPath], { encoding: "utf-8" }, (err, stdout) => {
+    execFile(nodeModulesBin("wasm-dis"), [wasmPath], { encoding: "utf-8" }, (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout);
     });

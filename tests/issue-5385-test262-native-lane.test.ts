@@ -95,7 +95,7 @@ describe("#5385 worker compile branches", () => {
       "compileSingleSource",
       "compilerBundle",
       "WORKER_SELF_VALIDATES",
-      "HARNESS_HOST_BRIDGE",
+      "HARNESS_INSPECTION",
       `${worker.slice(start, end)}; return doCompile;`,
     )(
       () => ({ recycle: false }),
@@ -104,7 +104,7 @@ describe("#5385 worker compile branches", () => {
       single,
       { compileWithTemporalGlobal: linked },
       { validate: false },
-      { hostBridge: "always" },
+      { hostBridge: "always", exceptionKindExport: true },
     );
     // The parameter list keeps growing in the middle (f1ad427b98 inserted
     // `moduleGraph`, 668d3cf93b `linkedHarness`, 06dbc8d88f `scriptGoal`), which

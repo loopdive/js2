@@ -18,6 +18,7 @@
 // decoding the ordered keys back into JS strings.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const SETUP = `
   const o: any = {};
@@ -49,28 +50,19 @@ describe("#1837 — standalone enumeration order", () => {
 
   it("Object.keys still counts every enumerable own key (4 here) after the reorder", async () => {
     const r = await compileStandalone(`const ks: any = Object.keys(o); return (ks.length as number);`);
-    const { instance } = await WebAssembly.instantiate(
-      r.binary,
-      (r as { importObject?: WebAssembly.Imports }).importObject ?? {},
-    );
+    const instance = await instantiateWithRuntime(r);
     expect((instance.exports.run as () => number)()).toBe(4);
   });
 
   it("Object.values length is unchanged by the ordering pass", async () => {
     const r = await compileStandalone(`const vs: any = Object.values(o); return (vs.length as number);`);
-    const { instance } = await WebAssembly.instantiate(
-      r.binary,
-      (r as { importObject?: WebAssembly.Imports }).importObject ?? {},
-    );
+    const instance = await instantiateWithRuntime(r);
     expect((instance.exports.run as () => number)()).toBe(4);
   });
 
   it("Object.entries length is unchanged by the ordering pass", async () => {
     const r = await compileStandalone(`const es: any = Object.entries(o); return (es.length as number);`);
-    const { instance } = await WebAssembly.instantiate(
-      r.binary,
-      (r as { importObject?: WebAssembly.Imports }).importObject ?? {},
-    );
+    const instance = await instantiateWithRuntime(r);
     expect((instance.exports.run as () => number)()).toBe(4);
   });
 
@@ -96,10 +88,7 @@ describe("#1837 — standalone enumeration order", () => {
     }`;
     const r = await compile(src, { fileName: "t.ts" });
     expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
-    const { instance } = await WebAssembly.instantiate(
-      r.binary,
-      (r as { importObject?: WebAssembly.Imports }).importObject ?? {},
-    );
+    const instance = await instantiateWithRuntime(r);
     expect((instance.exports.run as () => string)()).toBe("12ba");
   });
 });
