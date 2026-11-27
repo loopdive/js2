@@ -3,9 +3,7 @@ import { readFileSync } from "fs";
 import { join, dirname, relative } from "path";
 import { compileMulti } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
-
-// test262 is shared — not duplicated per worktree
-const TEST262_ROOT = process.env.TEST262_ROOT ?? "/workspace/test262";
+import { TEST262_ROOT } from "./helpers/repo-paths.js";
 
 describe("#1015 — fixture tests execute in unified mode", () => {
   it("negative fixture test compiles with expected error (resolution phase)", async () => {

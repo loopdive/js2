@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { planIrCompilation } from "../src/ir/select.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -34,11 +34,7 @@ async function compileAndInstantiate(source: string, experimentalIR: boolean): P
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
-  const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, {
-    env: built.env,
-    string_constants: built.string_constants,
-  });
+  const instance = await instantiateWithRuntime(r, ENV_STUB);
   return instance.exports as Record<string, unknown>;
 }
 

@@ -13,17 +13,20 @@ name: native-messaging smoke (real wasmtime)
 # promoted to required later). CI does not otherwise install wasmtime, so this
 # job installs a pinned release fresh.
 
+# (#7558) Post-merge only: the merge queue is the only pre-merge gate.
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - "examples/native-messaging/**"
-      - "src/codegen/**"
-      - ".github/workflows/native-messaging-smoke.yml"
 
 permissions:
   contents: read
+
+# (#7556) A new push to a pull request cancels that PR's older run of this
+# workflow. Other events get a group of their own (the run id), so nothing on
+# main or in the merge queue is ever cancelled or made to wait.
+concurrency:
+  group: native-messaging-smoke-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   smoke:

@@ -29,7 +29,12 @@ const object = (d: BuiltinFunctionPrototypeOperands, local: number): Instr[] => 
   { op: "ref.cast", typeIdx: d.objectTypeIdx },
 ];
 /** Returns actual parent, or an explicit gap. Null on the incomplete anchor is not public absence. */
-function ordinaryParent(d: BuiltinFunctionPrototypeOperands, cursor: number, next: number, gap: Instr[]): Instr[] {
+export function ordinaryParent(
+  d: BuiltinFunctionPrototypeOperands,
+  cursor: number,
+  next: number,
+  gap: Instr[],
+): Instr[] {
   return [
     ...object(d, cursor),
     { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },

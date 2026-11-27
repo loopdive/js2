@@ -1,46 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compile, CompileResult } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
-
-const jsStringPolyfill = {
-  concat: (a: string, b: string) => a + b,
-  length: (s: string) => s.length,
-  equals: (a: string, b: string) => (a === b ? 1 : 0),
-  substring: (s: string, start: number, end: number) => s.substring(start, end),
-  charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-};
-
-function buildImports(result: CompileResult): WebAssembly.Imports {
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_string: () => {},
-    console_log_bool: () => {},
-    __typeof: (v: unknown) => typeof v,
-    __is_truthy: (v: unknown) => (v ? 1 : 0),
-    __box_number: (v: number) => v,
-    __box_boolean: (v: number) => Boolean(v),
-    __unbox_number: (v: unknown) => Number(v),
-    __unbox_boolean: (v: unknown) => (v ? 1 : 0),
-    string_compare: (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0),
-    __make_callback: () => null,
-  };
-  return {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  };
-}
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  const imports = buildImports(result);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  return (instance.exports as any)[fn](...args);
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("prototype chain patterns (#631)", () => {
@@ -104,12 +67,14 @@ describe("prototype chain patterns (#631)", () => {
     expect(result).toBe(1);
   });
 
-  it("Object.getPrototypeOf returns null for plain object", async () => {
+  it("Object.getPrototypeOf of a plain object is Object.prototype", async () => {
+    // An object literal is created by OrdinaryObjectCreate(%Object.prototype%) (ECMA-262 §13.2.5 Object Initializer, Evaluation), and
+    // Object.getPrototypeOf returns its [[Prototype]] (§20.1.2.12). The old expectation (null) asserted wrong behaviour.
     const result = await run(
       `
       export function test(): number {
         const proto = Object.getPrototypeOf({});
-        return proto === null ? 1 : 0;
+        return proto === Object.prototype ? 1 : 0;
       }
     `,
       "test",

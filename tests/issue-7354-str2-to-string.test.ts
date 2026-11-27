@@ -121,20 +121,38 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
     );
   });
 
+  // (#7350 B3a) `String` is the realm's function object: the members and `new` it lacks refuse by name.
   it.each([
-    ["two arguments", 'var s = String("a", "b");', 'direct call to "String" has no exact AST-site plan'],
-    ["String.fromCharCode", "var s = String.fromCharCode(65);", 'identifier "String" is not in scope'],
-    ["new String", 'var s = new String("a");', 'unknown class "String"'],
-    // An alias reads `String` as a value, which has no Prepared answer (the plan is also invalidated program-wide).
-    ["a call beside an alias", 'var S = String;\nvar s = String("a");', 'identifier "String" is not in scope'],
-    ["typeof String", 'if (typeof String !== "function") throw 1;', 'identifier "String" is not in scope'],
+    [
+      "String.fromCharCode",
+      "var s = String.fromCharCode(65);",
+      "String.fromCharCode is not reachable on this path yet (#7350 B3bc)",
+    ],
+    ["new String", 'var s = new String("a");', "new String (a wrapper object; #7350 B3bc)"],
   ])("refuses %s by name", async (_label, source, expected) => {
     expect(await refusal(source)).toContain(expected);
   });
 
-  // The `String` plan trusts that the closed program cannot rebind the ambient `String` (it is not invalidated by an
-  // escape, which the harness prelude has). Each way to rebind it refuses by name, and a program declaring its own
-  // `String` anywhere loses the plan (the checker reports a script's `function String` as the lib's).
+  // (#7350 B3a) A second argument calls through the realm's value (evaluated, then ignored; `@ts-ignore` silences the
+  // checker's arity warning, which `run` counts), an alias beside the call keeps the plan (the realm's `String` is
+  // pristine), and `typeof String` is "function".
+  it.each([
+    [
+      "two arguments",
+      (ok: boolean) => `// @ts-ignore\nvar s = String("a", "b");\nif (s !== ${ok ? '"a"' : '"b"'}) throw 1;`,
+    ],
+    [
+      "a call beside an alias",
+      (ok: boolean) => `var S = String;\nvar s = String("a");\nif ((s === "a" && S === String) !== ${ok}) throw 1;`,
+    ],
+    ["typeof String", (ok: boolean) => `if ((typeof String === "function") !== ${ok}) throw 1;`],
+  ])("answers %s", async (_label, program) => {
+    await expectLikeNode(program);
+  });
+
+  // The `String` plan holds while the realm's `String` is pristine (it is not invalidated by a value read, which the
+  // harness prelude has). Each way to rebind it refuses by name, and a program declaring its own `String` anywhere loses
+  // the plan (the checker reports a script's `function String` as the lib's).
   it.each([
     [
       "an assignment to String",

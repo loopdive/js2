@@ -16,8 +16,8 @@
 #      files sampled, is baselined and tracked for triage); newly-fixed tests
 #      auto-ratchet the baseline down. A regression goes red on main within
 #      one run instead of silently rotting.
-#   2. Per-PR (ci.yml `quality`): the tests/*.test.ts files a PR adds or
-#      modifies must pass — a test cannot be born broken, and new files are
+#   2. Per-merge (ci.yml `quality` in the merge queue, and the pre-push hook,
+#      #7558): the tests/*.test.ts files a PR adds or modifies must pass — a test cannot be born broken, and new files are
 #      automatically inside this workflow's glob (no wiring step to forget).
 #
 # Concurrency: latest-wins, no per-SHA groups — unlike promote-baseline this

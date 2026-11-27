@@ -183,7 +183,7 @@ export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: t
   return globals;
 }
 
-/** The declarations {@link moduleF64UndefinedSeedGlobals} considers. Walked once per compile: its three callers ask
+/** The declarations {@link moduleF64UndefinedSeedGlobals} considers. Walked once per compile: its two callers ask
  * at different stages, but the source text they walk does not change between them. */
 const seedCandidates = new WeakMap<CodegenContext, readonly ts.VariableDeclaration[]>();
 function seedCandidateDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile): readonly ts.VariableDeclaration[] {

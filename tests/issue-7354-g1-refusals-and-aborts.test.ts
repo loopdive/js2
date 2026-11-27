@@ -56,11 +56,13 @@ describe("#7354 G1 — refusals by name", () => {
       'ir/from-ast: identifier "globalThis" is not in scope in <module-init>',
     ],
     // Function.prototype's `caller` / `arguments` setter throws; a write that silently landed (as it did before G1,
-    // unobservable while `assert.throws(TypeError, …)` could not run) answers wrong.
+    // unobservable while `assert.throws(TypeError, …)` could not run) answers wrong. (#7489) The realm answers
+    // `caller` now (tests/issue-7489-function-caller.test.ts); `arguments` still refuses, as a sloppy function's own
+    // is its arguments object.
     [
-      "a write to a function's caller",
-      "'use strict'; function f(){} f.caller = 1;",
-      gapText("member write 'caller' of a function needs Function.prototype's accessor"),
+      "a write to a function's arguments",
+      "'use strict'; function f(){} f.arguments = 1;",
+      gapText("member write 'arguments' of a function needs a sloppy function's own arguments object"),
     ],
     [
       "a read of an undeclared name",

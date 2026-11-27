@@ -4,7 +4,9 @@ name: Optional Porffor source canary
 # not a branch-protection context. Ordinary CI remains submodule-free.
 on:
   workflow_dispatch:
-  pull_request:
+  # (#7558) Post-merge on push to main, not on PRs: the merge queue is the
+  # only pre-merge gate.
+  push:
     branches: [main]
     paths:
       - "src/ir/**"
@@ -18,6 +20,13 @@ on:
 
 permissions:
   contents: read
+
+# (#7556) A new push to a pull request cancels that PR's older run of this
+# workflow. Other events get a group of their own (the run id), so nothing on
+# main or in the merge queue is ever cancelled or made to wait.
+concurrency:
+  group: porffor-source-canary-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   porffor-source-native-canary:

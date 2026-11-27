@@ -41,7 +41,7 @@
  *   application costs — widening ONE derivation turned a wrong answer into a
  *   thrown "Cannot access property on null or undefined", because the stored
  *   closure's `ref.test` then failed.
- * - **Read** — {@link paramReadIsJsDefaultGuess}. The prologue was already
+ * - **Read** — {@link paramReadTypeIsGuess}. The prologue was already
  *   right (`__extern_is_undefined` gates the default), but the next
  *   instruction at every use was `call $__unbox_number`: an identifier read
  *   re-narrows an externref local to the checker's type, and the strict-equality
@@ -67,6 +67,7 @@
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { checkerTypeIgnoresOmission } from "../shared/omittable-param.js";
 
 /** Is this parameter's checker type a guess read off its own default? */
 export function paramTypeIsJsDefaultGuess(param: ts.ParameterDeclaration): boolean {
@@ -109,7 +110,9 @@ export function widenJsDefaultGuessSymbolSlot(sym: ts.Symbol | undefined, wasmTy
 }
 
 /**
- * Does `expr` READ such a parameter?
+ * Does `expr` READ a parameter whose checker type is a guess: such a defaulted
+ * parameter, or (#7448) a JSDoc-typed one a local call omits
+ * (`checkerTypeIgnoresOmission`)? Both had their slot widened for that reason.
  *
  * Callers must already have established that the value is on the dynamic
  * carrier — the identifier-read narrowing gate requires
@@ -121,12 +124,12 @@ export function widenJsDefaultGuessSymbolSlot(sym: ts.Symbol | undefined, wasmTy
  * — the question is about the declaration's SYNTAX, not about a type, which is
  * exactly what `paramUndefinedTypeIsDefaultArtifact` established beside it.
  */
-export function paramReadIsJsDefaultGuess(ctx: CodegenContext, expr: ts.Expression): boolean {
+export function paramReadTypeIsGuess(ctx: CodegenContext, expr: ts.Expression): boolean {
   let bare: ts.Expression = expr;
   while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
   if (!ts.isIdentifier(bare)) return false;
   for (const decl of ctx.oracle.declarationsOf(bare)) {
-    if (ts.isParameter(decl) && paramTypeIsJsDefaultGuess(decl)) return true;
+    if (ts.isParameter(decl) && (paramTypeIsJsDefaultGuess(decl) || checkerTypeIgnoresOmission(decl))) return true;
   }
   return false;
 }

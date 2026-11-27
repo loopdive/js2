@@ -31,7 +31,8 @@ const ENV_STUB = {
 };
 
 async function runTest(source: string, standalone: boolean): Promise<number> {
-  const r = await compile(source, { fileName: "test.ts", standalone });
+  // The boolean `standalone` option was replaced by `target: "standalone"`.
+  const r = await compile(source, { fileName: "test.ts", ...(standalone ? { target: "standalone" as const } : {}) });
   expect(r.success, `compile failed: ${r.errors[0]?.message ?? "unknown"}`).toBe(true);
   const built = buildImports(r.imports, ENV_STUB, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, {
@@ -139,7 +140,10 @@ describe("#2791 Row 4 — KNOWN write miscompile via structural-narrowing copy (
       expect(got).toBe(9); // JS reference semantics; compiler currently returns 2
     });
 
-    it.fails(`mutation through an interface-typed param is lost (${tag})`, async () => {
+    // Fixed by 190d5336d (#6634, landed with PR #5978: "named interface's Wasm
+    // carrier no longer aliases to one implementer's struct"); bisected
+    // 2026-11-26. The structurally-compatible class case above is still #2793.
+    it(`mutation through an interface-typed param reaches the caller (${tag})`, async () => {
       const got = await runTest(
         `
         interface I { v: number; }
@@ -154,7 +158,7 @@ describe("#2791 Row 4 — KNOWN write miscompile via structural-narrowing copy (
         `,
         standalone,
       );
-      expect(got).toBe(100200); // compiler currently returns 1002 (writes lost to copies)
+      expect(got).toBe(100200);
     });
   }
 });

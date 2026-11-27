@@ -4,7 +4,7 @@
  */
 import { emitHostIntlGlobal } from "../helpers/host-intl-locale.js"; // (#6986)
 import { autoBindingNarrowedAcrossFunctionBoundary, expressionHasWidenedStaticType } from "../strict-eq-stale-type.js";
-import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
+import { paramReadTypeIsGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
   emitStandaloneUnavailableGlobalThrow,
@@ -15,9 +15,7 @@ import {
   isBigIntType,
   isBooleanType,
   isDeclaredHeterogeneousPrimitiveUnion,
-  isHeterogeneousUnion,
   isNumberType,
-  isStringType,
   type NullablePrimitiveInfo,
   type NullablePrimitiveKind,
 } from "../../checker/type-mapper.js";
@@ -63,7 +61,11 @@ import { reportError } from "../context/errors.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { moduleGlobalIsForeignToFunctionRead } from "./foreign-module-global-shadow.js";
-import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
+import {
+  annexBReadEscapesFunctionScope,
+  annexBReadIsUnbound,
+  collectAnnexBCancelSites,
+} from "../../shared/annexb-block-functions.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
   identifierIsWrittenTo,
@@ -588,12 +590,17 @@ function getDeclaredNullablePrimitiveInfo(ctx: CodegenContext, id: ts.Identifier
   return null;
 }
 
+/** Unbox a carrier read as `primitiveKind`; null leaves the carrier on the stack. */
 function emitNullablePrimitiveUnbox(
   ctx: CodegenContext,
   fctx: FunctionContext,
   primitiveKind: NullablePrimitiveKind,
+  expectedType?: ValType,
 ): ValType | null {
   if (primitiveKind === "string") return null;
+  // (#7497) A reference consumer keeps the BigInt carrier: an i64 round trip drops every bit past 64.
+  if (primitiveKind === "bigint" && (expectedType?.kind === "externref" || expectedType?.kind === "anyref"))
+    return null;
   addUnionImports(ctx);
   if (primitiveKind === "number") {
     const funcIdx = ctx.funcMap.get("__unbox_number");
@@ -610,10 +617,6 @@ function emitNullablePrimitiveUnbox(
     }
   }
   if (primitiveKind === "bigint") {
-    // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
-    // through __to_bigint would collapse it to the compiler's host-free i64
-    // carrier and discard every bit above 63.
-
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -736,7 +739,12 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
   fctx.body.push({ op: "unreachable" });
 }
 
-function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): ValType | null {
+function compileIdentifier(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  expectedType?: ValType,
+): ValType | null {
   const name = id.text;
 
   // (#1387 / #2663) `with` scope resolution, innermost-first.
@@ -757,14 +765,14 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
       const saved = fctx.withScopes;
       fctx.withScopes = scopes.slice(0, matchedIdx);
       try {
-        return compileIdentifier(ctx, fctx, id);
+        return compileIdentifier(ctx, fctx, id, expectedType);
       } finally {
         fctx.withScopes = saved;
       }
     });
   }
 
-  return compileIdentifierCore(ctx, fctx, id);
+  return compileIdentifierCore(ctx, fctx, id, false, expectedType);
 }
 
 /**
@@ -954,6 +962,7 @@ function compileIdentifierCore(
   fctx: FunctionContext,
   id: ts.Identifier,
   skipRuntimeEvalState = false,
+  expectedType?: ValType,
 ): ValType | null {
   const name = id.text;
 
@@ -1260,19 +1269,18 @@ function compileIdentifierCore(
       !fctx.forInIdentifierVars?.has(name) &&
       !fctx.mixedAssignmentCarrierVars?.has(name) &&
       !mappedExternrefParam &&
-      // (#6651 C3) A JavaScript defaulted parameter's checker type is read off
-      // its own initializer; the slot was widened for exactly that reason, so
-      // re-narrowing it here would undo the widening one instruction later.
-      !paramReadIsJsDefaultGuess(ctx, id) &&
+      // (#6651 C3, #7448) A JS defaulted parameter's checker type is read off its
+      // initializer, an omitted JSDoc-typed one's off its tag; the slot was widened
+      // for exactly that reason, so re-narrowing it here would undo the widening.
+      !paramReadTypeIsGuess(ctx, id) &&
       !expressionHasWidenedStaticType(ctx, id)
     ) {
-      const narrowedType = ctx.checker.getTypeAtLocation(id);
-      const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);
+      const narrowed = narrowTypeToUnbox(ctx, fctx, ctx.checker.getTypeAtLocation(id), expectedType);
       if (narrowed) return narrowed;
       if (fctx.narrowedNonNull?.has(name)) {
         const declaredNullable = getDeclaredNullablePrimitiveInfo(ctx, id);
         if (declaredNullable) {
-          const unboxed = emitNullablePrimitiveUnbox(ctx, fctx, declaredNullable.primitiveKind);
+          const unboxed = emitNullablePrimitiveUnbox(ctx, fctx, declaredNullable.primitiveKind, expectedType);
           if (unboxed) return unboxed;
         }
       }
@@ -2089,44 +2097,22 @@ function compileIdentifierCore(
  * and return the unboxed ValType. The externref value must already be on stack.
  * Returns null if no unboxing is needed (type is still a union or externref).
  */
-function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedType: ts.Type): ValType | null {
-  // Don't unbox if the narrowed type is still a heterogeneous union
-  if (isHeterogeneousUnion(narrowedType, ctx.checker)) return null;
-  // Don't unbox if still a union with null/undefined (stays externref)
+function narrowTypeToUnbox(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  narrowedType: ts.Type,
+  expectedType?: ValType,
+): ValType | null {
+  // A union (heterogeneous, or with null/undefined) stays on its carrier.
   if (narrowedType.isUnion()) return null;
-
-  if (isNumberType(narrowedType)) {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__unbox_number");
-    if (funcIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx });
-      return { kind: "f64" };
-    }
-  }
-  if (isBooleanType(narrowedType)) {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__unbox_boolean");
-    if (funcIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx });
-      return { kind: "i32" };
-    }
-  }
-  if (isBigIntType(narrowedType)) {
-    // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
-    // host BigInts. A checker narrowing changes the logical type, not that
-    // physical representation, so leave the externref on the stack.
-
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__to_bigint");
-    if (funcIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx });
-      return { kind: "i64", bigint: true };
-    }
-  }
-  // String stays as externref — no unboxing needed
-  if (isStringType(narrowedType)) return null;
-
-  return null;
+  const kind = isNumberType(narrowedType)
+    ? "number"
+    : isBooleanType(narrowedType)
+      ? "boolean"
+      : isBigIntType(narrowedType)
+        ? "bigint"
+        : undefined;
+  return kind === undefined ? null : emitNullablePrimitiveUnbox(ctx, fctx, kind, expectedType);
 }
 
 // ── instanceof (extracted to ./typeof-delete.ts) ──

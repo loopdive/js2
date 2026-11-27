@@ -1,16 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
-async function run(source: string, fn: string, args: unknown[]): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) throw new Error(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n"));
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env: {
-      console_log_number: () => {},
-      console_log_bool: () => {},
-    },
-  });
-  return (instance.exports as any)[fn](...args);
+async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("do-while", () => {

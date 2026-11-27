@@ -238,6 +238,7 @@ export function planIrFallbackGateEntry(graph: IrFallbackPlanningGraph): IrSelec
           numberStorage: "f64",
           allowHostExterns: true,
           allowBuiltinMapExtern: true,
+          scriptVarModel: "statement-and-for-heads",
         },
         identityContext,
       ),

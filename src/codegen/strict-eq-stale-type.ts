@@ -7,7 +7,7 @@
 import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { bindingHasCrossDomainAssignment } from "./analysis/mixed-assignment-carrier.js";
-import { paramReadIsJsDefaultGuess } from "./js-default-param-type-guess.js";
+import { paramReadTypeIsGuess } from "./js-default-param-type-guess.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 const indexedStaleProperties = new WeakMap<CodegenContext, Set<ts.Declaration>>();
@@ -200,7 +200,8 @@ export function equalityOperandHasStaleStaticType(
     // the §7.2.16 step-1 fold in `binary-ops-typed-dispatch` decided
     // `Type(number) !== Type(boolean)` and answered a constant `false` for
     // `a === false` without ever reading the boxed boolean that arrived.
-    paramReadIsJsDefaultGuess(ctx, expr) ||
+    // (#7448) An omitted JSDoc-typed argument: `x === undefined` folded `false`.
+    paramReadTypeIsGuess(ctx, expr) ||
     expressionHasWidenedStaticType(ctx, expr)
   );
 }

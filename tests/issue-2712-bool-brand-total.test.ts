@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // #2712 (I1+I2) — the optional i32 boolean brand made TOTAL at producers.
 //
@@ -15,7 +15,7 @@ import { compileAndInstantiate } from "../src/runtime.js";
 // Arithmetic/bitwise/logical results are NOT branded.
 
 async function run<T>(src: string): Promise<T> {
-  const exports = await compileAndInstantiate(src);
+  const exports = await compileToWasm(src);
   return (exports as { f: () => T }).f();
 }
 

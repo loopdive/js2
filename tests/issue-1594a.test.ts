@@ -1,19 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
-  // Build host imports the same way test262 does: build → instantiate →
-  // setExports. The lazy `r.importObject` path used by #1667 doesn't wire
-  // setExports, so closure-aware host helpers (e.g. __typeof via #1594A)
-  // can't see __is_closure unless we use this manual flow.
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports as unknown as WebAssembly.Imports);
-  if (typeof imports.setExports === "function") {
-    imports.setExports(instance.exports as Record<string, Function>);
-  }
+  const instance = await instantiateWithRuntime(r);
   const fn = (instance.exports as Record<string, unknown>).test as (() => unknown) | undefined;
   if (typeof fn !== "function") throw new Error("no test export");
   return fn();

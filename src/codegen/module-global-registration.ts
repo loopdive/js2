@@ -196,7 +196,7 @@ export function isHoistedScriptVar(decl: ts.VariableDeclaration): boolean {
   return (
     !ts.isExternalModule(decl.getSourceFile()) &&
     !isTopLevelStatementDeclaration(decl) &&
-    isModuleInitVarList(decl.parent)
+    isModuleInitVarList(decl.parent, "statement-and-for-heads")
   );
 }
 

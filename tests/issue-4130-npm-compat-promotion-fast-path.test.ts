@@ -72,14 +72,15 @@ describe("npm-compat promotion artifact validation", () => {
 
 describe("npm-compat promotion CI fast path", () => {
   it("classifies the exact artifact diff before selecting heavy suites", () => {
-    const changes = ci.slice(ci.indexOf("  changes:"), ci.indexOf("  quality:"));
+    const changes = ci.slice(ci.indexOf("  changes:"), ci.indexOf("  quality-lane:"));
     expect(changes).toContain("scripts/check-npm-compat-promotion.mjs");
     expect(changes).toContain("steps.npm_compat.outputs.only");
     expect(changes).toMatch(/npm-compat artifact-only diff[\s\S]*?code=false/);
   });
 
   it("keeps every post-classification quality step off the artifact-only path", () => {
-    const quality = ci.slice(ci.indexOf("  quality:"), ci.indexOf("  cancel-test262-on-quality-failure:"));
+    // (#7563) The gates live in the `quality-lane` matrix; `quality` only aggregates.
+    const quality = ci.slice(ci.indexOf("  quality-lane:"), ci.indexOf("\n  quality:"));
     const stepBlocks = quality
       .slice(quality.indexOf("    steps:"))
       .split(/\n(?= {6}- (?:name:|uses:|run:))/)

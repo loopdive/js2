@@ -56,7 +56,7 @@ import {
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import { ensureExtrasArgvGlobal, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import { compileStringLiteral, isStaticUndefinedArg } from "../string-ops.js";
-import { isStrictFunction } from "../helpers/is-strict-function.js";
+import { isStrictFunction } from "../../shared/is-strict-function.js";
 import { hasRestParameter, needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import {
   defaultValueInstrs,

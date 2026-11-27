@@ -15,7 +15,14 @@ function build(source: string, target: IrModuleInitTarget = "standalone", deferT
   const ast = analyzeSource(source, "startup-contract.ts");
   const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
   const identityContext = buildIrPlanningIdentityContext(inventory);
-  const input = { sourceFile: ast.sourceFile, checker: ast.checker, identityContext, target, deferTopLevelInit };
+  const input = {
+    sourceFile: ast.sourceFile,
+    checker: ast.checker,
+    identityContext,
+    target,
+    deferTopLevelInit,
+    scriptVarModel: "statement-and-for-heads" as const,
+  };
   return { ast, inventory, identityContext, input, plan: buildIrModuleInitPlan(input) };
 }
 
@@ -108,6 +115,7 @@ describe("startup data contract separation", () => {
         identityContext,
         target: "standalone",
         deferTopLevelInit: false,
+        scriptVarModel: "statement-and-for-heads",
       }),
     );
     expect(ast.sourceFiles).toHaveLength(3);

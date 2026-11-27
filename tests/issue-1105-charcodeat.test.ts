@@ -9,18 +9,14 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
-const ENV_STUB = {
-  console_log_number: () => {},
-  console_log_string: () => {},
-  console_log_bool: () => {},
-};
-
+// JS strings reach the native-string parameter through the compiled JS value
+// adapter (#6708 native-first), which replaced the test-only
+// `__test_str_from_externref` bridge (#1187).
 async function compileNative(source: string): Promise<Record<string, unknown>> {
   const r = await compile(source, {
     nativeStrings: true,
-    testRuntime: true,
     fileName: "issue-1105-charcodeat.ts",
   });
   if (!r.success) {
@@ -28,11 +24,8 @@ async function compileNative(source: string): Promise<Record<string, unknown>> {
     throw new Error(`compile failed: ${errors}`);
   }
   expect(r.imports.some((imp) => imp.module === "env" && imp.name === "string_charCodeAt")).toBe(false);
-  const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-  const exports = instance.exports as Record<string, unknown>;
-  built.setExports?.(exports as Record<string, Function>);
-  return exports;
+  const instance = await instantiateWithRuntime(r);
+  return instance.exports as Record<string, unknown>;
 }
 
 describe("#1105 nativeStrings charCodeAt", () => {
@@ -42,11 +35,10 @@ describe("#1105 nativeStrings charCodeAt", () => {
         return s.charCodeAt(i);
       }
     `);
-    const toNative = exports.__test_str_from_externref as (s: string) => unknown;
-    const codeAt = exports.codeAt as (s: unknown, i: number) => number;
+    const codeAt = exports.codeAt as (s: string, i: number) => number;
 
-    expect(codeAt(toNative("AZ"), 0)).toBe(65);
-    expect(codeAt(toNative("AZ"), 1)).toBe(90);
+    expect(codeAt("AZ", 0)).toBe(65);
+    expect(codeAt("AZ", 1)).toBe(90);
   });
 
   it("returns NaN for positions outside the native string code-unit range", async () => {

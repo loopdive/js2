@@ -17,6 +17,7 @@ import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slo
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { proxyArgDefeatsRefNarrowing } from "../proxy-value-provenance.js"; // (#7161)
 import { getVecInfo } from "../type-coercion.js";
+import { calleeNameIndex, siteOmitsArgument, type CalleeSite } from "../../shared/callee-name-index.js";
 import { paramReceivesOnlyProvenanceClosedArrayLiterals } from "./provenance-closed-arrays.js";
 import { functionNameIsStringReplacement } from "./string-replacement-callbacks.js"; // (#6988)
 import type { ValType } from "../../ir/types.js";
@@ -204,60 +205,6 @@ export interface CallSiteParamInference {
    * `return <param>` to f64. See {@link parameterMayBeUndefined}.
    */
   sawUnderApplied: boolean;
-}
-
-/**
- * Infer a concrete type for an untyped function parameter by scanning call sites.
- * When a parameter has no type annotation (TS gives it `any`), we look at every
- * call to that function and collect the argument types at the given index.
- * If all call sites agree on a single concrete wasm type, we return it as `type`.
- * `type` is null if no call site found or types disagree; `sawCallSite` reports
- * whether the function is called internally at all (see #3471 and
- * {@link inferParamTypeFromBody}).
- */
-/**
- * (#4416) Call sites bucketed by callee name, built ONCE per source file.
- *
- * `inferParamTypeFromCallSites` used to walk the entire source file looking for
- * calls to one function, and it is invoked once per (function, parameter). That
- * is O(functions x params x programSize) — measured quadratic:
- *
- *     units   calls   AST nodes visited
- *        32     128             184,448
- *       128     512           2,949,632
- *       512    2048          47,187,968     <- 4x input, 16x work
- *
- * 47 million node visits for a 61 KB input, and a CPU profile put this one
- * `visit` at **25.2% of a large compile** (with TypeScript's `forEachChild`
- * underneath it accounting for most of the rest). One walk per source file
- * turns it into O(programSize + functions x params).
- *
- * Keyed on the `SourceFile` object, so a new program (or a rewritten file, e.g.
- * cjs-rewrite) gets a fresh index automatically and nothing needs invalidating.
- * The index holds only nodes reachable from `forEachChild(sourceFile, ...)` —
- * exactly what the old walk saw — so coverage is unchanged, and buckets keep
- * document order so an order-dependent `agreed`/`conflict` accumulation
- * resolves identically.
- */
-type CalleeSite = ts.CallExpression | ts.NewExpression;
-const callSiteIndexBySourceFile = new WeakMap<ts.SourceFile, Map<string, CalleeSite[]>>();
-
-function calleeNameIndex(sourceFile: ts.SourceFile): Map<string, CalleeSite[]> {
-  const cached = callSiteIndexBySourceFile.get(sourceFile);
-  if (cached) return cached;
-  const index = new Map<string, CalleeSite[]>();
-  const visit = (node: ts.Node): void => {
-    if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && ts.isIdentifier(node.expression)) {
-      const name = node.expression.text;
-      const bucket = index.get(name);
-      if (bucket) bucket.push(node as CalleeSite);
-      else index.set(name, [node as CalleeSite]);
-    }
-    forEachChild(node, visit);
-  };
-  forEachChild(sourceFile, visit);
-  callSiteIndexBySourceFile.set(sourceFile, index);
-  return index;
 }
 
 /**
@@ -478,6 +425,15 @@ function isStandaloneCollectionNativeProtoArgument(ctx: CodegenContext, expressi
   );
 }
 
+/**
+ * Infer a concrete type for an untyped function parameter by scanning call sites.
+ * When a parameter has no type annotation (TS gives it `any`), we look at every
+ * call to that function and collect the argument types at the given index.
+ * If all call sites agree on a single concrete wasm type, we return it as `type`.
+ * `type` is null if no call site found or types disagree; `sawCallSite` reports
+ * whether the function is called internally at all (see #3471 and
+ * {@link inferParamTypeFromBody}).
+ */
 export function inferParamTypeFromCallSites(
   ctx: CodegenContext,
   funcName: string,
@@ -551,11 +507,8 @@ export function inferParamTypeFromCallSites(
       // zero-arg call site's pad could only satisfy with `ref.null` +
       // `ref.as_non_null` — an unconditional runtime trap on the (usually
       // passing) zero-arg path.
-      // `new F` with no parens has NO argument list at all (`arguments` is
-      // undefined, not empty) — that is an under-applied site for every
-      // parameter, so treat a missing list as length 0 rather than skipping it.
       const callArgs = node.arguments;
-      if ((callArgs?.length ?? 0) <= paramIndex) sawUnderApplied = true;
+      if (siteOmitsArgument(node, paramIndex)) sawUnderApplied = true;
       if (!conflict) {
         const arg = callArgs?.[paramIndex];
         if (arg) {
