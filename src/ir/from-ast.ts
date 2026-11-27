@@ -450,6 +450,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
+import type { GlobalBindingResolver } from "./builtin-global-binding.js";
 import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
@@ -590,7 +591,7 @@ export type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) 
   readonly ambientThisStrict?: boolean;
 };
 
-export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+export interface IrFromAstResolver extends PreparedAsyncFromAstResolver, GlobalBindingResolver {
   /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
   moduleInitChunkName?(preferred: string): string;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
@@ -976,8 +977,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** (#7118) Every declaration of the identifier's symbol is a lib one. */
   isLibOnlyBinding?(node: ts.Identifier): boolean;
-  /** (#7354 Ty) Closed world: a name the program does not declare is absent from its global environment. */
-  unresolvedNameIsAbsent?(node: ts.Identifier): boolean;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
   /** (#7106 lever O) The program has a runtime-eval site that may run. */
@@ -1021,7 +1020,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
-  isPristineBuiltinGlobal?(identifier: ts.Identifier): boolean; // (#7354 O1) `builtin-global-binding.ts`
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */

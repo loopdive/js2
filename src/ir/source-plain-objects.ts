@@ -30,6 +30,7 @@ export function programObjects(
   sourceFiles: readonly ts.SourceFile[],
   readsDeclarationValue: boolean,
   isPristineGlobal: (identifier: ts.Identifier) => boolean,
+  inheritedGlobalIntrinsic?: (node: ts.Identifier) => string | undefined,
 ): ProgramObjects {
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
@@ -52,7 +53,11 @@ export function programObjects(
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
-    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
+    functions ||=
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isAccessor(node) ||
+      (ts.isIdentifier(node) && inheritedGlobalIntrinsic?.(node) !== undefined);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };

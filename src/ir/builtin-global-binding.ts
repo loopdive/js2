@@ -11,7 +11,25 @@
 import { ts } from "../ts-api.js";
 import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
-import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
+import {
+  nativeObjectPrototypeMethod,
+  REALM_GLOBAL_NAMES,
+  objectPrototypeMethodId,
+} from "./program/builtin-prototype-keys.js";
+import {
+  isValueReference,
+  sourceMayPatchPrototype,
+  sourceMayWriteBindingUnseen,
+  sourceMayWriteGlobalObject,
+  sourceMayWriteUnspelledMember,
+} from "../shared/intrinsic-prototype-writes.js";
+import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
+
+export interface GlobalBindingResolver {
+  readonly isPristineBuiltinGlobal?: (node: ts.Identifier) => boolean;
+  readonly inheritedGlobalIntrinsic?: (node: ts.Identifier) => string | undefined;
+  readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
+}
 
 /** The names a global-object alias reaches the global bindings through. */
 const GLOBAL_ALIASES = new Set(["globalThis", "global", "window", "self"]);
@@ -113,4 +131,27 @@ export function scriptVarOfRealmGlobal(sourceFiles: readonly ts.SourceFile[]): t
   };
   sourceFiles.forEach(visit);
   return found;
+}
+
+/** The checker may report only lib declarations for a script function, so also check the source binding. */
+export function undeclaredGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
+  return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
+}
+
+/** Read the held Object.prototype function only when no source can replace or shadow the global property. */
+export function inheritedMethodRead(
+  node: ts.Identifier,
+  checker: ts.TypeChecker,
+  files: readonly ts.SourceFile[],
+): string | undefined {
+  const method = nativeObjectPrototypeMethod(node.text);
+  if (!method || !isValueReference(node) || !undeclaredGlobal(checker, node)) return undefined;
+  const mayChange = files.some(
+    (file) =>
+      sourceMayPatchPrototype(file, "Object") ||
+      sourceMayWriteGlobalObject(file) ||
+      sourceMayWriteBindingUnseen(file, method) ||
+      sourceMayWriteUnspelledMember(file),
+  );
+  return mayChange ? undefined : objectPrototypeMethodId(method);
 }
