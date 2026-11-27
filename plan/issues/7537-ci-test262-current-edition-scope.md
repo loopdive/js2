@@ -524,7 +524,7 @@ Where the code differs from the plan text above, and why:
     passes except the ratchet's reviewed exceptions, the earlier
     measurement's own verdicts win where it has them, and a row it lacks
     counts as passing. So a first run, an expired artifact or an eval-engine
-    switch still compares, re-checks and alarms.
+    switch still compares, re-checks and fails the run.
   - **Daily repeats are alarmed** (`--repeats-only` on the schedule run).
     The artifact's `timeout-watch.json` now carries `alarmed` (the confirmed
     repeats) beside `watch`.
@@ -545,6 +545,31 @@ Where the code differs from the plan text above, and why:
     URL with `location.replace`, so a failing `replaceState` cannot loop.
   - **Nit 10:** the alarm's repo default matches auto-park's (`GH_REPO`, set
     in the job).
+- **Second review (RV-PR7551 on `dd677924`: approve on condition of D1).**
+  - **D1: the alarm trusts nothing the report supplies.** On a merge group
+    the group's own scripts write `edition-report.json`, so a queued PR could
+    have the alarm label arbitrary numbers. `sanitizeReport` keeps only test
+    paths matching `^test/[\w./+-]+\.js$`, known statuses and 40-hex shas.
+    It keeps only PR numbers found by `prNumbersFromCommitSubjects` in
+    `git log --first-parent -n 200` of the checked-out main (the checkout is
+    now `fetch-depth: 200`), plus, on a merge group, the group's own first-parent
+    history. That history is checked out read-only (`group-history`) so the
+    group's PRs can still be named as second suspects. A repeat's origin is
+    re-read from the baseline run's own `timeout-watch.json`. The run must be
+    `test262-sharded.yml` and must have measured a commit of main. The rest
+    is dropped with a `::warning::`.
+  - **D2: no earlier measurement labels no PR.** When the baseline is the
+    completed rule alone, the verdict and the red ratchet stay, but the alarm
+    posts one #7526 notice ("no earlier measurement: N completed-edition rows
+    fail; not attributed") instead of labelling. Otherwise a first push, an
+    expired artifact or an engine switch would charge failures that predate
+    the push to innocent PRs, and the week's false-positive count would be
+    wrong.
+  - **D4:** the alarm job pins Node with `actions/setup-node@v6`
+    (`node-version: "25"`, as `setup-node-pnpm` gives the test262 jobs).
+- **Follow-up (review D3, not in this PR):** a failed alarm step is silent
+  behind `continue-on-error`. Add a `::warning::` and a job-summary line on
+  failure, and a red signal that does not park on push and schedule.
 - **Follow-up (review finding 9, not in this PR):** `test262-native-first`,
   `test262-honest-audit` and `test262-standalone-linked` still write out the
   install + bundle steps (`test262-sharded.yml`, three copies) instead of

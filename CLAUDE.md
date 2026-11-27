@@ -409,7 +409,10 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
       it runs no measured code).
     - A later push that only finds the same rows labels nothing.
     - With no earlier measurement, the completed rule (every row passes but
-      the ratchet's exceptions) is the baseline, so a failure is still alarmed.
+      the ratchet's exceptions) is the baseline: a failure still fails the
+      run, but no PR is labelled; one "not attributed" notice goes to #7526.
+    - The alarm trusts no number in the report: PR numbers must be merges on
+      main's history, and a repeat's origin is re-read from the baseline run.
   - **The lead reverts by hand, after 24 h:** the author has 24 h from the
     label for a fix-forward PR. After that, if the latest push run on main
     still fails the rows, the lead opens a plain revert PR through the queue.

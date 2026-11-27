@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { readWatch } from "../scripts/lib/test262-timeout-watch.mjs";
+import { COMPLETED_RULE_SHA, readWatch } from "../scripts/lib/test262-timeout-watch.mjs";
 import {
   LABEL,
   UNATTRIBUTED_LABEL,
@@ -15,9 +15,9 @@ import {
   labelFor,
   markerFor,
   renderIncident,
+  sanitizeReport,
 } from "../scripts/test262-post-merge-alarm.mjs";
 import {
-  COMPLETED_RULE_SHA,
   type ScopeMeta,
   buildReport,
   completedRuleStatuses,
@@ -150,7 +150,7 @@ describe("#7537 idempotent alarm", () => {
 });
 
 describe("#7537 no earlier measurement: the completed rule is the baseline", () => {
-  it("a first run still finds, re-checks and alarms a completed-edition failure", () => {
+  it("a first run still finds and re-checks a completed-edition failure, but charges no PR", () => {
     const paths = new Set([A, B]);
     const report = buildReport({
       run: statuses({ [A]: "fail", [B]: "pass" }),
@@ -162,7 +162,19 @@ describe("#7537 no earlier measurement: the completed rule is the baseline", () 
       },
     });
     expect(report.diff?.regressions).toEqual([{ file: A, now: "fail" }]);
-    expect(incidents(report, "legacy", [7600])[0].prs).toEqual([7600]);
+    // The failure may predate every PR of the push: one notice, no label.
+    const [incident] = incidents(report, "legacy", [7600]);
+    expect(incident).toMatchObject({ kind: "noBaseline", prs: [] });
+    const body = renderIncident({
+      incident,
+      lane: "legacy",
+      sha: "c1",
+      runUrl: "https://run",
+      now: new Date(),
+      measuredOn: "main",
+    });
+    expect(body).toContain("no earlier measurement: 1 completed-edition rows fail; not attributed");
+    expect(body).not.toContain("Revert window");
   });
 
   it("a row the earlier measurement lacks counts as passing, but a reviewed exception never does", () => {
@@ -172,6 +184,46 @@ describe("#7537 no earlier measurement: the completed rule is the baseline", () 
     expect(rule.has(B)).toBe(false);
     // The earlier measurement's own verdict wins where it has one.
     expect(completedRuleStatuses(paths, new Set(), statuses({ [A]: "fail" })).get(A)).toBe("fail");
+  });
+});
+
+describe("#7537 the alarm trusts no number the report supplies", () => {
+  const sha = "a".repeat(40);
+  const allowed = new Set([7590, 7600]);
+  const repeat = (file: string, prs: number[]) => ({
+    file,
+    now: "compile_timeout",
+    origin: { file, firstSeenSha: sha, prs },
+  });
+
+  it("drops PR numbers that are not merges on trusted history, and malformed rows", () => {
+    const report = {
+      sourceSha: sha,
+      diff: {
+        regressions: [
+          { file: A, now: "fail" },
+          { file: "../../etc/passwd", now: "fail" },
+          { file: B, now: "<b>forged</b>" },
+        ],
+        confirmedRepeats: [],
+      },
+    };
+    const clean = sanitizeReport(report, [7600, 1, "7601"], allowed, new Map());
+    expect(clean.currentPrs).toEqual([7600]);
+    expect(clean.report.diff.regressions).toEqual([{ file: A, now: "fail" }]);
+    expect(clean.dropped).toHaveLength(4);
+  });
+
+  it("a repeat's origin comes from the baseline run's own watch list, never from the report", () => {
+    const report = {
+      sourceSha: "not-a-sha",
+      diff: { regressions: [], confirmedRepeats: [repeat(A, [1]), repeat(B, [7590])] },
+    };
+    const watch = readWatch({ watch: [{ file: A, firstSeenSha: sha, prs: [7590] }] });
+    const clean = sanitizeReport(report, [], allowed, watch);
+    expect(clean.report.diff.confirmedRepeats).toEqual([repeat(A, [7590])]);
+    expect(clean.report.sourceSha).toBe("(unrecognised sha)");
+    expect(clean.dropped.join("\n")).toContain(B);
   });
 });
 
@@ -233,6 +285,9 @@ describe("#7537 workflow wiring of the completed-edition push lane", () => {
     expect(steps.length).toBeGreaterThan(0);
     for (const step of steps) expect(step).toContain("continue-on-error: true");
     expect(alarm).toContain("--repeats-only");
+    // PR numbers are checked against main's history, so the checkout carries it.
+    expect(alarm).toContain("fetch-depth: 200");
+    expect(alarm).toMatch(/uses: actions\/setup-node@v6\n\s+continue-on-error: true\n\s+with:\n\s+node-version: "25"/);
   });
 
   it("the whole-corpus gates run only under the full scope", () => {

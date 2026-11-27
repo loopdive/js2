@@ -534,7 +534,17 @@ Owner decision, 2026-11-26.
 - With no earlier measurement (the first run, an expired artifact, an
   eval-engine switch), and for any row the earlier one lacks, the completed
   rule is the baseline: every row passes but the ratchet's reviewed
-  exceptions. A failure is still compared, re-checked and alarmed.
+  exceptions. A failure is still compared, re-checked and fails the run,
+  but it may predate every PR in range, so no PR is labelled: one "no
+  earlier measurement: N completed-edition rows fail; not attributed" notice
+  goes to #7526 instead.
+- The alarm job treats the report as untrusted (on a merge group, the group's
+  own scripts wrote it). It acts only on test paths and statuses of the known
+  shape, on PR numbers that appear in a first-parent merge subject of main
+  (the last 200 commits) or of the merge group's own history, and on a
+  repeat's origin as the baseline run's own `timeout-watch.json` records it,
+  after checking that run is this workflow's and measured a commit of main.
+  Anything else is dropped with a warning.
 - The predecessor is the nearest first-parent ancestor with one. While a
   nearer push run is still in flight the check waits, at most 45 min,
   holding its runner. After that it uses the nearest measured commit, which

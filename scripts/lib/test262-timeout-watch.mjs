@@ -19,6 +19,13 @@ export const RECHECK_COMPILE_TIMEOUT_MS = 60_000;
  */
 export const RECHECK_MAX_ROWS = 50;
 
+/**
+ * The `sourceSha` of a baseline built from the completed rule alone: there was
+ * no earlier measurement, so every row of a completed edition counts as passing
+ * but its exceptions.
+ */
+export const COMPLETED_RULE_SHA = "completed-rule";
+
 /** A passing row that now stops at compile_timeout: listed, never gated on first sight. */
 export function isListedTimeout(was, now) {
   return was === "pass" && now === "compile_timeout";

@@ -49,6 +49,7 @@ import { REGRESSION_ANNOTATION_TITLE } from "./lib/regression-annotation.mjs";
 import {
   type Outcome,
   type WatchEntry,
+  COMPLETED_RULE_SHA,
   RECHECK_COMPILE_TIMEOUT_MS,
   RECHECK_MAX_ROWS,
   classifyRow,
@@ -149,9 +150,6 @@ export function completedRuleStatuses(
   for (const [file, status] of measured) out.set(file, status);
   return out;
 }
-
-/** The `sourceSha` a baseline built from the completed rule alone carries. */
-export const COMPLETED_RULE_SHA = "completed-rule";
 
 /** The scope a command measures: the IR's current edition, or the legacy lane's completed ones. */
 export interface Scope {

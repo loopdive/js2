@@ -3782,11 +3782,32 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      # Main's history is the trusted list of merged PRs: the alarm labels only
+      # PR numbers found in its first-parent merge subjects (the report it reads
+      # was written by the group's own scripts on merge_group).
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.sha }}
+          fetch-depth: 200
           persist-credentials: false
           sparse-checkout: scripts
+      # The group's own commits, read with `git log` only (never run), so the
+      # group's PRs can be named as second suspects of a repeated timeout.
+      - name: Merge group history (read only)
+        if: github.event_name == 'merge_group'
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.merge_group.head_sha }}
+          path: group-history
+          fetch-depth: 30
+          persist-credentials: false
+          sparse-checkout: package.json
+      # The node version the test262 jobs use (setup-node-pnpm's default).
+      - uses: actions/setup-node@v6
+        continue-on-error: true
+        with:
+          node-version: "25"
       # A confirmed repeated IR timeout: charged to the PRs where it first
       # appeared, never to the group being measured (which is not parked for it).
       - name: Download the IR current-edition measurement
@@ -3805,9 +3826,14 @@ jobs:
         continue-on-error: true
         env:
           MEASURED_ON: ${{ github.event_name == 'merge_group' && 'merge-group' || 'main' }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
+          group=()
+          if [ -n "$GROUP_BASE" ] && [ -d group-history/.git ]; then
+            group=(--group-history group-history --group-base "$GROUP_BASE")
+          fi
           node scripts/test262-post-merge-alarm.mjs alarm --report ir-measurement/edition-report.json --lane ir \
-            --prs ir-measurement/prs.json --run-url "$RUN_URL" --measured-on "$MEASURED_ON"
+            --prs ir-measurement/prs.json --run-url "$RUN_URL" --measured-on "$MEASURED_ON" "${group[@]}"
       # A completed-edition failure on push is charged to the push's PRs; the
       # daily run raises only confirmed repeats (its new failures span a day of
       # merges, and its summary names that commit range).
