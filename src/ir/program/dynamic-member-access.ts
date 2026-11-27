@@ -22,7 +22,7 @@ import {
 import { WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, objectFamilies, type CarrierKind, type ProgramFamilies } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
-import type { ValueConversion } from "./dynamic-value-chains.js";
+import type { KnownKinds, ValueConversion } from "./dynamic-value-chains.js";
 import { carried } from "./dynamic-value-types.js";
 import { gap } from "./dynamic-value-gap.js";
 
@@ -47,6 +47,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly staticKeys: ReadonlySet<string>;
   /** (#7354 A1) The program's ToString: ToPropertyKey of a computed primitive key. */
   readonly stringOf: ValueConversion;
+  /** (#7354 A1) The kinds the legalization proved, which a computed key's arm narrows. */
+  readonly kinds: Pick<KnownKinds, "learn">;
   readonly toNumber: ValueConversion;
   readonly branch: (
     cond: IrValueId,
@@ -381,21 +383,26 @@ function computedAccess(b: MemberAccessBuilders, instr: MemberGet | MemberSet): 
       instr.kind === "dyn.member_set"
         ? putValue(b, instr, key, `Cannot assign to read only property of ${receiver}`, s, throwTypeError)
         : [realmCall("js.object.get", [instr.recv, key, instr.recv], s)];
+    // Each arm reads the key as the one kind it holds there, so a conversion of it is that kind's alone.
     const byKind = (kind: CarrierKind, s: IrValueId): IrInstr[] => {
+      if (MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function") return b.abort(instr, s);
+      const key = b.fresh();
+      b.kinds.learn(key, [kind]);
+      const narrowed = carried(instr.key, key);
       if (kind === "string" && write && receiver === "object")
-        return unlessProto(b, instr, (t) => access(instr.key, t), s);
+        return [narrowed, ...unlessProto(b, instr, key, (t) => access(key, t), s)];
       if (kind === "string") {
         const found = b.fresh();
         const absent = (t: IrValueId) =>
-          canonicalNumeric(b, instr, (u) => (write ? access(instr.key, u) : [unread(u)]), t);
+          canonicalNumeric(b, instr, key, (u) => (write ? access(key, u) : [unread(u)]), t);
         return [
-          realmCall("js.object.has", [instr.recv, instr.key], found),
-          b.branch(found, (t) => access(instr.key, t), absent, s, b.carrier),
+          narrowed,
+          realmCall("js.object.has", [instr.recv, key], found),
+          b.branch(found, (t) => access(key, t), absent, s, b.carrier),
         ];
       }
-      if (MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function") return b.abort(instr, s);
-      const [text, key] = [b.fresh(), b.fresh()];
-      return [...b.stringOf(instr, instr.key, text), carried(text, key), ...access(key, s)];
+      const [text, converted] = [b.fresh(), b.fresh()];
+      return [narrowed, ...b.stringOf(instr, key, text), carried(text, converted), ...access(converted, s)];
     };
     return b.kindChain(instr, instr.key, r, byKind, b.kindsOf(instr.key), b.carrier);
   };
@@ -415,6 +422,7 @@ function computedAccess(b: MemberAccessBuilders, instr: MemberGet | MemberSet): 
 function unlessProto(
   b: MemberAccessBuilders,
   instr: MemberGet | MemberSet,
+  key: IrValueId,
   then: (result: IrValueId) => IrInstr[],
   result: IrValueId,
 ): IrInstr[] {
@@ -425,7 +433,7 @@ function unlessProto(
         return [
           b.text(name, text),
           carried(text, accessor),
-          b.intrinsic(instr, "js.value.strict_eq", [accessor, instr.key], same),
+          b.intrinsic(instr, "js.value.strict_eq", [accessor, key], same),
           b.branch(same, (s) => b.abort(instr, s), otherwise, r, b.carrier),
         ];
       },
@@ -438,16 +446,18 @@ function unlessProto(
 function canonicalNumeric(
   b: MemberAccessBuilders,
   instr: MemberGet | MemberSet,
+  key: IrValueId,
   then: (result: IrValueId) => IrInstr[],
   result: IrValueId,
 ): IrInstr[] {
   const [number, boxed, text, round, same] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+  b.kinds.learn(boxed, ["number"]);
   return [
-    ...b.toNumber(instr, instr.key, number),
+    ...b.toNumber(instr, key, number),
     b.intrinsic(instr, "js.number.box", [number], boxed),
     ...b.stringOf(instr, boxed, text),
     carried(text, round),
-    b.intrinsic(instr, "js.value.strict_eq", [round, instr.key], same),
+    b.intrinsic(instr, "js.value.strict_eq", [round, key], same),
     b.branch(same, then, (s) => b.abort(instr, s), result, b.carrier),
   ];
 }
