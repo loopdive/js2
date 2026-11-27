@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { REALM_ARRAY_LITERALS } from "../../../runtime/wasmgc/values/realm-array-bodies.js";
 import {
   assertNativeRealmRequirementsIssued,
   heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { IrStringEncoding } from "../../../ir/core/string-types.js";
+import type { NativeRealmProperty } from "../../../runtime/contracts/native-realm-catalog.js";
 import { NATIVE_BUILTIN_FUNCTION_LITERALS } from "../resources/native-builtin-function-requests.js";
 import { NATIVE_OBJECT_DESCRIPTOR_LITERALS } from "../resources/native-object-descriptors.js";
 import { nativeSourceObjectLiterals } from "../resources/native-source-objects.js";
@@ -31,6 +33,10 @@ export function planNativeRealmLiterals(
   if (typeof utf8Storage !== "boolean") fail("invalid encoding selection");
   const prior = cache.get(requirements)?.get(utf8Storage);
   if (prior) return prior;
+  const heldRows = heldCatalogRows(requirements.description);
+  const heldIds = new Set(heldRows.map((row) => row.id));
+  const unheldMember = (property: NativeRealmProperty): boolean =>
+    property.kind === "data" && property.value.kind === "intrinsic" && !heldIds.has(property.value.id);
   const texts = [
     ...new Set([
       "TypeError",
@@ -38,13 +44,18 @@ export function planNativeRealmLiterals(
       ...NATIVE_BUILTIN_FUNCTION_LITERALS,
       ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
       ...nativeSourceObjectLiterals(requirements.description.objectUses.map((use) => use.feature)),
+      // (#7354 A1) The array define's messages, where the realm holds arrays.
+      ...(heldRows.some((row) => row.array) ? REALM_ARRAY_LITERALS : []),
       // (#7354 G1) Only the rows the realm holds: a family the program never reaches adds no string to it.
-      ...heldCatalogRows(requirements.description).flatMap((row) => [
+      ...heldRows.flatMap((row) => [
         ...(row.callable ? [row.callable.initialName] : []),
-        ...row.properties.flatMap((property) => [
-          ...(property.key.kind === "string" ? [property.key.value] : []),
-          ...(property.kind === "data" && property.value.kind === "string" ? [property.value.value] : []),
-        ]),
+        // (#7354 A1) A key whose value the realm does not hold is no property it seeds (`Array.prototype.map`).
+        ...row.properties
+          .filter((property) => !unheldMember(property))
+          .flatMap((property) => [
+            ...(property.key.kind === "string" ? [property.key.value] : []),
+            ...(property.kind === "data" && property.value.kind === "string" ? [property.value.value] : []),
+          ]),
       ]),
     ]),
   ];

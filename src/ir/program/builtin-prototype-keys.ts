@@ -6,15 +6,16 @@
  * change, answers the object's own property or `undefined`. The realm's prototypes do not hold these properties yet,
  * so a read of one of them refuses by name; (#7354 P1) but for the Object.prototype methods the catalog marks native.
  *
- * (#7354 M1, C3) Object.prototype's keys are the realm catalog's (`OBJECT_PROTOTYPE_KEYS`, read here for every IR
- * reader, `src/ir/realm-keys.ts` re-exports them); the wrapper prototypes are not in the catalog yet, so their keys
- * are listed here from the specification.
+ * (#7354 M1, C3) Object.prototype's keys, and (#7561) the wrapper prototypes', are the realm catalog's
+ * (`OBJECT_PROTOTYPE_KEYS`, read here for every IR reader, `src/ir/realm-keys.ts` re-exports them).
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  REALM_BRAND,
+  WRAPPER_DATA,
   modelledRow,
   realmMethodId,
   type NativeErrorConstructor,
@@ -69,6 +70,7 @@ export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 interface RealmFamilyNames {
   readonly error: NativeErrorConstructor;
   readonly wrapper: NativeWrapperConstructor;
+  readonly array: "Array";
 }
 export type RealmFamily = keyof RealmFamilyNames;
 /**
@@ -90,7 +92,17 @@ const constructors = <F extends RealmFamily>(family: F, names: readonly RealmFam
 const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map<string, RealmConstructor>([
   ...constructors("error", NATIVE_ERROR_CONSTRUCTORS),
   ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
+  ...constructors("array", ["Array"]),
 ]);
+
+/** (#7352) The catalog id of `Array.isArray`, a static the realm holds as a function value. */
+export const IS_ARRAY_ID = realmMethodId("Array", "isArray");
+
+/**
+ * (#7352) Whether a realm that holds the family of `path`'s constructor holds the static `path` (`"Array.isArray"`) as
+ * a function value, so its call is the realm's method call (`dynamic-builtin-methods.ts`) and no static fold.
+ */
+export const realmHoldsStatic = (path: string): boolean => NATIVE_VALUE_INTRINSICS.includes(`%${path}%`);
 
 /**
  * (#7350 B3a) `X(v)` of a wrapper constructor with NewTarget undefined (§22.1.1.1, §21.1.1.1, §20.3.1.1): ToString,
@@ -166,6 +178,16 @@ export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
   NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),
 );
 
+/** (#7561) The selectors of `js.object.wrapper-data` and (#7352) `js.object.has-brand`, for every IR reader. */
+export { REALM_BRAND, WRAPPER_DATA };
+
+/** (#7561) The wrapper constructor of each primitive kind: the prototype its member access reads through. */
+export const WRAPPER_OF_PRIMITIVE = {
+  string: "String",
+  number: "Number",
+  boolean: "Boolean",
+} as const satisfies Readonly<Record<string, NativeWrapperConstructor>>;
+
 /** (#7354 P1, G1) The realm's selector of the built-in function object `id` (`js.object.intrinsic`). */
 export const realmIntrinsicSelector = (id: string): number => NATIVE_VALUE_INTRINSICS.indexOf(id);
 
@@ -188,58 +210,6 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  * setter is %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties).
  */
 export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
-
-const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
-const STRING_PROTOTYPE = [
-  "at",
-  "charAt",
-  "charCodeAt",
-  "codePointAt",
-  "concat",
-  "endsWith",
-  "includes",
-  "indexOf",
-  "isWellFormed",
-  "lastIndexOf",
-  "localeCompare",
-  "match",
-  "matchAll",
-  "normalize",
-  "padEnd",
-  "padStart",
-  "repeat",
-  "replace",
-  "replaceAll",
-  "search",
-  "slice",
-  "split",
-  "startsWith",
-  "substring",
-  "toLocaleLowerCase",
-  "toLocaleUpperCase",
-  "toLowerCase",
-  "toUpperCase",
-  "toWellFormed",
-  "trim",
-  "trimEnd",
-  "trimStart",
-  "substr",
-  "anchor",
-  "big",
-  "blink",
-  "bold",
-  "fixed",
-  "fontcolor",
-  "fontsize",
-  "italics",
-  "link",
-  "small",
-  "strike",
-  "sub",
-  "sup",
-  "trimLeft",
-  "trimRight",
-];
 
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */
 const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
@@ -264,9 +234,9 @@ const FUNCTION_REACHABLE_KEYS = new Set(
 export const BUILTIN_REACHABLE_KEYS = {
   object: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
   function: FUNCTION_REACHABLE_KEYS,
-  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...NUMBER_PROTOTYPE]),
-  boolean: UNPOPULATED_OBJECT_PROTOTYPE_KEYS,
-  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...STRING_PROTOTYPE, "length"]),
+  number: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...realmStringKeys("%Number.prototype%")]),
+  boolean: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...realmStringKeys("%Boolean.prototype%")]),
+  string: new Set([...UNPOPULATED_OBJECT_PROTOTYPE_KEYS, ...realmStringKeys("%String.prototype%")]),
 } as const satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
 /** A canonical array index (§6.1.7): a string's own indexed character. */

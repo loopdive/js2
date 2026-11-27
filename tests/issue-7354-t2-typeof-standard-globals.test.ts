@@ -14,7 +14,6 @@ const UNPROVIDED = [
   "isNaN",
   "Math",
   "Object",
-  "Array",
   "RegExp",
   "Date",
   "JSON",
@@ -44,9 +43,10 @@ describe("#7354 T — typeof of a standard global", () => {
     );
   });
 
-  it("answers typeof of a wrapper constructor as node does", async () => {
+  // (#7352) and Array.
+  it("answers typeof of a wrapper constructor and of Array as node does", async () => {
     await agreesWithNode(
-      'var out = typeof String + typeof Number + typeof Boolean + (typeof Number === "function");\n' +
+      'var out = typeof String + typeof Number + typeof Boolean + typeof Array + (typeof Number === "function");\n' +
         "function f() { return typeof Boolean; }\nout = out + f();",
     );
   });

@@ -62,8 +62,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
   // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
   "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
-  // (#7354 G1) Whether an object has [[ErrorData]] (`Object.prototype.toString`'s "Error" tag).
-  "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
+  // (#7354 G1, #7352) Whether an object carries the realm brand `selector` (`REALM_BRAND`): [[ErrorData]]
+  // (`Object.prototype.toString`'s "Error" tag) or an Array exotic object (IsArray, the "Array" tag).
+  "js.object.has-brand": declaration("js.object.has-brand", [EXTERNAL, SELECTOR], [BOOLEAN]),
   // (#7354 G1) A new error of the Error constructor `selector` (its index in `NATIVE_ERROR_CONSTRUCTORS`), with the
   // already converted `message`, or none for null; and Error.prototype.toString of an object (§20.5.3.4).
   "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, SELECTOR], [EXTERNAL]),
@@ -86,9 +87,16 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // requiring the enumerable attribute when `selector` is 1.
   "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
+  // (#7561) A new wrapper of the already converted primitive, for the wrapper constructor `selector` (its index in
+  // `NATIVE_WRAPPER_CONSTRUCTORS`); and what the realm answers of a wrapper (`WRAPPER_DATA`): an object's primitive
+  // data, or thisXValue where the method is a held wrapper prototype's `valueOf` / `toString`.
+  "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, SELECTOR], [EXTERNAL]),
   // (#7354 O2) IsConstructor (§7.2.4) of a function object: false for one `init-function` made without [[Construct]]
   // (an accessor).
   "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
+  // (#7352) ArrayCreate(length) (§10.4.2.2) on %Array.prototype%; a `length` that is no array length is a RangeError.
+  "js.object.create-array": declaration("js.object.create-array", [FLAGS], [EXTERNAL]),
 });
 
 /**

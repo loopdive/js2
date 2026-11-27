@@ -4,7 +4,7 @@
  * of the realm kernel's own algorithm, so no object algorithm is written twice.
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags, ifArrayBrand } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
 import { buildAccessorCall, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
@@ -140,7 +140,11 @@ type SourceObjectSetOperands = Pick<
  * value (`buildAccessorCall`, the getter's call too), answering `true`. A non-extensible receiver is unreachable: no
  * Prepared program can make one yet (`Object.preventExtensions`, slice O3).
  */
-export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): SourceObjectDefinition {
+export function buildSourceObjectSetDefinition(
+  d: SourceObjectSetOperands,
+  /** (#7352) Where the realm holds arrays: its array define, which answers the define on an array receiver. */
+  arrayDefine?: FuncHandle,
+): SourceObjectDefinition {
   const [status, entry, storage, setter, vector] = [4, 5, 6, 7, 8];
   const entryFlag = (flag: number): Instr[] => [
     { op: "local.get", index: entry },
@@ -174,8 +178,9 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
   ];
-  // The define on the receiver's storage with descriptor word `word`, answering true.
-  const define = (word: number): Instr[] => [
+  // The define on the receiver's storage with descriptor word `word`, answering true; (#7354 A1) an array's answers
+  // whether ArrayDefineOwnProperty accepted it (a new index past a read-only `length` is rejected, not thrown).
+  const ordinaryDefine = (word: number): Instr[] => [
     { op: "local.get", index: storage },
     { op: "local.get", index: 1 },
     { op: "local.get", index: 2 },
@@ -183,6 +188,25 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     { op: "call", funcIdx: d.defineData },
     { op: "i32.const", value: 1 },
   ];
+  const define = (word: number): Instr[] =>
+    arrayDefine === undefined
+      ? ordinaryDefine(word)
+      : ifArrayBrand(
+          d.objectTypeIdx,
+          [{ op: "local.get", index: storage }],
+          { kind: "val", type: { kind: "i32" } },
+          [
+            { op: "local.get", index: storage },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "ref.null.extern" },
+            { op: "ref.null.extern" },
+            { op: "f64.const", value: word },
+            { op: "i32.const", value: 0 },
+            { op: "call", funcIdx: arrayDefine },
+          ],
+          ordinaryDefine(word),
+        );
   return {
     locals: [
       { name: "status", type: { kind: "i32" } },
@@ -254,21 +278,22 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
 }
 
 /**
- * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the built-in function object `selector` names
- * (`NATIVE_VALUE_INTRINSICS`), through its entry's getter (which initializes the realm first). `getters` holds the
- * entries the realm has; the caller passes only selectors whose entry the realm holds (it holds what is named).
+ * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the realm value `selector` names
+ * (`NATIVE_VALUE_INTRINSICS`), a built-in function object through its entry's getter, (#7561) a prototype object
+ * through the realm's own read; each initializes the realm first. `values` holds what the realm has; the caller passes
+ * only selectors the realm holds (it holds what is named).
  */
 export function buildSourceObjectIntrinsicDefinition(d: {
-  readonly getters: readonly { readonly selector: number; readonly getter: FuncHandle }[];
+  readonly values: readonly { readonly selector: number; readonly value: readonly Instr[] }[];
 }): SourceObjectDefinition {
   return {
     locals: [],
     body: [
-      ...d.getters.flatMap(({ getter, selector }): Instr[] => [
+      ...d.values.flatMap(({ value, selector }): Instr[] => [
         { op: "local.get", index: 0 },
         { op: "i32.const", value: selector },
         { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "call", funcIdx: getter }, { op: "return" }] },
+        { op: "if", blockType: { kind: "empty" }, then: [...value, { op: "return" }] },
       ]),
       { op: "unreachable" },
     ],

@@ -31,7 +31,8 @@
         "src/shared/contracts/string-surrogate.ts",
         "src/shared/contracts/linear-memory-layout.ts",
         "src/shared/contracts/f64-value-markers.ts",
-        "src/shared/contracts/prepared-validation.ts"
+        "src/shared/contracts/prepared-validation.ts",
+        "src/shared/contracts/descriptor-word.ts"
       ],
       "minModules": 12
     },
@@ -16886,6 +16887,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -17370,6 +17376,21 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-builtin-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-tag.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-types.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/dynamic-value-kinds.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -17418,6 +17439,26 @@
       "path": "src/runtime/wasmgc/values/realm-family-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/program/dynamic-array-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/shared/contracts/descriptor-word.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-array-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-arrays.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     },
     {
       "path": "src/ir/builtin-global-binding.ts",

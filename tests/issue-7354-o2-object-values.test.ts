@@ -158,12 +158,14 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       functions: false,
       namesSymbol: false,
       realmFamilies: new Set(),
+      wrappers: new Set(),
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
       namesSymbol: false,
       realmFamilies: new Set(),
+      wrappers: new Set(),
     });
   });
 

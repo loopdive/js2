@@ -36,6 +36,8 @@ export function familyObjects(heldRows: readonly NativeRealmIntrinsic[]): { read
     .map((row) => ({
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
+      ...(row.primitiveData === undefined ? {} : { primitiveData: row.primitiveData }),
+      ...(row.array ? { array: row.array } : {}),
       properties: familyProperties(row),
     }));
   return objects.length === 0 ? {} : { objects };

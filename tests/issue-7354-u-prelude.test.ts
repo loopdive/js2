@@ -51,7 +51,7 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
           // (#7354 T) `typeof JSON` refuses by name: JSON is a standard global this path does not provide.
           'formatIdentityFreeValue: ir/from-ast: identifier "JSON" is not in scope in formatIdentityFreeValue',
           "compareArray: dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
-          '<module-init>__closure_10: ir/from-ast: identifier "Array" is not in scope in <module-init>__closure_10',
+          // (#7352) `compareArray.format` lowers: `Array` is the realm's value.
         ],
       });
     },

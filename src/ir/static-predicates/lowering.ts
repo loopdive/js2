@@ -46,16 +46,22 @@ const IR_STATIC_PREDICATE_TABLE: Readonly<Record<string, IrStaticPredicatePlan>>
   "Array.isArray": { arity: 1, test: "array" },
 };
 
-/** The plan of a direct, non-optional `<Namespace>.<m>(…)` on the ambient namespace, else undefined. */
+/**
+ * The plan of a direct, non-optional `<Namespace>.<m>(…)` on the ambient namespace, else undefined; (#7354 A1) also
+ * undefined where the realm holds the static as a value (`realmHolds`, `Array.isArray` on the Prepared path), whose call
+ * the realm's method call answers.
+ */
 export function staticPredicatePlan(
   call: ts.CallExpression,
   isAmbientNamespace: (receiver: ts.Identifier) => boolean,
+  realmHolds: (path: string) => boolean,
 ): IrStaticPredicatePlan | undefined {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
   if (callee.questionDotToken !== undefined || call.questionDotToken !== undefined) return undefined;
-  const plan = IR_STATIC_PREDICATE_TABLE[`${callee.expression.text}.${callee.name.text}`];
-  return plan !== undefined && isAmbientNamespace(callee.expression) ? plan : undefined;
+  const path = `${callee.expression.text}.${callee.name.text}`;
+  const plan = IR_STATIC_PREDICATE_TABLE[path];
+  return plan !== undefined && isAmbientNamespace(callee.expression) && !realmHolds(path) ? plan : undefined;
 }
 
 /** The family of an operand with no effects and no IR value — `null`, the global `undefined`, `void 0` — else undefined. */

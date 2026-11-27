@@ -137,7 +137,11 @@ describe("#7354 M1 — refusals that stay", () => {
       "function f(o, k){ o[k] = 1; } f({a:1}, 'a');",
       gapText("dyn.member_set with a computed key"),
     ],
-    ["C5: a number key", "function f(v){ return v[0]; } f('abc');", gapText("dyn.member_get with a computed key")],
+    [
+      "C5: a computed number key",
+      "function f(v, i){ return v[i]; } f('abc', 0);",
+      gapText("dyn.member_get with a computed key"),
+    ],
     [
       "E38: Object.prototype.toString of an object in a program that names Symbol",
       "function f(v){ return Object.prototype.toString.call(v); } var s = typeof Symbol; f({});",

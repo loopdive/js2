@@ -24,19 +24,22 @@ export type NativeRealmProperty = {
 export interface NativeRealmIntrinsic {
   readonly id: string;
   /**
-   * (#7354 G1) The constructor whose presence in a realm brings this row (its prototype, a method of that prototype):
-   * a row without one belongs to every realm. What a realm holds, and so the literals it carries, follows this field.
+   * (#7354 G1) The realm value whose presence in a realm brings this row: a family's constructor (the Error family's
+   * prototypes and methods come with it), or (#7561) the row itself, a wrapper family member a realm holds one by one.
+   * A row without one belongs to every realm. What a realm holds, and so the literals it carries, follows this field.
    */
   readonly heldWith?: string;
   /**
    * (#7350 B3a) The realm models only this row's identity and the own properties named here (`length`, `name`,
-   * Number's five constants): (B3b-0) the rest of `properties`, and the other rows of its family, are catalog data no
-   * realm holds yet ({@link modelledRow}). A query that misses the modelled properties is unknown, never absent: the
-   * kernel aborts it (`BUILTIN_IDENTITY_ONLY_FLAG`).
+   * Number's five constants, (#7561) `prototype`): the rest of `properties` (the statics) is catalog data no realm
+   * holds yet ({@link modelledRow}). A query that misses the modelled properties is unknown, never absent: the kernel
+   * aborts it (`BUILTIN_IDENTITY_ONLY_FLAG`).
    */
   readonly identityOnly?: readonly string[];
   /** (#7350 B3b-0) A wrapper prototype's [[StringData]], [[NumberData]] or [[BooleanData]] (§22.1.3, §21.1.3, §20.3.3). */
   readonly primitiveData?: string | number | boolean;
+  /** (#7352) An Array exotic object: %Array.prototype% is itself an array (§23.1.3). */
+  readonly array?: true;
   readonly aliases: readonly string[];
   readonly prototype: string | null;
   readonly extensible: boolean;
@@ -166,11 +169,26 @@ export type NativeErrorConstructor = (typeof NATIVE_ERROR_CONSTRUCTORS)[number];
 /** (#7350 B3a) The primitive wrapper constructors (§22.1.1, §21.1.1, §20.3.1). */
 export const NATIVE_WRAPPER_CONSTRUCTORS = Object.freeze(["String", "Number", "Boolean"] as const);
 export type NativeWrapperConstructor = (typeof NATIVE_WRAPPER_CONSTRUCTORS)[number];
+/**
+ * (#7561) What `js.object.wrapper-data(object, method, selector)` answers: an object's [[StringData]] /
+ * [[NumberData]] / [[BooleanData]] (`undefined` for any other object), or thisXValue of `object` where `method` is a
+ * held wrapper prototype's `valueOf` / `toString` (`null` for any other method).
+ */
+export const WRAPPER_DATA = { slot: 0, valueOf: 1, toString: 2 } as const;
+/**
+ * (#7354 G1, #7352) The brands `js.object.has-brand` tests, each its bit of an ordinary object's flags (bits no legacy
+ * object flag uses: those stop at 0x400): [[ErrorData]], an Array exotic object.
+ */
+export const REALM_BRAND = { error: 0x800, array: 0x1000 } as const;
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
   "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
   "Error.prototype": ["toString"],
+  // (#7561) thisXValue and its ToString (`dynamic-builtin-methods.ts`).
+  ...Object.fromEntries(NATIVE_WRAPPER_CONSTRUCTORS.map((name) => [`${name}.prototype`, ["toString", "valueOf"]])),
+  // (#7352) IsArray is the realm's brand test; Array's other statics and every method are `unavailable`.
+  Array: ["isArray"],
 };
 const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
 const objectMethods: readonly Method[] = [
@@ -223,17 +241,7 @@ const legacyProperty = (row: NativeRealmProperty): NativeRealmProperty => ({
   legacy: true,
 });
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
-/**
- * (#7354 G1) The function values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)`
- * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a)
- * the wrapper constructors. Positional: new rows are appended.
- */
-export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
-  ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
-  ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
-  realmMethodId("Error.prototype", errorToString[0]),
-  ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`),
-]);
+
 /**
  * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a constructor (length 1, own `prototype` read only; a NativeError's
  * [[Prototype]] is %Error%) and its prototype object (`constructor`, `name`, `message` "", and Error.prototype's
@@ -392,6 +400,77 @@ const WRAPPER_MEMBERS: Readonly<
     legacy: [],
   },
 };
+/** (#7352) §23.1.2: Array's statics; only `isArray` (IsArray, the realm's brand test) is native. */
+const arrayStatics: readonly Method[] = [
+  ["from", 1, ["IteratorToList", "CreateDataPropertyOrThrow"]],
+  ["isArray", 1, ["IsArray"]],
+  ["of", 0, ["CreateDataPropertyOrThrow"]],
+];
+/** (#7352) §23.1.3: Array.prototype's methods (`@@iterator` and `@@unscopables` aside), each `unavailable`. */
+const arrayMethods: readonly Method[] = (
+  [
+    ["at", 1],
+    ["concat", 1],
+    ["copyWithin", 2],
+    ["entries", 0],
+    ["every", 1],
+    ["fill", 1],
+    ["filter", 1],
+    ["find", 1],
+    ["findIndex", 1],
+    ["findLast", 1],
+    ["findLastIndex", 1],
+    ["flat", 0],
+    ["flatMap", 1],
+    ["forEach", 1],
+    ["includes", 1],
+    ["indexOf", 1],
+    ["join", 1],
+    ["keys", 0],
+    ["lastIndexOf", 1],
+    ["map", 1],
+    ["pop", 0],
+    ["push", 1],
+    ["reduce", 1],
+    ["reduceRight", 1],
+    ["reverse", 0],
+    ["shift", 0],
+    ["slice", 2],
+    ["some", 1],
+    ["sort", 1],
+    ["splice", 2],
+    ["toLocaleString", 0],
+    ["toReversed", 0],
+    ["toSorted", 1],
+    ["toSpliced", 2],
+    ["toString", 0],
+    ["unshift", 1],
+    ["values", 0],
+    ["with", 2],
+  ] as const
+).map(([name, length]): Method => [name, length, ["ToObject", "LengthOfArrayLike"]]);
+/**
+ * (#7354 G1) The values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)` numbers
+ * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a) the
+ * wrapper constructors, (#7561) their prototype objects and those prototypes' methods, (#7352) `Array`, its prototype,
+ * `Array.isArray` and Array.prototype's methods. Positional: new rows are appended.
+ */
+export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
+  ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
+  ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
+  realmMethodId("Error.prototype", errorToString[0]),
+  ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`),
+  ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}.prototype%`),
+  ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap((name) =>
+    [...WRAPPER_MEMBERS[name].methods, ...WRAPPER_MEMBERS[name].legacy].map(([method]) =>
+      realmMethodId(`${name}.prototype`, method),
+    ),
+  ),
+  "%Array%",
+  "%Array.prototype%",
+  realmMethodId("Array", "isArray"),
+  ...arrayMethods.map(([method]) => realmMethodId("Array.prototype", method)),
+]);
 /** (#7350 B3b-0) §22.1.3, §21.1.3, §20.3.3: a wrapper prototype's primitive value. */
 const WRAPPER_PRIMITIVE_DATA: Readonly<Record<NativeWrapperConstructor, string | number | boolean>> = {
   String: "",
@@ -412,7 +491,8 @@ const WRAPPER_REQUIRES: Readonly<Record<NativeWrapperConstructor, readonly strin
  * (#7350 B3a, B3b-0) §22.1.1-3, §21.1.1-3, §20.3.1-3, in `errorRows`' shape: a wrapper constructor (length 1; its
  * statics, own `prototype` {!w, !e, !c}, and Number's value properties), its prototype object (the primitive data,
  * `constructor` and the methods; [[Prototype]] %Object.prototype%) and one row per static and method. The constructor
- * stays identity-only until B3b-1: a realm models it and Number's five constants, nothing else of the family.
+ * stays identity-only: a realm models it, Number's five constants and (#7561) `prototype`, not its statics. (#7561)
+ * Each row is held on its own (`heldWith` itself), so a realm holds the members its program reaches.
  */
 function wrapperRows(name: NativeWrapperConstructor): NativeRealmIntrinsic[] {
   const id = `%${name}%`,
@@ -436,34 +516,73 @@ function wrapperRows(name: NativeWrapperConstructor): NativeRealmIntrinsic[] {
     true,
     "native",
   );
-  const identity = ["length", "name", ...modelled.map((property) => property.key.value)];
+  const identity = ["length", "name", ...modelled.map((property) => property.key.value), "prototype"];
   return [
     { ...ctor, aliases: [id, name], identityOnly: identity },
-    {
-      id: prototype,
-      aliases: [prototype],
-      prototype: objectPrototype,
-      extensible: true,
-      immutablePrototype: false,
-      constructible: false,
-      normativeOptional: false,
-      legacy: false,
-      primitiveData: WRAPPER_PRIMITIVE_DATA[name],
-      properties: [
-        reference("constructor", id),
-        ...methodProperties(`${name}.prototype`, methods),
-        ...methodProperties(`${name}.prototype`, legacy).map(legacyProperty),
-        ...(name === "String"
-          ? STRING_TRIM_ALIASES.map(([alias, target]) =>
-              legacyProperty(reference(alias, realmMethodId("String.prototype", target))),
-            )
-          : []),
-      ],
-    },
+    familyPrototype(name, { primitiveData: WRAPPER_PRIMITIVE_DATA[name] }, [
+      // (#7561) §22.1.3: String.prototype is a String exotic object, so it owns StringCreate's `length` (0).
+      ...(name === "String" ? [data("length", { kind: "number", value: 0 }, false, false)] : []),
+      reference("constructor", id),
+      ...methodProperties(`${name}.prototype`, methods),
+      ...methodProperties(`${name}.prototype`, legacy).map(legacyProperty),
+      ...(name === "String"
+        ? STRING_TRIM_ALIASES.map(([alias, target]) =>
+            legacyProperty(reference(alias, realmMethodId("String.prototype", target))),
+          )
+        : []),
+    ]),
     ...members(name, statics),
     ...members(`${name}.prototype`, methods),
     ...members(`${name}.prototype`, legacy, true),
-  ].map((row) => ({ ...row, heldWith: id }));
+  ].map((row) => ({ ...row, heldWith: row.id }));
+}
+/** The constructor `name`'s prototype object (`%name.prototype%`, [[Prototype]] %Object.prototype%). */
+function familyPrototype(
+  name: string,
+  exotic: Pick<NativeRealmIntrinsic, "primitiveData" | "array">,
+  properties: readonly NativeRealmProperty[],
+): NativeRealmIntrinsic {
+  const id = `%${name}.prototype%`;
+  return {
+    id,
+    aliases: [id],
+    prototype: objectPrototype,
+    extensible: true,
+    immutablePrototype: false,
+    constructible: false,
+    normativeOptional: false,
+    legacy: false,
+    ...exotic,
+    properties,
+  };
+}
+/**
+ * (#7352) §23.1.1-3, in `wrapperRows`' shape: the Array constructor (length 1, identity-only: `length`, `name`,
+ * `isArray` and `prototype`), %Array.prototype% (itself an array: its own `length` 0, writable and not configurable,
+ * then `constructor` and the methods) and one row per static and method, each held on its own.
+ */
+function arrayRows(): NativeRealmIntrinsic[] {
+  const id = "%Array%";
+  const ctor = callable(
+    id,
+    "Array",
+    1,
+    "Array",
+    ["ArrayCreate", "GetPrototypeFromConstructor", "CreateDataPropertyOrThrow"],
+    [...methodProperties("Array", arrayStatics), reference("prototype", "%Array.prototype%", false, false)],
+    true,
+    "native",
+  );
+  return [
+    { ...ctor, aliases: [id, "Array"], identityOnly: ["length", "name", "isArray", "prototype"] },
+    familyPrototype("Array", { array: true }, [
+      data("length", { kind: "number", value: 0 }, true, false),
+      reference("constructor", id),
+      ...methodProperties("Array.prototype", arrayMethods),
+    ]),
+    ...members("Array", arrayStatics),
+    ...members("Array.prototype", arrayMethods),
+  ].map((row) => ({ ...row, heldWith: row.id }));
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -568,6 +687,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ]),
     ...NATIVE_ERROR_CONSTRUCTORS.flatMap(errorRows),
     ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap(wrapperRows),
+    ...arrayRows(),
   ];
   return rows.map((row) => ({
     ...row,
@@ -595,10 +715,11 @@ function catalog(): readonly NativeRealmIntrinsic[] {
 }
 /**
  * Complete retained Object/Function population, including Normative Optional legacy members; (#7354 G1) the Error
- * family; (#7350 B3b-0) the wrapper families, whose constructors stay identity-only ({@link modelledRow}).
+ * family; (#7350 B3b-0) the wrapper families and (#7352) the Array family, whose constructors stay identity-only
+ * ({@link modelledRow}).
  */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function+Error+Wrappers:v4" as const,
+  version: "ecma262-2026:Object+Function+Error+Wrappers+Array:v6" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [
@@ -614,28 +735,22 @@ export const NATIVE_REALM_CATALOG = freeze({
   ],
 });
 
-const IDENTITY_ONLY_CONSTRUCTORS = new Set(
-  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, identityOnly }) => (identityOnly ? [id] : [])),
-);
-function modelled(row: NativeRealmIntrinsic): NativeRealmIntrinsic | undefined {
-  const { identityOnly, heldWith } = row;
-  if (identityOnly)
-    return freeze({
-      ...row,
-      properties: row.properties.filter(({ key }) => key.kind === "string" && identityOnly.includes(key.value)),
-    });
-  return heldWith !== undefined && IDENTITY_ONLY_CONSTRUCTORS.has(heldWith) ? undefined : row;
+/** An identity-only row with only the own properties its `identityOnly` names; any other row itself. */
+function modelled(row: NativeRealmIntrinsic): NativeRealmIntrinsic {
+  const { identityOnly } = row;
+  return identityOnly
+    ? freeze({
+        ...row,
+        properties: row.properties.filter(({ key }) => key.kind === "string" && identityOnly.includes(key.value)),
+      })
+    : row;
 }
 const MODELLED_ROWS: ReadonlyMap<string, NativeRealmIntrinsic> = new Map(
-  NATIVE_REALM_CATALOG.intrinsics.flatMap((row) => {
-    const view = modelled(row);
-    return view ? [[row.id, view] as const] : [];
-  }),
+  NATIVE_REALM_CATALOG.intrinsics.map((row) => [row.id, modelled(row)]),
 );
 /**
- * (#7350 B3b-0) What a realm can model of the catalog row `row`: the row itself; an identity-only constructor with
- * only the own properties its `identityOnly` names; nothing for the other rows of that constructor's family (its
- * prototype, statics and methods). The one gate between the wrapper families' complete data and what a realm holds
- * until B3b-1 holds them.
+ * (#7350 B3b-0) What a realm can model of the catalog row `row`: the row itself, or an identity-only constructor with
+ * only the own properties its `identityOnly` names. The one gate between a constructor's complete data and what a
+ * realm holds of it.
  */
-export const modelledRow = (row: NativeRealmIntrinsic): NativeRealmIntrinsic | undefined => MODELLED_ROWS.get(row.id);
+export const modelledRow = (row: NativeRealmIntrinsic): NativeRealmIntrinsic => MODELLED_ROWS.get(row.id)!;

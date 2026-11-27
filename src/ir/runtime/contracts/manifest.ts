@@ -428,7 +428,7 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.has",
   "js.object.create-type-error",
   "js.object.set",
-  "js.object.is-error",
+  "js.object.has-brand",
   "js.object.create-error",
   "js.object.error-to-string",
   "js.object.init-function",
@@ -438,7 +438,10 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.own-descriptor",
   "js.object.intrinsic",
   "js.object.has-own",
+  "js.object.create-wrapper",
+  "js.object.wrapper-data",
   "js.object.is-constructor",
+  "js.object.create-array",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -452,7 +455,7 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.has",
   "native.js.object.create-type-error",
   "native.js.object.set",
-  "native.js.object.is-error",
+  "native.js.object.has-brand",
   "native.js.object.create-error",
   "native.js.object.error-to-string",
   "native.js.object.init-function",
@@ -462,7 +465,10 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.own-descriptor",
   "native.js.object.intrinsic",
   "native.js.object.has-own",
+  "native.js.object.create-wrapper",
+  "native.js.object.wrapper-data",
   "native.js.object.is-constructor",
+  "native.js.object.create-array",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

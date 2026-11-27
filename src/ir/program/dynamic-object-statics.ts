@@ -11,7 +11,9 @@ import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-ca
 import { nativeObjectStatic } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
+import { unlessStringObject } from "./dynamic-builtin-methods.js";
+import { constantArgumentOf } from "./dynamic-member-access.js";
+import { MEMBER_ACCESS_ARM, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
 const HELPER_PREFIX = "__ir_object_static:";
 /** The front end's helper symbol for `Object.<name>`. */
@@ -26,6 +28,9 @@ export type ObjectStaticBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
   /** (#7354 G1) A value may be an error (`holdsFamily`). */
   readonly errors: boolean;
+  /** (#7561) What the program allows its values (the wrapper kinds it can hold). */
+  readonly program: LegalizationProgram;
+  readonly definitions: ReadonlyMap<IrValueId, IrInstr>;
 };
 type Call = Extract<IrInstr, { kind: "call" }>;
 type Arm = (result: IrValueId) => IrInstr[];
@@ -33,6 +38,17 @@ type Arm = (result: IrValueId) => IrInstr[];
 /** The kinds the kernel's own-property roles serve: an ordinary object and a function object. */
 const served = (kind: CarrierKind): boolean =>
   MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function";
+
+/**
+ * ToPropertyKey of `value`, the program's ToString, into `text`; (#7561) where the program can hold a wrapper or
+ * (#7352) an array prototype, a constant string key is that constant, so the realm's use names the one member it
+ * reaches (`pinnedMembers`).
+ */
+export function toPropertyKey(b: ObjectStaticBuilders, instr: IrInstr, value: IrValueId, text: IrValueId): IrInstr[] {
+  const pins = b.program.objects.wrappers.size > 0 || holdsFamily(b.program, "array");
+  const known = pins ? constantArgumentOf(b.definitions, value) : undefined;
+  return known === undefined ? b.stringOf(instr, value, text) : [b.text(known, text)];
+}
 
 /** The legalized `Object.<name>(…args)` into the call's result. */
 export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
@@ -56,9 +72,12 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   /** ToPropertyKey of `value`, then `then` with the key's carrier. */
   const withKey = (value: IrValueId, then: (key: IrValueId) => IrInstr[]): IrInstr[] => {
     const [text, key] = [b.fresh(), b.fresh()];
-    return [...b.stringOf(instr, value, text), carried(text, key), ...then(key)];
+    return [...toPropertyKey(b, instr, value, text), carried(text, key), ...then(key)];
   };
   const nullish = (kind: CarrierKind) => MEMBER_ACCESS_ARM[kind] === "type-error";
+  /** (#7561) `then`, but the run-time abort for a String object and a key that may be an index (`unlessStringObject`). */
+  const unlessString = (object: IrValueId, key: IrValueId | undefined, then: Arm) =>
+    unlessStringObject(b, instr, b.program, object, key && constantArgumentOf(b.definitions, key), then);
   /**
    * ObjectDefineProperties(object, properties) after ToObject(properties), answering `object`. A number or a Boolean
    * becomes a wrapper without own properties; a string's own index properties need the String object the realm lacks.
@@ -68,7 +87,10 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   const defineAll = (object: IrValueId, properties: IrValueId, r: IrValueId, undefinedMap: "TypeError" | "none") =>
     byKind(
       properties,
-      (s) => [realmCall("js.object.descriptors-define", [object, properties]), carried(object, s)],
+      unlessString(properties, undefined, (s) => [
+        realmCall("js.object.descriptors-define", [object, properties]),
+        carried(object, s),
+      ]),
       (kind, s) =>
         undefinedMap === "none" && kind === "undefined"
           ? [carried(object, s)]
@@ -84,14 +106,22 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   switch (name) {
     case "defineProperty":
       return onObject((r) =>
-        withKey(second, (key) => [realmCall("js.object.descriptor-define", [first, key, third!]), carried(first, r)]),
+        withKey(second, (key) =>
+          unlessString(first, second, (s) => [
+            realmCall("js.object.descriptor-define", [first, key, third!]),
+            carried(first, s),
+          ])(r),
+        ),
       );
     case "defineProperties":
-      return onObject((r) => defineAll(first, second, r, "TypeError"));
+      return onObject(unlessString(first, undefined, (r) => defineAll(first, second, r, "TypeError")));
     case "getOwnPropertyDescriptor":
       return byKind(
         first,
-        (r) => withKey(second, (key) => [realmCall("js.object.own-descriptor", [first, key], r)]),
+        (r) =>
+          withKey(second, (key) =>
+            unlessString(first, second, (s) => [realmCall("js.object.own-descriptor", [first, key], s)])(r),
+          ),
         (kind, r) =>
           nullish(kind)
             ? throwing("Cannot convert undefined or null to object", r)

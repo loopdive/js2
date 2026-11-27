@@ -11,7 +11,12 @@
  */
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import {
+  ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags,
+  asOrdinaryObject,
+  markObjectFlag,
+  objectFlags,
+} from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 import { BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
@@ -47,15 +52,18 @@ export interface RealmFamilyOperands {
     readonly id: string;
     readonly global: number;
     readonly prototype: string;
+    /** (#7561) A wrapper prototype's primitive data (`NativeRealmIntrinsic.primitiveData`). */
+    readonly primitiveData?: string | number | boolean;
+    /** (#7352) %Array.prototype%, itself an array. */
+    readonly array?: true;
     readonly properties: readonly RealmFamilyProperty[];
   }[];
+  /** (#7561) Where the realm holds a wrapper prototype: the wrapper `id` of `primitiveData` over `prototype`. */
+  readonly wrapperAllocation?: (id: string, primitiveData: string | number | boolean, prototype: Instr[]) => Instr[];
 }
 
 const global = (index: number): Instr => ({ op: "global.get", index });
-const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => [
-  { op: "any.convert_extern" },
-  { op: "ref.cast", typeIdx: d.objectTypeIdx },
-];
+const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => asOrdinaryObject(d.objectTypeIdx);
 
 /** The externref of the realm's entry or object `id`. */
 function intrinsic(d: RealmFamilyOperands, id: string): Instr[] {
@@ -75,14 +83,24 @@ const word = (property: Pick<RealmFamilyProperty, "writable" | "configurable">):
   flags.configurableSpecified |
   flags.hasValue;
 
-/** Each object, linked to the realm's Object.prototype or to an object created before it, into its global. */
+/**
+ * Each object, linked to the realm's Object.prototype or to an object created before it, into its global; (#7561) an
+ * object with primitive data is a wrapper.
+ */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
-  return d.objects.flatMap((object): Instr[] => [
-    ...(object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype)),
-    ...asObject(d),
-    { op: "call", funcIdx: d.createWithPrototype },
-    { op: "global.set", index: object.global },
-  ]);
+  return d.objects.flatMap((object): Instr[] => {
+    const prototype =
+      object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype);
+    const created =
+      object.primitiveData === undefined
+        ? [...prototype, ...asObject(d), { op: "call", funcIdx: d.createWithPrototype } as Instr]
+        : d.wrapperAllocation!(object.id, object.primitiveData, prototype);
+    return [
+      ...created,
+      { op: "global.set", index: object.global },
+      ...(object.array ? markObjectFlag(d.objectTypeIdx, [global(object.global)], flags.arrayExotic) : []),
+    ];
+  });
 }
 
 /** The externref of `property`'s value. */
@@ -128,25 +146,10 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
       object.properties.flatMap((property) => define(d, [global(object.global)], property)),
     ),
     ...d.entries.flatMap((entry) =>
-      entry.identityOnly ? markIdentityOnly(d, () => [...bag(entry), ...asObject(d)]) : [],
+      entry.identityOnly ? markObjectFlag(d.objectTypeIdx, bag(entry), BUILTIN_IDENTITY_ONLY_FLAG) : [],
     ),
   ];
 }
-
-/** `flags |= BUILTIN_IDENTITY_ONLY_FLAG` on the object `object` leaves. */
-function markIdentityOnly(d: Pick<RealmFamilyOperands, "objectTypeIdx">, object: () => Instr[]): Instr[] {
-  return [
-    ...object(),
-    ...object(),
-    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-    { op: "i32.const", value: BUILTIN_IDENTITY_ONLY_FLAG },
-    { op: "i32.or" },
-    { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-  ];
-}
-
-/** The [[ErrorData]] bit of an ordinary object's flags; no legacy flag uses it. */
-export const ERROR_DATA_FLAG = 0x800;
 
 export interface ErrorCreateOperands extends RealmFamilyOperands {
   readonly initializer: FuncHandle;
@@ -162,7 +165,6 @@ export interface ErrorCreateOperands extends RealmFamilyOperands {
  */
 export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: LocalDef[]; body: Instr[] } {
   const error = 2;
-  const flagsField = 4;
   return {
     locals: [{ name: "error", type: { kind: "externref" } }],
     body: [
@@ -182,14 +184,7 @@ export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: Lo
           ],
         },
       ]),
-      { op: "local.get", index: error },
-      ...asObject(d),
-      { op: "local.get", index: error },
-      ...asObject(d),
-      { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: flagsField },
-      { op: "i32.const", value: ERROR_DATA_FLAG },
-      { op: "i32.or" },
-      { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: flagsField },
+      ...markObjectFlag(d.objectTypeIdx, [{ op: "local.get", index: error }], flags.errorData),
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
       {
@@ -210,15 +205,16 @@ export function buildErrorCreateDefinition(d: ErrorCreateOperands): { locals: Lo
   };
 }
 
-/** `js.object.is-error(object) -> i32`: the [[ErrorData]] bit of an ordinary object (the caller tests the kind). */
-export function buildIsErrorDefinition(d: { readonly objectTypeIdx: number }): { locals: LocalDef[]; body: Instr[] } {
+/**
+ * `js.object.has-brand(object, brand) -> i32`: whether the realm brand `brand` (`REALM_BRAND`, its flag bit) is set in
+ * an ordinary object's flags (the caller tests the kind).
+ */
+export function buildHasBrandDefinition(d: { readonly objectTypeIdx: number }): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [],
     body: [
-      { op: "local.get", index: 0 },
-      ...asObject(d),
-      { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-      { op: "i32.const", value: ERROR_DATA_FLAG },
+      ...objectFlags(d.objectTypeIdx, [{ op: "local.get", index: 0 }]),
+      { op: "local.get", index: 1 },
       { op: "i32.and" },
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },

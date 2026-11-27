@@ -46,10 +46,16 @@ export interface NativeBuiltinProperty {
   readonly writable: boolean;
   readonly configurable: boolean;
 }
-/** (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one. */
+/**
+ * (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one;
+ * (#7561) a wrapper prototype's primitive data.
+ */
 export interface NativeBuiltinObject {
   readonly id: string;
   readonly prototype: string;
+  readonly primitiveData?: string | number | boolean;
+  /** (#7352) %Array.prototype%, itself an array. */
+  readonly array?: true;
   readonly properties: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequirement {

@@ -51,11 +51,21 @@ import {
   nativeBuiltinFunctionSingletonBinding,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
-import { NATIVE_VALUE_INTRINSICS } from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  NATIVE_VALUE_INTRINSICS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
+  realmMethodId,
+} from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  buildWrapperCreateDefinition,
+  buildWrapperDataDefinition,
+} from "../../../runtime/wasmgc/values/primitive-wrapper-bodies.js";
+import { realmWrapperKinds, realmWrapperRepresentation, type NativeRealmWrappers } from "./native-realm-wrappers.js";
 import {
   buildErrorToStringDefinition,
-  buildIsErrorDefinition,
+  buildHasBrandDefinition,
 } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
+import type { NativeRealmArrays } from "./native-realm-arrays.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
@@ -71,6 +81,10 @@ export interface NativeSourceObjectDependencies {
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly kernel: NativeBuiltinFunctionReservations;
   readonly errors: NativeErrorReservations;
+  /** (#7561) Where the realm holds a wrapper prototype: its wrappers. */
+  readonly wrappers?: NativeRealmWrappers;
+  /** (#7352) Where the realm holds the Array family: its array creation and define. */
+  readonly arrays?: NativeRealmArrays;
 }
 const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
@@ -86,6 +100,18 @@ function createOperands({ layouts, storage, kernel }: NativeSourceObjectDependen
 function literalKey(tx: PhysicalModuleReservations, { kernel }: NativeSourceObjectDependencies) {
   const strings = nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings;
   return (text: string): Instr[] => [...nativeStringLiteralInstrs(tx, strings, text), { op: "extern.convert_any" }];
+}
+/** (#7561) The wrapper methods `wrapper-data` answers, in `WRAPPER_DATA` order, and V8's wrong-receiver message. */
+const WRAPPER_METHODS = ["valueOf", "toString"] as const;
+const wrapperMethodMessage = (kind: string, method: string) =>
+  kind + ".prototype." + method + " requires that 'this' be a " + kind;
+/** (#7561) The realm's held wrapper kinds, with their representation (`SLOT`). */
+function wrapperKinds({ values, kernel, wrappers }: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
+  const anyStrTypeIdx = nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings.layout.anyStrTypeIdx;
+  return {
+    ...realmWrapperRepresentation(values, anyStrTypeIdx),
+    kinds: wrappers ? realmWrapperKinds(tx, wrappers) : [],
+  };
 }
 type Signature = { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
 /** (#7354 O1) ToBoolean and ToPropertyDescriptor: one function each, reserved once for every adapter that reads descriptors. */
@@ -184,16 +210,19 @@ const ROWS = {
   },
   "js.object.set": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF, EXTERNREF], results: [I32] },
-    body: ({ kernel }, tx) => buildSourceObjectSetDefinition(nativeBuiltinFunctionOperands(tx, kernel)),
+    body: ({ kernel, arrays }, tx) =>
+      buildSourceObjectSetDefinition(nativeBuiltinFunctionOperands(tx, kernel), arrays?.define.handle),
   },
   "js.object.has": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
     body: ({ kernel }) => buildSourceObjectHasDefinition({ has: kernel.functions.has.handle }),
   },
-  "js.object.is-error": {
-    signature: { params: [EXTERNREF], results: [I32] },
-    body: ({ layouts }) => buildIsErrorDefinition({ objectTypeIdx: layouts.object.typeIndex }),
+  "js.object.has-brand": {
+    signature: { params: [EXTERNREF, I32], results: [I32] },
+    body: ({ layouts }) => buildHasBrandDefinition({ objectTypeIdx: layouts.object.typeIndex }),
   },
+  // (#7352) Only a realm that holds the Array family creates arrays, and only it serves the contract.
+  "js.object.create-array": { binds: ({ arrays }) => arrays!.create },
   // (#7354 G1) Only a realm that holds the Error family has its error creation, and only it serves the contract.
   "js.object.create-error": { binds: ({ kernel }) => kernel.errorCreate! },
   "js.object.error-to-string": {
@@ -262,14 +291,73 @@ const ROWS = {
   },
   "js.object.intrinsic": {
     signature: { params: [I32], results: [EXTERNREF] },
-    body: ({ kernel }, tx) =>
-      buildSourceObjectIntrinsicDefinition({
-        getters: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) =>
-          kernel.entries.some((entry) => entry.id === id)
-            ? [{ selector, getter: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }]
-            : [],
+    body: ({ kernel }, tx) => {
+      const d = nativeBuiltinFunctionOperands(tx, kernel);
+      // (#7561) A held prototype object is read after the realm's initialization.
+      const value = (id: string): readonly Instr[] | undefined => {
+        if (kernel.entries.some((entry) => entry.id === id))
+          return [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }];
+        const object = d.objects.find((row) => row.id === id);
+        return (
+          object && [
+            { op: "call", funcIdx: d.initializer },
+            { op: "global.get", index: object.global },
+          ]
+        );
+      };
+      return buildSourceObjectIntrinsicDefinition({
+        values: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) => {
+          const instrs = value(id);
+          return instrs ? [{ selector, value: instrs }] : [];
+        }),
+      });
+    },
+  },
+  // (#7561) A program creates a wrapper only of a kind whose prototype the realm then holds.
+  "js.object.create-wrapper": {
+    signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
+    body: (dependencies, tx) => {
+      const d = nativeBuiltinFunctionOperands(tx, dependencies.kernel);
+      const prototype = (kind: string) => d.objects.find(({ id }) => id === `%${kind}.prototype%`)!.global;
+      const held = wrapperKinds(dependencies, tx);
+      return buildWrapperCreateDefinition({
+        ...held,
+        prototypes: new Map(
+          held.kinds.map(({ kind, selector }) => [selector, [{ op: "global.get", index: prototype(kind) }]]),
         ),
-      }),
+        initializer: d.initializer,
+        defineDataBody: d.defineDataBody,
+        lengthKey: d.lengthKey,
+      });
+    },
+  },
+  "js.object.wrapper-data": {
+    signature: { params: [EXTERNREF, EXTERNREF, I32], results: [EXTERNREF] },
+    literals: NATIVE_WRAPPER_CONSTRUCTORS.flatMap((kind) =>
+      WRAPPER_METHODS.map((name) => wrapperMethodMessage(kind, name)),
+    ),
+    body: (dependencies, tx) => {
+      const { kernel } = dependencies;
+      const d = nativeBuiltinFunctionOperands(tx, kernel);
+      const key = literalKey(tx, dependencies);
+      const held = wrapperKinds(dependencies, tx);
+      const method = (kind: string, name: (typeof WRAPPER_METHODS)[number]) => ({
+        value: [
+          {
+            op: "call",
+            funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId(kind + ".prototype", name)).getter
+              .handle,
+          } as Instr,
+        ],
+        throwTypeError: builtinTypeError(d, key(wrapperMethodMessage(kind, name))),
+      });
+      return buildWrapperDataDefinition({
+        ...held,
+        kinds: held.kinds.map((row) => ({ ...row, methods: WRAPPER_METHODS.map((name) => method(row.kind, name)) })),
+        undefinedGlobal: d.undefinedGlobal,
+        sameValue: d.sameValue,
+      });
+    },
   },
   "js.object.has-own": {
     signature: { params: [EXTERNREF, EXTERNREF, I32], results: [I32] },

@@ -2,9 +2,10 @@
 //
 // #7350 B3a — `String`, `Number` and `Boolean` as realm values on the Prepared path. The three constructors are the
 // realm's function objects (identity, `typeof`, `name`, `length`), Number's five constants fold to their numbers, and
-// `String(v)`, `Number(v)`, `Boolean(v)` convert, directly and through the realm's value. Their `prototype` and statics
-// wait for B3bc: the catalog models the constructors as identity rows, so a static read of a key they lack refuses by
-// name and a dynamic one aborts uncatchably, never answering `undefined` or a catchable error.
+// `String(v)`, `Number(v)`, `Boolean(v)` convert, directly and through the realm's value. Their statics wait for #7350:
+// the catalog models the constructors as identity rows, so a static read of a key they lack refuses by name and a
+// dynamic one aborts uncatchably, never answering `undefined` or a catchable error. (#7561) Their `prototype`, the
+// wrappers and the prototypes are tests/issue-7561-wrappers.test.ts.
 //
 // Each program computes `out` and is checked against node, with a wrong answer that must throw
 // (tests/helpers/prepared-node-agreement.ts), at module level and inside a function. Every program calls a function
@@ -96,29 +97,11 @@ describe("#7350 B3a — String, Number and Boolean are the realm's", () => {
 describe("#7350 B3a — what the identity rows lack refuses by name or aborts", () => {
   // A static read off the pristine constructor: the receiver is the realm's read, so the missing key is known.
   it.each([
-    [
-      "String.prototype",
-      "var p = String.prototype;",
-      "String.prototype is not reachable on this path yet (#7350 B3bc)",
-    ],
-    [
-      "Number.prototype",
-      "var p = Number.prototype;",
-      "Number.prototype is not reachable on this path yet (#7350 B3bc)",
-    ],
     ["a static's read", "var p = Number.isNaN;", "Number.isNaN is not reachable on this path yet (#7350 B3bc)"],
     ["a static's call", "var p = String.fromCharCode(65);", "String.fromCharCode is not reachable on this path yet"],
     // The write's own route refuses its receiver first.
     ["a write of a key it lacks", "Boolean.prototype = 1;", 'identifier "Boolean" is not in scope'],
-    ["new String", 'var w = new String("a");', "new String (a wrapper object; #7350 B3bc)"],
-    ["new Number", "var w = new Number(1);", "new Number (a wrapper object; #7350 B3bc)"],
-    ["new Boolean", "var w = new Boolean(1);", "new Boolean (a wrapper object; #7350 B3bc)"],
     // An `Object` static whose target is the constructor and whose key is a constant: as visible as a member read.
-    [
-      "Object.getOwnPropertyDescriptor(String, 'prototype')",
-      'var d = Object.getOwnPropertyDescriptor(String, "prototype");',
-      "String.prototype is not reachable on this path yet (#7350 B3bc)",
-    ],
     [
       "Object.defineProperty(Number, 'zz', …)",
       'var r = Object.defineProperty(Number, "zz", {value: 1});',

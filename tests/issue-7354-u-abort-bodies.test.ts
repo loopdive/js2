@@ -75,7 +75,7 @@ describe("#7354 U — a function never entered: node's answer", () => {
       "`instanceof` with it on the right (no call)",
       `function G(){ this.r = ${UNLOWERABLE}; } function t(v){ return v instanceof G; } var out = String(t({}));`,
     ],
-    ["a legalization refusal (computed key on a dynamic value)", "function g(v){ return v[0]; } var out = typeof g;"],
+    ["a legalization refusal (computed key on a dynamic value)", "function g(v){ return v[v]; } var out = typeof g;"],
     [
       "strict code",
       `'use strict'; function g(){ return ${UNLOWERABLE}; } var f = function(){ return ${UNLOWERABLE}; };` +
@@ -95,8 +95,8 @@ describe("#7354 U — the table", () => {
     async () => {
       expect(
         await abortBodies(
-          `function a(){ return ${UNLOWERABLE}; } function b(v){ var r = ${UNLOWERABLE}; return v[0]; }` +
-            " function c(v){ return v[0]; } var x = 1;",
+          `function a(){ return ${UNLOWERABLE}; } function b(v){ var r = ${UNLOWERABLE}; return v[v]; }` +
+            " function c(v){ return v[v]; } var x = 1;",
         ),
       ).toEqual([`a: ${REGEXP_REFUSAL("a")}`, `b: ${REGEXP_REFUSAL("b")}`, `c: ${COMPUTED_KEY_REFUSAL}`]);
     },
@@ -156,10 +156,10 @@ describe("#7354 U — a function entered: the abort, which no catch or finally s
       "<module-init>__closure_0",
     ],
     ["strict code", `'use strict'; function g(){ return ${UNLOWERABLE}; } g();`, "g"],
-    ["a legalization refusal", "function g(v){ return v[0]; } g(1);", "g"],
+    ["a legalization refusal", "function g(v){ return v[v]; } g(1);", "g"],
     [
       "each of two aborted functions in its own body",
-      `function a(){ return ${UNLOWERABLE}; } function b(v){ return v[0]; } try { b(1); } catch (e) {} a();`,
+      `function a(){ return ${UNLOWERABLE}; } function b(v){ return v[v]; } try { b(1); } catch (e) {} a();`,
       "b",
     ],
     [

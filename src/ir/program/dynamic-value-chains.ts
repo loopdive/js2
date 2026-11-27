@@ -13,9 +13,11 @@ import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
+import { CARRIER, F64, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { REALM_BRAND, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { conversionMethodTests } from "./dynamic-builtin-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -28,19 +30,9 @@ import {
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 
-/** The dynamic value's carrier, the native externref. */
-export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
-
-/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
-export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
-  kind: "coerce.to_externref",
-  value,
-  result,
-  resultType: CARRIER,
-});
+export { CARRIER, carried } from "./dynamic-value-types.js";
 
 const STRING: IrType = Object.freeze({ kind: "string" });
-const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
@@ -285,17 +277,6 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** (#7354 G1) The realm's Error.prototype.toString, recognised by identity (`ordinary-to-primitive.ts`). */
-  const errorToString = (instr: IrInstr) => ({
-    is: (method: IrValueId, r: IrValueId): IrInstr[] => {
-      const builtin = fresh();
-      return [
-        ...builders.realmIntrinsic(ERROR_TO_STRING_ID, builtin),
-        intrinsic(instr, "js.value.strict_eq", [method, builtin], r),
-      ];
-    },
-    answer: (object: IrValueId, r: IrValueId): IrInstr[] => [realmCall("js.object.error-to-string", [object], r)],
-  });
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
   const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);
   const toPrimitive = (
@@ -315,8 +296,15 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
-      ...(holdsFamily(program, "error") ? { errorToString: errorToString(instr) } : {}),
+      builtins: (name: string, method: IrValueId, object: IrValueId) =>
+        conversionMethodTests({ ...builders, stringOf }, instr, program, name, method, object),
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
+      ...(holdsFamily(program, "array")
+        ? {
+            isArray: (object: IrValueId, r: IrValueId) =>
+              builders.selectorCall("js.object.has-brand", [object], REALM_BRAND.array, r),
+          }
+        : {}),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
   };
@@ -351,6 +339,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         return toPrimitive(instr, value, "string", result, kind, {
           type: STRING,
           text: (source, r) => [source === undefined ? unsupported(instr, r) : text(source, r)],
+          unsupported: (r) => [unsupported(instr, r)],
           primitive: (primitive, r) => stringOf(instr, primitive, r, primitives),
         });
     }
@@ -370,7 +359,15 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
     if (converted.length === 0) return unbox(value, result);
     const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
-      toPrimitive(instr, value, "number", r, kind, { type: F64, text: (_, s) => [nan(s)], primitive: unbox });
+      toPrimitive(instr, value, "number", r, kind, {
+        type: F64,
+        text: (_, s) => [nan(s)],
+        unsupported: (s) => {
+          const [string, carrier] = [fresh(), fresh()];
+          return [unsupported(instr, string), carried(string, carrier), ...unbox(carrier, s)];
+        },
+        primitive: unbox,
+      });
     const convert = (r: IrValueId) => kindChain(instr, value, r, arm, converted, F64);
     if (converted.length === held.length) return convert(result);
     const cond = fresh();
@@ -389,6 +386,10 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       text: (source, r) => {
         const string = fresh();
         return [source === undefined ? unsupported(instr, string) : text(source, string), carried(string, r)];
+      },
+      unsupported: (r) => {
+        const string = fresh();
+        return [unsupported(instr, string), carried(string, r)];
       },
       primitive: (primitive, r) => [carried(primitive, r)],
     };
