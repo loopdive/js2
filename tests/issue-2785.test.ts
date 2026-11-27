@@ -16,16 +16,14 @@
 // canary green.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
-// Host-mode harness (buildImports + setExports — the canonical host runtime glue
+// Host-mode harness (the shared runtime harness — the canonical host runtime glue
 // so a newly-imported helper can never be silently masked).
 async function run(source: string, fn = "test"): Promise<unknown> {
   const result = await compile(source);
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 

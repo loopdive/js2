@@ -59,13 +59,22 @@ export interface Assembly {
   readonly unmodelled?: boolean;
 }
 
+/**
+ * The harness parts in assembly order. The body is passed because the harness
+ * may elide parts the body does not use (#7376's runtime shim on demand); an
+ * older harness ignores the third argument.
+ */
+export function harnessParts(harness: Harness, meta: Meta, body: string) {
+  return harness.harnessSourceParts(meta, meta.flags?.includes("async") === true, body);
+}
+
 /** The literal runner assembly (`assembleOriginalHarness(...).primary`), the program CI measures. */
 export function realAssembly(tools: Toolchain, source: string, meta: Meta): Assembly {
   const variant = tools.harness.assembleOriginalHarness(source, meta).primary;
   const starts: [number, string][] = [];
   let line = variant.strict ? 2 : 1;
   if (variant.bodyLineOffset > 0) {
-    for (const part of tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true)) {
+    for (const part of harnessParts(tools.harness, meta, source)) {
       starts.push([line, part.name]);
       line += part.source.split("\n").length - 1;
     }

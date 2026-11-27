@@ -39,6 +39,7 @@
 
 import { execFileSync } from "node:child_process";
 import { enforceQueueHold } from "./enforce-pr-queue-hold.mjs";
+import { REGRESSION_ANNOTATION_TITLE } from "./lib/regression-annotation.mjs";
 
 const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
@@ -156,6 +157,9 @@ export const INFRA_STEP_PATTERNS = [
   // the noun FIRST, which an artifact-then-download-only pattern missed (caught
   // by the real-step-name cases in tests/issue-3597-auto-park-step-aware.test.ts).
   /\bartifacts?\b[^\n]*\b(download|upload)\b/i,
+  // (#7551) A step that exists only to fail a job whose tool CRASHED (no
+  // verdict was reached) marks itself with a trailing "[infra]".
+  /\[infra\]$/i,
 ];
 
 // Is this step name a setup/infra step (as opposed to a verdict step)?
@@ -214,6 +218,14 @@ const DERIVATIVE_AGGREGATE_STEPS = [/^Fail if required test262 shards did not su
 function isDerivativeAggregateStep(name) {
   return typeof name === "string" && DERIVATIVE_AGGREGATE_STEPS.some((re) => re.test(name.trim()));
 }
+// (#7551) Steps that only FORWARD another job's verdict into a required check:
+// `merge shard reports` repeats the result of `merge complete IR standalone
+// measurement`. They never carry a verdict of their own, so they are never
+// judged — the forwarded job's failed step decides infra vs verdict.
+const FORWARDING_STEPS = [/^IR current-edition gate \(#7551\)$/];
+function isForwardingStep(name) {
+  return typeof name === "string" && FORWARDING_STEPS.some((re) => re.test(name.trim()));
+}
 
 export function classifyRun(jobs) {
   const failed = (jobs || []).filter((j) => j && j.conclusion === "failure");
@@ -226,6 +238,8 @@ export function classifyRun(jobs) {
       job: j.name,
       url: j.html_url || null,
       failedSteps,
+      // (#7551) What the job's verdict annotation says failed (regressed tests).
+      notes: Array.isArray(j.regressionNotes) ? j.regressionNotes : [],
       // The runner-kill signature, TWO variants (both require dying well
       // before the job timeout; missing timestamps -> NOT a kill,
       // conservative):
@@ -247,7 +261,7 @@ export function classifyRun(jobs) {
   const anyRunnerKilled = failedDetails.some((d) => d.runnerKilled);
   // Steps that carry an independent verdict for the infra/real judgment.
   const judgedSteps = (d) =>
-    anyRunnerKilled ? d.failedSteps.filter((s) => !isDerivativeAggregateStep(s)) : d.failedSteps;
+    d.failedSteps.filter((s) => !isForwardingStep(s) && !(anyRunnerKilled && isDerivativeAggregateStep(s)));
   const unclassifiable = failedDetails.some((d) => d.failedSteps.length === 0 && !d.runnerKilled);
   const infraOnly =
     realFailure &&
@@ -271,7 +285,8 @@ export function renderFailureLines(failedDetails) {
     .map((d) => {
       const steps = d.failedSteps.length ? ` — failing step: ${d.failedSteps.join(", ")}` : " — failing step: unknown";
       const url = d.url ? ` ([job log](${d.url}))` : "";
-      return `- ${d.job}${steps}${url}`;
+      const notes = (d.notes || []).flatMap((note) => note.split("\n").map((line) => `  - ${line}`));
+      return [`- ${d.job}${steps}${url}`, ...notes].join("\n");
     })
     .join("\n");
 }
@@ -305,14 +320,38 @@ function fetchJobs(runId) {
 // API call per such job, only on failure runs. Any fetch error leaves
 // `shutdownAnnotated` unset (conservative -> judged as a real failure).
 const SHUTDOWN_ANNOTATION = /runner has received a shutdown signal/i;
-function annotateShutdownKills(jobs) {
+// (#7551) The IR current-edition gate names its regressed tests in one error
+// annotation titled REGRESSION_ANNOTATION_TITLE; the park comment repeats it.
+
+// What a failed job's annotations add to the classification: the runner-kill
+// marker, and the regressed-test list.
+export function readJobAnnotations(annotations) {
+  const list = Array.isArray(annotations) ? annotations : [];
+  return {
+    shutdownAnnotated: list.some((a) => SHUTDOWN_ANNOTATION.test(String(a?.message ?? ""))),
+    regressionNotes: list
+      .filter((a) => a?.title === REGRESSION_ANNOTATION_TITLE && typeof a.message === "string")
+      .map((a) => a.message),
+  };
+}
+
+function annotateFailedJobs(jobs) {
   for (const j of jobs || []) {
     if (!j || j.conclusion !== "failure" || !j.id) continue;
     const steps = Array.isArray(j.steps) ? j.steps : [];
     const hasFailedStep = steps.some((s) => s && s.conclusion === "failure");
     if (!hasFailedStep) continue; // variant A handles the cancelled-step shape
-    const r = ghMaybe(["api", `repos/${REPO}/check-runs/${j.id}/annotations`, "--jq", ".[].message"]);
-    if (r.ok && SHUTDOWN_ANNOTATION.test(r.stdout)) j.shutdownAnnotated = true;
+    const r = ghMaybe(["api", `repos/${REPO}/check-runs/${j.id}/annotations`, "--jq", "[.[] | {title, message}]"]);
+    if (!r.ok) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(r.stdout || "[]");
+    } catch {
+      continue;
+    }
+    const { shutdownAnnotated, regressionNotes } = readJobAnnotations(parsed);
+    if (shutdownAnnotated) j.shutdownAnnotated = true;
+    if (regressionNotes.length > 0) j.regressionNotes = regressionNotes;
   }
   return jobs;
 }
@@ -802,6 +841,81 @@ function selfCheck() {
     "- quality — failing step: unknown",
     "render: unknown step, no url",
   );
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "merge complete IR standalone measurement",
+          conclusion: "failure",
+          steps: [{ name: "Fail on an edition regression (#7551)", conclusion: "failure" }],
+        },
+        {
+          name: "merge shard reports",
+          conclusion: "failure",
+          steps: [{ name: "IR current-edition gate (#7551)", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["merge complete IR standalone measurement", "merge shard reports"],
+      infraOnly: false,
+      unclassifiable: false,
+      shouldPark: true,
+    },
+    "#7551: an IR edition regression parks (the forwarding gate step adds no verdict)",
+  );
+  for (const step of [
+    "Download the nearest earlier IR measurement (#7551)",
+    "Edition report did not complete (#7551) [infra]",
+  ])
+    eq(
+      pick(
+        classifyRun([
+          {
+            name: "merge complete IR standalone measurement",
+            conclusion: "failure",
+            steps: [{ name: step, conclusion: "failure" }],
+          },
+          {
+            name: "merge shard reports",
+            conclusion: "failure",
+            steps: [{ name: "IR current-edition gate (#7551)", conclusion: "failure" }],
+          },
+        ]),
+      ),
+      {
+        realFailure: true,
+        failedJobs: ["merge complete IR standalone measurement", "merge shard reports"],
+        infraOnly: true,
+        unclassifiable: false,
+        shouldPark: false,
+      },
+      `#7551: "${step}" is infra (no verdict), even though the gate forwards it`,
+    );
+  eq(
+    renderFailureLines([
+      {
+        job: "merge complete IR standalone measurement",
+        url: null,
+        failedSteps: ["Fail on an edition regression (#7551)"],
+        notes: ["1 ES5 test(s) went pass -> not pass on the IR path (baseline abc):\ntest/a.js -> fail"],
+      },
+    ]),
+    "- merge complete IR standalone measurement — failing step: Fail on an edition regression (#7551)\n" +
+      "  - 1 ES5 test(s) went pass -> not pass on the IR path (baseline abc):\n" +
+      "  - test/a.js -> fail",
+    "#7551: render the regressed tests under the job line",
+  );
+  eq(
+    readJobAnnotations([
+      { title: "test262 regressions (#7551)", message: "x" },
+      { title: null, message: "The runner has received a shutdown signal" },
+      { title: "other", message: "y" },
+    ]),
+    { shutdownAnnotated: true, regressionNotes: ["x"] },
+    "#7551: annotations carry the shutdown marker and the regression list",
+  );
 
   if (failures) {
     console.error(`\n${failures} self-check(s) failed`);
@@ -843,7 +957,7 @@ if (isMain()) {
     process.exit(0);
   }
 
-  const jobs = annotateShutdownKills(fetchJobs(runId));
+  const jobs = annotateFailedJobs(fetchJobs(runId));
   const { realFailure, failedJobs, failedDetails, infraOnly, unclassifiable } = classifyRun(jobs);
   if (!realFailure) {
     console.log(

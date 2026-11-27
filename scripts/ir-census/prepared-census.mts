@@ -31,6 +31,7 @@ import { childLoop, errorText, runPool } from "./pool.mts";
 import {
   type Assembly,
   type Entry,
+  harnessParts,
   loadToolchain,
   type Meta,
   options,
@@ -46,7 +47,7 @@ const DETAIL_CAP = 600;
 function standInAssembly(tools: Toolchain, source: string, meta: Meta): Assembly {
   const strict = meta.flags?.includes("onlyStrict") === true;
   if (meta.flags?.includes("raw")) return { source, starts: [], bodyLine: 1 };
-  const parts = tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true);
+  const parts = harnessParts(tools.harness, meta, source);
   return assembleStandIn(source, parts, strict);
 }
 

@@ -8,11 +8,12 @@
  *   3. Assemble the literal upstream harness and untouched test body
  *   4. Compile with allowJs, instantiate, and run top-level initialization
  */
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join, relative } from "path";
 import { createHash } from "crypto";
 import { createContext, runInContext } from "node:vm";
 import { compile, compileMulti } from "../src/index.js";
+import { findCategoryTestFiles, TEST_CATEGORIES } from "./test262-categories.js";
 // (#5248) The compile-once `Temporal` provider (#4628). Source ACQUISITION is
 // not imported here — `tests/dogfood/setup-temporal-polyfill.mjs` owns the
 // pinned-tarball contract and is loaded lazily, only when a Temporal row runs.
@@ -3536,108 +3537,7 @@ ${asyncResultExport}`;
 
 // ── Test discovery ──────────────────────────────────────────────────
 
-/** Categories of test262 tests to scan */
-export const TEST_CATEGORIES = [
-  // ── harness self-tests ──
-  "harness",
-  // ── language ──
-  "language/arguments-object",
-  "language/asi",
-  "language/block-scope",
-  "language/comments",
-  "language/computed-property-names",
-  "language/destructuring",
-  "language/directive-prologue",
-  "language/eval-code",
-  "language/export",
-  "language/expressions",
-  "language/function-code",
-  "language/future-reserved-words",
-  "language/global-code",
-  "language/identifier-resolution",
-  "language/identifiers",
-  "language/import",
-  "language/keywords",
-  "language/line-terminators",
-  "language/literals",
-  "language/module-code",
-  "language/punctuators",
-  "language/reserved-words",
-  "language/rest-parameters",
-  "language/source-text",
-  "language/statementList",
-  "language/statements",
-  "language/types",
-  "language/white-space",
-  // ── built-ins (consolidated — each entry covers all subdirectories) ──
-  "built-ins/AbstractModuleSource",
-  "built-ins/AggregateError",
-  "built-ins/Array",
-  "built-ins/ArrayBuffer",
-  "built-ins/ArrayIteratorPrototype",
-  "built-ins/AsyncDisposableStack",
-  "built-ins/AsyncFromSyncIteratorPrototype",
-  "built-ins/AsyncFunction",
-  "built-ins/AsyncGeneratorFunction",
-  "built-ins/AsyncGeneratorPrototype",
-  "built-ins/AsyncIteratorPrototype",
-  "built-ins/Atomics",
-  "built-ins/BigInt",
-  "built-ins/Boolean",
-  "built-ins/DataView",
-  "built-ins/Date",
-  "built-ins/DisposableStack",
-  "built-ins/Error",
-  "built-ins/FinalizationRegistry",
-  "built-ins/Function",
-  "built-ins/GeneratorFunction",
-  "built-ins/GeneratorPrototype",
-  "built-ins/Infinity",
-  "built-ins/Iterator",
-  "built-ins/JSON",
-  "built-ins/Map",
-  "built-ins/MapIteratorPrototype",
-  "built-ins/Math",
-  "built-ins/NaN",
-  "built-ins/NativeErrors",
-  "built-ins/Number",
-  "built-ins/Object",
-  "built-ins/Promise",
-  "built-ins/Proxy",
-  "built-ins/Reflect",
-  "built-ins/RegExp",
-  "built-ins/RegExpStringIteratorPrototype",
-  "built-ins/Set",
-  "built-ins/SetIteratorPrototype",
-  "built-ins/ShadowRealm",
-  "built-ins/SharedArrayBuffer",
-  "built-ins/String",
-  "built-ins/StringIteratorPrototype",
-  "built-ins/SuppressedError",
-  "built-ins/Symbol",
-  "built-ins/Temporal",
-  "built-ins/ThrowTypeError",
-  "built-ins/TypedArray",
-  "built-ins/TypedArrayConstructors",
-  "built-ins/Uint8Array",
-  "built-ins/WeakMap",
-  "built-ins/WeakRef",
-  "built-ins/WeakSet",
-  "built-ins/decodeURI",
-  "built-ins/decodeURIComponent",
-  "built-ins/encodeURI",
-  "built-ins/encodeURIComponent",
-  "built-ins/eval",
-  "built-ins/global",
-  "built-ins/isFinite",
-  "built-ins/isNaN",
-  "built-ins/parseFloat",
-  "built-ins/parseInt",
-  "built-ins/undefined",
-  // ── annexB (legacy browser behaviors, standard test262 format) ──
-  "annexB/built-ins",
-  "annexB/language",
-];
+export { TEST_CATEGORIES };
 
 const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 
@@ -3645,19 +3545,7 @@ const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 const RUNTIME_EVAL_PROVIDER_LABEL = "test262-in-process";
 
 export function findTestFiles(category: string, test262Root = TEST262_ROOT): string[] {
-  const dir = join(test262Root, "test", category);
-  if (!existsSync(dir)) return [];
-  const files: string[] = [];
-  function walk(d: string) {
-    for (const entry of readdirSync(d, { withFileTypes: true })) {
-      const full = join(d, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".js") && !entry.name.includes("_FIXTURE") && !entry.name.endsWith(".imports.js"))
-        files.push(full);
-    }
-  }
-  walk(dir);
-  return files.sort();
+  return findCategoryTestFiles(category, test262Root);
 }
 
 export type Test262DiscoveredFile = {
