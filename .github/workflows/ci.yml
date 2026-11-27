@@ -15,6 +15,13 @@ env:
 permissions:
   contents: write
 
+# (#7556) A new push to a pull request cancels that PR's older run of this
+# workflow. Other events get a group of their own (the run id), so nothing on
+# main or in the merge queue is ever cancelled or made to wait.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # #2239 follow-up — detect whether this PR touches compiler/test/build source.
   # The heavy compile-and-run suites (equivalence-shard, equivalence-gate,

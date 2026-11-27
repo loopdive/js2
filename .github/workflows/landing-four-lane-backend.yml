@@ -37,6 +37,13 @@ env:
   WASMTIME_VERSION: "46.0.1"
   WASMTIME_SHA256: "9ae0b17ea298bcc52277a8208d6ab7fae8e1a89579672f9d82f9d86c116edb62"
 
+# (#7556) A new push to a pull request cancels that PR's older run of this
+# workflow. Other events get a group of their own (the run id), so nothing on
+# main or in the merge queue is ever cancelled or made to wait.
+concurrency:
+  group: landing-four-lane-backend-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   correctness-support-sanitizers:
     runs-on: ubuntu-24.04
