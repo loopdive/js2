@@ -62,8 +62,9 @@ timeout amendment is posted separately).
 - tests: 9,029 rows × 0.65 s ≈ 98 runner-min;
 - shard setup: 16 × 45 s ≈ 12 runner-min;
 - provider builds: ≈ 2.3 runner-min;
-- the re-run of new failures (below): ≈ 1 runner-min;
-- total ≈ **113 runner-min**, ≈ 7–8 min wall.
+- the re-check (section 2, step 4), only when candidates exist: ≈ 45 s of setup plus up to 60 s per watched row and about 1 s per other row, ≈ 2–4 runner-min;
+- the predecessor wait: 0 normally, up to 45 runner-min when push runs overlap;
+- total ≈ **112 runner-min** on a clean push, ≈ 7–8 min wall; more when there are candidates or a wait.
 
 The full run then costs ≈ 940 runner-min per day instead of per week.
 
@@ -119,48 +120,77 @@ and the run's timeout watch list (section 3).
 
 ### 2. Attribution, phase 1: label and alarm only
 
-A new step in `merge-report` runs on push, after the ratchet.
+**Order of steps in `merge-report`.** These run on every legacy run (push and
+daily), so both lanes judge rows the same way. The re-check result feeds the
+ratchet; it is never a note beside it.
 
-**Steps:**
-
-1. **Wait for the predecessor.** The nearest first-parent ancestor with a
-   test262-relevant push is the predecessor.
-   - While its push run is still queued or in progress, the step waits:
-     polls every 2 min, for at most 45 min.
-   - After that it falls back to the nearest **measured** ancestor and widens
-     the range. It never compares against a run that has not finished.
-2. **Diff.** New failing rows are completed-edition rows that are not passing
-   now and were passing in the predecessor. A timeout counts only under the
-   repeated rule (section 3).
-3. **Re-run once.** The new failing rows are re-run in the same job: one
-   runner, `TEST262_PATH_FILTER_FILE` with just those rows, the same pool
-   size. Only rows that fail again count. A row that passes on the re-run is
-   listed as a flake.
-4. **Red.** If confirmed rows remain, `merge shard reports` fails: main is
-   red. It stays red while those rows fail, because the completed-edition rule
-   is absolute.
-5. **Attribute.**
-   - The PR set comes from `prNumbersFromCommitSubjects` over
-     `git log --first-parent <predecessor>..<sha>`. That is auto-park's
-     helper, so it is not re-implemented. A queue push carries 2–5 merge
-     commits.
+1. **Merge and validate** the shard JSONL, as today.
+2. **Fetch the predecessor row set.** The predecessor is the nearest
+   first-parent ancestor with a test262-relevant push or a full run.
+   - While its run is still queued or in progress, the step polls every
+     2 min, for at most 45 min. **That holds the `merge-report` runner for
+     the wait** (worst case 45 runner-min, only when push runs overlap).
+   - After that it falls back to the nearest **measured** ancestor, which
+     widens the commit range. It never compares against an unfinished run.
+3. **Candidates.** These are completed-edition rows that passed in the
+   predecessor (a watched row counts as pass, section 3) and do not pass now.
+4. **Re-check once.**
+   - The candidates are re-run in the same job, with `TEST262_PATH_FILTER_FILE`
+     set to just those rows and pool size 1, so there is no fork-pool
+     contention.
+   - Watched timeout rows (section 3) run with a raised compile timeout of
+     60 s instead of 30 s. This adds a `TEST262_COMPILE_TIMEOUT_MS` input to
+     the compiler pool's `timeoutMs`; the default is unchanged.
+   - This needs the **full shard setup inside `merge-report`**:
+     - the test262 checkout (already there for the classifier);
+     - the compiler bundles;
+     - the eval and Temporal provider artifacts.
+   - That setup moves out of the two shard jobs into one composite action,
+     `.github/actions/test262-runner-setup`, used by `test262-shard`,
+     `test262-ir-measurement-shard` and both re-check steps. Today the bundle
+     build and the provider downloads are written out twice.
+   - The step is skipped when there are no candidates.
+5. **Override.** Each re-checked row replaces its shard row in the merged
+   JSONL, marked `recheck: true`.
+   - This happens **before** the ratchet runs and before the row-set artifact
+     is written, so a flake that passes on re-check cannot turn main red.
+   - The daily run promotes the overridden JSONL.
+6. **Ratchet**: the completed-edition check, with the timeout rule of
+   section 3.
+7. **Red.** If confirmed rows remain, `merge shard reports` fails: main is
+   red. It stays red while those rows fail, because the completed rule is
+   absolute.
+8. **Attribute** (push only).
+   - **PR set:** `prNumbersFromCommitSubjects`, auto-park's helper (not
+     re-implemented), over `git log --first-parent <predecessor>..<sha>`. A
+     queue push carries 2–5 merge commits.
    - **k = 1:** label that PR `post-merge-regression`.
-   - **k > 1:** label all k `post-merge-regression-unattributed`. There is no
-     bisect in phase 1; a per-merge-commit bisect is a phase 2 candidate.
-6. **Comment and alarm.**
-   - One comment per PR, made idempotent with an HTML marker. It reuses
+   - **k > 1:** label all k `post-merge-regression-unattributed`. This
+     includes the case where the step-2 **fallback widened the range** across
+     unmeasured pushes. There is no bisect in phase 1; a per-merge-commit
+     bisect is a phase 2 candidate.
+   - **Repeated timeouts** are attributed to the PR set stored with the watch
+     entry (section 3), not to this push.
+9. **Comment and alarm.**
+   - One comment per PR, idempotent through an HTML marker. It reuses
      `park()`'s marker-guarded comment and label calls in
      `scripts/auto-park-merge-group-failure.mjs`, extracted into one shared
      function instead of copied.
-   - The regressed-test list uses `scripts/lib/regression-annotation.mjs`'s
+   - The list of regressed tests uses `scripts/lib/regression-annotation.mjs`'s
      annotation format.
-   - The comment holds the confirmed rows, the flakes, the run link, the PR
-     set, and whether the latest completed push run on current main still
-     fails them, and the 24 h revert deadline.
-   - A job-summary block goes to the lead, and a message on coordination PR
-     #7526: one comment per incident, marker-guarded.
-7. **Repeated failures.** A later push that finds the same rows still failing
-   adds nothing. It labels only PRs that add new confirmed rows.
+   - **The comment holds:**
+     - the confirmed rows;
+     - the re-check flakes;
+     - the run link;
+     - the PR set;
+     - whether the latest completed push run on current main still fails
+       them;
+     - the 24 h revert deadline.
+   - One job-summary block goes to the lead, and one marker-guarded comment
+     per incident goes on coordination PR #7526.
+10. **Repeated failures.** A later push that finds the same rows still failing
+    adds nothing. It labels only PRs that add new confirmed rows.
+11. **Upload** the row-set artifact (section 1), green runs included.
 
 **The lead reverts by hand, after a 24 h window** (owner, 2026-11-27: "Ja,
 aber 24 h Frist").
@@ -169,51 +199,88 @@ aber 24 h Frist").
 - When the window has passed and the latest completed push run on current
   main still fails the confirmed rows, the lead opens a plain revert PR
   through the queue.
-- The comment states the deadline, the label time + 24 h in UTC.
+- The comment states the deadline: the label time + 24 h, in UTC.
 - In phase 1 nothing opens a revert PR automatically, and nothing reads a
   marker or a label to act on it.
 
 **False-positive record.** The issue file gets a table, kept by the lead for
-the week from the first labelled incident. Each incident gets a row:
+the week from the first labelled incident. Each row records:
 
-- date;
-- run;
-- PR set;
-- confirmed rows;
-- real or false positive, and why.
+- the date;
+- the run;
+- the PR set;
+- the confirmed rows;
+- whether it was real or a false positive, and why.
 
 The owner decides on automation from that table.
 
-**Permissions:** job-level `pull-requests: write` and `issues: write`,
-`GITHUB_TOKEN`. No deploy key, no app token.
+**Permissions:** job-level `pull-requests: write` and `issues: write`, with
+`GITHUB_TOKEN`. No deploy key and no app token.
 
-### 3. Compile timeouts: listed once, gated when repeated
+### 3. Compile timeouts: listed once, then re-checked and attributed to the origin
 
-**The rule, for both lanes.** A row that passed in the baseline and is
-`compile_timeout` now is **listed, not gated**, and goes on the measurement's
-`timeoutWatch` list, which the run's artifact carries.
+**First sighting (both lanes).** A row that passed in the baseline and is
+`compile_timeout` now is **listed, not gated**. It joins the measurement's
+`timeoutWatch` list, carried in the run's artifact, as:
 
-In the next measurement, a row on the baseline's `timeoutWatch` is compared as
-if the baseline had it as `pass`:
+```
+{ file, firstSeenSha, prs }
+```
 
-- **`pass`:** it is resolved.
-- **`compile_timeout` again:** a **repeated timeout**, gated.
-- **any other non-pass:** gated as an ordinary regression.
+- `firstSeenSha` is the measured commit where it first timed out.
+- `prs` is that commit's PR set: the queue group's PRs on the IR gate, or the
+  push's first-parent PR set on the legacy lane.
 
-So "repeated" means **two consecutive measurements on the same first-parent
-lineage**. A row that never passed is never gated.
+**Later measurements.** A row on the baseline's `timeoutWatch`:
+
+- **`pass` now:** resolved, and dropped from the list.
+- **`compile_timeout` again:** **re-checked once with the raised timeout**
+  (section 2, step 4).
+  - If it passes, it stays on the list unchanged, as a flake.
+  - If it still times out, it is a **confirmed repeated timeout**.
+- **Any other non-pass now:** also a confirmed repeat. The timeout already
+  hid this row's result at `firstSeenSha`, so this measurement cannot tell
+  whether the current change caused it.
+
+**A confirmed repeat never parks a queue group and never blames the current
+push.**
+
+- It raises the label and alarm of section 2 on the **originating** PR set,
+  `prs`: `post-merge-regression` when there is one PR, `-unattributed`
+  otherwise.
+- That PR has already merged, so this is post-merge by construction.
+- It then **leaves `timeoutWatch`** and is recorded in the artifact's
+  `alarmed` list with its origin.
+- The next baseline holds it as non-pass. It is therefore neither re-gated
+  nor re-alarmed, and it stays a known failure until it passes again or the
+  lead reverts.
+- This is what prevents the wedge where P1 merges on a free first timeout and
+  P2, P3 … are parked because their base is P1's measurement.
+
+**Known limit, stated:** a group that genuinely breaks a watched row is not
+parked for it, only alarmed against the originating PR. The lead triages from
+the alarm.
 
 **Where it lives:**
 
-- `pass → compile_timeout` is listed and not gated in the ratchet's existing
-  per-row path (`test262-edition-ratchet.ts`, the `timeouts` bucket, L643 and
-  L683).
-- That predicate and the "watched row counts as pass once" rule move to one
-  small shared helper. The ratchet path and `compareEditionRuns` in
-  `test262-edition-scope.ts` both use it.
-- **IR queue gate:** `EditionDiff` gains `timeouts` (listed) beside
-  `regressions`. `renderSummary` prints them, and the edition artifact carries
-  `timeoutWatch`. This amends #7551 B3 (L150 and L312 say "gated").
+- The ratchet's existing per-row path already lists `pass → compile_timeout`
+  without gating it (`test262-edition-ratchet.ts`, the `timeouts` bucket, L643
+  and L683).
+- That predicate and the watch-list transitions move to one small shared
+  helper, `scripts/lib/test262-timeout-watch.mjs`:
+  - `classify(baselineStatus, watched, nowStatus)` returns `pass`,
+    `listed`, `recheck`, `regression` or `confirmedRepeat`;
+  - `nextWatch(prevWatch, outcomes, origin)` builds the next list.
+- The ratchet path and `compareEditionRuns` in `test262-edition-scope.ts` both
+  use the helper.
+- **IR queue gate:**
+  - `EditionDiff` gains `timeouts` (listed) and `confirmedRepeats` beside
+    `regressions`. Only `regressions` fails the report.
+  - `merge-ir-measurement` runs the re-check with the same composite setup.
+  - The artifact carries `timeoutWatch` and `alarmed`.
+  - In merge_group, a confirmed repeat triggers the section 2 alarm on the
+    originating PRs, not auto-park.
+  - This amends #7551 B3 (L150 and L312 say "gated").
 - **Legacy push lane and daily full run:** the completed-edition check reads
   the predecessor row-set artifact's `timeoutWatch` in the same way.
 
@@ -293,18 +360,31 @@ reason text says:
   - `paths --completed` equals the completed editions' union, and a
     non-completed edition is excluded;
   - `fetch-baseline --artifact` selects by name;
-  - the timeout rule's four cases: first timeout listed; repeated gated;
-    watched → fail gated; watched → pass resolved;
-  - a never-passed timeout is not gated.
-- **`tests/test262-edition-ratchet.test.ts`:** the same four cases for the
-  completed-edition check with a predecessor row set.
+  - the gate's report: a confirmed repeat is not in `regressions`, so it
+    does not fail the group.
+- **New `tests/test262-timeout-watch.test.ts`** (the shared helper):
+  - first timeout: listed, with `firstSeenSha` and `prs`;
+  - watched → pass: resolved and dropped;
+  - watched → timeout → re-check pass: stays watched;
+  - watched → timeout → re-check timeout: a confirmed repeat, moved to
+    `alarmed`, origin kept;
+  - watched → fail: a confirmed repeat;
+  - a never-passed timeout: never listed;
+  - an `alarmed` row is not re-alarmed in the next measurement;
+  - the P1/P2/P3 sequence: P1 merges on a first timeout, and groups P2 and
+    P3 are not parked; the alarm names P1.
+- **`tests/test262-edition-ratchet.test.ts`:**
+  - the completed-edition check uses the helper on a predecessor row set;
+  - a `recheck: true` override that passes clears the row before the check.
 - **New `tests/issue-7537-post-merge-attribution.test.ts`:**
   - k = 1 is labelled and k > 1 is labelled unattributed;
   - only new confirmed rows count, and a flake on re-run is not attributed;
   - the comment is idempotent through the marker;
   - while main stays red, the next push labels nothing;
   - waiting on an in-flight predecessor, and falling back to the nearest
-    measured ancestor (mocked `gh`).
+    measured ancestor (mocked `gh`);
+  - **a fallback that widens the range to k > 1 labels all of them
+    unattributed.**
 - **Workflow structure:**
   - the push arms: `tests/test262-per-lane-gating.test.ts`,
     `tests/issue-7551-job-skip-propagation.test.ts`,
@@ -330,11 +410,15 @@ reason text says:
   - a confirmed new completed-edition failure turns the push run red;
   - it labels the single PR (k = 1) or all k PRs as unattributed (k > 1);
   - it comments idempotently and posts one alarm on #7526;
-  - a flake that passes on re-run labels nothing;
+  - a flake that passes on re-check is overridden in the merged JSONL before
+    the ratchet, so it neither turns main red nor labels anything;
   - the comment names the 24 h deadline, and nothing reverts automatically.
-- **Timeouts:** a first pass → `compile_timeout` is listed and blocks nothing,
-  on the IR queue gate and on the legacy lane. The same row timing out in the
-  next measurement is gated.
+- **Timeouts:**
+  - a first pass → `compile_timeout` is listed and blocks nothing, on the IR
+    queue gate and on the legacy lane;
+  - a watched row that times out again and fails its raised-timeout re-check
+    alarms its **originating** PR set and leaves the watch list;
+  - it never parks a later group and never labels a later push.
 - **Daily run:** the full run and promotion happen daily at 21:17 UTC, and the
   staleness alert fires after 48 h.
 - **Website:** the site opens on the IR view, the toggle is always visible,
@@ -342,7 +426,11 @@ reason text says:
 - **Code quality:**
   - one classifier and one file-list writer (`paths`, extended);
   - one first-parent artifact lookup (`fetch-baseline`, parameterised);
-  - one timeout predicate shared by the ratchet and the IR gate;
+  - one timeout helper (`scripts/lib/test262-timeout-watch.mjs`) shared by
+    the ratchet and the IR gate;
+  - one runner-setup composite action shared by both shard jobs and both
+    re-check steps, removing today's duplicated bundle build and provider
+    download steps;
   - auto-park's PR-set and comment/label logic, shared rather than copied;
   - the push lane reuses `test262-shard` and `merge-report` instead of
     parallel jobs;
