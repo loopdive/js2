@@ -112,8 +112,12 @@ import {
   resolveOrdinaryObjectClosureSignature,
 } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
-import { constantMemberRead, lowerRealmConversionCall, tryLowerRealmStaticCall } from "./realm-static-call.js";
-
+import {
+  constantMemberRead,
+  lowerRealmConversionCall,
+  realmToNumber,
+  tryLowerRealmStaticCall,
+} from "./realm-static-call.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
   IR_DYN_ADD_FN,
@@ -9787,29 +9791,25 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       `ir/from-ast: JSON.stringify of ${describeIrType(rawType)} operand is deferred (${cx.funcName})`,
     );
   }
-  // Exact-arity Math builtins become semantic intrinsics before receiver
-  // lowering because the ambient `Math` global has no IR value binding.
-  // Recheck the selector proof here so divergence fails with a clear error.
+  // Exact-arity Math builtins become semantic intrinsics before receiver lowering (the ambient `Math` has no IR
+  // value binding); the selector proof is rechecked so divergence fails with a clear error.
   if (receiverIdentifier?.text === "Math" && isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)) {
     const plan = IR_MATH_METHOD_TABLE[methodName];
     if (plan !== undefined && expr.arguments.length === plan.arity) {
-      const args = expr.arguments.map((argExpr) => {
+      // (#7564) On the realm's lane every argument is evaluated, then each is converted in order (ToNumber).
+      const host = functionObjectLoweringHost(cx);
+      const realm = host.createsFunctionObjects();
+      const values = expr.arguments.map((argExpr) => {
+        if (realm) return host.lowerExpression(argExpr);
         const arg = lowerExpr(argExpr, cx, irVal({ kind: "f64" }));
         const argType = cx.builder.typeOf(arg);
-        if (argType.kind !== "val" || argType.val.kind !== "f64") {
-          demoteToLegacy(
-            "method-call-unsupported",
-            `ir/from-ast: Math.${methodName} arg must be f64, got ${describeIrType(argType)} (${cx.funcName})`,
-          );
-        }
-        return arg;
+        if (argType.kind === "val" && argType.val.kind === "f64") return arg;
+        const detail = `Math.${methodName} arg must be f64, got ${describeIrType(argType)} (${cx.funcName})`;
+        return demoteToLegacy("method-call-unsupported", `ir/from-ast: ${detail}`);
       });
-      const source = expr.getSourceFile();
-      const position = source.getLineAndCharacterOfPosition(expr.getStart(source));
-      return cx.builder.emitIntrinsic(plan.intrinsic, args, {
-        line: position.line + 1,
-        column: position.character,
-      });
+      const args = realm ? values.map((arg, index) => realmToNumber(arg, expr.arguments[index]!, host)) : values;
+      const position = expr.getSourceFile().getLineAndCharacterOfPosition(expr.getStart());
+      return cx.builder.emitIntrinsic(plan.intrinsic, args, { line: position.line + 1, column: position.character });
     }
     demoteToLegacy("method-call-unsupported", `ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
