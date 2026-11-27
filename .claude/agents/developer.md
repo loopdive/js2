@@ -103,7 +103,7 @@ These help the tech lead know you're alive and progressing, not stuck. Keep them
 ### Implement
 1. Read `plan/issues/sprints/{sprint}/{N}.md` + smoke-test 1-2 failing cases to confirm the bug reproduces
 2. Update issue frontmatter: `status: in-progress` **and `assignee: ttraenkler/<your-agent-name>`** (commit on your branch — this lazily reflects the lock onto `main` when your PR merges; the live lock is already held on the `issue-assignments` ref from the Start step)
-3. Check `plan/method/file-locks.md` — if another dev owns your target file/function, message them directly
+3. Run `node scripts/pr-file-overlap.mjs --paths <files you will touch>` (or `--issue {N}`) — if another lane's open PR changes them, coordinate on #7526 before you start (the old `plan/method/file-locks.md` table is retired, #7559)
 4. Create worktree: `git worktree add /workspace/.claude/worktrees/issue-{N}-{slug} -b issue-{N}-{slug} origin/main`
    - **Branch base = `origin/main`, never the merge-queue tip (#2522).** Queued PRs are speculative and can eject; basing work on a `gh-readonly-queue` tip leaves phantom commits that force a forbidden rebase. The `git merge origin/main` you do before enqueue (steps below) already rebases your work onto future-main using only PRs that *landed*. **Exception:** if your task is known to depend on a specific in-flight PR, branch from *that PR's real branch* (explicit predecessor-stacking) and enqueue only after it lands.
    Then write your active status for the tech lead's statusline. Fill `<model>`

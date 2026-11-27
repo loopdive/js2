@@ -269,6 +269,61 @@ export function buildClosureMethodArgumentState(
   return setupInstrs;
 }
 
+/**
+ * (#7562) The callee half of that protocol, run at the entry of a function that reads `arguments`: take `__argc` and
+ * the extras, clear both so a later callee cannot read them, and leave `argc + extras.length` (`arguments.length`) as
+ * an f64. `-1` marks an entry no caller published a count for; `unknownCount` answers it with an i32.
+ */
+export function buildArgumentsCountBody(
+  state: Omit<ClosureArgumentState, "extrasArrTypeIdx">,
+  locals: { readonly argc: number; readonly extras: number },
+  unknownCount: readonly Instr[],
+): Instr[] {
+  return [
+    { op: "global.get", index: state.argc },
+    { op: "local.tee", index: locals.argc },
+    { op: "i32.const", value: -1 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...unknownCount, { op: "local.set", index: locals.argc }],
+      else: [],
+    },
+    { op: "i32.const", value: -1 },
+    { op: "global.set", index: state.argc },
+    { op: "global.get", index: state.extrasArgv },
+    { op: "local.set", index: locals.extras },
+    { op: "ref.null", typeIdx: state.extrasVecTypeIdx },
+    { op: "global.set", index: state.extrasArgv },
+    { op: "local.get", index: locals.argc },
+    { op: "local.get", index: locals.extras },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: locals.extras },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: state.extrasVecTypeIdx, fieldIdx: 0 },
+      ],
+    },
+    { op: "i32.add" },
+    { op: "f64.convert_i32_s" },
+  ];
+}
+
+/** (#7562) The caller half of a direct call: publish its count (the i32 parameter) and no extras. */
+export function buildPublishArgcBody(state: Omit<ClosureArgumentState, "extrasArrTypeIdx">): Instr[] {
+  return [
+    { op: "local.get", index: 0 },
+    { op: "global.set", index: state.argc },
+    { op: "ref.null", typeIdx: state.extrasVecTypeIdx },
+    { op: "global.set", index: state.extrasArgv },
+  ];
+}
+
 export function orderClosureDispatchEntries<T extends { funcTypeIdx: number; rest?: unknown }>(
   types: readonly TypeDef[],
   entries: T[],
