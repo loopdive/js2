@@ -1922,7 +1922,8 @@ jobs:
     # The distinct artifact names are what keep an edition run from ever being
     # read as a whole-corpus measurement: the site (#7616,
     # scripts/test262-ir-site-measurements.mjs) publishes the full one, and an
-    # edition one of a later landed commit only as that edition's row.
+    # edition one of a later landed commit only as a separate current-edition
+    # figure with its own commit and date.
     needs: [changes]
     # always(): `changes` does not run on schedule.
     if: |

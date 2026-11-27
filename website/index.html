@@ -4692,10 +4692,18 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         }
         node.hidden = false;
         const filename = mode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-        node.textContent = measured
-          ? (report ? window.t262ViewState.irMeasurementLabel(report, mode) : `IR requested · ${mode} · measured`) +
-            ` · benchmarks/results/${filename}`
-          : `IR requested · ${mode} · unmeasured`;
+        if (!measured) {
+          node.textContent = `IR requested · ${mode} · unmeasured`;
+          return;
+        }
+        window.t262ViewState.showIrProvenance(
+          node,
+          (report ? window.t262ViewState.irMeasurementLabel(report, mode) : `IR requested · ${mode} · measured`) +
+            ` · benchmarks/results/${filename}`,
+          mode === "host"
+            ? "./benchmarks/results/test262-editions.json"
+            : "./benchmarks/results/test262-standalone-editions.json",
+        );
       };
       if (IR_SELECTED) {
         const view = window.t262ViewState.read();

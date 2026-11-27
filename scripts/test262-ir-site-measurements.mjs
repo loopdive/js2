@@ -5,16 +5,17 @@
 //   test262-ir-standalone-edition-measurement  the CURRENT edition only (every merge-queue group, and a
 //                                              direct push the queue did not measure)
 // Only a measurement of a commit on main's first-parent line counts: a queue group that failed or was
-// cancelled never lands there. The newest full measurement supplies every published file. An edition
-// measurement of a LATER commit replaces that one edition's row, and the row names its own commit and
-// date; the other rows stay the full run's. The edition history keeps, per kind, the newest
-// measurement of each day.
+// cancelled never lands there. The newest full measurement supplies every published file and every
+// edition row, so no figure the pages sum or scale mixes two commits. An edition measurement of a
+// LATER commit is published beside them as the envelope's `currentEdition`, with its own commit and
+// date. The edition history keeps, per kind, the newest measurement of each day.
 //
 // Usage (deploy-pages.yml, in a full-history checkout of the deployed main commit):
 //   node scripts/test262-ir-site-measurements.mjs
 import { execFileSync } from "node:child_process";
 import * as nodeFs from "node:fs";
 import { realpathSync } from "node:fs";
+import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ghWithRetry } from "./lib/gh-api-retry.mjs";
 import { editionBucket } from "./lib/test262-edition-bucket.mjs";
@@ -63,6 +64,19 @@ function producingRun(api, repository, runId) {
   if (producers.length !== 1 || producers[0].status !== "completed" || producers[0].conclusion !== "success")
     return undefined;
   return execution;
+}
+
+/**
+ * Whether the run's commit carries this script, and with it the scope.json that names compilerPath:
+ * edition artifacts of earlier commits cannot be valid, so they are not even downloaded.
+ */
+function carriesThisPublisher({ git }, sha) {
+  try {
+    git(["cat-file", "-e", `${sha}:${relative(process.cwd(), fileURLToPath(import.meta.url))}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const json = (fs, path) => JSON.parse(fs.readFileSync(path, "utf8"));
@@ -124,20 +138,18 @@ function readFull({ fs }, directory, execution) {
  */
 function readEdition({ fs, git }, directory, execution, artifact) {
   const sha = execution.head_sha;
-  // Early edition artifacts predate scope.json; neither file is ever borrowed from elsewhere.
-  const scope = optional(fs, `${directory}/scope.json`);
-  const report = optional(fs, `${directory}/edition-report.json`);
-  const configured = JSON.parse(git(["show", `${sha}:scripts/test262-current-edition.json`])).edition;
+  const scope = json(fs, `${directory}/scope.json`);
   if (
-    scope?.compilerPath !== "ir" ||
+    scope.compilerPath !== "ir" ||
     scope.target !== "standalone" ||
     scope.scope !== "edition" ||
     scope.sourceSha !== sha ||
-    scope.edition !== configured ||
-    report?.sourceSha !== sha ||
-    report.edition !== scope.edition
+    scope.edition !== JSON.parse(git(["show", `${sha}:scripts/test262-current-edition.json`])).edition
   )
     return "IR edition artifact does not match its actual source run";
+  const report = json(fs, `${directory}/edition-report.json`);
+  if (report.sourceSha !== sha || report.edition !== scope.edition)
+    return "IR edition report does not match its actual source run";
   const records = new Map();
   for (const line of fs.readFileSync(`${directory}/results.jsonl`, "utf8").split("\n")) {
     if (!line.trim()) continue;
@@ -150,14 +162,7 @@ function readEdition({ fs, git }, directory, execution, artifact) {
   if (total <= 0 || total !== report.counts?.total) return "IR edition results contradict their edition report";
   const provenance = { sourceSha: sha, measuredAt: artifact.created_at, runId: String(execution.id) };
   return {
-    row: {
-      edition: scope.edition,
-      ...counts,
-      total,
-      pct: Math.round((counts.pass / total) * 100),
-      scope: "edition",
-      ...provenance,
-    },
+    row: { edition: scope.edition, ...counts, total, pct: Math.round((counts.pass / total) * 100), ...provenance },
     snapshot: {
       timestamp: artifact.created_at,
       gitHash: sha.slice(0, 8),
@@ -170,14 +175,32 @@ function readEdition({ fs, git }, directory, execution, artifact) {
 }
 
 /**
- * The newest valid measurement of each day of one kind, newest commit first. A full measurement that
- * contradicts its source run fails the deploy, as before #7616; an edition one is skipped with a
- * warning, because edition artifacts retained from before #7616 carry no compilerPath.
+ * The two artifact kinds. A full measurement that cannot be read or contradicts its source run fails
+ * the deploy, as before #7616. An edition one is optional: it is skipped with a warning.
  */
-function dailyMeasurements(context, name, read, reject) {
+const KINDS = {
+  full: {
+    name: IR_ARTIFACTS.full,
+    admits: () => true,
+    read: readFull,
+    reject: (_context, reason) => {
+      throw new Error(reason);
+    },
+  },
+  edition: {
+    name: IR_ARTIFACTS.edition,
+    admits: carriesThisPublisher,
+    read: readEdition,
+    reject: (context, reason) => context.warn(reason),
+  },
+};
+
+/** The newest valid measurement of each day of one kind, newest commit first. */
+function dailyMeasurements(context, kind) {
   const { api, gh, fs, repository, line } = context;
-  const artifacts = listAll(api, `repos/${repository}/actions/artifacts?name=${name}`, "artifacts")
+  const artifacts = listAll(api, `repos/${repository}/actions/artifacts?name=${kind.name}`, "artifacts")
     .filter((artifact) => !artifact.expired && line.has(artifact.workflow_run?.head_sha))
+    .filter((artifact) => kind.admits(context, artifact.workflow_run.head_sha))
     .sort((a, b) => line.get(a.workflow_run.head_sha) - line.get(b.workflow_run.head_sha) || b.id - a.id);
   const days = new Set();
   const measurements = [];
@@ -187,11 +210,16 @@ function dailyMeasurements(context, name, read, reject) {
     const execution = producingRun(api, repository, artifact.workflow_run.id);
     if (!execution) continue;
     const directory = `.ir-measurement-download/${artifact.id}`;
-    fs.mkdirSync(directory, { recursive: true });
-    gh(["run", "download", String(execution.id), "--repo", repository, "--name", name, "--dir", directory]);
-    const measurement = read(context, directory, execution, artifact);
+    let measurement;
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      gh(["run", "download", String(execution.id), "--repo", repository, "--name", kind.name, "--dir", directory]);
+      measurement = kind.read(context, directory, execution, artifact);
+    } catch (error) {
+      measurement = error.message;
+    }
     if (typeof measurement === "string") {
-      reject(`${measurement} (artifact ${artifact.id}, run ${execution.id})`);
+      kind.reject(context, `${measurement} (artifact ${artifact.id}, run ${execution.id})`);
       continue;
     }
     days.add(day);
@@ -220,11 +248,9 @@ export function publishIrMeasurements({
   warn = (message) => console.log(`::warning::${message}`),
 }) {
   const api = (path) => JSON.parse(gh(["api", path]));
-  const context = { api, gh, git, fs, repository, line: mainLine(git) };
-  const full = dailyMeasurements(context, IR_ARTIFACTS.full, readFull, (reason) => {
-    throw new Error(reason);
-  });
-  const editions = dailyMeasurements(context, IR_ARTIFACTS.edition, readEdition, warn);
+  const context = { api, gh, git, fs, warn, repository, line: mainLine(git) };
+  const full = dailyMeasurements(context, KINDS.full);
+  const editions = dailyMeasurements(context, KINDS.edition);
   const write = (path, data) => fs.writeFileSync(`${RESULTS}/${path}`, JSON.stringify(data));
   fs.mkdirSync(`${RESULTS}/ir/runs`, { recursive: true });
   const latest = full[0];
@@ -243,8 +269,8 @@ export function publishIrMeasurements({
   write("test262-standalone-ir-report.json", latest.report);
   write("ir/test262-standalone-categories.json", json(fs, `${latest.directory}/ir/test262-standalone-categories.json`));
   write("ir/runs/standalone-index.json", { ...latest.row, runs: measured.map((measurement) => measurement.row) });
-  // Only an edition measurement of a later commit than the full run's may replace its row.
-  const fresher = editions[0]?.position < latest.position ? editions[0].row : undefined;
+  // Only an edition measurement of a later commit than the full run's is newer news.
+  const currentEdition = editions[0]?.position < latest.position ? editions[0].row : undefined;
   for (const [file, field] of [
     ["test262-standalone-editions.json", "editions"],
     ["test262-category-editions.json", "data"],
@@ -259,12 +285,7 @@ export function publishIrMeasurements({
       edition[field] === undefined
     )
       throw new Error("IR edition artifact does not match its actual source run");
-    write(
-      `ir/${file}`,
-      field === "editions" && fresher
-        ? { ...edition, editions: edition.editions.map((row) => (row.edition === fresher.edition ? fresher : row)) }
-        : edition,
-    );
+    write(`ir/${file}`, field === "editions" && currentEdition ? { ...edition, currentEdition } : edition);
   }
   const history = [...measured.flatMap((measurement) => measurement.snapshots), ...editions.map((m) => m.snapshot)];
   if (history.length > 0) write("ir/runs/standalone-editions-index.json", { ...latest.row, runs: history });

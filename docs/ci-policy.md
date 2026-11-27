@@ -556,12 +556,15 @@ upload `test262-ir-standalone-measurement`; edition runs upload
 `test262-ir-standalone-edition-measurement`. `deploy-pages.yml` runs
 `scripts/test262-ir-site-measurements.mjs`, which publishes:
 
-- every IR file from the newest full run, with that run's commit and date;
-- for the current edition only, the row of the newest edition run whose
-  commit is LATER on main's first-parent line than the full run's, with its
-  own commit and date in the row (the report page names both). A queue group
-  that failed or was cancelled never lands on main, so its measurement is
-  never shown. An edition run is never presented as a full-corpus score;
+- every IR file and every edition row from the newest full run, with that
+  run's commit and date, so nothing the pages sum or scale mixes commits;
+- beside those rows (`currentEdition` in `ir/test262-standalone-editions.json`),
+  the current edition's figure from the newest edition run whose commit is
+  LATER on main's first-parent line than the full run's, with its own commit
+  and date. The IR provenance line on both pages shows it after the full
+  run's. A queue group that failed or was cancelled never lands on main, so
+  its measurement is never shown. An edition run is never presented as a
+  full-corpus score;
 - in the edition history, the newest measurement of each day of each kind;
   an edition-only point is drawn only at its own edition's scope.
 

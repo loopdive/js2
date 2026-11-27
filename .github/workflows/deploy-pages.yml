@@ -134,8 +134,9 @@ jobs:
           fi
 
       - name: Fetch separate completed IR standalone measurements
-        # (#7616) The newest full-corpus IR run, plus the current edition's row
-        # from the newest merge that landed after it. Needs the full first-parent
+        # (#7616) The newest full-corpus IR run, plus the current edition's
+        # figure from the newest merge that landed after it, published beside
+        # (never inside) the full run's rows. Needs the full first-parent
         # history of the checkout (fetch-depth: 0 above): a measurement counts
         # only when its commit is on main's first-parent line.
         env:

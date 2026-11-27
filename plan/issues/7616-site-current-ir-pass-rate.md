@@ -145,3 +145,26 @@ Implemented as planned (commit 381af36a5e).
   PR's own merge group already writes the new `scope.json`, so its edition
   row can appear on the deploy after it lands, once that group's run has
   completed (otherwise on the next deploy).
+
+## Review r1 fixes (2026-11-27)
+
+- **B1, two commits in one number.** Replacing the ES5 row put the edition
+  run's numbers into sums the pages build from the rows (landing-page
+  cumulative scopes, strict scaling by the full report's ratios, the edition
+  timeline), under the full run's label. Chosen fix, the simpler correct one:
+  the rows stay the full run's, all of them; the newer measurement is
+  published beside them as the envelope's `currentEdition` (counts, commit,
+  date, run). Nothing that is summed or scaled changes, so no consumer needs
+  a special case. Both pages show it through ONE shared function,
+  `t262ViewState.showIrProvenance` (`website/components/t262-view-state.js`):
+  the full run's label, then "newer ES5 measurement (edition only): pass /
+  total (pct) · source · date · all other figures are the full run's". The
+  landing page's `showIrProvenance` and report.html both call it. Each trend
+  point is a single measurement, so the edition history is unchanged.
+- **Edition artifacts can no longer fail the deploy.** `scope.json` is
+  checked before the commit's edition config is read; a failed download or an
+  unreadable file of an edition artifact is a rejection with a warning. A
+  full-run artifact still fails the deploy.
+- **Pre-#7616 edition artifacts are not downloaded.** An edition run counts
+  only when its commit carries `scripts/test262-ir-site-measurements.mjs`
+  (`git cat-file -e`, local): earlier commits wrote no `compilerPath`.

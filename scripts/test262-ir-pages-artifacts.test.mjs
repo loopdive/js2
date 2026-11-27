@@ -233,14 +233,28 @@ test("IR provenance separates request, measurement, proof, source and date", () 
   assert.match(label, /source-revision.*2026-10-19/);
 });
 
-test("an edition row from a later edition-only run names its own commit and date; full-run rows add nothing", () => {
-  const label = view().irEditionSourcesLabel([
-    { edition: "ES5", pass: 2, total: 4, scope: "edition", sourceSha: "head", measuredAt: "2026-11-27T12:00:00Z" },
-    { edition: "ES2015", pass: 0, total: 1 },
-  ]);
-  assert.match(label, /ES5 from a later edition-only run · source head · 2026-11-27T12:00:00Z/);
-  assert.doesNotMatch(label, /ES2015/);
-  assert.equal(view().irEditionSourcesLabel(rawEditions), "");
+test("IR provenance adds a newer current-edition measurement with its own commit and date, and nothing else", async () => {
+  const provenance = async (envelope) => {
+    const node = { textContent: "" };
+    view("?ir=1", envelope).showIrProvenance(node, "full run", "./benchmarks/results/test262-standalone-editions.json");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return node.textContent;
+  };
+  const currentEdition = {
+    edition: "ES5",
+    pass: 2,
+    total: 4,
+    pct: 50,
+    sourceSha: "head",
+    measuredAt: "2026-11-27T12:00:00Z",
+  };
+  assert.match(
+    await provenance({ ...allCompileErrors, editions: rawEditions, currentEdition }),
+    /^full run · newer ES5 measurement \(edition only\): 2 \/ 4 pass \(50%\) · source head · 2026-11-27T12:00:00Z/,
+  );
+  assert.equal(await provenance({ ...allCompileErrors, editions: rawEditions }), "full run");
+  // An editions file that is not a measured IR envelope adds nothing.
+  assert.equal(await provenance({ editions: rawEditions, currentEdition }), "full run");
 });
 
 test("historical Host caption keeps the actual frozen date and revision", () => {
@@ -655,6 +669,7 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
   const fixture = memoryFiles();
   const commands = [];
   const warnings = [];
+  const gitCommands = [];
   const gh = (args) => {
     commands.push(["gh", ...args]);
     if (args[0] === "api") {
@@ -682,8 +697,10 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
     const dir = args.at(-1);
     if (args[args.indexOf("--name") + 1] === IR_ARTIFACTS.edition) {
       const sha = runSha(args[2]);
+      if (options.editionDownloadFails) throw new Error("HTTP 410: artifact has expired");
       for (const [file, payload] of Object.entries(options.editionRun?.(sha) ?? editionRunFiles(sha)))
-        fixture.files.set(`${dir}/${file}`, typeof payload === "string" ? payload : JSON.stringify(payload));
+        if (payload !== undefined)
+          fixture.files.set(`${dir}/${file}`, typeof payload === "string" ? payload : JSON.stringify(payload));
       return "";
     }
     fixture.files.set(
@@ -711,7 +728,14 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
     return "";
   };
   const git = (args) => {
+    gitCommands.push(args);
     if (args[0] === "rev-list") return MAIN_LINE.join("\n") + "\n";
+    // A commit before #7616 lacks the publisher script (and the scope.json that names compilerPath).
+    if (args[0] === "cat-file") {
+      assert.match(args[2], /:scripts\/test262-ir-site-measurements\.mjs$/);
+      if ((options.predating ?? []).includes(args[2].split(":")[0])) throw new Error("fatal: path does not exist");
+      return "";
+    }
     assert.equal(args[0], "show");
     return JSON.stringify({ edition: options.configuredEdition ?? "ES5", chunks: 102 });
   };
@@ -722,7 +746,7 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
     fs: fixture.fs,
     warn: (message) => warnings.push(message),
   });
-  return { ...fixture, commands, warnings };
+  return { ...fixture, commands, warnings, gitCommands };
 }
 test("Pages actual artifact bridge serves V0 all-fail IR and never mutates Git or dispatches", () => {
   const result = retrieveMeasurements([mainArtifact(100)]);
@@ -931,18 +955,19 @@ const fullWithEditions = (dir) => ({
     runs: [{ timestamp: dir, editions: [] }],
   },
 });
-const publishedRows = (result) =>
-  JSON.parse(result.files.get("benchmarks/results/ir/test262-standalone-editions.json")).editions;
+const publishedEditions = (result) =>
+  JSON.parse(result.files.get("benchmarks/results/ir/test262-standalone-editions.json"));
 const publishedHistory = (result) =>
   JSON.parse(result.files.get("benchmarks/results/ir/runs/standalone-editions-index.json")).runs;
-test("a landed merge newer than the full run supplies the current edition's row, with its own commit and date", () => {
+const editionPoints = (result) => publishedHistory(result).filter((run) => run.scope === "edition");
+test("a landed merge newer than the full run is published beside the full run's rows, with its own commit and date", () => {
   const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
     editionFiles: fullWithEditions,
     editionArtifacts: [editionArtifact(500, "head")],
   });
-  const [es5, es2015] = publishedRows(result);
+  const published = publishedEditions(result);
   // Counted as generate-editions counts: compile_timeout is a compile error.
-  assert.deepEqual(es5, {
+  assert.deepEqual(published.currentEdition, {
     edition: "ES5",
     pass: 2,
     fail: 1,
@@ -950,21 +975,18 @@ test("a landed merge newer than the full run supplies the current edition's row,
     skip: 0,
     total: 4,
     pct: 50,
-    scope: "edition",
     sourceSha: "head",
     measuredAt: "2026-11-27T12:00:00Z",
     runId: "head-run",
   });
-  // The other editions stay the full run's, whose identity the envelope keeps.
-  assert.deepEqual(es2015, rawEditions[1]);
-  const envelope = JSON.parse(result.files.get("benchmarks/results/ir/test262-standalone-editions.json"));
-  assert.equal(envelope.baseline_sha, "source");
-  // The full-corpus score is never the edition run's.
+  // Every row the pages draw, sum or scale stays the full run's, under the full run's identity.
+  assert.deepEqual(published.editions, rawEditions);
+  assert.equal(published.baseline_sha, "source");
   assert.equal(
     JSON.parse(result.files.get("benchmarks/results/test262-standalone-ir-report.json")).baseline_sha,
     "source",
   );
-  const point = publishedHistory(result).find((run) => run.scope === "edition");
+  const [point] = editionPoints(result);
   assert.deepEqual(point.editions, [{ edition: "ES5", pass: 2, total: 4 }]);
   assert.equal(point.sourceSha, "head");
 });
@@ -973,20 +995,18 @@ test("a queue group that never landed on main is not shown, and not even downloa
     editionFiles: fullWithEditions,
     editionArtifacts: [editionArtifact(500, "ejected")],
   });
-  assert.deepEqual(publishedRows(result), rawEditions);
-  assert.ok(publishedHistory(result).every((run) => run.scope !== "edition"));
+  assert.equal(publishedEditions(result).currentEdition, undefined);
+  assert.deepEqual(editionPoints(result), []);
   assert.ok(!result.commands.some((command) => command.includes("ejected-run")));
 });
-test("an edition measurement older than the full run never overrides it, but stays in the history", () => {
+test("an edition measurement older than the full run is not current, but stays in the history", () => {
   const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
     editionFiles: fullWithEditions,
     editionArtifacts: [editionArtifact(500, "older", "2026-11-28T12:00:00Z")],
   });
-  assert.deepEqual(publishedRows(result), rawEditions);
+  assert.equal(publishedEditions(result).currentEdition, undefined);
   assert.deepEqual(
-    publishedHistory(result)
-      .filter((run) => run.scope === "edition")
-      .map((run) => run.sourceSha),
+    editionPoints(result).map((run) => run.sourceSha),
     ["older"],
   );
 });
@@ -996,34 +1016,113 @@ test("the newest landed commit wins, whatever the upload order", () => {
     // The group of "head" uploaded first; a run of the earlier commit uploaded later the same day.
     editionArtifacts: [editionArtifact(600, "older"), editionArtifact(500, "head")],
   });
-  assert.equal(publishedRows(result)[0].sourceSha, "head");
+  assert.equal(publishedEditions(result).currentEdition.sourceSha, "head");
 });
-test("a wrong-edition, wrong-commit, non-IR or contradictory edition artifact is refused with a warning", () => {
-  for (const [label, editionRun, configuredEdition] of [
-    ["edition configured at that commit", () => editionRunFiles("head"), "ES2015"],
-    ["scope edition", () => editionRunFiles("head", { scope: { edition: "ES2015" } }), undefined],
-    ["scope commit", () => editionRunFiles("head", { scope: { sourceSha: "source" } }), undefined],
-    ["report commit", () => editionRunFiles("head", { report: { sourceSha: "older" } }), undefined],
-    ["report edition", () => editionRunFiles("head", { report: { edition: "ES2015" } }), undefined],
-    ["compiler path", () => editionRunFiles("head", { scope: { compilerPath: "legacy" } }), undefined],
-    ["target", () => editionRunFiles("head", { scope: { target: "gc" } }), undefined],
-    ["scope.json predating #7616", () => editionRunFiles("head", { scope: { compilerPath: undefined } }), undefined],
-    ["full-scope measurement", () => editionRunFiles("head", { scope: { scope: "full" } }), undefined],
-    ["row count", () => editionRunFiles("head", { report: { counts: { pass: 2, total: 9 } } }), undefined],
+test("a wrong, unreadable or inconsistent edition artifact is refused with a warning, never failing the deploy", () => {
+  const missing = (file) => () => ({
+    ...editionRunFiles("head"),
+    [file]: undefined,
+  });
+  for (const [label, options] of [
+    ["edition configured at that commit", { configuredEdition: "ES2015" }],
+    [
+      "scope edition",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { edition: "ES2015" } }),
+      },
+    ],
+    [
+      "scope commit",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { sourceSha: "source" } }),
+      },
+    ],
+    [
+      "report commit",
+      {
+        editionRun: () => editionRunFiles("head", { report: { sourceSha: "older" } }),
+      },
+    ],
+    [
+      "report edition",
+      {
+        editionRun: () => editionRunFiles("head", { report: { edition: "ES2015" } }),
+      },
+    ],
+    [
+      "compiler path",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { compilerPath: "legacy" } }),
+      },
+    ],
+    [
+      "target",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { target: "gc" } }),
+      },
+    ],
+    [
+      "no compilerPath",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { compilerPath: undefined } }),
+      },
+    ],
+    [
+      "full-scope measurement",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { scope: "full" } }),
+      },
+    ],
+    [
+      "row count",
+      {
+        editionRun: () =>
+          editionRunFiles("head", {
+            report: { counts: { pass: 2, total: 9 } },
+          }),
+      },
+    ],
+    ["no scope.json", { editionRun: missing("scope.json") }],
+    ["no edition report", { editionRun: missing("edition-report.json") }],
+    ["no results", { editionRun: missing("results.jsonl") }],
+    [
+      "unparsable results",
+      {
+        editionRun: () => ({
+          ...editionRunFiles("head"),
+          "results.jsonl": "{not json\n",
+        }),
+      },
+    ],
+    ["failed download", { editionDownloadFails: true }],
   ]) {
     const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
       editionFiles: fullWithEditions,
       editionArtifacts: [editionArtifact(500, "head")],
-      editionRun,
-      configuredEdition,
+      ...options,
     });
-    assert.deepEqual(publishedRows(result), rawEditions, label);
-    assert.ok(
-      publishedHistory(result).every((run) => run.scope !== "edition"),
-      label,
-    );
+    assert.equal(publishedEditions(result).currentEdition, undefined, label);
+    assert.deepEqual(editionPoints(result), [], label);
     assert.equal(result.warnings.length, 1, label);
   }
+});
+test("an artifact that is not an IR edition measurement is refused before its commit's edition config is read", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "head")],
+    editionRun: () => editionRunFiles("head", { scope: { compilerPath: undefined } }),
+  });
+  assert.ok(!result.gitCommands.some((args) => args[0] === "show"));
+});
+test("an edition run of a commit before #7616 is not even downloaded", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "head")],
+    predating: ["head"],
+  });
+  assert.ok(!result.commands.some((command) => command.includes("head-run")));
+  assert.equal(publishedEditions(result).currentEdition, undefined);
+  assert.deepEqual(result.warnings, []);
 });
 test("an edition run whose producer job failed (a regression) is not shown", () => {
   const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
@@ -1031,7 +1130,7 @@ test("an edition run whose producer job failed (a regression) is not shown", () 
     editionArtifacts: [editionArtifact(500, "head")],
     jobsOf: (runId) => (runId === "head-run" ? [{ ...producerJob, conclusion: "failure" }] : undefined),
   });
-  assert.deepEqual(publishedRows(result), rawEditions);
+  assert.equal(publishedEditions(result).currentEdition, undefined);
 });
 test("an edition run is never published without a measured full run", () => {
   const result = retrieveMeasurements([], allCompileErrors, {
@@ -1053,9 +1152,7 @@ test("the edition history keeps the newest edition measurement of each day", () 
     ],
   });
   assert.deepEqual(
-    publishedHistory(result)
-      .filter((run) => run.scope === "edition")
-      .map((run) => run.sourceSha),
+    editionPoints(result).map((run) => run.sourceSha),
     ["head"],
   );
 });
