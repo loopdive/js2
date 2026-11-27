@@ -151,7 +151,10 @@ export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
   "propertyIsEnumerable",
 ] as const);
 export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
-/** (#7557) The Function.prototype methods the realm's built-in caller answers through a value. */
+/**
+ * (#7557) The Function.prototype methods the realm holds as values, for its built-in caller to answer (`call`; a call
+ * of `apply` or `bind` is the caller's run-time abort until its rung exists).
+ */
 export const NATIVE_FUNCTION_PROTOTYPE_METHODS = Object.freeze(["call", "apply", "bind"] as const);
 /** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
 export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([

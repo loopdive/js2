@@ -184,27 +184,13 @@ in the P1 notes): the dispatcher's built-in arm stops being the run-time abort.
 - **Cost:** prelude 103,439 → 110,121 B (+6.7 KB). The prelude has function values, so it gets the caller. Holding
   the P1 methods (the ladder's identity tests) and method 3 are most of it.
 
-### Open, next
-
-- A non-call `apply-vector` that reaches a built-in still aborts; only the method dispatcher's arm calls the caller.
-- `isPrototypeOf({})` with an `undefined` `this` refuses ("a dynamic value flows into Object without a conversion"):
-  a from-ast flow rule, not the caller.
-- **`Function` in scope and `Function.prototype.call` / `apply` / `bind`.**
-  - Catalog: Function.prototype's native members; `%Function%` and the members held as values, appended.
-  - `realmConstructorId` names `Function`; `Function(…)` / `new Function` stay the built-in arm's abort.
-  - The function-value read of `call` / `apply` / `bind` is allowed where the realm holds them.
-  - The `call` rung dispatches `this` with `args[1..]`. It needs one runtime `apply-arguments(callee, this, args,
-    start)`: the vector-apply builder over the `$ObjVec` layout, with the caller as its built-in arm.
-  - `apply` takes a realm array (a kernel array-to-`$ObjVec`); any other array-like aborts.
-  - `bind` is BoundFunctionCreate (a closure-root subtype holding target, `this` and arguments), a rung of its own.
-
 ### Prelude cost recovered (A1b-1 step 1)
 
 - **Identity without holding.** `identityTest` asks `js.object.is-intrinsic(value, selector)`: SameValue with the
   built-in the selector names where the realm holds it, `false` for any other selector (a function object the realm
   does not hold is no program value). Only `js.object.intrinsic` reads still make the realm hold a method.
 - **Rungs only where reachable.** The caller's Object.prototype rungs exist only where the source spells one of
-  their names (`ProgramObjects.objectMethods`, `families.objectMethods`). Elsewhere a detached call of one is the
+  their names (`ProgramObjects.methodNames`, `families.methodNames`). Elsewhere a detached call of one is the
   run-time abort, as before the caller. The caller body was 74 KB of WAT text in the prelude, almost all of it these
   rungs' ToPropertyKey conversions.
 - `from-ast.ts` no longer grows: the module-init resolver members moved to `ModuleInitResolver`
@@ -214,3 +200,53 @@ in the P1 notes): the dispatcher's built-in arm stops being the run-time abort.
 - Probes: the 152 A1a probes unchanged (145 OK, 4 abort, 3 refused, 0 wrong); the 13 A1b-1 probes unchanged; 10 new
   (override of `Object.prototype.hasOwnProperty` honoured, a folded key aborts, methods stored on objects and called
   as `o.f(…)`): 7 OK with failing twins, 3 abort. Ordinary pipeline 32/32 identical.
+
+### `Function` in scope, `Function.prototype.call` (A1b-1 step 2)
+
+- **`Function`** reads the realm's %Function% (`realmConstructorId`; catalog `implementation: "native"`: held as a
+  value; `Function(…)` and `new Function(…)` are the built-in arm's run-time abort).
+- **Function.prototype's methods.** `call`, `apply` and `bind` are appended to `NATIVE_VALUE_INTRINSICS`; the realm
+  holds them as a group where a constant key names one or the IR reads one (`METHOD_GROUPS`,
+  `native-realm-requirements.ts`; the Object.prototype group now also counts any constant-key use, not only a
+  [[Get]]). %Function.prototype%'s bootstrap entry seeds its held data properties on its bag
+  (`functionPrototypeProperties`); a function's reads of those keys go through the realm's [[Get]], so a write to
+  Function.prototype (or to its `call`) is the program's. Entries are `object-prototype-method` only for the
+  Object.prototype methods; every other entry is `native` (its holder lists it).
+- **Chains.** Where the program names `Function`, `functionChainAnswer` answers `true` for %Function.prototype% on every
+  function's chain but its own (`Function.prototype instanceof Function` is false).
+- **`call` rung** (`dynamic-builtin-call.ts`): Call(`this`, thisArg, args) is the dispatcher's method call of the
+  caller's `this` with `args[0]` and up to three arguments after it, picked by the vector's length; more is the
+  run-time abort. A built-in `this` reaches the caller again (`Function.prototype.call.call(h, o, k)`), a value that is
+  not callable is the dispatcher's TypeError, and a throw in the callee stays catchable. Chosen over a new
+  `apply-arguments` runtime: no new consumer plumbing, and the dispatcher's own receiver rules apply (a sloppy callee
+  with an `undefined` or primitive thisArg is its run-time abort, as for a detached call).
+- **Rungs by spelled name.** `ProgramObjects.methodNames`: the realm's prototype-method names the source spells; the
+  caller has a rung only for those (and reads four arguments only where `call` is spelled).
+
+### Measured (head 4c22a5e9d3)
+
+- Prelude + `assert.sameValue(1, 1);` (3 compiles, same session, load ~3): A1a 103,374 B (9.19–13.72 s, median
+  10.29 s); head 107,463 B (+4.1 KB; median 10.63 s). The prelude spells `call`, so it carries the `call` rung.
+- The 43 propertyHelper rows (real harness, refuse-mode compile): none stops at `Function` any more (base: 42). First
+  stops now: 26 `arguments.length` (`dyn.publish_argc`, A1c), 8 `Math.pow` (needs callable provider
+  materialization), 2 `null` under an f64 hint, 1 each `Date`, `RegExp` (×2), `globalThis`, a closure return type,
+  `this` outside a method, a dynamic value into String. No row reaches run time, so `bind` (still the abort) is not
+  yet what stops one.
+- Probes against node: 14 `Function` probes (11 OK with failing twins, 2 abort: `new Function`, a read of
+  `Function.prototype.constructor`; 1 refused: `'call' in g` (`__extern_has`)), 15 `call` probes (12 OK with failing
+  twins, 3 abort: more than three arguments, a sloppy callee with an `undefined` / primitive thisArg). The 152 A1a
+  probes unchanged (145 / 4 / 3), the 13 + 10 A1b-1 probes unchanged. 0 wrong, 0 invalid, 0 exceptions.
+- Ordinary pipeline: 32/32 binaries identical. `tests/issue-7557-builtins-through-values.test.ts`: 15 node agreements
+  with wrong twins, 3 aborts.
+- The 411-row sample was not re-run in this session (its row lists were not found in this worktree).
+
+### Next session
+
+1. `bind`: BoundFunctionCreate as a closure-root subtype holding target, `this` and a realm array of arguments, its
+   `length` / `name` per §20.2.3.2 (a target whose `length` is an accessor aborts); a bound rung that prepends the bound
+   arguments (the same count-picked dispatcher call as `call`); `new` of a bound function stays the abort.
+2. `apply`: CreateListFromArrayLike of a realm array (any other array-like aborts; `null` / `undefined` is no
+   arguments), then the same count-picked call.
+3. `Array.prototype.join` / `push` (A1b-3; they need the `slot` / `loop` legalization helpers), `Math.pow`,
+   `getOwnPropertyNames` (A1b-4), then A1c's `arguments.length`, which stops 26 of the 43 rows.
+4. Re-run the 411-row sample through the real runner on the A1a head and on this head.

@@ -68,6 +68,8 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%ThrowTypeError%",
       // (#7354 W2) Object as a value
       "%Object%",
+      // (#7557) Function as a value
+      "%Function%",
       // (#7354 O1) the Object statics whose call form the Prepared path lowers
       "%Object.create%",
       "%Object.defineProperties%",
@@ -77,6 +79,10 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%Object.prototype.hasOwnProperty%",
       "%Object.prototype.isPrototypeOf%",
       "%Object.prototype.propertyIsEnumerable%",
+      // (#7557) the Function.prototype methods the realm's built-in caller answers
+      "%Function.prototype.apply%",
+      "%Function.prototype.bind%",
+      "%Function.prototype.call%",
       // (#7354 G1) the Error family: the constructors and Error.prototype.toString
       "%Error%",
       "%Error.prototype.toString%",

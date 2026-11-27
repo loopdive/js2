@@ -35,7 +35,6 @@ const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not i
 
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
-    ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
     ["Reflect.getPrototypeOf", "function f(){ return Reflect.getPrototypeOf({}); } f();", notInScope("Reflect")],
     ["globalThis", "function f(){ return globalThis; } f();", notInScope("globalThis")],
     [
@@ -66,8 +65,10 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ["a dynamic value's __proto__", "function f(v){ return v.__proto__; } f(1);"],
     ["a dynamic value's constructor", "function f(v){ return v.constructor; } f(1);"],
     // (#7354 P1) The routes a populated Object.prototype method opens: it is a built-in function object, and every key
-    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts.
-    ...(["constructor", "__proto__", "call"] as const).flatMap((key) =>
+    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts. (#7557)
+    // %Function.prototype% itself is a program value (`Function.prototype`), whose methods `call` / `apply` / `bind`
+    // the realm holds and whose reads and writes are the realm's (tests/issue-7557-builtins-through-values.test.ts).
+    ...(["constructor", "__proto__"] as const).flatMap((key) =>
       ["({})", "1"].map((receiver): [string, string] => [
         `a method of ${receiver}'s ${key}`,
         `var fv = function(){ return 1; }; fv(); function f(v){ return v.hasOwnProperty.${key}; } f(${receiver});`,
@@ -75,11 +76,9 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ),
     // (#7354 G1) The Error family's values and prototypes are the program's to read and write, but none leads on to a
     // prototype the premise covers: each route past them (a function's or an object's [[Prototype]], Function) aborts.
-    ...["TypeError.__proto__", "TypeError.constructor", "TypeError.call", "Error.prototype.__proto__"].map(
-      (route): [string, string] => [
-        `the Error family's ${route}`,
-        `var fv = function(){ return 1; }; fv(); function f(){ return ${route}; } f();`,
-      ],
-    ),
+    ...["TypeError.__proto__", "TypeError.constructor", "Error.prototype.__proto__"].map((route): [string, string] => [
+      `the Error family's ${route}`,
+      `var fv = function(){ return 1; }; fv(); function f(){ return ${route}; } f();`,
+    ]),
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
 });
