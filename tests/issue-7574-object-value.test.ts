@@ -159,7 +159,6 @@ var out = Object.prototype.toString.call(id({}));`,
 
   it.each([
     ["a static the identity row lacks, called", "var out = String(Object.keys({ a: 1 }).length);"],
-    ["a static read as a value", "var d = Object.defineProperty;\nvar out = typeof d;"],
     ["a static written on the global", "Object.keys = function () { return 1; };\nvar out = String(Object.keys({}));"],
     ["a computed key off Object", 'var O = Object, k = "ke" + "ys";\nvar out = typeof O[k];'],
   ])(

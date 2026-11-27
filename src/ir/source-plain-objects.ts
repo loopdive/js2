@@ -13,9 +13,10 @@
  * (#7580) The escape rule: a call `Object.m(…)` keeps the folded built-in unless the program may have replaced
  * `Object.m` when it runs. That needs the `object` family (without it no code obtains `Object`: the root's
  * `constructor` comes with the family) and a route that writes `m` on it: a member named `m` written, deleted or
- * defined on any object, a member installed under a name the source does not spell, a reflective route
- * (`constructor`, `Reflect`, …), code the walk cannot see, or `Object` handed on (`var O = Object`, `f(Object)`).
- * Each is a question of the shared walk (`intrinsic-prototype-writes.ts`), asked of every source file.
+ * defined on any object, a reflective route (`constructor`, `Reflect`, …), code the walk cannot see, or `Object`
+ * handed on (`var O = Object`, `f(Object)`, `Object[k]`). A write under a name the source does not spell reaches
+ * `Object` only through one of these (`d(Object, k, v)` hands it on). Each is a question of the shared walk
+ * (`intrinsic-prototype-writes.ts`), asked of every source file.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
@@ -29,7 +30,6 @@ import {
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
 import {
   sourceLetsIntrinsicEscape,
-  sourceMayWriteUnspelledMember,
   sourceNamesReflectiveRoute,
   sourceRunsDynamicCode,
   sourceWritesMemberNamed,
@@ -107,11 +107,7 @@ export function programObjects(
   const replaces = (name: string): boolean =>
     escapes ||
     sourceFiles.some(
-      (file) =>
-        sourceWritesMemberNamed(file, name) ||
-        sourceMayWriteUnspelledMember(file) ||
-        sourceNamesReflectiveRoute(file) ||
-        sourceRunsDynamicCode(file),
+      (file) => sourceWritesMemberNamed(file, name) || sourceNamesReflectiveRoute(file) || sourceRunsDynamicCode(file),
     );
   return {
     present: present || realmFamilies.has("error"),

@@ -43,7 +43,7 @@ slice builds it.
 | realm holds | `native-realm-requirements.ts` | the one pin function pins a family constructor's own function members as it pins its prototype's (a static is held where a constant key names it, every one where a key may be computed); `heldCatalogRows` keeps a family row's property whose value is a callable held without a family only where the realm holds that callable as a value | `pinnedMembers`, `modelledRow` |
 | backend | `native-realm.ts` | a callable held without a family is installed on the root only if the root names it (P1's methods); a static is a plain built-in function value | — |
 | shared source facts | `src/shared/intrinsic-prototype-writes.ts` | the existing walk also records the intrinsics a non-inert use lets escape (`isInertUse` is #7350's escape test); one new query | `prototypeUse`, `isInertUse` |
-| source fact | `source-plain-objects.ts` | `ProgramObjects` gains the statics the program reads as values and the native statics it may replace | `sourceWritesMemberNamed`, `sourceMayWriteUnspelledMember`, `sourceNamesReflectiveRoute`, `sourceRunsDynamicCode`, the new escape query |
+| source fact | `source-plain-objects.ts` | `ProgramObjects` gains the statics the program reads as values and the native statics it may replace | `sourceWritesMemberNamed`, `sourceNamesReflectiveRoute`, `sourceRunsDynamicCode`, the new escape query |
 | IR statics | `dynamic-object-statics.ts` | the algorithm takes its arguments explicitly; where the program holds the `object` family and may replace the static, the folded call is a [[Get]] of the static, an identity test, the algorithm, else the run-time abort | `identityTest`, `builtinMethodChain` |
 | IR call | `dynamic-prototype-methods.ts` | a dispatcher call whose callee may be a held native static answers it by identity (statics ignore `this`), arguments padded with `undefined` | the one method-by-identity table |
 | tests | `tests/issue-7580-object-statics.test.ts` | node agreement with wrong twins; refuses/aborts rows | `tests/helpers/prepared-node-agreement.ts` |
@@ -55,10 +55,12 @@ A call `Object.m(…)` keeps the folded built-in unless both hold:
 1. the program holds the `object` family (`holdsFamily`): only then can any code obtain `%Object%` at all (the root's
    `constructor` is seeded with the family), so without it no write to a static exists;
 2. the program may replace `Object.m`: in some source file a member named `m` is written, deleted or defined on any
-   object (`sourceWritesMemberNamed`), a member may be installed under an unspelled name
-   (`sourceMayWriteUnspelledMember`), a reflective route is named (`constructor`, `Reflect`, … —
+   object (`sourceWritesMemberNamed`), a reflective route is named (`constructor`, `Reflect`, … —
    `sourceNamesReflectiveRoute`), dynamic code may run (`sourceRunsDynamicCode`), or `Object` escapes (a use that is
    no callee, member-access object, `typeof` / `instanceof` / equality operand — the existing walk's `isInertUse`).
+   A write under an unspelled name (`sourceMayWriteUnspelledMember`) reaches `Object` only through one of these
+   (`d(Object, k, v)` and `Object[k] = v` hand it on), so it is not asked: a program with an ordinary computed store
+   keeps its fold.
 
 Then the call reads the static's current value and answers by identity; any other value is the run-time abort (never
 the stale fold). The write half reuses the shared walk (no second member-write walker); only the escape half is new,
