@@ -81,6 +81,13 @@ var out = String(s.length) + String(d.value) + String(d.writable) + String(d.enu
   + Number.prototype.toString() + String(String.prototype.length) + String(Boolean.prototype.valueOf())
   + String(String.prototype.valueOf() === "") + typeof Number.prototype;`,
   ],
+];
+
+/**
+ * Programs that write a built-in or depend on a member's identity, and one whose function declarations nest (inside a
+ * function it ends at the run-time abort): module level only.
+ */
+const WRITES: readonly (readonly [string, string])[] = [
   [
     "a wrapper captured, returned and passed to a function",
     `function mk(v) { var w = new Number(v); return function () { return w + 1; }; }
@@ -89,10 +96,6 @@ function inc(x) { return x + 1; }
 var w = str();
 var out = String(mk(2)()) + typeof w + w + w.length + String(inc(new Number(4)));`,
   ],
-];
-
-/** Programs that write a built-in or depend on a member's identity: module level only. */
-const WRITES: readonly (readonly [string, string])[] = [
   [
     "a wrong receiver of valueOf / toString is a catchable TypeError",
     `var o = {valueOf: String.prototype.valueOf}, p = {toString: Number.prototype.toString};
