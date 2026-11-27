@@ -428,6 +428,7 @@
         "src/runtime/wasmgc/values/source-function-object-bodies.ts",
         "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
         "src/runtime/wasmgc/values/object-static-bodies.ts",
+        "src/runtime/wasmgc/values/own-key-walk-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -2038,6 +2039,14 @@
       "destination": "ir-core",
       "owner": "7354-prepared-path",
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/arguments-object.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend lowering of a function's own arguments object (the count read and its refusals), keyed on ast-scope's owner rule; moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/function-declaration-values.ts",
@@ -13243,6 +13252,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/bigint-operand-refusal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7525",
+      "nextBoundary": "Separate the checker-backed BigInt operand predicate (frontend) from the IR refusal it feeds."
+    },
+    {
       "path": "src/ir/module-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -15461,6 +15478,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/object-static-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/own-key-walk-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

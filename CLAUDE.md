@@ -174,6 +174,15 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   has no skip flag. It judges the pushed refs: deletes and tags skip it, and it
   refuses a pushed branch that is not HEAD, a dirty tracked tree, a missing
   main ref, or a box without `timeout`/`gtimeout`. A failure it misses costs a queue run and a `hold` park.
+- **A branch stacked on an unmerged branch cannot meet that 20-minute bound**,
+  because the hook also runs the base's test files (#7561's alone take ~15
+  min). Set the hook's own variable to the branch you stacked on:
+  `CHANGED_ROOT_TESTS_BASE=origin/<base-branch> git push …` runs only your
+  slice's files. Run the base's files your change can affect by hand.
+- **A test that spawns `git` must strip the `GIT_*` environment.** Changed
+  tests now run inside a git hook, where `GIT_DIR` and friends point at the
+  real repository: on 2026-11-27 a test's `git init` hit the real git dir
+  instead of its temp dir.
 
 ## Running Tests
 
@@ -928,6 +937,14 @@ tail does not.** "Always get PRs into the queue" is satisfied by making them
 *enqueueable* and confirming they were taken — see the shepherd's one-shot
 backstop rules under "PR-queue shepherd" for the only sanctioned manual enqueue,
 which is one-shot, PAT-authenticated, and never repeated.
+
+**Coordination thread: PR #7526 (project-lead order, 2026-11-27).** It is a
+standing draft PR that is never merged. Read its newest comments at session
+start. Post a comment there for every project-lead decision and every change
+that affects other lanes: CI and merge-queue behaviour, a rule in this file, a
+shared module you are about to restructure, another lane's PR you are about to
+push to, close or release. A decision that only one session knows does not
+exist for the others.
 
 **One issue per PR (project-lead order, 2026-11-27).** Every code PR has its
 own issue file, `plan/issues/<id>-<slug>.md`, with the plan and the result of

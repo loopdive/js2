@@ -255,6 +255,7 @@ import {
   isEqualityOperator,
   isGlobalUndefinedIdentifier,
   isNumberCompoundAssignOperator,
+  isBigIntUnsafeDynamicOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   mayBeElementRead,
@@ -265,6 +266,7 @@ import {
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
+import { someBigIntOperand } from "./bigint-operand-refusal.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -743,6 +745,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * standalone codegen instead of selecting the host-extern IR ABI.
    */
   readonly isRegExpExpression?: (expr: ts.Expression) => boolean;
+  /** (#7525) An operand whose static type has a BigInt member (`bigIntOperandOption`); host-free lanes only. */
+  readonly isBigIntOperand?: (expr: ts.Expression) => boolean;
   /** (#7106 lever R) Legacy's static RegExp compiler builds this pair (`standaloneStaticRegExpCompiles`). */
   readonly nativeRegExpCompiles?: (pattern: string, flags: string) => boolean;
   /**
@@ -2491,7 +2495,9 @@ function whyNotIrClaimable(
     containsDynamicCarrierForInHead(body)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
+    const latched = typedShapeRejectReason; // (#7525) a decline the scan names wins over the generic one
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
+      if (typedShapeRejectReason !== latched) return typedShapeRejectReason!;
       return dynNames.size > 0 ? "param-type-not-resolvable" : "return-type-not-resolvable";
     }
   }
@@ -3508,6 +3514,11 @@ function dynamicUsesAreMoveOnly(
   const carrierStaticValues = (e: ts.CallExpression): readonly ts.Expression[] | undefined =>
     certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic" ? e.arguments : objectStaticScanValues(e);
 
+  /** (#7525) A BigInt operand of a dynamic numeric arm below: refused by name, the arm cannot lower it (#7526). */
+  const refusesBigInt = (at: ts.Node, ...operands: ts.Expression[]): boolean =>
+    someBigIntOperand(currentSelectionOptions?.isBigIntOperand, ...operands) &&
+    !capabilityNo("operand-coercion-unsupported", "expr-dynamic-bigint-operand", at);
+
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
@@ -3943,6 +3954,9 @@ function dynamicUsesAreMoveOnly(
           scanExpr(concrete, false)
         );
       }
+      // (#7525) The dynamic arms below cannot lower a BigInt operand (#7526).
+      if ((leftIsDyn || rightIsDyn) && isBigIntUnsafeDynamicOperator(op) && refusesBigInt(e, e.left, e.right))
+        return false;
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
         if (!expectDyn) return false;
@@ -4053,13 +4067,13 @@ function dynamicUsesAreMoveOnly(
           e.operator === ts.SyntaxKind.MinusToken ||
           e.operator === ts.SyntaxKind.ExclamationToken)
       ) {
-        return scanExpr(op, true);
+        return (e.operator === ts.SyntaxKind.ExclamationToken || !refusesBigInt(e, op)) && scanExpr(op, true);
       }
       if (
         isDynShaped(op) &&
         (e.operator === ts.SyntaxKind.PlusPlusToken || e.operator === ts.SyntaxKind.MinusMinusToken)
       ) {
-        return currentDynamicRuntimeBuildable && scanExpr(op, true);
+        return currentDynamicRuntimeBuildable && !refusesBigInt(e, op) && scanExpr(op, true);
       }
       return scanExpr(op, false);
     }
@@ -7210,7 +7224,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
 
 /** (#7106 S5, lever L) A `<module-init>` `var` list: its names are script `var`s in their `__mod_<name>` slots. */
 function isScriptVarList(list: ts.Node): boolean {
-  return currentSubjectIsModuleInit && isModuleInitVarList(list);
+  return currentSubjectIsModuleInit && isModuleInitVarList(list, "statement-and-for-heads");
 }
 
 /**
@@ -13886,7 +13900,7 @@ function isDynamicHomeOpenCarrier(value: EmptyObjectExpression): boolean {
 function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): boolean {
   return (
     ts.isIdentifier(decl.name) &&
-    isModuleInitVarList(decl.parent) &&
+    isModuleInitVarList(decl.parent, "statement-and-for-heads") &&
     currentModuleBindingResolver?.(decl.name)?.valueKind.kind === "dynamic" &&
     currentSelectionOptions?.isOpenObjectBinding?.(decl) === true
   );
@@ -14185,7 +14199,9 @@ export function assessModuleInit(
   };
   findDynamicModuleUpdate(sourceFile);
   currentIrSafeVarDeclarationLists =
-    scriptVarGate || hasDynamicModuleUpdate ? collectIrSafeModuleVarDeclarationLists(population) : new Set();
+    scriptVarGate || hasDynamicModuleUpdate
+      ? collectIrSafeModuleVarDeclarationLists(population, "statement-and-for-heads")
+      : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();

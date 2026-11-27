@@ -61,6 +61,7 @@ export interface BuiltinFunctionBodyOperands extends Pick<
   readonly createNull: FuncHandle;
   readonly boxNumber: FuncHandle;
   readonly defineDataBody: FuncHandle;
+  readonly defineAccessorBody: FuncHandle;
   readonly defineAttributes: FuncHandle;
   readonly typeError: FuncHandle;
   readonly exceptionTag: number;

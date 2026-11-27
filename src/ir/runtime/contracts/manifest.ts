@@ -443,6 +443,9 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.create-wrapper",
   "js.object.wrapper-data",
   "js.object.is-constructor",
+  "js.object.for-in-keys",
+  "js.object.key-list-length",
+  "js.object.key-list-get",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -469,6 +472,9 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.create-wrapper",
   "native.js.object.wrapper-data",
   "native.js.object.is-constructor",
+  "native.js.object.for-in-keys",
+  "native.js.object.key-list-length",
+  "native.js.object.key-list-get",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

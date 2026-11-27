@@ -4,9 +4,11 @@
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
  *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`, (#7354 F1b) `init-function`,
- *     (#7354 C2) `create-with-prototype`, `inherits`):
+ *     (#7354 C2) `create-with-prototype`, `inherits`, (#7377) `for-in-keys` and its list's `key-list-length`,
+ *     `key-list-get`):
  *     a function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`,
- *     `source-function-object-bodies.ts`) over the realm's storage, kernel and descriptor packs; or
+ *     `source-function-object-bodies.ts`, `own-key-walk-bodies.ts`, `argument-vector-bodies.ts`) over the realm's
+ *     storage, kernel and descriptor packs; or
  *   - binds a realm function as it is (`define-data`, (#7354 O2) `define-accessor`: the descriptor pack's public
  *     defines; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor; (#7354 O1) `create-null`: the storage's
@@ -34,6 +36,8 @@ import {
   buildSourceFunctionInitDefinition,
   buildSourceFunctionIsConstructorDefinition,
 } from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
+import { buildForInKeysDefinition } from "../../../runtime/wasmgc/values/own-key-walk-bodies.js";
+import { argumentVectorElement, argumentVectorLength } from "../../../runtime/wasmgc/values/argument-vector-bodies.js";
 import { buildToBooleanBody, buildToBooleanLocals } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import {
   buildToPropertyDescriptorDefinition,
@@ -236,7 +240,7 @@ const ROWS = {
     },
   },
   "js.object.init-function": {
-    signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
+    signature: { params: [EXTERNREF, EXTERNREF, F64, I32, I32], results: [] },
     body: (dependencies, tx) => {
       const key = literalKey(tx, dependencies);
       return buildSourceFunctionInitDefinition({
@@ -244,6 +248,7 @@ const ROWS = {
         create: createOperands(dependencies),
         prototypeKey: key("prototype"),
         constructorKey: key("constructor"),
+        callerKey: key("caller"),
       });
     },
   },
@@ -360,6 +365,34 @@ const ROWS = {
         entryTypeIdx: layouts.propEntry.typeIndex,
         findOwn: kernel.functions.findOwn.handle,
       }),
+  },
+  "js.object.for-in-keys": {
+    signature: { params: [EXTERNREF], results: [EXTERNREF] },
+    body: ({ kernel }, tx) =>
+      buildForInKeysDefinition({
+        ...nativeBuiltinFunctionOperands(tx, kernel),
+        ownKeys: kernel.functions.ownKeys.handle,
+        ownDescriptor: kernel.functions.ownDescriptor.handle,
+        anyStrTypeIdx: nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings.layout.anyStrTypeIdx,
+      }),
+  },
+  "js.object.key-list-length": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: ({ kernel }, tx) => ({
+      locals: [],
+      body: argumentVectorLength(nativeBuiltinFunctionOperands(tx, kernel), [{ op: "local.get", index: 0 }]),
+    }),
+  },
+  "js.object.key-list-get": {
+    signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
+    body: ({ kernel }, tx) => ({
+      locals: [],
+      body: argumentVectorElement(
+        nativeBuiltinFunctionOperands(tx, kernel),
+        [{ op: "local.get", index: 0 }],
+        [{ op: "local.get", index: 1 }],
+      ),
+    }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */
