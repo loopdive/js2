@@ -41,7 +41,7 @@ import { realmCall } from "./dynamic-realm-calls.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import { objectStaticTest, toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
-import { functionChainAnswer } from "./dynamic-error-constructors.js";
+import { functionChainAnswer } from "./dynamic-function-operations.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";

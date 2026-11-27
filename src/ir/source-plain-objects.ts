@@ -19,12 +19,11 @@
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
-import { nativeObjectStaticCall, objectTagCallReceiver, realmConstantRead } from "./realm-static-call.js";
+import { nativeObjectStaticCall, realmReceiverRead } from "./realm-static-call.js";
 import {
   HELD_OBJECT_STATICS,
   WRAPPER_OF_PRIMITIVE,
   realmConstructorId,
-  type RealmConstructor,
   type RealmFamily,
 } from "./program/builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
@@ -57,23 +56,14 @@ export function programObjects(
   let namesSymbol = false;
   const realmFamilies = new Set<RealmFamily>();
   const wrappers = new Set<NativeWrapperConstructor>();
-  // (#7354 G1) The family of the realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it
-  // the same way, through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such
-  // read, nor a receiver the front end folds, which reaches no object: (#7350 B3a) of a constant
-  // (`realmConstantRead`), (#7574) of a native `Object` static's call (`nativeObjectStaticCall`) or of the object tag
-  // (`objectTagCallReceiver`).
-  const constructorRead = (node: ts.Identifier): RealmConstructor | undefined => {
+  // (#7354 G1) The realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it the same way,
+  // through `realmIntrinsicRead`), and (#7580) the member it reads off it: a member name, a label or a binding of the
+  // same spelling is no such read, nor a receiver the front end folds (`realmReceiverRead`), which reaches no object.
+  const constructorRead = (node: ts.Identifier) => {
     const ctor = realmConstructorId(node.text);
     if (ctor === undefined || isMemberName(node) || !isPristineGlobal(node)) return undefined;
-    const access = node.parent;
-    if (!ts.isPropertyAccessExpression(access)) return ctor;
-    const call = access.parent;
-    const tag = access.parent.parent?.parent;
-    const folded =
-      realmConstantRead(access, isPristineGlobal) !== undefined ||
-      (ts.isCallExpression(call) && nativeObjectStaticCall(call, isPristineGlobal) !== undefined) ||
-      (tag !== undefined && ts.isCallExpression(tag) && objectTagCallReceiver(tag) === node);
-    return folded ? undefined : ctor;
+    const { folded, member } = realmReceiverRead(node, isPristineGlobal);
+    return folded ? undefined : { ctor, member };
   };
   // (#7574) The wrapper kinds `Object(v)` / `new Object(v)` may make of its first argument: a literal's, else all.
   const objectWraps = (node: ts.Identifier): readonly NativeWrapperConstructor[] => {
@@ -87,28 +77,22 @@ export function programObjects(
       return [WRAPPER_OF_PRIMITIVE.boolean];
     return Object.values(WRAPPER_OF_PRIMITIVE);
   };
-  // (#7580) The statics a value read reaches by name: `Object.m` that is no folded call.
+  // (#7580) The statics a value read reaches by name (`Object.defineProperty` that is no folded call).
   const staticValues = new Set<string>();
-  const staticRead = (node: ts.Identifier): readonly string[] => {
-    const access = node.parent;
-    return ts.isPropertyAccessExpression(access) && HELD_OBJECT_STATICS.includes(access.name.text)
-      ? [access.name.text]
-      : [];
-  };
   const visit = (node: ts.Node): void => {
-    const ctor = ts.isIdentifier(node) ? constructorRead(node) : undefined;
+    const read = ts.isIdentifier(node) ? constructorRead(node) : undefined;
+    const ctor = read?.ctor;
     if (ctor !== undefined) realmFamilies.add(ctor.family);
     // (#7561) `new X(…)` and `X.prototype` are how a program obtains a wrapper of X or its prototype.
     const access = node.parent;
     if (
       ctor?.family === "wrapper" &&
-      ((ts.isNewExpression(access) && access.expression === node) ||
-        (ts.isPropertyAccessExpression(access) && access.name.text === "prototype"))
+      ((ts.isNewExpression(access) && access.expression === node) || read?.member === "prototype")
     )
       wrappers.add(ctor.name);
     if (ctor?.family === "object") {
       objectWraps(node as ts.Identifier).forEach((kind) => wrappers.add(kind));
-      staticRead(node as ts.Identifier).forEach((name) => staticValues.add(name));
+      if (read?.member !== undefined && HELD_OBJECT_STATICS.includes(read.member)) staticValues.add(read.member);
     }
     present ||=
       ts.isObjectLiteralExpression(node) ||

@@ -2,7 +2,8 @@
 /**
  * (#7354 M1, B-tag, G1, #7561) Object.prototype.toString's algorithm, for `Object.prototype.toString.call(v)` (which
  * from-ast intercepts as `dyn.object_tag`) and (#7574) a call of the realm's method (`dynamic-builtin-methods.ts`): a
- * tag per kind `v` may hold (§20.1.3.6). `undefined` and `null` are named before ToObject (steps 1-2), a primitive
+ * tag per kind `v` may hold (§20.1.3.6). The algorithm alone; which method a call reaches is the method table's
+ * (`dynamic-builtin-methods.ts`), which imports this module, so the two stay apart without an import cycle. `undefined` and `null` are named before ToObject (steps 1-2), a primitive
  * answers its wrapper's builtinTag, and an object a wrapper's kind by its primitive data (#7561), "Error" for
  * [[ErrorData]] (G1), else "Object"; its `@@toStringTag` is reachable only by naming `Symbol`, which refuses by name.
  */

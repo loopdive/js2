@@ -88,6 +88,17 @@ var out = String(id(function () {}).x) + String(id(new Error("m")).x) + String(i
     "the root's own keys",
     'var p = Object.prototype;\nvar out = String(p.hasOwnProperty("valueOf")) + String(p.hasOwnProperty("x"));',
   ],
+  // Review r1: `Object.prototype` as the argument of a folded static is a read of the root.
+  [
+    "a key defined on the root by a folded static, read off primitives",
+    ID +
+      `Object.defineProperty(Object.prototype, "g", { value: "V", writable: true, configurable: true });
+var out = String(id(1).g) + String(id("s").g) + String(id(true).g);`,
+  ],
+  [
+    "the root written by a program function it is passed to",
+    ID + 'function w(p) { p.x = 1; }\nw(Object.prototype);\nvar out = String(id(1).x) + String(id("s").x);',
+  ],
 ];
 
 describe("#7574 — Object as a realm value agrees with node", () => {
@@ -132,6 +143,17 @@ describe("#7574 — what the slice leaves out refuses or aborts", () => {
       "the object tag through a written toString",
       ID +
         'Object.prototype.toString = function () { return "z"; };\nvar out = Object.prototype.toString.call(id({}));',
+    ],
+    [
+      "the root's __proto__ descriptor, the root a folded static's argument",
+      'var out = typeof Object.getOwnPropertyDescriptor(Object.prototype, "__proto__");',
+    ],
+    [
+      "the object tag through a toString a folded static defined",
+      ID +
+        `Object.defineProperty(Object.prototype, "toString", {
+  value: function () { return "z"; }, writable: true, configurable: true });
+var out = Object.prototype.toString.call(id({}));`,
     ],
   ])("aborts %s", async (_label, body) => aborts(body), SLOW);
 

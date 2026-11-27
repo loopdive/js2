@@ -422,8 +422,8 @@ instead of answering.
 - Cost: `var O = Object; typeof O` 24,840 B; `Object.prototype.hasOwnProperty.call(o, "x")` 49,329 B against
   46,774 B for `o.hasOwnProperty("x")` (+2.5 KB: `%Object%`, the root's `constructor`; the call itself aborts until
   #7557).
-- Bytes: ordinary pipeline 30 programs × 2 targets identical. Prepared: every realm program is 117 B smaller (only the
-  global section differs): `%Object%` and the three methods are no longer rows of every realm, so their names and the
+- Bytes: ordinary pipeline 30 programs × 2 targets identical. Prepared: every realm program is 117 B smaller (the global
+  section shrinks, and the code section's global indices shift with it): `%Object%` and the three methods are no longer rows of every realm, so their names and the
   statics' keys are no longer realm literals. 12 programs that name `Object` only as a native static's receiver or in
   the object tag: same outcome, each exactly −117 B.
 - test262, own runner, `mw-00` (87 rows): pass 18 → 19 (`S15.2.1.1_A2_T13`), fail 11 → 11, compile error 58 → 57, no
@@ -433,3 +433,28 @@ instead of answering.
 
 Pins moved: `issue-7354-m-prototype-premise` (Object.prototype is obtainable; `Object.getPrototypeOf` refuses by its
 static's name), `issue-7354-m-refusals` (G45 refuses by the static's name), `issue-7354-t2` (`typeof Object` agrees).
+
+## Review r1 (2026-11-27, head `bce3d557da`): NOT MET — fixed
+
+**F1 (blocking, wrong values).** `constructorRead` took an `Object` read as folded whenever the access's parent was a
+native static's call, without checking the access was that call's callee: in `Object.defineProperty(Object.prototype,
+…)` the argument's `Object` counted as folded, the family was not held, and the primitive read, the root's own-key
+guard and the object tag skipped the root while the read still answered it (`typeof
+Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")` "undefined"; a key defined on the root read off `1` as
+`undefined`; the tag "[object Object]" after a defined `toString`). Fix: one predicate, `foldedRealmReceiver`
+(`src/ir/realm-static-call.ts`): the receiver of a constant the front end folds, or the head of the member chain that
+is exactly a folded call's callee (a native static's, or the object tag's). Every other position of `Object` holds the
+family.
+
+Probes (fresh realm, wrong twins): 20 programs, right 9, refused 7, aborted 4, wrong 0 — `Object.prototype` as a
+folded static's argument (`defineProperty` with a value or a getter, `getOwnPropertyDescriptor`, `create`;
+`defineProperties` aborts), as a non-native static's argument (`getPrototypeOf`, `keys`, `isFrozen`,
+`preventExtensions`, `freeze`: refuse by name), passed to a program function that writes it, stored in a literal,
+returned, in a comma expression; `Object` passed to a function that writes its `prototype`. Tests: four rows added
+(two agreements, two aborts). The 12 static-call programs keep their r0 bytes; ordinary bytes on 6 programs identical.
+
+Non-blocking, folded: `functionChainAnswer` moved to `dynamic-function-operations.ts` (its local `BOOLEAN` folded into
+`dynamic-value-types.ts`'s); `OBJECT_PROTOTYPE_ID` joins the existing catalog re-export line of
+`builtin-prototype-keys.ts` (the IR's one catalog reader, so no IR module imports the catalog itself);
+`dynamic-object-tag.ts` keeps `objectTagOf` alone: the method table imports it, so the algorithm stays apart without an
+import cycle; the over-width comment; the bytes sentence above (the code section changes too).

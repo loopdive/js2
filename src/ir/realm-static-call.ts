@@ -68,6 +68,34 @@ export function objectTagCallReceiver(call: ts.CallExpression): ts.Identifier | 
 }
 
 /**
+ * (#7350 B3a, #7574) What `receiver`, the unchanged global of a realm constructor, reads: nothing where it is the
+ * receiver of a form the front end folds (`folded`): a constant it holds (`realmConstantRead`), or in callee position,
+ * a native `Object` static's call (`nativeObjectStaticCall`) or the object tag (`objectTagCallReceiver`). Any other
+ * position (an argument, an operand, `Object.prototype` passed anywhere) is a read of the value; (#7580) where it is
+ * the object of a member access, `member` names the key (`Object.defineProperty` read as a value, `X.prototype`).
+ */
+export function realmReceiverRead(
+  receiver: ts.Identifier,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): { readonly folded: boolean; readonly member?: string } {
+  const access = receiver.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== receiver) return { folded: false };
+  const read = { folded: true, member: access.name.text };
+  if (realmConstantRead(access, isPristineGlobal) !== undefined) return read;
+  // The member chain `receiver` heads, and the call it is the callee of.
+  let callee: ts.Expression = access;
+  while (ts.isPropertyAccessExpression(callee.parent) && callee.parent.expression === callee) callee = callee.parent;
+  const call = callee.parent;
+  const folded =
+    ts.isCallExpression(call) &&
+    call.expression === callee &&
+    (callee === access
+      ? nativeObjectStaticCall(call, isPristineGlobal) !== undefined
+      : objectTagCallReceiver(call) === receiver);
+  return { ...read, folded };
+}
+
+/**
  * (#7350 B3a) `X.<key>` with `X` the unchanged global of a realm constructor and `key` one of its constant value
  * properties (`nativeConstantStatic`: `Number.MAX_VALUE`, …): that number. The fold reads nothing, so the realm holds
  * nothing for it.
