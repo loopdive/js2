@@ -26,7 +26,9 @@ import {
   buildSourceObjectHasDefinition,
   buildSourceObjectIntrinsicDefinition,
   buildSourceObjectIsIntrinsicDefinition,
+  buildSourceObjectIsConstructorDefinition,
   buildSourceObjectHasOwnDefinition,
+  partialObjectMiss,
   sourceObjectCreate,
   type SourceObjectCreateOperands,
   type SourceObjectDefinition,
@@ -50,10 +52,12 @@ import {
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
 import {
+  NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
   realmMethodId,
 } from "../../../runtime/contracts/native-realm-catalog.js";
+import { lacksCatalogProperty } from "../program/native-realm-families.js";
 import {
   buildWrapperCreateDefinition,
   buildWrapperDataDefinition,
@@ -162,6 +166,42 @@ function heldFunctionIntrinsics(tx: PhysicalModuleReservations, kernel: NativeSo
         ]
       : [],
   );
+}
+/** (#7557) The built-in function objects the realm holds that are no constructors: each through its getter. */
+function heldNonConstructors(kernel: NativeSourceObjectDependencies["kernel"]): readonly (readonly Instr[])[] {
+  return kernel.entries.flatMap((entry, index) =>
+    kernel.requests.requirements.intrinsics[index]!.constructible
+      ? []
+      : [[{ op: "call", funcIdx: entry.getter.handle } as Instr]],
+  );
+}
+/**
+ * (#7557) {@link partialObjectMiss} of the object in local 0: the realm's objects that lack a catalog property, each as
+ * its externref. Object.prototype always does (its `toString`, `valueOf`).
+ */
+function ownMiss(tx: PhysicalModuleReservations, kernel: NativeSourceObjectDependencies["kernel"]): Instr[] {
+  const d = nativeBuiltinFunctionOperands(tx, kernel);
+  const { intrinsics, objects = [] } = kernel.requests.requirements;
+  const catalogRow = (aliases: readonly string[]) =>
+    NATIVE_REALM_CATALOG.intrinsics.find((row) => aliases.includes(row.id))!;
+  const entries = kernel.entries.flatMap((entry, index) => {
+    const row = intrinsics[index]!;
+    return lacksCatalogProperty(catalogRow(row.aliases), row.properties ?? [])
+      ? [[{ op: "call", funcIdx: entry.getter.handle } as Instr]]
+      : [];
+  });
+  const families = objects.flatMap(({ id, properties }) =>
+    lacksCatalogProperty(catalogRow([id]), properties)
+      ? [
+          [
+            { op: "call", funcIdx: d.initializer },
+            { op: "global.get", index: d.objects.find((object) => object.id === id)!.global },
+          ] as Instr[],
+        ]
+      : [],
+  );
+  const objectPrototype: Instr[] = [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }];
+  return partialObjectMiss(0, [objectPrototype, ...entries, ...families], d.sameValue);
 }
 /** Creation's operands: a program creates a wrapper only of a family the realm then holds (`create-wrapper`'s selector). */
 function wrapperCreateOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
@@ -347,6 +387,7 @@ const ROWS = {
         objectStaticOperands(dependencies, tx),
         sourceObjectCreate(createOperands(dependencies)),
         dependencies.descriptors.defineData.handle,
+        ownMiss(tx, dependencies.kernel),
       ),
   },
   "js.object.intrinsic": {
@@ -380,6 +421,14 @@ const ROWS = {
         sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
       }),
   },
+  "js.object.is-constructor": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: ({ kernel }, tx) =>
+      buildSourceObjectIsConstructorDefinition({
+        methods: heldNonConstructors(kernel),
+        sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
+      }),
+  },
   "js.object.create-wrapper": {
     signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
     body: (dependencies, tx) => {
@@ -404,10 +453,11 @@ const ROWS = {
   "js.object.create-array": { binds: ({ arrays }) => arrays!.create },
   "js.object.has-own": {
     signature: { params: [EXTERNREF, EXTERNREF, I32], results: [I32] },
-    body: ({ layouts, kernel }) =>
+    body: ({ layouts, kernel }, tx) =>
       buildSourceObjectHasOwnDefinition({
         entryTypeIdx: layouts.propEntry.typeIndex,
         findOwn: kernel.functions.findOwn.handle,
+        miss: ownMiss(tx, kernel),
       }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;

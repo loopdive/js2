@@ -96,8 +96,7 @@ export interface NativeInvocationReservations {
 export interface BuiltinCallerReservations {
   readonly global: GlobalReservation;
   readonly install: FunctionReservation;
-  readonly argument?: FunctionReservation;
-  readonly argumentCount?: FunctionReservation;
+  readonly reads?: { readonly argument: FunctionReservation; readonly argumentCount: FunctionReservation };
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
@@ -306,7 +305,7 @@ export function reserveNativeInvocationResources(
       ...(builtinCaller
         ? [
             builtinCaller.install,
-            ...(builtinCaller.argument ? [builtinCaller.argument, builtinCaller.argumentCount!] : []),
+            ...(builtinCaller.reads ? [builtinCaller.reads.argument, builtinCaller.reads.argumentCount] : []),
           ]
         : []),
     ]),
@@ -324,14 +323,16 @@ function reserveBuiltinCaller(
   const externref = { kind: "externref" } as const;
   const reads = requirements.argumentReads
     ? {
-        argument: tx.reserveFunction(key("argument"), "__builtin_argument", {
-          params: [externref, { kind: "f64" }],
-          results: [externref],
-        }),
-        argumentCount: tx.reserveFunction(key("argument-count"), "__builtin_argument_count", {
-          params: [externref],
-          results: [{ kind: "f64" }],
-        }),
+        reads: {
+          argument: tx.reserveFunction(key("argument"), "__builtin_argument", {
+            params: [externref, { kind: "f64" }],
+            results: [externref],
+          }),
+          argumentCount: tx.reserveFunction(key("argument-count"), "__builtin_argument_count", {
+            params: [externref],
+            results: [{ kind: "f64" }],
+          }),
+        },
       }
     : {};
   return Object.freeze({
@@ -509,7 +510,7 @@ export function fillNativeInvocationResources(
         ? { kind: "global" as const, index: tx.physicalIndex(literal.global) }
         : { kind: "callable" as const, handle: literal.function.handle },
     ...(builtinMethods || pack.requirements.realmAccessors ? { builtinRootTypeIdx: owner.layout.rootTypeIdx } : {}),
-    ...(pack.builtinCaller ? { builtinCaller: builtinCallerArm(tx, pack) } : {}),
+    ...(pack.builtinCaller ? { builtinCaller: builtinCallerArm(tx, pack, pack.builtinCaller) } : {}),
   };
   if (owner.borrowedSubstrate.value === undefined) fillNativeInvocationSubstrateResources(tx, owner.substrate);
   else requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
@@ -544,12 +545,15 @@ export function fillNativeInvocationResources(
 }
 
 /** (#7557) The dispatcher's built-in arm: the caller's global, its arity's method, the argument vector's layout. */
-function builtinCallerArm(tx: PhysicalModuleReservations, pack: NativeInvocationReservations) {
-  const method = pack.methods.find((row) => row.arity === BUILTIN_CALLER_ARITY);
-  if (!method) fail("built-in caller lost its method");
+function builtinCallerArm(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  caller: BuiltinCallerReservations,
+) {
   return {
-    global: tx.physicalIndex(pack.builtinCaller!.global),
-    method: method.function.handle,
+    global: tx.physicalIndex(caller.global),
+    // The requirements add the caller's arity to the methods wherever they install it.
+    method: pack.methods.find((row) => row.arity === BUILTIN_CALLER_ARITY)!.function.handle,
     vector: pack.arguments.layout,
   };
 }
@@ -562,9 +566,9 @@ function fillBuiltinCaller(
   const global = tx.physicalIndex(caller.global);
   tx.fillGlobal(caller.global, [{ op: "ref.null.extern" }]);
   tx.fillFunction(caller.install, buildInstallBuiltinCallerDefinition(global));
-  if (caller.argument) {
-    tx.fillFunction(caller.argument, buildBuiltinArgumentDefinition(pack.arguments.layout, undefinedGlobal));
-    tx.fillFunction(caller.argumentCount!, buildBuiltinArgumentCountDefinition(pack.arguments.layout));
+  if (caller.reads) {
+    tx.fillFunction(caller.reads.argument, buildBuiltinArgumentDefinition(pack.arguments.layout, undefinedGlobal));
+    tx.fillFunction(caller.reads.argumentCount, buildBuiltinArgumentCountDefinition(pack.arguments.layout));
   }
 }
 

@@ -2,8 +2,9 @@
 //
 // #7354 P1 — `isPrototypeOf`, and the three Object.prototype methods as values, through the strict Prepared entry with
 // the test262 runner's options. A method read is a built-in function object of the realm (its `typeof`, `length`,
-// `name`, identity); a call that does not read it as `o.m(…)` reaches the dispatcher, which cannot run a built-in: the
-// run-time abort. A value that is not callable keeps the dispatcher's catchable TypeError.
+// `name`, identity); (#7557) a call that does not read it as `o.m(…)` reaches the dispatcher, whose built-in arm calls
+// the realm's built-in caller: the same algorithm over the call's own `this`. A value that is not callable keeps the
+// dispatcher's catchable TypeError.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { abortsAtRunTime, agreesWithNode, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
 import { CATCHES } from "./helpers/object-static-probes.js";
@@ -69,15 +70,15 @@ describe("#7354 P1 — the methods as values", () => {
   ])("%s", (_label, body) => agrees(body), SLOW);
 });
 
-describe("#7354 P1 — what ends at the run-time abort", () => {
+// (#7557) A detached call runs the method's algorithm over its own `this`: `undefined` here, whose ToObject throws
+// (review r1 of P1: never the `false` the method call's receiver would answer). A built-in method is no constructor.
+describe("#7354 P1 — detached calls and `new` throw as node does", () => {
   it.each([
     [
       "a method called through another value (its this is undefined)",
-      "var h = ({}).hasOwnProperty; t(function(){ h('x'); });",
+      "var h = ({}).hasOwnProperty; var out = t(function(){ h('x'); });",
     ],
-    ["a method as a constructor", "var h = ({}).propertyIsEnumerable; t(function(){ new h(); });"],
-    // (review r1) Only `o.m(v)` runs the method's algorithm: a detached call's receiver is not the [[Get]]'s, and JS
-    // throws (ToObject of `undefined`), where the algorithm would have answered `false`.
+    ["a method as a constructor", "var h = ({}).propertyIsEnumerable; var out = t(function(){ new h(); });"],
     ...[
       ["isPrototypeOf", "c"],
       ["hasOwnProperty", "'a'"],
@@ -86,14 +87,19 @@ describe("#7354 P1 — what ends at the run-time abort", () => {
       [
         `a detached ${method} read into a local`,
         `function f(p, c){ var m = p.${method}; try { return String(m(${argument})); } catch (e) { return 'T'; } }` +
-          ` var p = {a: 1}; f(p, Object.create(p));`,
+          ` var p = {a: 1}; var out = f(p, Object.create(p));`,
       ],
       [
         `a detached ${method} through a comma`,
         `function f(p, c){ try { return String((0, p.${method})(${argument})); } catch (e) { return 'T'; } }` +
-          ` var p = {a: 1}; f(p, Object.create(p));`,
+          ` var p = {a: 1}; var out = f(p, Object.create(p));`,
       ],
     ]),
+  ])("%s", (_label, body) => agrees(body), SLOW);
+});
+
+describe("#7354 P1 — what ends at the run-time abort", () => {
+  it.each([
     [
       "a string receiver (the String exotic's own keys)",
       "function id(v){ return v; } id('abc').hasOwnProperty('length');",

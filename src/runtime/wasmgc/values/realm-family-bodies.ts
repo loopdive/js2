@@ -40,6 +40,8 @@ export interface RealmFamilyOperands {
   readonly text: (value: string) => Instr[];
   readonly entries: readonly {
     readonly id: string;
+    /** The catalog ids the entry answers for (a bootstrap entry's `id` is its behavior). */
+    readonly aliases: readonly string[];
     readonly typeIdx: number;
     readonly singleton: number;
     readonly properties: readonly RealmFamilyProperty[];
@@ -62,15 +64,12 @@ export interface RealmFamilyOperands {
 const global = (index: number): Instr => ({ op: "global.get", index });
 const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => asOrdinaryObject(d.objectTypeIdx);
 
-/**
- * The externref of the realm's entry or object `id` ((#7354 W2) its Object.prototype too; (#7557) %Function.prototype%
- * is the bootstrap entry named by its behavior).
- */
+/** The externref of the realm's entry or object `id` ((#7354 W2) its Object.prototype too). */
 function intrinsic(d: RealmFamilyOperands, id: string): Instr[] {
   if (id === "%Object.prototype%") return [global(d.objectPrototype)];
   const object = d.objects.find((row) => row.id === id);
   if (object) return [global(object.global)];
-  const entry = d.entries.find((row) => row.id === (id === "%Function.prototype%" ? "function-prototype" : id));
+  const entry = d.entries.find((row) => row.aliases.includes(id));
   if (!entry) throw new Error(`realm family: no entry or object ${id}`);
   return [global(entry.singleton), { op: "ref.as_non_null" }, { op: "extern.convert_any" }];
 }

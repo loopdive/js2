@@ -35,9 +35,9 @@ export interface NativeRealmDescription {
   readonly objectUses: NativeObjectAccessRequirements["uses"];
   /**
    * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
-   * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
-   * since no other read can reach one, and (#7557) so the Function.prototype methods; (#7354 G1) the Error family where the program can observe an error
-   * ({@link heldErrorConstructors}).
+   * Object.prototype methods where the program reads one (a constant key naming one, or the method itself), none
+   * otherwise, since no other read can reach one; (#7557) the Function.prototype methods by the same rule; (#7354 G1)
+   * the Error family where the program can observe an error ({@link heldErrorConstructors}).
    */
   readonly intrinsics: readonly string[];
   readonly numberUses: readonly {

@@ -11,24 +11,13 @@
  * obtain a built-in prototype and change it (`String.prototype.k = 5`); the legalization derives that from these
  * names (`programFamilies`), and a primitive's member access then reads through the realm's prototype objects. A
  * program that names none obtains no built-in prototype (tests/issue-7354-m-prototype-premise.test.ts pins the
- * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none. (#7557) It records whether
- * the names of the realm's prototype methods the source spells (`methodNames`): only those can the realm hold.
+ * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none. (#7557) It records the names of
+ * the realm's native members the source spells (`methodNames`): the built-in caller answers only those.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import {
-  ARRAY_ID,
-  NATIVE_FUNCTION_PROTOTYPE_METHODS,
-  NATIVE_OBJECT_PROTOTYPE_METHODS,
-  realmConstructorId,
-} from "./program/builtin-prototype-keys.js";
-
-/** (#7557) The realm's prototype methods whose rungs the built-in caller has only where the source spells them. */
-const REALM_METHOD_NAMES: ReadonlySet<string> = new Set([
-  ...NATIVE_OBJECT_PROTOTYPE_METHODS,
-  ...NATIVE_FUNCTION_PROTOTYPE_METHODS,
-]);
+import { ARRAY_ID, NATIVE_MEMBER_NAMES, realmConstructorId } from "./program/builtin-prototype-keys.js";
 import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
 import { stringPrototypeBorrowShape } from "./array-prototype-borrow-call.js";
 
@@ -63,7 +52,7 @@ export function programObjects(
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
-    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && REALM_METHOD_NAMES.has(node.text))
+    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && NATIVE_MEMBER_NAMES.has(node.text))
       methodNames.add(node.text);
     ts.forEachChild(node, visit);
   };

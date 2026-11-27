@@ -90,6 +90,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7557) Whether a value is that built-in function object (SameValue), without the realm holding it: a function
   // object the realm does not hold is no value of the program, so no value is it.
   "js.object.is-intrinsic": declaration("js.object.is-intrinsic", [EXTERNAL, SELECTOR], [BOOLEAN]),
+  // (#7557) IsConstructor (§7.2.4) of a function value: false for a built-in the realm holds that is no constructor
+  // (a method), true for every other one (a source function on this lane, a built-in constructor).
+  "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
   // (#7354 W2) A new wrapper of the primitive (already converted) of the wrapper constructor `selector` (its index in
   // `NATIVE_WRAPPER_CONSTRUCTORS`); and a wrapper's slot as the realm answers it (`realm-wrapper-bodies.ts`

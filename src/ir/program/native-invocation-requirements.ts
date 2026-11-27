@@ -27,6 +27,7 @@ import {
   type NativeGetterInvocationUse,
 } from "./native-getter-invocation-requirements.js";
 import { definesAccessors } from "../runtime/ordinary-object-callables.js";
+import { irClosureInvocationCallableDeclaration } from "../runtime/closure-invocation-callables.js";
 
 export interface NativeInvocationUse {
   readonly occurrence: number;
@@ -245,19 +246,15 @@ function calculate(
       if (!fn) fail("invocation occurrence has no actual selected owner");
       typeMaps.set(unitId, (types = nativeAsyncCallableValueTypes(fn)));
     }
-    if (kind === "install-builtin-caller" || kind === "argument" || kind === "argument-count") {
-      if (call.args.length !== (kind === "argument" ? 2 : 1)) fail(`canonical ${kind} callable operand count differs`);
-      uses.push({ occurrence, ownerUnitId: unitId, kind });
-      continue;
-    }
-    if (call.result === null || !external(call.resultType ?? undefined))
+    const { params, results } = irClosureInvocationCallableDeclaration(call.target)!;
+    if (call.args.length !== params.length) fail(`canonical ${kind} callable operand count differs`);
+    if (results.some(external) && (call.result === null || !external(call.resultType ?? undefined)))
       fail("semantic invocation result is not externref");
-    if (kind === "undefined" || kind === "receiver") {
-      if (call.args.length) fail(`canonical ${kind} callable takes no operands`);
+    // Only a method call and an apply carry a closure; every other kind's operands are its declaration's.
+    if (kind !== "method" && kind !== "apply-vector") {
       uses.push({ occurrence, ownerUnitId: unitId, kind });
       continue;
     }
-    if (call.args.length !== (kind === "method" ? arity! + 2 : 3)) fail("semantic invocation argument count differs");
     const callee = call.args[kind === "method" ? 1 : 0]!;
     if (!external(types.get(callee))) fail("callee has no external invocation carrier");
     if (!external(types.get(call.args[kind === "method" ? 0 : 1]!))) fail("receiver is not an external value");

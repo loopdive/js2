@@ -18,6 +18,7 @@ import { realmFamilyAllocation, realmFamilySeed, type RealmFamilyOperands } from
 
 export interface BuiltinFunctionEntryOperands {
   readonly id: string;
+  readonly aliases: readonly string[];
   readonly typeIdx: number;
   /** The closure metadata type this carrier extends; `match` excludes its subtypes from the source arm. */
   readonly metadataTypeIdx: number;

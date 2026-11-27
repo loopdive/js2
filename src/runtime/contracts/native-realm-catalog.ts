@@ -197,6 +197,8 @@ const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   ...Object.fromEntries(NATIVE_WRAPPER_CONSTRUCTORS.map((name) => [name + ".prototype", ["toString", "valueOf"]])),
 };
 const isNativeMember = (parent: string, name: string): boolean => NATIVE_MEMBERS[parent]?.includes(name) === true;
+/** (#7557) The names the native members are read under (`hasOwnProperty`, `call`, `isArray`, `valueOf`, …). */
+export const NATIVE_MEMBER_NAMES: ReadonlySet<string> = new Set(Object.values(NATIVE_MEMBERS).flat());
 const objectMethods: readonly Method[] = [
   ["hasOwnProperty", 1, ["ToPropertyKey", "ToObject", "HasOwnProperty"]],
   ["isPrototypeOf", 1, ["ToObject", "GetPrototypeOf", "SameValue"]],

@@ -338,6 +338,46 @@ export function buildSourceObjectIsIntrinsicDefinition(d: {
 }
 
 /**
+ * (#7557) `js.object.is-constructor(value) -> i32`: IsConstructor of a function value: 0 where it is one of the realm's
+ * built-in function objects that are no constructors (`methods`, each through its getter), else 1.
+ */
+export function buildSourceObjectIsConstructorDefinition(d: {
+  readonly methods: readonly (readonly Instr[])[];
+  readonly sameValue: FuncHandle;
+}): SourceObjectDefinition {
+  return {
+    locals: [],
+    body: [
+      ...whereSameValue(0, d.methods, d.sameValue, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+      { op: "i32.const", value: 1 },
+    ],
+  };
+}
+
+/** `then` where the value in `local` is SameValue to one of `values` (each an externref's instructions). */
+function whereSameValue(
+  local: number,
+  values: readonly (readonly Instr[])[],
+  sameValue: FuncHandle,
+  then: readonly Instr[],
+): Instr[] {
+  return values.flatMap((value): Instr[] => [
+    { op: "local.get", index: local },
+    ...value,
+    { op: "call", funcIdx: sameValue },
+    { op: "if", blockType: { kind: "empty" }, then: [...then] },
+  ]);
+}
+
+/**
+ * (#7557) An own-property miss on the object in `local` (`has-own`, `own-descriptor`): the run-time abort where the
+ * object is one of `partial`, the realm's objects that lack a property the catalog gives them, as the miss may be
+ * that property.
+ */
+export const partialObjectMiss = (local: number, partial: readonly (readonly Instr[])[], sameValue: FuncHandle) =>
+  whereSameValue(local, partial, sameValue, [{ op: "unreachable" }]);
+
+/**
  * (#7354 P1) `js.object.has-own(object, key, selector) -> i32`: HasOwnProperty (§7.3.12) of a canonical key on an
  * ordinary or function object, through the kernel's own-property find (a function's own properties are in its bag);
  * selector 1 also requires the property to be enumerable (`propertyIsEnumerable`, §20.1.3.4).
@@ -345,6 +385,8 @@ export function buildSourceObjectIsIntrinsicDefinition(d: {
 export function buildSourceObjectHasOwnDefinition(d: {
   readonly entryTypeIdx: TypeHandle;
   readonly findOwn: FuncHandle;
+  /** (#7557) {@link partialObjectMiss} of the object. */
+  readonly miss: readonly Instr[];
 }): SourceObjectDefinition {
   const entry = 3;
   return {
@@ -355,7 +397,7 @@ export function buildSourceObjectHasOwnDefinition(d: {
       { op: "call", funcIdx: d.findOwn },
       { op: "local.tee", index: entry },
       { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+      { op: "if", blockType: { kind: "empty" }, then: [...d.miss, { op: "i32.const", value: 0 }, { op: "return" }] },
       { op: "local.get", index: 2 },
       {
         op: "if",

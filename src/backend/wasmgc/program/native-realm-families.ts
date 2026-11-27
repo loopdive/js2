@@ -29,6 +29,19 @@ export function familyProperties(row: NativeRealmIntrinsic, holds: (id: string) 
 }
 
 /**
+ * (#7557) Whether the catalog gives `row` a property the kernel does not seed from `seeded` (Object.prototype's
+ * `toString`, Function.prototype's `caller` or @@hasInstance, String.prototype's `charAt`, an unheld static): an own
+ * miss on such an object may be that property, which the realm cannot answer as absent.
+ */
+export function lacksCatalogProperty(row: NativeRealmIntrinsic, seeded: readonly NativeBuiltinProperty[]): boolean {
+  const keys = new Set(seeded.map((property) => property.key));
+  return row.properties.some(
+    ({ key }) =>
+      key.kind !== "string" || !(keys.has(key.value) || (row.callable && SEEDED_BY_THE_KERNEL.has(key.value))),
+  );
+}
+
+/**
  * (#7557) %Function.prototype%'s own data properties the realm holds (its held methods, `constructor` where it holds
  * %Function%); its `caller` / `arguments` accessors are the IR's refusal (`FUNCTION_PROTOTYPE_ACCESSOR_KEYS`).
  */

@@ -57,6 +57,18 @@ describe("#7354 F1 — the function kind", () => {
     SLOW,
   );
 
+  // (#7557) A read of Function.prototype's `call` is the realm's built-in, called through the value.
+  const CALL = "function g(a) { return this.x + a; } var o = { x: 1 }; var k = g.call;\n";
+  it(
+    "reads Function.prototype's call off a function and calls it",
+    () =>
+      agrees(
+        `${CALL}if (typeof k !== "function" || k !== g.apply.call || g.call(o, 2) !== 3) throw 1;`,
+        `${CALL}if (g.call(o, 2) !== 4) throw 1;`,
+      ),
+    SLOW,
+  );
+
   // D6: Function.prototype.toString (the source text) is not built. A function value's ToString without an own
   // conversion method ends at the run-time abort ((#7354 F2) an own method is called: it is a run-time fact of the
   // value, so even a value that may only be a function compiles). Where the value may also be a kind that answers (a
@@ -93,10 +105,11 @@ describe("#7354 F1 — the function kind", () => {
 
   it.each([
     // (#7354 F1b) A function value is the realm's object now: only the keys its built-in prototypes hold refuse.
+    // (#7557) `call`, `apply` and `bind` are the realm's (tests/issue-7557-builtins-through-values.test.ts).
     [
       "a member read of a Function.prototype key",
-      "function g() {} var k = g.call;",
-      "member read 'call' of a function needs Function.prototype's properties",
+      "function g() {} var k = g.toString;",
+      "member read 'toString' of a function needs Function.prototype's properties",
     ],
     // (#7354 H2) The write of the inherited accessor refuses at its own site.
     [

@@ -98,10 +98,12 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
  * Object.prototype; the body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`)
  * replaces the new object.
  *
- * IsConstructor is the function-kind test: every function value on this lane is a constructor (a declaration or a
- * function expression). Arrows, methods, accessors, generators and async functions carry no all-dynamic signature, so
- * F2's dispatchability rule refuses any program that could call one through a value. The slice that admits the first
- * non-constructor function value adds the test, with a program that reaches it.
+ * IsConstructor is the function-kind test, then the realm's (`js.object.is-constructor`): every source function value
+ * on this lane is a constructor (a declaration or a function expression; arrows, methods, accessors, generators and
+ * async functions carry no all-dynamic signature, so F2's dispatchability rule refuses any program that could call one
+ * through a value), and (#7557) a built-in method the realm holds is not, so it never reaches the dispatcher, whose
+ * built-in arm would run its [[Call]]. A built-in constructor does reach that arm, and the built-in caller has no rung
+ * for one: the run-time abort.
  */
 export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
@@ -112,11 +114,11 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   );
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
-  const isConstructor = holds(b, instr, callee, ["function"]);
+  const isFunction = holds(b, instr, callee, ["function"]);
   // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
   // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
   const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
-  const construct = (r: IrValueId): IrInstr[] => {
+  const ordinary = (r: IrValueId): IrInstr[] => {
     const [prototype, object, answer] = [b.fresh(), b.fresh(), b.fresh()];
     const link = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
@@ -145,9 +147,16 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
+  const construct = (r: IrValueId): IrInstr[] => {
+    const isConstructor = b.fresh();
+    return [
+      realmCall("js.object.is-constructor", [callee], isConstructor),
+      b.branch(isConstructor, ordinary, notConstructor, r, CARRIER),
+    ];
+  };
   return [
-    ...isConstructor.instrs,
-    b.branch(isConstructor.cond, b.program.objects.functions ? construct : builtin, notConstructor, result, CARRIER),
+    ...isFunction.instrs,
+    b.branch(isFunction.cond, b.program.objects.functions ? construct : builtin, notConstructor, result, CARRIER),
   ];
 }
 

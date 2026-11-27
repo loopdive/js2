@@ -164,7 +164,8 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: true,
       functions: false,
       namesSymbol: false,
-      methodNames: new Set(),
+      // (#7557) The names the realm's native members are read under, as spelled (here a property name).
+      methodNames: new Set(["toString"]),
       constructors: new Set(),
     });
   });

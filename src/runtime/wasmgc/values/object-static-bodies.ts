@@ -178,6 +178,7 @@ export function buildOwnDescriptorDefinition(
   d: ObjectStaticOperands,
   create: readonly Instr[],
   defineOwn: FuncHandle,
+  miss: readonly Instr[],
 ): SourceObjectDefinition {
   const [entryFlags, value, getter, setter, result] = [2, 3, 4, 5, 6];
   const defineField = (name: string, fieldValue: Instr[]): Instr[] => [
@@ -201,7 +202,7 @@ export function buildOwnDescriptorDefinition(
       set(value),
       set(entryFlags),
       { op: "i32.eqz" },
-      { op: "if", blockType: { kind: "empty" }, then: [...d.undefinedValue, { op: "return" }] },
+      { op: "if", blockType: { kind: "empty" }, then: [...miss, ...d.undefinedValue, { op: "return" }] },
       ...create,
       set(result),
       ...fromPropertyDescriptor(d, defineField, [entryFlags, value, getter, setter]),

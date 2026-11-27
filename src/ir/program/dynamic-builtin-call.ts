@@ -13,7 +13,7 @@ import {
   IR_CLOSURE_ARGUMENT_COUNT,
   irClosureMethodReference,
 } from "../core/closure-invocation-callables.js";
-import { FUNCTION_CALL_ID, NATIVE_OBJECT_PROTOTYPE_METHODS } from "./builtin-prototype-keys.js";
+import { FUNCTION_CALL_ID } from "./builtin-prototype-keys.js";
 import { builtinMethodChain, identityTest, type BuiltinMethodTest } from "./dynamic-builtin-methods.js";
 import {
   realmMethodTests,
@@ -25,8 +25,6 @@ import {
 import type { ConvertingBuilders } from "./dynamic-value-chains.js";
 import { BOOLEAN, CARRIER, F64 } from "./dynamic-value-types.js";
 
-/** The names a realm method the program may hold is read under, but the Object.prototype methods'. */
-const METHOD_NAMES = ["toString", "valueOf", "isArray"];
 /** The most arguments a held method reads. */
 const METHOD_ARGUMENTS = 1;
 /** The most arguments after `thisArg` a `call` through a value passes on; a call with more is the run-time abort. */
@@ -112,13 +110,12 @@ function callTest(b: ConvertingBuilders, instr: Call, call: BuiltinCall, vector:
 }
 
 /**
- * The realm methods the program may hold: each id once, and each held wrapper method by its name. An Object.prototype
- * method only where the source spells its name (`families.methodNames`); elsewhere a detached call of one is the
- * run-time abort, as it was before the caller existed.
+ * The realm methods the program may hold: each id once, and each held wrapper method by its name. Only those whose name
+ * the source spells (`families.methodNames`); a detached call of any other is the run-time abort, as it was before the
+ * caller existed.
  */
 function heldMethods(b: ConvertingBuilders): RealmMethods[] {
-  const spelled = NATIVE_OBJECT_PROTOTYPE_METHODS.filter((name) => b.families.methodNames.has(name));
-  const named = [...spelled, ...METHOD_NAMES].flatMap((name) => realmMethodsNamed(name, b.families) ?? []);
+  const named = [...b.families.methodNames].flatMap((name) => realmMethodsNamed(name, b.families) ?? []);
   const ids = [...new Set(named.flatMap((methods) => methods.ids))];
   return [{ ids }, ...named.flatMap((methods) => (methods.wrapper ? [{ ids: [], wrapper: methods.wrapper }] : []))];
 }

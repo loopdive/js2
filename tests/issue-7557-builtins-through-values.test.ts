@@ -64,12 +64,24 @@ const AGREES: readonly (readonly [string, string])[] = [
     "an overridden hasOwnProperty is the program's",
     `${F}Object.prototype.hasOwnProperty = function (k) { return 'mine' + k; }; var h = Object.prototype.hasOwnProperty; var out = h('a');`,
   ],
+  [
+    "a built-in method is no constructor",
+    `${F}var h = ({}).hasOwnProperty; var c = g.call; var out = ''; try { new h('a'); } catch (e) { out += String(e instanceof TypeError); } try { new c(); } catch (e) { out += String(e instanceof TypeError); }`,
+  ],
+  [
+    "Function.prototype owns the methods it holds",
+    `${F}var c = g.call; var out = String(Function.prototype.hasOwnProperty('call')) + typeof Object.getOwnPropertyDescriptor(Function.prototype, 'apply') + String(Object.prototype.hasOwnProperty.call(Function.prototype, 'bind'));`,
+  ],
 ];
 
 const ABORTS: readonly (readonly [string, string])[] = [
   ["call with more than three arguments", "var f = function () { return 1; }; f.call(null, 1, 2, 3, 4);"],
   ["Function as a constructor", `${F}new Function('return 1');`],
   ["bind", `${F}g.bind(null);`],
+  // An own-property miss on an object the realm holds without all its properties may be one of them.
+  ["a miss on Function.prototype", `${F}Function.prototype.hasOwnProperty('toString');`],
+  ["a miss on Object.prototype", `${F}Object.getOwnPropertyDescriptor(Object.prototype, 'toString');`],
+  ["a built-in constructor through a value", `${F}var E = TypeError; new E('m');`],
 ];
 
 describe("#7557 — built-ins through values agree with node", () => {
