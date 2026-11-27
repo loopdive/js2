@@ -7350,3 +7350,104 @@ Nobody owns them today.
   - A constant-key read of one refuses or aborts through W2's unheld-key rule, generalised from wrappers to families.
   - ToPrimitive of an array aborts.
   - They come with A1b, because the harness calls them through bound values.
+
+## Slice A1a result (2026-11-27, branch `claude/7354-a1`, #7352 claimed for this lane)
+
+### Built
+
+- **Catalog**: Array is one more row of W2's `familyRows` (`ARRAY_FAMILY`). `isArray` is native; `from`, `of` and
+  the 38 prototype methods are `unavailable`. %Array.prototype% is an array (`array: true`) with `length` 0.
+  `NATIVE_VALUE_INTRINSICS` gains `%Array%`, `%Array.isArray%` and `%Array.prototype%`, appended so earlier
+  selectors are unchanged.
+- **One flags table**: `ORDINARY_OBJECT_DESCRIPTOR_ENCODING` gains `errorData` (G1's 0x800, folded in; the
+  `ERROR_DATA_FLAG` constant is gone) and `arrayExotic` (0x1000). The legacy object flags stop at 0x400.
+  `js.object.is-error` becomes `js.object.has-brand(o, REALM_BRAND)`, one body for both brands.
+- **Kernel** (`realm-array-bodies.ts`, `native-realm-arrays.ts`):
+  - `create-array` is ArrayCreate; a length that is no array length throws a RangeError.
+  - `array-define` is §10.4.2.1, with ArraySetLength (§10.4.2.4) split out.
+  - The descriptor pack's `define-data` / `define-accessor` boundaries call `array-define` after their preflight
+    when the target carries the brand, with `throw` set. OrdinarySet (`js.object.set`) calls it for an array
+    receiver with `throw` 0 and answers its boolean.
+  - Where the Error family is held, holding Array also holds RangeError.
+- **Literals**:
+  - Only held members' keys become realm literals (`native-realm-literals.ts`). A family's unheld methods had
+    added their names, which fixes W2's String family too.
+  - Fixed on the way: `ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)` had pointed at `%Boolean.prototype%`
+    since W2. It now names `Error.prototype.toString`. Probed on the base: no wrong answer was found.
+- **IR**:
+  - `prepared-array-literal.ts`: CreateDataProperty per present element, in order, through `dynamicStoreOperand`.
+  - `Array(…)` / `new Array(…)` is a row of `dynamic-realm-constructors.ts`.
+  - `Array.isArray(v)` is P1's method call by identity. On the lane, the #7106 static predicate yields to the
+    realm (`realmHoldsStatic`).
+  - "[object Array]" is in `dynamic-object-tag.ts`.
+  - The unheld-key rule is generalised to families (`unheldFamilyPrototypeKeys`).
+  - An array's ToPrimitive aborts (`unlessArray` in OrdinaryToPrimitive): its `toString` is `join`, which comes in
+    A1b.
+  - A function-local array or object is boxed onto the carrier for an element read or write and for a method
+    call (`preparedReceiver`).
+- **Computed keys** (`computedAccess` in `dynamic-member-access.ts`, the subset arrays need; L0c's general rule
+  replaces it):
+  - A constant number key is its canonical string.
+  - A string key reads `has ? get : canonical-numeric ? undefined : abort`. Its write is OrdinarySet, but
+    `"__proto__"` aborts. A function receiver's string-key write keeps the `has` rule.
+  - Any other primitive key is ToString'd.
+  - An object key, or a primitive receiver, aborts.
+- `from-ast.ts`: 17,328 lines, as at the base. Stale comments were cut to pay for the new arm.
+
+### Every write path into an array, and how it is covered
+
+| path | through |
+|---|---|
+| member / computed write `a.k = v`, `a[i] = v` (incl. `length`) | `js.object.set`: OrdinarySet, then `array-define` with `throw` 0; sloppy ignores and strict throws on `false` (PutValue) |
+| `Object.defineProperty` / `defineProperties` / `create` | the kernel's define roles, then the pack's boundary defines, then `array-define` with `throw` 1 |
+| array literal, `new Array(a, b)` | `js.object.define-data` (the pack's boundary) on an already branded array |
+| accessor on an index | the pack's `define-accessor`, then `array-define` (the index grows `length`) |
+| inherited setter on an Array.prototype index | OrdinarySet finds the accessor and calls it; no define happens |
+| `length` shrink | `array-define` deletes through the kernel's `deleteOwn`, stopping above the highest non-configurable index |
+| kernel seeding (function `length` / `name`, family objects, wrapper indices, error `message`) | data-body directly; never an array but %Array.prototype%'s own `length`, seeded at creation |
+| push / unshift / splice / freeze / seal / preventExtensions | not in A1a: unheld, so a refusal by name or the run-time abort |
+
+### Proof (local node 22)
+
+- **Probes**: 152 programs (holes, elisions, sparse `a[4294967294]`, `length` truncation and growth, shrink
+  against a non-configurable element, sloppy and strict, read-only `length`, Array.prototype indices, getters and
+  setters, arrays as values, keys "01", "1.0", "-0", "4294967295", -1 and 1.5, `Array` and `new Array` forms,
+  IsArray, `instanceof`, tags, defineProperty and defineProperties), each against node with a wrong twin.
+  - Head: 143 OK (all twins throw), 5 ABORT, 4 REFUSED, 0 WRONG, 0 INVALID, 0 EXC.
+  - Base → head: 135 REFUSED→OK, 8 ABORT→OK, 5 REFUSED→ABORT, 4 REFUSED→REFUSED.
+  - The aborts are known limits: a closure writing a script var, and a closure over a function-local object.
+  - The refusals: `typeof []` and `Object.prototype.toString.call([])` on a literal operand; `Array.isArray = …`;
+    `null` under an f64 hint.
+- **Sample rows, real runner** (`TEST262_COMPILER_PATH=ir`, standalone; refusal-only eval provider here): the 20
+  non-propertyHelper sample rows naming arrays.
+  - Base: 20 compile errors.
+  - Head: 11 pass, 8 fail, 1 compile timeout.
+  - The fails are all run-time aborts: forEach / filter / toString / an object `length` value.
+  - The timeout is `ident-name-keyword-accessor.js` (86 accessors). The same program without its array takes 38 s
+    on the base (the known function-count scaling).
+  - Each of the 11 passes has a mutated twin (last assertion changed), and all 11 twins fail.
+- **Ordinary pipeline**: 16 programs (8 test262 array/defineProperty files, 8 TS programs with typed arrays, push,
+  holes, `Array.isArray`, `new Array`) × default and standalone: 32/32 binaries identical to the base.
+- **Prelude cost** (`assert.sameValue(1, 1)`, 4 runs each, interleaved): 95,918 B → 103,542 B (+7.6 KB); the
+  median goes from about 9.0 s to 9.5 s.
+  - `compareArray.format` reads `Array`, so the family is held.
+  - `compareArray` itself now lowers (computed keys).
+  - Holding finer was not needed under the 15 KB / 1 s bar.
+- **Run time**: 10,000 `a[a.length] = i` writes then 10,000 reads take 108 ms in the module, against 0.8 ms in node.
+  Every index access formats a key and probes the hash map. A dense store is the measured option for later.
+- **Gates** (bare chain, merge-base and `LOC_GATE_BASE=origin/main`): loc, func, coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles and the compiler-boundaries inventory (three new modules classified) all pass.
+
+### Known limits
+
+- Array.prototype methods (A1b).
+- An array's ToPrimitive.
+- A string or object `length` value (no ToNumber in the realm).
+- Spread.
+- `typeof` / tag of a literal operand.
+- A computed string key the realm lacks that is not canonical-numeric.
+- An object key.
+- A primitive receiver with a computed key.
+- `Array.isArray` reassigned.
+
+All of these are aborts or refusals.
