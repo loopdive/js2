@@ -148,9 +148,13 @@ ratchet; it is never a note beside it.
    - **Setup comes from one composite action,
      `.github/actions/test262-runner-setup`.** It wraps the existing
      `.github/actions/setup-node-pnpm` and does not repeat its steps.
-     - **Always:** checkout with submodules, the setup-node-pnpm call,
-       `pnpm install`, and the compiler and runtime bundle build. Today that
-       sequence is written out in both `test262-shard` and
+     - **Checkout stays with each caller.** A local action
+       (`uses: ./.github/actions/…`) resolves only after the repository is
+       checked out, so `actions/checkout` remains each caller's first step,
+       with that caller's own options (submodules, fetch-depth).
+     - **The action starts at the setup-node-pnpm call** and always runs
+       `pnpm install` and the compiler and runtime bundle build. That
+       sequence is written out today in both `test262-shard` and
        `test262-ir-measurement-shard`.
      - **Only with the explicit opt-in input `providers: true`:** downloading
        the runtime-eval and Temporal provider artifacts, which today only
@@ -458,8 +462,8 @@ reason text says:
     the ratchet and the IR gate;
   - one runner-setup composite action shared by both shard jobs and both
     re-check steps, wrapping `setup-node-pnpm`, with provider download as an
-    explicit opt-in; it removes today's duplicated checkout, install and
-    bundle-build sequence;
+    explicit opt-in. Checkout stays with each caller. It removes today's
+    duplicated install and bundle-build sequence;
   - auto-park's PR-set and comment/label logic, shared rather than copied;
   - the push lane reuses `test262-shard` and `merge-report` instead of
     parallel jobs;
