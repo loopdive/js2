@@ -192,3 +192,157 @@ Code quality:
 6. The vec home is one module for all element kinds.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Re-build on #7561 (2026-11-27)
+
+Arrays as realm values on the Prepared path were built once as slice A1a (`origin/claude/7354-a1` `c86f46cc81`, on
+the closed W2 stack; review rounds r1 and r2 in #7354's file on that branch). W2's family model was not taken; main's
+realm model with #7561 (`origin/claude/7561-wrappers` `10273019db`) is the base. This section plans the
+re-implementation there. It is not a port: the old branch is a donor, file by file, and is never merged
+(`git merge-tree` against main: 26 conflicting files).
+
+For this path the criteria of this section replace the "Census" criteria above (#7380 bans census rows, receipts
+and hash / count / text pins).
+
+### A1a's own diff, classified against the new base
+
+`git diff origin/claude/7354-w2...origin/claude/7354-a1 -- src scripts`: 37 files, +1,418 / −197. Each file's diff
+was tried with `git apply --check` on the #7561 head; "applies" means textually, not that it type-checks.
+
+**(a) Carries over unchanged: 16 files, +810 / −33.**
+
+| file | lines | note |
+| --- | --- | --- |
+| `src/runtime/wasmgc/values/realm-array-bodies.ts` (new) | +456 | ArrayCreate, `array-define` (§10.4.2.1), ArraySetLength (§10.4.2.4) |
+| `src/backend/wasmgc/resources/native-realm-arrays.ts` (new) | +96 | the reservations; imports only main's symbols |
+| `src/shared/contracts/descriptor-word.ts` (new) | +30 | `DESCRIPTOR_WORD`, `FULL_DATA_DESCRIPTOR` |
+| `src/ir/prepared-array-literal.ts` (new) | +40 | needs `ARRAY_LITERAL_HELPER` from class (b) |
+| `ordinary-object-descriptor-common.ts`, `-definitions.ts` | +87 / −8 | `ORDINARY_OBJECT_DESCRIPTOR_ENCODING` gains `errorData`, `arrayExotic`; `ifArrayBrand`; the define hook's two callers |
+| `source-object-bodies.ts` | +28 / −4 | OrdinarySet's array arm (`throw` 0) |
+| `object-layouts.ts` | +10 | `OBJECT_FIELD`, `PROP_ENTRY_FIELD` |
+| `builtin-function-bodies.ts` | +5 / −5 | flags by name |
+| `native-realm-literals.ts` | +16 / −5 | only held members' keys become literals |
+| `native-object-descriptors.ts`, `prepare-ordinary-object-access.ts`, `manifest.ts` | +11 / −5 | contract rows |
+| `static-predicates/lowering.ts`, `selection.ts` | +21 / −5 | `realmHolds` without a default |
+| `ordinary-to-primitive.ts` | +10 / −1 | the brand test first (`isArray`, `answer.unsupported`); re-check against #7561's rewrite of this file |
+
+**(b) Carries over with mechanical renames: 16 files, +246 / −112.**
+
+| file | lines | rename |
+| --- | --- | --- |
+| `dynamic-value-kinds.ts`, `dynamic-value-chains.ts`, `dynamic-value-legalization.ts`, `dynamic-prototype-methods.ts`, `dynamic-object-tag.ts` | +94 / −34 | `ProgramFamilies` (`families.arrays`, `.errors`, `.prototypes`) → `holdsFamily(program, "array")`; `holdsErrors` → `holdsFamily(program, "error")` |
+| `source-plain-objects.ts` | +3 / −1 | `objects.constructors.add(ARRAY_ID)` → `realmFamilies.add("array")` (what `constructorRead` already does for a new family row) |
+| `dynamic-realm-calls.ts` | +12 | `ARRAY_LITERAL_HELPER`, `isArrayLiteralCall`: as is |
+| `function-object-lowering.ts`, `from-ast.ts` | +35 / −42 | the literal arm and `realmStatics(resolver)`; from-ast must end at or below its base (17,396 lines) |
+| `native-realm.ts`, `native-realm-families.ts`, `native-source-objects.ts`, `native-builtin-function-requests.ts` | +34 / −7 | the extensible `$Object` root "where a wrapper family is held" gains "or the array family"; `js.object.create-array`, `js.object.has-brand` rows |
+| `ordinary-object-callables.ts` | +6 / −2 | the two contract rows |
+| `realm-family-bodies.ts` | +37 / −25 | `markObjectFlag`, `%Array.prototype%` allocated as an array; re-applied on #7561's version |
+| `scripts/compiler-boundaries.json` | +25 / −1 | regenerated, not applied |
+
+**(c) Rewritten: 5 files, +362 / −52.**
+
+| file | lines | what is written instead |
+| --- | --- | --- |
+| `native-realm-catalog.ts` | +74 / −2 | `familyRows(ARRAY_FAMILY)` → an `arrayRows()` builder in `wrapperRows`' shape (constructor, prototype with `array: true` and `length` 0, one row per static and method, each `heldWith` itself); `%Array%` an identity row with `isArray` and `prototype` |
+| `builtin-prototype-keys.ts` | +33 / −20 | `constructors("array", ["Array"])`; W2's `ARRAY_ID` lists go |
+| `dynamic-realm-constructors.ts` (absent on the base) | +65 / −1 | `realmConstructorOf` stays in `dynamic-realm-calls.ts`; a new sibling `dynamic-array-constructors.ts` holds `arrayOf` (the one ArrayCreate-then-CreateDataProperty helper), `Array(…)` / `new Array(…)` and the literal's legalization |
+| `native-realm-requirements.ts` | +13 / −3 | an `array` row of `HELD_FAMILIES`; the per-member pin of #7561 over the array prototype (`unheldWrapperPrototypeKeys` / `heldFamilyMembers` are not taken) |
+| `dynamic-member-access.ts` | +177 / −26 | `computedAccess` (the computed-key subset arrays need) on #7561's `memberAccess`; W2's `unheldStaticKeys` → `identityOnlyKeyRefusal`. The other lane builds computed keys on object literals and `in`: one of the two lanes owns the computed-key arm, to be agreed before this file is touched |
+
+Tests: `tests/issue-7354-a1-arrays.test.ts`, `-array-values.test.ts`, `-array-limits.test.ts` (437 lines) carry over
+as programs; their refusal texts are re-read on the new base. The 18 other test files A1a touched are re-derived
+from failures, not applied.
+
+### Requirements carried from A1a's reviews
+
+1. **No ToPrimitive through a user-written `Object.prototype.toString` (r2, a wrong value).** OrdinaryToPrimitive
+   tests the array brand first and aborts before reading `toString` or `valueOf`, whatever the chain holds, until
+   `Array.prototype.toString` and `join` exist. Test: `Object.prototype.toString = function () { return "z"; };
+   String([1, 2])` aborts; so do concatenation, a template, unary `+`, `Number()`, `<`, a computed key `o[[1]]` and
+   `new Error([1, 2])`. With #7574 the root is obtainable, so more programs reach this row than on A1a.
+2. **No compile-time exception for a for-of over an array (r1, the blocker).** The literal is a dynamic value at its
+   source, not a raw externref a function local keeps. The consumer sweep of r1 (30 consumers × function-local
+   array, script array, literal operand) is re-run: each cell answers, aborts or refuses; none throws out of
+   `compile()`.
+3. **The literal is carried as operands of one helper symbol (r2).** `__ir_array_literal` with the length (f64), then
+   each present element's index key and value. No length or index in the symbol text, no parser.
+4. One descriptor-word table (`descriptor-word.ts`); no `191` literal. One brand dispatch (`ifArrayBrand`), one flag
+   mark, one `asOrdinaryObject` (r1 quality points 2–4).
+5. `js.object.has-brand(o, REALM_BRAND)` replaces `js.object.is-error`; one body for both brands.
+6. `staticPredicatePlan`'s `realmHolds` has no default (r1 point 5).
+7. Every write path into an array goes through `array-define` (A1a's table of eight paths); kernel seeding bypasses
+   it only for `%Array.prototype%`'s own `length`.
+
+### The first array PR (#7352)
+
+`propertyHelper.js` needs, in its order: `Array.isArray` as a value (line 27), `Array.prototype.join` and `push` as
+values (lines 31–32), then inside `verifyProperty` an array literal, `failures.length` and `names[i]` (lines 80–93).
+A1a's diff is about 1,600 changed source lines, above the ~1,000 guideline, so it is two PRs:
+
+| PR | issue | content | changed source lines |
+| --- | --- | --- | --- |
+| A | **#7352** | the realm side (class (a)'s runtime, backend and shared files; the catalog; the contracts) and the smallest IR that reaches it: `Array` as a value, `Array.prototype`, `Array(…)` / `new Array(…)`, `Array.isArray`, `length` read and write, constant index keys (`a[0]`, `a["0"]`), "[object Array]", `instanceof Array`, ToPrimitive's abort | about 1,150, of which 622 are the four new files taken unchanged |
+| B | new id | the array literal (`prepared-array-literal.ts`, the from-ast arm, `arrayOf` shared with PR A), computed index keys (`a[i]`), the consumer sweep | about 450 |
+
+If the owner prefers one PR of about 1,600 lines (the #7561 precedent was 1,460), A and B merge under #7352 and no
+id is needed.
+
+Held, not built: `Array.prototype.join` and `push` (and every other prototype method) are rows the realm holds by
+#7561's pin rule, so `Array.prototype.join` is a function value with the right identity, `length` and `name`, which
+`Function.prototype.call.bind` can take once #7557 and #7560 exist. Calling one through the dispatcher is the
+run-time abort, as for every held built-in today.
+
+Out of PR A and B: every Array.prototype method body; `Array.from` / `of`; spread; destructuring; for-of's iterator
+(a for-of over an array aborts or refuses, never throws at compile time); a `length` value that is a string or an
+object; `delete a[i]`; a dense element store.
+
+Acceptance, PR A and B:
+
+1. A1a's 152 probes and r1's consumer sweep agree with node or abort / refuse as recorded there, each agreement with
+   a wrong twin; 0 wrong, 0 invalid Wasm, 0 exceptions out of `compile()`.
+2. The seven requirements above, each with a test row.
+3. `var A = Array; A.isArray = f; Array.isArray([])` never answers the built-in (the identity row; `isArray` is
+   called by identity, not folded).
+4. Ordinary-pipeline output byte-identical; Prepared output byte-identical for programs that hold no array family;
+   `src/ir/from-ast.ts` does not grow; no new IR to runtime import edge (budget 10).
+5. The prelude (`assert.js` + `sta.js` + one assertion; `compareArray.format` names `Array`) is measured before and
+   after: bar 15 KB and 1 s, as on A1a (+7.5 KB there). The pin rule's cost with a computed key (all 38 prototype
+   methods held) is measured on one `propertyHelper.js` program and reported.
+6. Code quality: `arrayRows` in `wrapperRows`' shape; `array` a row of `REALM_CONSTRUCTORS` and `HELD_FAMILIES`; one
+   pin function for wrapper, object and array prototypes; none of W2's names (`familyRows`, `ProgramFamilies`,
+   `dynamic-realm-constructors.ts`, `unheldFamilyPrototypeKeys`) exists afterwards; new modules classified in
+   `scripts/compiler-boundaries.json`; a fresh-context adversarial review with its verdict in the PR body.
+
+### The order after it
+
+1. **`Function` as a value and `Function.prototype.call` (#7557).** Base: #7561 + #7574 + PR A. Mined from
+   `origin/claude/7354-a1b` `affccb6fe4`: `realm-builtin-caller.ts` (the lifted caller function),
+   `builtin-caller-bodies.ts`, `dynamic-builtin-call.ts` (the identity ladder), the `BuiltinCall` interface over
+   P1's algorithms, `%Function%` in `REALM_CONSTRUCTORS`. About 1,800 diff lines on the old branch, so two PRs: the
+   caller route with the already-held methods through values (a detached `hasOwnProperty`), then `Function` and
+   `call`; one new id. Review findings to carry: `new` of a held built-in method must throw (use the other lane's
+   `NativeRealmIntrinsic.constructible`, drop A1b's own IsConstructor check); Function.prototype's own properties
+   must give one answer to [[Get]], has-own and descriptor queries (the pin rule, or `is-partial`: #7574's open
+   question 2); the nine old tests that asserted aborts are re-derived. Agreed regression from the other lane:
+   `S15.5.3.2_A3_T2` (save `String.fromCharCode`, delete the property, call the saved reference), plus replacement
+   of the property and reassignment of the variable to a non-callable value.
+2. **`bind` and `apply` (#7560).** Base: #7557. Not mined for code (the old branch `claude/7354-a1b2` is local
+   only); the plan text is #7557's "Next session" list: BoundFunctionCreate as a closure-root subtype holding
+   target, `this` and a realm array of arguments, `length` / `name` per §20.2.3.2 (a target whose `length` is an
+   accessor aborts), a bound rung that prepends the bound arguments; `apply` with CreateListFromArrayLike of a realm
+   array (any other array-like aborts). About 500 lines. After it lines 31–34 of `propertyHelper.js` run.
+3. **`Array.prototype.join`, `push`, `toString` bodies (new id).** Base: #7560 and PR B. From #7557's plan, "New
+   algorithms": the legalization builders gain a `slot` and a `loop` (no legalization writes a loop today; this is
+   new shared builder code and is sized first). `join` gives an array its ToPrimitive, which removes requirement
+   1's abort. About 500 lines. Finding to carry: requirement 1 stays true for an array whose `toString` the program
+   overrides (the override is called, not the built-in).
+4. **`Object` statics as values (#7574's slice 2, new id)** can land anywhere after #7574; its caller rung needs
+   #7557.
+5. **`Object.getOwnPropertyNames` and `keys` (#7574's slice 3, new id).** Base: PR A and slice 2. The kernel's
+   own-key walk into a realm array. It makes the pin rule's "whole family" trigger apply to these two contracts
+   (they list non-enumerable keys). About 300 lines.
+
+Not in this order and not owned here: `Math.pow` (line 35), `arguments.length` (`dyn.publish_argc`), `delete`,
+for-in, the JSDoc flow rule, `JSON`.
+
+New ids for this plan: PR B, #7557's second half, the join / push bodies; with #7574's two, five in all.
