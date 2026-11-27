@@ -26,6 +26,8 @@ import {
   isIgnoredOverlapPath,
   issuePlanPaths,
   openPrFiles,
+  repoSlug,
+  truncatedUnlisted,
 } from "./lib/open-pr-files.mjs";
 
 const USAGE =
@@ -60,12 +62,7 @@ function branchPaths() {
 /** This checkout's branch and the GitHub repos of its remotes: what identifies its own PR. */
 function ownHead() {
   const branch = git("branch", "--show-current");
-  const repos = lines(git("remote")).map(
-    (r) =>
-      git("remote", "get-url", r)
-        .toLowerCase()
-        .match(/github\.com[:/](.+?)(?:\.git)?\/?$/)?.[1],
-  );
+  const repos = lines(git("remote")).map((r) => repoSlug(git("remote", "get-url", r)));
   return branch ? { branch, repos: repos.filter(Boolean) } : undefined;
 }
 
@@ -104,9 +101,19 @@ function parseArgs(argv) {
 export function verdictLine(result) {
   if (!result.checked) return `pr-file-overlap: NOT CHECKED — ${result.reason}`;
   const n = result.paths.length;
-  if (!result.overlaps.length) return `pr-file-overlap: OK — no open PR touches these ${n} path(s)`;
+  // A PR whose file list GitHub cut at 3000 may change more files than it
+  // shows, so it cannot be cleared — the verdict must not read as a plain OK.
+  const cut = result.truncated ?? [];
+  const partly = cut.length
+    ? `; ${cut.length} PR(s) (${cut.map((pr) => `#${pr}`).join(", ")}) have a file list cut at 3000 by GitHub and could not be fully checked`
+    : "";
+  if (!result.overlaps.length) {
+    return cut.length
+      ? `pr-file-overlap: OK for the other ${result.prCount - cut.length} open PR(s) on these ${n} path(s)${partly}`
+      : `pr-file-overlap: OK — no open PR touches these ${n} path(s)`;
+  }
   const touched = new Set(result.overlaps.flatMap((o) => o.paths)).size;
-  return `pr-file-overlap: ${result.overlaps.length} open PR(s) touch ${touched} of your ${n} path(s) — settle it with the other lane on #7526`;
+  return `pr-file-overlap: ${result.overlaps.length} open PR(s) touch ${touched} of your ${n} path(s) — settle it with the other lane on #7526${partly}`;
 }
 
 /** Compute the overlap result. `deps` lets tests inject the fetcher and cache. */
@@ -126,7 +133,14 @@ export async function overlapResult(opts, deps = {}) {
   const listing = await openPrFiles({ timeoutMs: opts.timeoutMs, ...deps });
   if (!listing.checked) return { checked: false, reason: listing.reason, paths };
   const overlaps = findPathOverlaps(paths, listing.prs, { excludePr: opts.excludePr, excludeHead });
-  return { checked: true, paths, ignored: all.length - paths.length, prCount: listing.prs.length, overlaps };
+  return {
+    checked: true,
+    paths,
+    ignored: all.length - paths.length,
+    prCount: listing.prs.length,
+    overlaps,
+    truncated: truncatedUnlisted(listing.prs, overlaps),
+  };
 }
 
 /** @returns {Promise<number>} the exit code */

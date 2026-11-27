@@ -33,7 +33,13 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { findPathOverlaps, formatOverlaps, issuePlanPaths, openPrFiles } from "./lib/open-pr-files.mjs";
+import {
+  findPathOverlaps,
+  formatOverlaps,
+  issuePlanPaths,
+  openPrFiles,
+  truncatedUnlisted,
+} from "./lib/open-pr-files.mjs";
 // (#4045/#4117) READ THE CLAIM LEDGER THROUGH claim-issue.mjs, NOT a raw
 // `git show` of a remote-tracking ref.
 //
@@ -290,6 +296,12 @@ if (!intended.length) {
     for (const line of formatOverlaps(overlaps, { maxLines: 20 })) warnings.push(`    ${line}`);
   } else {
     notes.push(`file overlap: no open PR changes the ${intended.length} intended path(s)`);
+  }
+  const cut = truncatedUnlisted(openPrs.prs, overlaps);
+  if (cut.length) {
+    warnings.push(
+      `FILE OVERLAP PARTLY CHECKED — ${cut.map((n) => `#${n}`).join(", ")} have a file list cut at 3000 by GitHub`,
+    );
   }
 }
 

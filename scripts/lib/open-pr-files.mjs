@@ -169,7 +169,8 @@ async function forEachParallel(items, task) {
 
 /**
  * Every open PR with its changed files. The list and the files are separate
- * answers: `prs` is the PR list whenever it could be read (null otherwise),
+ * answers: `prs` is the PR list when it was read now or is within its 5-minute
+ * TTL (null otherwise — never an expired list),
  * while `checked` says every PR's `files`/`truncated` are known too.
  *
  * @returns {Promise<{prs: Array<{number, title, author, branch, headRepo, draft, hold, sha,
@@ -184,10 +185,14 @@ export async function openPrFiles({
 } = {}) {
   const cache = readCache(cacheFile, repo);
   const deadline = now() + timeoutMs;
+  // Only a list fetched now or still within its TTL is an answer. An expired
+  // one is history: a PR opened since would be missing without a word.
+  let listed = Boolean(cache.prs) && now() - cache.listedAt < LIST_TTL_MS;
   try {
-    if (!cache.prs || now() - cache.listedAt >= LIST_TTL_MS) {
+    if (!listed) {
       cache.prs = await listOpenPrs(ghJson, repo, deadline, now);
       cache.listedAt = now();
+      listed = true;
     }
     const missing = cache.prs.filter((pr) => !cache.files[fileKey(pr)]);
     await forEachParallel(missing, async (pr) => {
@@ -195,12 +200,16 @@ export async function openPrFiles({
     });
   } catch (error) {
     // Bank what was fetched: a cold cache then warms up over a few runs.
-    if (cache.prs) writeCache(cacheFile, cache);
+    if (listed) writeCache(cacheFile, cache);
     const reason = String(error?.stderr || error?.message || error)
       .trim()
       .split("\n")[0]
       .slice(0, 200);
-    return { prs: withFiles(cache), checked: false, reason: `GitHub unreachable or rate-limited (${reason})` };
+    return {
+      prs: listed ? withFiles(cache) : null,
+      checked: false,
+      reason: `GitHub unreachable or rate-limited (${reason})`,
+    };
   }
   writeCache(cacheFile, cache);
   return { prs: withFiles(cache), checked: true };
@@ -214,6 +223,27 @@ const withFiles = (cache) =>
   });
 
 /**
+ * `owner/repo` of a remote URL or a GitHub `full_name`, lowercased, in one
+ * spelling: https, ssh and SCP forms (an ssh host alias included), a `.git`
+ * suffix, and the repo's two names `js2wasm`/`js2` folded to `js2` — the
+ * forms `scripts/hooks/push-remote-classify.sh` documents for this repo.
+ * Null when no owner/repo can be recovered.
+ */
+export function repoSlug(urlOrName) {
+  const segments = urlOrName
+    .trim()
+    .replace(/^[a-z+]+:\/\//i, "")
+    .replaceAll(":", "/")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "")
+    .toLowerCase()
+    .split("/");
+  if (segments.length < 2 || !segments.at(-1) || !segments.at(-2)) return null;
+  const name = segments.at(-1) === "js2wasm" ? "js2" : segments.at(-1);
+  return `${segments.at(-2)}/${name}`;
+}
+
+/**
  * The open PRs that change any of `paths` (ignored planning paths dropped),
  * most overlapping paths first. Pure.
  *
@@ -224,12 +254,22 @@ const withFiles = (cache) =>
  */
 export function findPathOverlaps(paths, prs, { excludePr, excludeHead } = {}) {
   const wanted = new Set(paths.filter((p) => !isIgnoredOverlapPath(p)));
-  const own = (pr) => pr.branch === excludeHead?.branch && excludeHead.repos.includes(pr.headRepo?.toLowerCase());
+  const own = (pr) =>
+    pr.branch === excludeHead?.branch && pr.headRepo !== null && excludeHead.repos.includes(repoSlug(pr.headRepo));
   return prs
     .filter((pr) => pr.number !== excludePr && !own(pr))
     .map(({ files, sha, ...pr }) => ({ ...pr, paths: [...new Set(files)].filter((f) => wanted.has(f)).sort() }))
     .filter((overlap) => overlap.paths.length)
     .sort((a, b) => b.paths.length - a.paths.length || a.number - b.number);
+}
+
+/**
+ * Numbers of the PRs whose file list GitHub cut at its cap and that are not
+ * already in `overlaps`: they may change the paths beyond what was seen.
+ */
+export function truncatedUnlisted(prs, overlaps) {
+  const shown = new Set(overlaps.map((o) => o.number));
+  return prs.filter((pr) => pr.truncated && !shown.has(pr.number)).map((pr) => pr.number);
 }
 
 /** One header line per overlapping PR, then its paths, cut to `maxLines`. */

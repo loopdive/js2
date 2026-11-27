@@ -15,6 +15,7 @@ import {
   issuePlanPaths,
   ghRest,
   openPrFiles,
+  repoSlug,
   // @ts-expect-error — plain .mjs module without type declarations
 } from "../scripts/lib/open-pr-files.mjs";
 // @ts-expect-error — plain .mjs module without type declarations
@@ -183,6 +184,18 @@ describe("#7559 openPrFiles", () => {
     });
   });
 
+  it("never returns an EXPIRED cached list when the list call fails", async () => {
+    let t = 0;
+    const gh = fakeGitHub([pull(7, "b7")], { 7: [{ filename: "a" }] });
+    await openPrFiles({ ghJson: gh.ghJson, cacheFile, now: () => t });
+    t = 10 * 60_000;
+    const failing = () => Promise.reject(new Error("HTTP 403: rate limited"));
+    expect(await openPrFiles({ ghJson: failing, cacheFile, now: () => t })).toMatchObject({
+      prs: null,
+      checked: false,
+    });
+  });
+
   it("returns the PR list but NOT CHECKED when a file fetch fails partway", async () => {
     const gh = fakeGitHub([pull(7, "b7"), pull(8, "b8")], { 7: [{ filename: "a" }] });
     const ghJson = (endpoint: string) =>
@@ -229,6 +242,24 @@ describe("#7559 openPrFiles", () => {
     } finally {
       process.env.PATH = savedPath;
     }
+  });
+});
+
+describe("#7559 repoSlug", () => {
+  it("brings every remote spelling of one repository to one slug", () => {
+    for (const url of [
+      "https://github.com/loopdive/js2",
+      "https://github.com/Loopdive/js2wasm.git",
+      "git@github.com:loopdive/js2.git",
+      "git@github-work:loopdive/js2wasm", // ssh host alias
+      "ssh://git@github.com/loopdive/js2/",
+      "http://local_proxy@127.0.0.1:41729/git/loopdive/js2",
+      "loopdive/js2wasm", // a GitHub full_name
+    ]) {
+      expect(repoSlug(url)).toBe("loopdive/js2");
+    }
+    expect(repoSlug("ttraenkler/js2")).toBe("ttraenkler/js2");
+    expect(repoSlug("not-a-repo")).toBeNull();
   });
 });
 
@@ -280,6 +311,15 @@ describe("#7559 pr-file-overlap CLI", () => {
     expect(out.at(-1)).toBe("pr-file-overlap: NOT CHECKED — GitHub unreachable or rate-limited (connect ECONNREFUSED)");
   });
 
+  it("does not say a plain OK while a PR's file list is cut at GitHub's cap", async () => {
+    const huge = Array.from({ length: 3000 }, (_, i) => ({ filename: `gen/f${i}.ts` }));
+    const gh = fakeGitHub([pull(7, "b7"), pull(8, "b8")], { 7: huge, 8: [{ filename: "src/x.ts" }] });
+    const { out } = await run(["--paths", "src/a.ts"], { ghJson: gh.ghJson });
+    expect(out.at(-1)).toBe(
+      "pr-file-overlap: OK for the other 1 open PR(s) on these 1 path(s); 1 PR(s) (#7) have a file list cut at 3000 by GitHub and could not be fully checked",
+    );
+  });
+
   it("says NOT CHECKED, never OK, when one PR's files could not be fetched", async () => {
     const gh = fakeGitHub([pull(7, "b7"), pull(8, "b8")], { 7: [{ filename: "src/x.ts" }] });
     const ghJson = (endpoint: string) =>
@@ -321,6 +361,29 @@ describe("#7559 pre-dispatch-gate", () => {
       timeout: 150_000,
     });
     expect(run.stdout).toContain("FILE OVERLAP NOT CHECKED");
+    expect(run.status).toBe(2);
+  }, 160_000);
+
+  it("warns, never CLEAR, when only an expired cached list exists and the list call fails", () => {
+    // The issue names no paths, so only section 2 can speak; an old cache
+    // must not stand in for the open-PR list.
+    const repo = scratchRepo();
+    fs.mkdirSync(path.join(repo, "plan/issues"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "plan/issues/1-x.md"), "---\nid: 1\nstatus: ready\n---\n# x\n");
+    fs.mkdirSync(path.join(repo, ".js2wasm-cache"));
+    const stale = { version: 2, repo: "loopdive/js2", listedAt: 0, prs: [], files: {} };
+    fs.writeFileSync(path.join(repo, ".js2wasm-cache/open-pr-files.json"), JSON.stringify(stale));
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "gh"), '#!/bin/sh\necho "<html>proxy</html>"\n', { mode: 0o755 });
+    const run = spawnSync(process.execPath, [path.resolve("scripts/pre-dispatch-gate.mjs"), "1"], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...GIT_FREE_ENV, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      timeout: 150_000,
+    });
+    expect(run.stdout).toContain("CAUTION");
+    expect(run.stdout).toContain("open PRs NOT CHECKED");
     expect(run.status).toBe(2);
   }, 160_000);
 });
