@@ -4440,8 +4440,8 @@ function isPhase1MutableMemberTarget(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (target.questionDotToken !== undefined) return false;
-  // (#7338) A read-modify-write of a carrier's member: `lowerPropertyCompound`
-  // takes object / class receivers only, and `dyn.member_set` has no compound.
+  // (#7338) A read-modify-write of a carrier's member: the ordinary pipeline keeps this refusal by policy, its
+  // bytes unchanged; only the Prepared resolver admits it (#7354 O7, `dynamicCompoundMemberWrites`).
   if (readsCarrier(target.expression)) return shapeNo("member-compound-dynamic-receiver", target);
   if (ts.isPropertyAccessExpression(target)) {
     if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;

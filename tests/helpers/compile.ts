@@ -22,8 +22,8 @@
  */
 import { expect } from "vitest";
 import { compile } from "../../src/index.js";
-import { buildImports, wrapCompiledExports } from "../../src/runtime.js";
-import type { CompileResult } from "../../src/index.js";
+import { buildCompiledImports, buildImports, wrapCompiledExports } from "../../src/runtime.js";
+import type { CompileOptions, CompileResult } from "../../src/index.js";
 
 /**
  * (#6708) Read exports the way an embedder does. Since S6 the default policy is
@@ -275,14 +275,16 @@ export async function compileAndRunTestSyncNumber(source: string): Promise<numbe
 
 /**
  * Cluster M (2 files — issue-1068/1070): cluster F with all compile-error
- * messages joined by `"; "` in the throw.
+ * messages joined by `"; "` in the throw. `options` adds compile options, e.g.
+ * `hostAccelerators: ["intl"]` for the Intl cases (#6986).
  */
-export async function compileAndRunTestSyncJoined(source: string): Promise<any> {
-  const result = await compile(source, { fileName: "test.ts" });
+export async function compileAndRunTestSyncJoined(source: string, options: CompileOptions = {}): Promise<any> {
+  const result = await compile(source, { fileName: "test.ts", ...options });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors?.map((e) => e.message).join("; ")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
+  // The embedder binder: it admits the result's selected host accelerators.
+  const imports = buildCompiledImports(result);
   const mod = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(mod, imports);
   imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, it, expect } from "vitest";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 /**
  * #1443 — String.prototype.{replace,replaceAll,match,search,split} delegation to
@@ -27,7 +27,7 @@ describe("#1443 — String.prototype.* Symbol dispatch", () => {
       }
       export { test };
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect((exports as { test: () => string }).test()).toBe("aXc");
   });
 
@@ -38,7 +38,7 @@ describe("#1443 — String.prototype.* Symbol dispatch", () => {
       }
       export { test };
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect((exports as { test: () => string }).test()).toBe("a_b_c");
   });
 
@@ -50,7 +50,7 @@ describe("#1443 — String.prototype.* Symbol dispatch", () => {
       }
       export { test };
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect((exports as { test: () => number }).test()).toBe(3);
   });
 
@@ -61,7 +61,7 @@ describe("#1443 — String.prototype.* Symbol dispatch", () => {
       }
       export { test };
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect((exports as { test: () => string }).test()).toBe("hell0 w0rld");
   });
 
@@ -77,7 +77,7 @@ describe("#1443 — String.prototype.* Symbol dispatch", () => {
       }
       export { test };
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect((exports as { test: () => string }).test()).toBe("ab<X>c");
   });
 });
