@@ -17,7 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileOk(src: string, opts: Record<string, unknown> = {}) {
   const r = await compile(src, opts);
@@ -29,12 +29,8 @@ async function compileOk(src: string, opts: Record<string, unknown> = {}) {
 async function runF(body: string, ret = "number", opts: Record<string, unknown> = {}): Promise<unknown> {
   const src = `export function f(): ${ret} { ${body} }`;
   const r = await compileOk(src, opts);
-  const imports = buildImports(r.imports, {}, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
+  const instance = await instantiateWithRuntime(r);
   const exports = instance.exports as Record<string, (...a: unknown[]) => unknown>;
-  if ((imports as { setExports?: (e: unknown) => void }).setExports) {
-    (imports as { setExports: (e: unknown) => void }).setExports(exports);
-  }
   return exports.f();
 }
 
