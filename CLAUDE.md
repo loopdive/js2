@@ -174,6 +174,15 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   has no skip flag. It judges the pushed refs: deletes and tags skip it, and it
   refuses a pushed branch that is not HEAD, a dirty tracked tree, a missing
   main ref, or a box without `timeout`/`gtimeout`. A failure it misses costs a queue run and a `hold` park.
+- **A branch stacked on an unmerged branch cannot meet that 20-minute bound**,
+  because the hook also runs the base's test files (#7561's alone take ~15
+  min). Set the hook's own variable to the branch you stacked on:
+  `CHANGED_ROOT_TESTS_BASE=origin/<base-branch> git push …` runs only your
+  slice's files. Run the base's files your change can affect by hand.
+- **A test that spawns `git` must strip the `GIT_*` environment.** Changed
+  tests now run inside a git hook, where `GIT_DIR` and friends point at the
+  real repository: on 2026-11-27 a test's `git init` hit the real git dir
+  instead of its temp dir.
 
 ## Running Tests
 
