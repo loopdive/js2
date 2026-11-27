@@ -72,6 +72,7 @@ import {
   booleanReadAsNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
+  isBigIntUnsafeDynamicOperator,
   isEqualityOperator,
   isNumberBinaryOperator,
   isNumberCompoundAssignOperator,
@@ -328,6 +329,7 @@ import {
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError, refuseUnselected } from "./outcomes.js";
+import { refuseBigIntDynamicOperand } from "./bigint-operand-refusal.js"; // (#7525)
 import {
   boxWrapper,
   emitToPrimitive,
@@ -957,6 +959,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isNativeRegExpReceiver?(receiver: ts.Expression): boolean;
   /** (#7364) The selector's `nativeRegExpCompiles`, asked again where a static construction is built. */
   nativeRegExpCompiles?(pattern: string, flags: string): boolean;
+  /** (#7525) The selector's `isBigIntOperand`, asked again where a dynamic numeric operator is built. */
+  isBigIntOperand?(expr: ts.Expression): boolean;
   nativeRegExpMethodPlan?(
     receiver: ts.Expression,
     method: RegExpCarrierMethod,
@@ -10962,6 +10966,7 @@ function lowerDynamicMemberCompound(
 ): boolean {
   const member = dynamicNamedMember(lhs, recv, cx);
   if (member === undefined) return false;
+  refuseBigIntDynamicOperand(cx, lhs, ...(rhs === null ? [] : [rhs]));
   const old = cx.builder.emitDynMemberGet(member.target, member.key);
   const stored = rhs === null ? dynamicIncrement(old, token, cx) : dynamicCompoundStep(token, old, lhs, rhs, cx).stored;
   cx.builder.emitDynMemberSet(member.target, member.key, stored, member.sloppy);
@@ -13650,6 +13655,7 @@ function lowerCompoundAssignment(
     store(result, proof.resultEncoding);
     return result;
   }
+  if (slotFamily === "dynamic") refuseBigIntDynamicOperand(cx, id, rhs);
   const binaryOp = numberCompoundBinaryOperator(compoundOp);
   // invariant (producer-promise): every caller passes a numeric compound operator (`isNumberCompoundAssignOperator`).
   if (binaryOp === undefined) throw new Error(`ir/from-ast: compound operator has no binary form in ${cx.funcName}`);
@@ -13752,6 +13758,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     );
   }
   if (slotFamily === "dynamic") {
+    refuseBigIntDynamicOperand(cx, id);
     const current =
       storage.kind === "moduleGlobal"
         ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
@@ -14422,6 +14429,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       // `__unbox_number` host — D4) feeds the existing `f64.neg`. Byte-inert
       // until the S5.P scan admits dynamic-unary bodies.
       if (randType.kind === "dynamic") {
+        refuseBigIntDynamicOperand(cx, expr.operand);
         const n = cx.builder.emitDynToNumber(rand);
         return cx.builder.emitUnary("f64.neg", n, irVal({ kind: "f64" }));
       }
@@ -14446,6 +14454,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       // #2949 S5.5 — unary `+` on a boxed-any carrier IS ToNumber (§13.5.4
       // Unary Plus is exactly `? ToNumber(value)`): a bare `dyn.to_number`.
       if (randType.kind === "dynamic") {
+        refuseBigIntDynamicOperand(cx, expr.operand);
         return cx.builder.emitDynToNumber(rand);
       }
       // (#3168) `+x` IS `ToNumber(x)` (§13.5.4). A boolean / string operand
@@ -15301,6 +15310,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     irOperandFamily(rt, expr.right),
   );
   if ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) {
+    if (isBigIntUnsafeDynamicOperator(op)) refuseBigIntDynamicOperand(cx, expr.left, expr.right);
     const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx);
     if (dynEq !== null) return dynEq;
     // `+` and the ToNumeric operators: the dynamic binary producer, shared with the compound assignments (#7354 O7).

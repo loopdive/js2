@@ -13257,6 +13257,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/bigint-operand-refusal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7525",
+      "nextBoundary": "Separate the checker-backed BigInt operand predicate (frontend) from the IR refusal it feeds."
+    },
+    {
       "path": "src/ir/module-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
