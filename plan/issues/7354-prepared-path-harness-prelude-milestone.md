@@ -7766,3 +7766,48 @@ Function declarations inside functions and blocks, closures that write captured 
 - **Quality criterion:** one ref-cell mechanism (the native cells), one module-binding write lookup, one hoisting
   predicate module; function declarations are lowered by the closure path, not a second lifting path; `from-ast.ts`
   does not grow; no `func-budget-allow`.
+
+## Slice L0c result, part 1 (2026-11-27, branch `claude/7354-l0c`; L0b 73bce75aaf merged)
+
+M1, M2 and M4 of the plan (with the part of M3 that M4 needs). Annex B block functions and the `var` leftovers are
+not done yet (next part). `from-ast.ts` 17172 → 17152.
+
+### Built
+
+- **M1.** `requireCompletedNativeRealmSlots` lists the source-closure setup's ref-cell types
+  (`nativeSourceRefCellTypes`, re-checked like `resolveNativeRefCell`). A mutable capture of the dynamic value takes a
+  cell of the carrier: `boxed<dynamic>` in from-ast, `boxed<externref>` in carrier form (`carrierOf`), and the
+  allocation registry re-types the cell site with the closures (`retypeToCarrierForm`). A plain or compound write
+  into such a cell stores the carrier. No change to `lower-generic.ts`: the legalized cell is a scalar cell.
+- **M2.** `laneModuleBinding`: a compound or update write in a function reaches a script binding the scope does not
+  hold. `lowerCompoundAssignment` reads and writes its storage through one `read`/`write` pair.
+- **M4.** A function declaration in a function body with the all-dynamic contract is hoisted
+  (`hoistFunctionDeclarations`): its name and every `var` of the body that a declaration reads or writes
+  (`localDeclarationCaptures`, shared with the provenance) are cells of the carrier bound at entry; the declarations
+  are created through the closure path (`lowerDynamicClosure`, now shared with function expressions) in source order;
+  a `var` declaration of a hoisted name is a write. A call of a function-local declaration reads its binding
+  (`sourceFunctionCallee` takes top-level declarations only); such a declaration makes the program create function
+  values (`programObjects`). An annotated declaration keeps the nested-function lowering.
+- **Size.** The capture analysis moved to `closure-captures.ts` (`analyseClosureCaptures` over a `lookup` host);
+  `heldType` replaces two copies of the "value a binding holds" expression.
+
+### Still refused or aborting
+
+- Annex B function-in-block (54 of the 90 first-blocker rows), `var` declared in a nested statement and read outside
+  it, `{ … }` blocks in a function prefix, a declaration sharing a parameter's name (abort), an object element store
+  in a loop closure.
+
+### Proof
+
+- Probes: the 394 L0a/L0b/reviewer programs + 10 Boolean switches, ≤ 10 per process, L0b head → L0c head:
+  abort→right 32 + 14 (M1/M2 step), nothing right changed, 0 wrong/invalid/exceptions. 27 L0c programs: 20 right
+  (the 7 others above); 10 more function-declaration programs: 9 right, 1 the parameter-name abort. All with twins.
+- Ordinary bytes identical, main vs head: 33 probe programs × default/standalone (closures with captured writes,
+  annotated nested functions, compound module writes) and the 62 test262 files.
+- `check:prepared-bytes` identical to L0b.
+- Runner: targeted 41 → **44** (function-code 10.4.3-1-30-s, 10.4.3-1-42-s; throw S12.13_A3_T6), sample 87 → 87; no
+  pass lost. The 3 new passes have hand-made twins (the generic flip would hit a message string); all 3 fail.
+- Every root test file the branch modifies (17), each alone, exit 0: d1 42, fa 41, h2 31, l0a-loose 5,
+  l0a-relational 9, l0b-expressions 6, l0b-statements 7, l0c-captured-writes 5, l0c-function-declarations 5,
+  m-refusals 42, o-objects 13, p 25, r-provider-census 117, str 17, t 105, ty 61, w 8.
+- Gates exit 0, also with `LOC_GATE_BASE` = origin/main (a9cdc8857a).
