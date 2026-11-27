@@ -17,7 +17,7 @@
 //      its fctx-build twin, the function-declaration lane, the closure lane and
 //      the three object-literal-method lanes. A disagreement between any two of
 //      them is invalid Wasm, not a wrong value;
-//   2. the READ (`paramReadIsJsDefaultGuess`). The prologue was already right —
+//   2. the READ (`paramReadTypeIsGuess`). The prologue was already right —
 //      `__extern_is_undefined` gates the default — but the next instruction at
 //      every use was `call $__unbox_number`, because the identifier read
 //      re-narrows an externref local to the checker's type. Widening the slot

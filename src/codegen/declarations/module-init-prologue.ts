@@ -132,16 +132,27 @@ export function emitModuleInitPrologue(
 }
 
 /**
+ * The prologue work that needs a `__module_init` even when the program has no init statement: (#2931) a reassigned
+ * function's live-binding global, seeded so a read before the reassignment yields the function; (#7366) an f64
+ * `undefined` seed; (#7519) the restricted-global-lexical throw, e.g. for a Script that is only `class NaN {}`.
+ */
+export function moduleInitPrologueForcesInit(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  return (
+    ctx.restrictedGlobalLexicalName !== undefined ||
+    (ctx.liveFuncBindingGlobals?.size ?? 0) > 0 ||
+    moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0
+  );
+}
+
+/**
  * Conservative "might `emitModuleInitPrologue` emit anything?" — true whenever
  * any of its emitters has work, never false when one does. For the routes that
  * cannot run the prologue (the allocator-sealed multi-source batch), so they
  * can refuse the claim instead of silently dropping instantiation work.
  */
 export function moduleInitPrologueMayEmit(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
-  if (ctx.restrictedGlobalLexicalName !== undefined) return true;
-  if ((ctx.liveFuncBindingGlobals?.size ?? 0) > 0) return true;
+  if (moduleInitPrologueForcesInit(ctx, sourceFile)) return true;
   if (scriptVarBindingNames(sourceFile).size > 0) return true;
-  if (moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0) return true;
   if (ctx.sourceIsModule) return false;
   return ctx.topLevelFunctionNames.size > 0 || (ctx.globalObjectVarBindings?.size ?? 0) > 0;
 }

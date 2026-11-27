@@ -25,6 +25,7 @@ describe("#6930 linked-harness provider options", () => {
   it("host lane options spell no semantic-provider policy", () => {
     expect(harnessProviderCompileOptions(undefined)).toEqual({
       hostBridge: "always",
+      exceptionKindExport: true,
       allowJs: true,
       emitWat: false,
       skipSemanticDiagnostics: true,

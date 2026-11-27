@@ -14,10 +14,14 @@ import {
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
+  modelledRow,
   realmMethodId,
+  type NativeErrorConstructor,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
+  type NativeWrapperConstructor,
 } from "../../runtime/contracts/native-realm-catalog.js";
 
 const propertiesOf = (intrinsicIds: readonly string[]): readonly NativeRealmProperty[] =>
@@ -61,23 +65,102 @@ export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): stri
 export const ERROR_ID = "%Error%";
 export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 
+/** (#7350 B3a) The realm's constructor families and their names: (#7354 G1) the Error constructors, the wrappers. */
+interface RealmFamilyNames {
+  readonly error: NativeErrorConstructor;
+  readonly wrapper: NativeWrapperConstructor;
+}
+export type RealmFamily = keyof RealmFamilyNames;
 /**
- * (#7354 G1) The catalog id of the Error constructor `name` names (`NATIVE_ERROR_CONSTRUCTORS`), if it names one: the
- * IR's one read of which global names are the realm's Error constructors.
+ * A constructor the realm serves: its global name, catalog id (`%name%`), family, and selector within the family's
+ * list (`NATIVE_ERROR_CONSTRUCTORS` for `js.object.create-error`, `NATIVE_WRAPPER_CONSTRUCTORS`).
  */
-export const errorConstructorId = (name: string): string | undefined =>
-  (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined;
-
-/** (#7354 G1) The Error constructor `id`'s selector (`js.object.create-error`), or -1. */
-export const errorConstructorSelector = (id: string): number =>
-  NATIVE_ERROR_CONSTRUCTORS.findIndex((name) => `%${name}%` === id);
-
-/** (#7354 G1) The Error constructor's name a `js.object.create-error` selector stands for. */
-export const errorConstructorName = (selector: number): string => NATIVE_ERROR_CONSTRUCTORS[selector]!;
+interface FamilyConstructor<F extends RealmFamily> {
+  readonly name: RealmFamilyNames[F];
+  readonly id: string;
+  readonly family: F;
+  readonly selector: number;
+}
+/** (#7350 B3b-0) {@link FamilyConstructor} as a union by family, so a test of `family` narrows `name`. */
+export type RealmConstructor<F extends RealmFamily = RealmFamily> = F extends RealmFamily
+  ? FamilyConstructor<F>
+  : never;
+const constructors = <F extends RealmFamily>(family: F, names: readonly RealmFamilyNames[F][]) =>
+  names.map((name, selector): [string, FamilyConstructor<F>] => [name, { name, id: `%${name}%`, family, selector }]);
+const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map<string, RealmConstructor>([
+  ...constructors("error", NATIVE_ERROR_CONSTRUCTORS),
+  ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
+]);
 
 /**
- * (#7354 G1) The global names the realm serves a built-in for (`Object`, `Function`, the Error constructors): the
- * catalog's plain-name aliases.
+ * (#7350 B3a) `X(v)` of a wrapper constructor with NewTarget undefined (§22.1.1.1, §21.1.1.1, §20.3.1.1): ToString,
+ * ToNumber or ToBoolean of the first argument, and "", +0 or false without one. The one table both routes read: the
+ * front end's conversion call (`realm-static-call.ts`) and the call through the realm's value
+ * (`dynamic-wrapper-constructors.ts`).
+ */
+export const WRAPPER_CONVERSIONS = {
+  String: { to: "string", absent: "" },
+  Number: { to: "number", absent: 0 },
+  Boolean: { to: "boolean", absent: false },
+} as const satisfies Record<
+  NativeWrapperConstructor,
+  { readonly to: string; readonly absent: string | number | boolean }
+>;
+
+/**
+ * (#7354 G1, #7350 B3a) The realm constructor the global `name` names, if it names one: the IR's one read of which
+ * global names are the realm's constructors (`realmConstructorOf` derives the IR value's answer from it).
+ */
+export const realmConstructorId = (name: string): RealmConstructor | undefined => REALM_CONSTRUCTORS.get(name);
+
+const REALM_CONSTRUCTORS_BY_ID: ReadonlyMap<string, RealmConstructor> = new Map(
+  [...REALM_CONSTRUCTORS.values()].map((ctor) => [ctor.id, ctor]),
+);
+/** (#7350 B3a) The realm constructor whose catalog id is `id`, if one is. */
+export const realmConstructorById = (id: string): RealmConstructor | undefined => REALM_CONSTRUCTORS_BY_ID.get(id);
+
+/**
+ * (#7350 B3a) The own string keys of each realm constructor the catalog models only as an identity
+ * (`NativeRealmIntrinsic.identityOnly`), by id: any other key of it is one the realm lacks.
+ */
+const IDENTITY_ONLY_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, identityOnly }) =>
+    identityOnly ? [[id, new Set(identityOnly)] as const] : [],
+  ),
+);
+
+/**
+ * (#7350 B3a) The refusal of a static access to `key` of the pristine realm constructor `ctor` when its identity row
+ * lacks `key`: the realm does not hold the property, and the kernel would abort the access at run time. The one test
+ * a constant-key member access (`dynamic-member-access.ts`) and an `Object` static's target (`realm-static-call.ts`)
+ * share.
+ */
+export function identityOnlyKeyRefusal(ctor: RealmConstructor, key: string): string | undefined {
+  const own = IDENTITY_ONLY_KEYS.get(ctor.id);
+  return own === undefined || own.has(key)
+    ? undefined
+    : `${ctor.name}.${key} is not reachable on this path yet (#7350 B3bc)`;
+}
+
+/**
+ * (#7350 B3a) `<name>.<key>` as a constant where the realm constructor `name` holds `key` as a data property with a
+ * number value that is neither writable nor configurable (Number's value properties, §21.1.2): no program can change
+ * it, so a read of it off the pristine global is that number.
+ */
+export function nativeConstantStatic(name: string, key: string): number | undefined {
+  const ctor = realmConstructorId(name);
+  const row = NATIVE_REALM_CATALOG.intrinsics.find(({ id }) => id === ctor?.id);
+  const property = (row && modelledRow(row))?.properties.find(
+    (own) => own.key.kind === "string" && own.key.value === key,
+  );
+  return property?.kind === "data" && property.value.kind === "number" && !property.writable && !property.configurable
+    ? property.value.value
+    : undefined;
+}
+
+/**
+ * (#7354 G1) The global names the realm serves a built-in for (`Object`, `Function`, the Error constructors, (#7350
+ * B3a) the wrapper constructors): the catalog's plain-name aliases.
  */
 export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
   NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),

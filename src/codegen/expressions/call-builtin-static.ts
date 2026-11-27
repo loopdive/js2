@@ -167,11 +167,11 @@ import {
   compileNumberIsPredicate,
   compileObjectAssignArg,
   compileProtoArg,
-  isGlobalBuiltinIdentifier,
   isTypedArrayIntrinsicCtorExpr,
   staticToBoolean,
   tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
+import { isGlobalBuiltinIdentifier } from "./global-builtin-identifier.js";
 
 function classConstructorLength(ctx: CodegenContext, className: string): number {
   const decl = ctx.classDeclarationMap.get(className);

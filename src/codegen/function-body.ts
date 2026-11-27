@@ -54,7 +54,7 @@ import { compileObjectLiteralAsExternref } from "./literals.js";
 import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
-import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
+import { isStrictFunction, isSimpleParameterList } from "../shared/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
 import { collectI32SpecializedArrays } from "./array-element-typing.js";

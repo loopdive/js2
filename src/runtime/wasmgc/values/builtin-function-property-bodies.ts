@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
+  buildBuiltinVectorCall,
+  type BuiltinCallArguments,
   builtinFailure,
   builtinUndefined,
   sourceClosureOrdinal,
@@ -8,6 +10,7 @@ import {
   type BuiltinFunctionDefinition,
 } from "./builtin-function-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionPropertyOperands extends BuiltinFunctionBodyOperands {
   readonly entryTypeIdx: number;
@@ -31,13 +34,48 @@ function bag(d: BuiltinFunctionPropertyOperands): Instr[] {
 function entryField(d: BuiltinFunctionPropertyOperands, local: number, fieldIdx: number): Instr[] {
   return [...nonnull(local), { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx }];
 }
+/** (#7350 B3a) Whether the realm holds an entry the catalog models only as an identity. */
+const holdsIdentityOnly = (d: BuiltinFunctionPropertyOperands): boolean =>
+  d.entries.some((entry) => entry.identityOnly);
+/**
+ * The own entry of `key` in the object's storage (a function's bag), or null. (#7350 B3a) A miss in an identity-only
+ * bag (`BUILTIN_IDENTITY_ONLY_FLAG`) is unknown, so it aborts: every own query (the lookup of [[Get]], [[HasProperty]]
+ * and [[Set]], HasOwnProperty, [[GetOwnProperty]], a define) passes here, and none may answer absent or create the
+ * property. The test is emitted only where the realm holds such an entry.
+ */
 export function buildBuiltinFunctionFindOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
-  return { locals: [], body: [...bag(d), get(1), call(d.findOrdinary)] };
+  if (!holdsIdentityOnly(d)) return { locals: [], body: [...bag(d), get(1), call(d.findOrdinary)] };
+  const entry = 2;
+  return {
+    locals: [{ name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } }],
+    body: [
+      ...bag(d),
+      get(1),
+      call(d.findOrdinary),
+      { op: "local.tee", index: entry },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: empty,
+        then: [
+          ...bag(d),
+          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+          n(BUILTIN_IDENTITY_ONLY_FLAG),
+          { op: "i32.and" },
+          { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
+        ],
+      },
+      get(entry),
+    ],
+  };
 }
 export function buildBuiltinFunctionHasOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
   return { locals: [], body: [get(0), get(1), call(d.findOwn), { op: "ref.is_null" }, { op: "i32.eqz" }] };
 }
-/** Returns the logical target, never its implementation bag. */
+/**
+ * Returns the logical target, never its implementation bag. (#7350 B3a) Where the realm holds an identity-only entry,
+ * the key is first looked up among the target's own properties, so a define of a key such an entry misses aborts.
+ */
 export function buildBuiltinFunctionDefine(
   d: BuiltinFunctionPropertyOperands,
   kind: "data" | "accessor" | "attributes",
@@ -46,6 +84,7 @@ export function buildBuiltinFunctionDefine(
   return {
     locals: [],
     body: [
+      ...(holdsIdentityOnly(d) ? [get(0), get(1), call(d.findOwn), { op: "drop" } as Instr] : []),
       get(0),
       call(d.bag),
       ...Array.from({ length: count - 1 }, (_, index) => get(index + 1)),
@@ -54,7 +93,7 @@ export function buildBuiltinFunctionDefine(
     ],
   };
 }
-/** Internal status/value ABI: 3 explicitly means a getter needs a mixed callable owner. */
+/** Internal (status, value) ABI: 0 absent, 1 present (a getter has run, `buildAccessorCall`), and its value. */
 export function buildBuiltinFunctionGetOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
   return {
     locals: [
@@ -73,20 +112,25 @@ export function buildBuiltinFunctionGetOwn(d: BuiltinFunctionPropertyOperands): 
   };
 }
 /**
- * (#7354 O2) Call(`callee`, `receiver`, the locals `args`) of an accessor half, which ToPropertyDescriptor's IsCallable left a
- * built-in or a source closure: a source closure through the program's dispatcher of that arity, a built-in through
- * the kernel's own call. Leaves the result. The callee is program code: a caller must not use anything it computed
- * about an object before the call.
+ * (#7354 O2) Call(`callee`, `receiver`, the locals `args`) of an accessor half, which ToPropertyDescriptor's IsCallable
+ * left a built-in or a source closure, leaving the result: a built-in through the kernel's own call
+ * (`buildBuiltinVectorCall`); a source closure through the program's dispatcher of that arity, or, without
+ * `accessorCalls` (no source closure can be stored as a half: `realmAccessors`), the trap. `args`: the arguments and a
+ * free externref local for their vector. The callee is program code: a caller must not use anything it computed about an
+ * object before the call.
  */
+export type AccessorCallOperands = Pick<
+  BuiltinFunctionPropertyOperands,
+  "match" | "entries" | "accessorCalls" | "newVector" | "push" | "vectorTypeIdx" | "callVector"
+>;
 export function buildAccessorCall(
-  d: Pick<BuiltinFunctionPropertyOperands, "match" | "entries">,
-  calls: NonNullable<BuiltinFunctionPropertyOperands["accessorCalls"]>,
+  d: AccessorCallOperands,
   callee: number,
   receiver: number,
-  args: readonly number[],
+  args?: BuiltinCallArguments,
 ): Instr[] {
-  const arity = args.length;
-  const values = args.map(get);
+  const values = args?.values ?? [];
+  const source = d.accessorCalls?.[values.length];
   return [
     get(callee),
     call(d.match),
@@ -95,8 +139,8 @@ export function buildAccessorCall(
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      then: [get(receiver), get(callee), ...values, call(calls.source[arity]!)],
-      else: [get(callee), get(receiver), ...values, call(calls.builtin[arity]!)],
+      then: source ? [get(receiver), get(callee), ...values.flat(), call(source)] : [{ op: "unreachable" }],
+      else: buildBuiltinVectorCall(d, [get(callee)], [get(receiver)], args),
     },
   ];
 }
@@ -120,63 +164,14 @@ export function buildBuiltinFunctionEntryGet(
         { op: "local.tee", index: getter },
         { op: "ref.is_null" },
         { op: "if", blockType: empty, then: [n(1), ...builtinUndefined(d), { op: "return" }] },
-        ...(d.accessorCalls
-          ? [n(1), ...buildAccessorCall(d, d.accessorCalls, getter, receiver, []), { op: "return" } as Instr]
-          : builtinAccessorCall(
-              d,
-              getter,
-              receiver,
-              undefined,
-              [n(3), ...builtinUndefined(d), { op: "return" }],
-              (call) => [n(1), ...call, { op: "return" }],
-            )),
+        n(1),
+        ...buildAccessorCall(d, getter, receiver),
+        { op: "return" },
       ],
     },
     n(1),
     ...entryField(d, entry, 1),
     { op: "extern.convert_any" },
-  ];
-}
-/** The kernel operands {@link builtinAccessorCall} reads. */
-type BuiltinAccessorCallOperands = Pick<
-  BuiltinFunctionPropertyOperands,
-  "match" | "entries" | "newVector" | "push" | "vectorTypeIdx" | "callVector"
->;
-/**
- * Without `accessorCalls` the program holds no source closure that can be an accessor half: `callee` (a local) is a
- * built-in, called by the kernel with `receiver` and, for a setter, the `value` local (pushed through the `vector`
- * local), its result passed to `then`; anything else runs `other`, which must not fall through. (#7489) A getter and a
- * setter share it: %Function.prototype%'s `caller` / `arguments` halves are %ThrowTypeError%.
- */
-export function builtinAccessorCall(
-  d: BuiltinAccessorCallOperands,
-  callee: number,
-  receiver: number,
-  value: { readonly local: number; readonly vector: number } | undefined,
-  other: readonly Instr[],
-  then: (call: Instr[]) => Instr[],
-): Instr[] {
-  const list: Instr[] = value
-    ? [call(d.newVector), set(value.vector), get(value.vector), get(value.local), call(d.push), get(value.vector)]
-    : [call(d.newVector)];
-  return [
-    get(callee),
-    call(d.match),
-    { op: "i32.eqz" },
-    get(callee),
-    call(d.match),
-    n(sourceClosureOrdinal(d)),
-    { op: "i32.eq" },
-    { op: "i32.or" },
-    { op: "if", blockType: empty, then: [...other] },
-    ...then([
-      get(callee),
-      get(receiver),
-      ...list,
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-      call(d.callVector),
-    ]),
   ];
 }
 /** Presence is returned independently from data undefined/null and absent accessor halves. */

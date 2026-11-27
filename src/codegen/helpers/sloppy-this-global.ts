@@ -40,7 +40,7 @@ import { compileIdentifier } from "../expressions/identifiers.js";
 import { inlinedCalleeHasBoundReceiver } from "../expressions/inlined-call-receiver.js"; // (#4555)
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { coerceType } from "../shared.js";
-import { isStrictContext, isStrictFunction } from "./is-strict-function.js";
+import { isStrictContext, isStrictFunction } from "../../shared/is-strict-function.js";
 import { readEnv } from "../../env.js";
 
 /**

@@ -296,19 +296,19 @@ function beginRealm(
     { vectors, vectorPlan, strings: strings.strings, ...(errorCreate ? { errorCreate } : {}) },
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
-  const catalog = requirements.description.catalog;
-  const heldRows = heldCatalogRows(requirements.description);
+  const catalog = requirements.description.catalog,
+    held = heldCatalogRows(requirements.description);
   // (#7489) The realm's entry or object for a catalog id: a bootstrap function's entry is named by its behavior.
   const entryOf = (id: string): string | undefined => {
     if (catalog.bootstrap.includes(id))
       return catalog.intrinsics.find((row) => row.id === id)?.callable?.implementation;
-    return requirements.description.intrinsics.includes(id) || heldRows.some((row) => row.id === id && !row.callable)
+    return requirements.description.intrinsics.includes(id) || held.some((row) => row.id === id && !row.callable)
       ? id
       : undefined;
   };
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
-    const row = catalog.intrinsics.find((row) => row.id === id),
+    const row = held.find((row) => row.id === id),
       call = row?.callable;
     const behavior =
       index < catalog.bootstrap.length
@@ -340,11 +340,12 @@ function beginRealm(
       constructible: row.constructible,
       aliases: row.aliases,
       ...(properties.length > 0 ? { properties } : {}),
+      ...(row.identityOnly ? { identityOnly: true as const } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, ...familyObjects(heldRows, entryOf) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(held, entryOf) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,

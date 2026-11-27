@@ -21,7 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 interface RunResult {
   exports: Record<string, Function>;
@@ -32,12 +32,8 @@ async function run(src: string): Promise<RunResult> {
   if (!result.success) {
     throw new Error(`compile failed:\n${result.errors.map((e) => `  L${e.line}:${e.column} ${e.message}`).join("\n")}`);
   }
-  const importResult = buildImports(result.imports as never, undefined, result.stringPool);
-  const inst = await WebAssembly.instantiate(result.binary, importResult as never);
-  if (typeof (importResult as { setExports?: Function }).setExports === "function") {
-    (importResult as { setExports: Function }).setExports(inst.instance.exports);
-  }
-  return { exports: inst.instance.exports as Record<string, Function> };
+  const instance = await instantiateWithRuntime(result);
+  return { exports: instance.exports as Record<string, Function> };
 }
 
 describe("#1300 closure capturing outer param in Next-callback lambda", () => {

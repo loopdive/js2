@@ -6,9 +6,11 @@
  * The previous emitter used direct property access (`exn[0]`), which silently
  * skipped Symbol.iterator and missed throws from the iterable.
  */
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileToWasm } from "./equivalence/helpers.ts";
 import { runTest262File } from "./test262-runner.ts";
+import { TEST262_ROOT } from "./helpers/repo-paths.ts";
 
 describe("#1378 catch destructuring iterator protocol", () => {
   it("catch ([x]) on plain array binds first elem", async () => {
@@ -65,7 +67,7 @@ export function test(): number {
 
   it("test262: ary-init-iter-get-err.js — catch [x] propagates iter throw", async () => {
     const result = await runTest262File(
-      "/workspace/test262/test/language/statements/try/dstr/ary-init-iter-get-err.js",
+      join(TEST262_ROOT, "test/language/statements/try/dstr/ary-init-iter-get-err.js"),
       "language",
     );
     expect(result.status).toBe("pass");

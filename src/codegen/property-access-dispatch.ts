@@ -814,7 +814,7 @@ export function tryBufferViewAttributeReads(
   expr: ts.PropertyAccessExpression,
   propName: string,
   objType: ts.Type,
-): PADispatchResult {
+): ValType | typeof PA_FALLTHROUGH {
   // (#3054 B2) Accessor props on a shared-backing `$__ta_view` receiver
   // (`.byteLength`, `.byteOffset`, `.buffer` identity, `BYTES_PER_ELEMENT`). Runs
   // BEFORE the generic TypedArray accessor arms below, which discriminate on the

@@ -1,11 +1,13 @@
 name: Optional direct Porffor / JS2 A/B
 
-# Advisory only: pull requests run semantic and sanitizer validation. Performance
+# Advisory only: pushes to main run semantic and sanitizer validation. Performance
 # capture is workflow_dispatch-only, publishes artifacts, and enforces no numeric
 # threshold. This workflow intentionally does not run in merge_group.
 on:
   workflow_dispatch:
-  pull_request:
+  # (#7558) Post-merge on push to main, not on PRs: the merge queue is the
+  # only pre-merge gate.
+  push:
     branches: [main]
     paths:
       - "benchmarks/porffor-direct-ab-harness.c"
@@ -28,6 +30,13 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# (#7556) A new push to a pull request cancels that PR's older run of this
+# workflow. Other events get a group of their own (the run id), so nothing on
+# main or in the merge queue is ever cancelled or made to wait.
+concurrency:
+  group: porffor-direct-ab-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   semantic-sanitizers:

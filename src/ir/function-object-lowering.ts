@@ -107,14 +107,9 @@ export function lowerTopLevelFunctionValue(
   return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
 }
 
-/** (#7489) Neither a generator nor async: a function §17.1 lets an implementation extend with an own `caller`. */
-function plainFunction(fn: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
-  return fn.asteriskToken === undefined && !ts.getModifiers(fn)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
-}
-
 /** (#7489) The program's strictness of `fn`'s code; without an answer the function refuses by name. */
 function functionCodeStrict(
-  fn: ts.FunctionDeclaration | ts.FunctionExpression,
+  fn: ts.FunctionLikeDeclaration,
   resolver: Pick<IrFromAstResolver, "closureCodeStrictness"> | undefined,
 ): boolean {
   const strict = resolver?.closureCodeStrictness?.(fn).functionCodeStrict;
@@ -128,21 +123,33 @@ function functionCodeStrict(
 }
 
 /**
+ * (#7354 O2) Whether a source function has [[Construct]]: a function declaration or expression (MakeConstructor in
+ * §10.2.9's callers); an arrow, a method, an accessor, a generator or an async function has none. `init-function`
+ * records the answer, which `new` asks (`dynamicConstruct`).
+ */
+function isConstructorFunction(fn: ts.FunctionLikeDeclaration): boolean {
+  return (
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    fn.asteriskToken === undefined &&
+    !fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  );
+}
+
+/**
  * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
  * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate, the §15.1.5 count the legacy metadata uses), `name`
- * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor (a function declaration or expression),
+ * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor ({@link isConstructorFunction}),
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
- * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
- * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
- * A function whose name is a computed key the compiler cannot evaluate refuses by name.
+ * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor
+ * ({@link isFunctionObject} says which closures). A function whose name is a computed key the compiler cannot evaluate refuses by name.
  *
- * (#7489) A sloppy plain function (a declaration or expression, neither a generator nor async: the functions §17.1 lets
- * an implementation extend) owns V8's `caller`, read only and `null`; every other function's `caller` is
+ * (#7489) A sloppy constructor function (a declaration or expression, neither a generator nor async: the functions
+ * §17.1 lets an implementation extend) owns V8's `caller`, read only and `null`; every other function's `caller` is
  * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`); where
- * it has no answer for a function declaration or expression the function refuses by name, since a guess would answer
- * a sloppy function's `caller` with the accessor's TypeError.
+ * it has no answer for such a function the function refuses by name, since a guess would answer a sloppy function's
+ * `caller` with the accessor's TypeError.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
@@ -153,7 +160,6 @@ export function emitFunctionObjectInit(
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
   if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
-  if (ts.isAccessor(fn) && type.signature.returnType?.kind !== "dynamic") return;
   const key =
     ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
   if (key === undefined)
@@ -163,8 +169,8 @@ export function emitFunctionObjectInit(
       "the name of a function under a computed key needs the key's value",
     );
   const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
-  const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
-  const ownsCaller = isConstructor && plainFunction(fn) && !functionCodeStrict(fn, resolver);
+  const isConstructor = isConstructorFunction(fn);
+  const ownsCaller = isConstructor && !functionCodeStrict(fn, resolver);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
@@ -185,6 +191,22 @@ export function emitFunctionObjectInit(
  */
 export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
   return resolver?.createsFunctionObjects?.() === true;
+}
+
+/**
+ * (#7354 O2) Whether the closure literal `fn` is created as a function object: where closures are, every one except an
+ * accessor that keeps the checker's typed signature (`sourceDynamicClosureSignature`: in an exported, typed #3518
+ * function), as before O2.
+ */
+export function isFunctionObject(
+  resolver:
+    | { createsFunctionObjects?(): boolean; dynamicClosureSignature?(fn: ts.FunctionLikeDeclaration): unknown }
+    | undefined,
+  fn: ts.FunctionLikeDeclaration,
+): boolean {
+  return (
+    createsFunctionObjects(resolver) && (!ts.isAccessor(fn) || resolver?.dynamicClosureSignature?.(fn) !== undefined)
+  );
 }
 
 export function functionObjectDynamicValue(
@@ -266,7 +288,7 @@ export function dynamicStoreOperand(
   value: IrValueId,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
-  role: "member-store" | "construct argument" | "Object static argument",
+  role: "member-store" | "construct argument" | "Object static argument" | "conversion operand",
 ): IrValueId {
   const boxed = storedCarrierValue(value, source, cx);
   if (cx.builder.typeOf(boxed).kind === "dynamic") return boxed;

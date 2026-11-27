@@ -4,8 +4,11 @@ import {
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
+  NATIVE_WRAPPER_CONSTRUCTORS,
+  modelledRow,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
+import { ERROR_TO_STRING_ID } from "./builtin-prototype-keys.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
@@ -33,8 +36,7 @@ export interface NativeRealmDescription {
   /**
    * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
    * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
-   * since no other read can reach one; (#7354 G1) the Error family where the program can observe an error
-   * ({@link heldErrorConstructors}).
+   * since no other read can reach one; (#7354 G1, #7350 B3a) the families the program uses ({@link heldFamilies}).
    */
   readonly intrinsics: readonly string[];
   /**
@@ -122,9 +124,6 @@ const intrinsicOf = (use: Use): string | undefined =>
     ? NATIVE_VALUE_INTRINSICS[use.selector]
     : undefined;
 const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
-/** `Error.prototype.toString`'s id, and the family's: the Error constructors' and it. */
-const ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)!;
-const FAMILY_IDS: readonly string[] = [...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`), ERROR_TO_STRING];
 /** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
 const readsPrototypeMethod = (use: Use): boolean =>
   METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
@@ -146,26 +145,55 @@ function bindsCaughtValue(program: PreparedIrProgram): boolean {
         });
   return binds;
 }
-/** (#7354 G1) The Error family's contracts: each needs the family's objects and literals. */
-const ERROR_FEATURES: ReadonlySet<string> = new Set(["js.object.create-error", "js.object.error-to-string"]);
 /**
- * (#7354 G1) The Error family members the realm holds, derived only from what the program's IR emitted: where it uses
- * any member (an intrinsic read of one, `create-error`, `error-to-string`) or binds a caught value (the one way a realm
- * error becomes a program value), `Error`, `TypeError` (the realm's own errors) and `Error.prototype.toString`, with
- * every other constructor the IR reads. The legalization decides what to emit (`holdsErrors`); this never re-derives
- * that decision from the source, so the two cannot disagree. Where none is held no code reads an error.
+ * (#7354 G1, #7350 B3a) A family the realm can hold: its members (`NATIVE_VALUE_INTRINSICS` ids), the contracts that
+ * use it, what it brings once used (`base`), and what else makes it used (`implied`).
  */
-function heldErrorConstructors(uses: readonly Use[], program: PreparedIrProgram): ReadonlySet<string> {
-  const named = new Set(uses.map(intrinsicOf).filter((id): id is string => id !== undefined));
-  const used = [...named].some((id) => FAMILY_IDS.includes(id)) || uses.some((use) => ERROR_FEATURES.has(use.feature));
-  if (!used && !bindsCaughtValue(program)) return new Set();
-  return new Set(["%Error%", "%TypeError%", ERROR_TO_STRING, ...FAMILY_IDS.filter((id) => named.has(id))]);
+interface HeldFamily {
+  readonly members: readonly string[];
+  readonly contracts: ReadonlySet<string>;
+  readonly base: readonly string[];
+  readonly implied?: (program: PreparedIrProgram) => boolean;
 }
-/** (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its constructors bring. */
-export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {
-  return description.catalog.intrinsics.filter(
-    (row) => row.heldWith === undefined || description.intrinsics.includes(row.heldWith),
+const HELD_FAMILIES: readonly HeldFamily[] = [
+  // The Error family: the realm's own errors (`Error`, `TypeError`) and `Error.prototype.toString` come with any use,
+  // and a bound caught value is one (the one way a realm error becomes a program value).
+  {
+    members: [...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`), ERROR_TO_STRING_ID],
+    contracts: new Set(["js.object.create-error", "js.object.error-to-string"]),
+    base: ["%Error%", "%TypeError%", ERROR_TO_STRING_ID],
+    implied: bindsCaughtValue,
+  },
+  // The wrapper constructors: each one the IR reads, alone.
+  { members: NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`), contracts: new Set(), base: [] },
+];
+/**
+ * (#7354 G1, #7350 B3a) The family members the realm holds, derived only from what the program's IR emitted: for each
+ * family the program uses (an intrinsic read of a member, a use of one of its contracts, or what the family implies),
+ * its base and every other member the IR reads. The legalization decides what to emit (`holdsFamily`); this never
+ * re-derives that decision from the source, so the two cannot disagree. Where a family is not held no code reads it.
+ */
+function heldFamilies(uses: readonly Use[], program: PreparedIrProgram): ReadonlySet<string> {
+  const named = new Set(uses.map(intrinsicOf).filter((id): id is string => id !== undefined));
+  return new Set(
+    HELD_FAMILIES.flatMap((family) => {
+      const used =
+        family.members.some((id) => named.has(id)) ||
+        uses.some((use) => family.contracts.has(use.feature)) ||
+        family.implied?.(program) === true;
+      return used ? [...family.base, ...family.members.filter((id) => named.has(id))] : [];
+    }),
   );
+}
+/**
+ * (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its constructors bring,
+ * (#7350 B3b-0) each as far as a realm models it (`modelledRow`).
+ */
+export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {
+  return description.catalog.intrinsics.flatMap((row) => {
+    const modelled = modelledRow(row);
+    return modelled && (row.heldWith === undefined || description.intrinsics.includes(row.heldWith)) ? [modelled] : [];
+  });
 }
 function calculate(
   program: PreparedIrProgram,
@@ -184,7 +212,7 @@ function calculate(
     !!source &&
     !!(source.signatures.length || source.shapes.length || source.units.length || source.allocations.length);
   const numbers = numberUses(access);
-  const errors = heldErrorConstructors(access.uses, program);
+  const families = heldFamilies(access.uses, program);
   const methods = access.uses.some(readsPrototypeMethod);
   if (!selectedSource && !access.uses.length && !numbers.length) return undefined;
   const anchor = program.inventory.sources.find((row) => row.kind === "entry");
@@ -196,7 +224,7 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
-    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => (methods && METHOD_IDS.includes(id)) || errors.has(id)),
+    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => (methods && METHOD_IDS.includes(id)) || families.has(id)),
     restrictedFunctionAccessors: access.uses.some(readsRestrictedFunctionKey),
     numberUses: numbers,
     unavailable: [

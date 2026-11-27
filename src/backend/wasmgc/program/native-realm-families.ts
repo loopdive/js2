@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 G1) What the kernel seeds for the intrinsic families a realm holds (`heldCatalogRows`): each member's own
- * properties beyond `length` and `name`, and the family's ordinary objects (its prototypes), read from the catalog so
- * the kernel writes no row of its own.
+ * properties beyond `length` and `name` (strings, (#7350 B3a) numbers, realm references), and the family's ordinary
+ * objects (its prototypes), read from the catalog so the kernel writes no row of its own.
  */
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 import type { NativeBuiltinObject, NativeBuiltinProperty } from "../resources/native-builtin-function-requests.js";
@@ -31,9 +31,7 @@ export function familyProperties(
       const [get, set] = [entryOf(property.get), entryOf(property.set)];
       return !accessors || get === undefined || set === undefined ? [] : seeded({ kind: "accessor", get, set }, false);
     }
-    if (property.value.kind === "string") return seeded(property.value, property.writable);
-    if (property.value.kind === "number")
-      throw Error(`native realm families: ${row.id}.${property.key.value} is no string or intrinsic data property`);
+    if (property.value.kind !== "intrinsic") return seeded(property.value, property.writable);
     const id = entryOf(property.value.id);
     return id === undefined ? [] : seeded({ kind: "intrinsic", id }, property.writable);
   });

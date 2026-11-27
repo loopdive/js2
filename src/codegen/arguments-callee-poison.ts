@@ -43,7 +43,7 @@
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { emitThrowTypeError } from "./js-errors.js";
 import { compileExpression, skipTransparentExpressions } from "./shared.js";
 
