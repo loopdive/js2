@@ -428,6 +428,7 @@
         "src/runtime/wasmgc/values/source-function-object-bodies.ts",
         "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
         "src/runtime/wasmgc/values/object-static-bodies.ts",
+        "src/runtime/wasmgc/values/own-key-walk-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -15469,6 +15470,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/object-static-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/own-key-walk-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

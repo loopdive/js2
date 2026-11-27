@@ -31,6 +31,7 @@ import {
   type FunctionValueGlobal,
 } from "./function-declaration-values.js";
 import { moduleBindingDeclarationOrder } from "./module-init-vars.js";
+import type { ScriptVarModel } from "../shared/var-declaration-lists.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrSourceId, IrUnitId } from "./identity.js";
 import { irDynamic } from "./nodes.js";
@@ -81,8 +82,9 @@ function refuse(name: string, why: string): never {
 export function blockFunctionFirstOrdinal(
   sourceFile: ts.SourceFile,
   functionValues: readonly ts.FunctionDeclaration[],
+  model: ScriptVarModel,
 ): number {
-  return moduleBindingDeclarationOrder(sourceFile).length + functionValues.length;
+  return moduleBindingDeclarationOrder(sourceFile, model).length + functionValues.length;
 }
 
 /** The names whose var binding is new, one per name some declaration writes and nothing else declares. */
@@ -246,7 +248,7 @@ export function scriptBlockFunctionHomes(
     blockFunctions,
     identity.sourceIdBySourceFile.get(source)!,
     identity.moduleInitUnitIdBySourceFile.get(source)!,
-    blockFunctionFirstOrdinal(source, contracts.functionDeclarationValues),
+    blockFunctionFirstOrdinal(source, contracts.functionDeclarationValues, "with-for-in-heads"),
     existing,
   );
 }

@@ -3117,6 +3117,7 @@ function planIrOverlay(
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
+            scriptVarModel: "statement-and-for-heads",
           },
           identityContext,
         );
@@ -5910,6 +5911,7 @@ export function generateModule(
         identityContext: irPlanningIdentityContext,
         target: ctx.wasi ? "wasi" : "standalone",
         deferTopLevelInit: ctx.deferTopLevelInit,
+        scriptVarModel: "statement-and-for-heads",
       });
       moduleInitPlanning = Object.freeze({
         plan,
