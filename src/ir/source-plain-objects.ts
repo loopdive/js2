@@ -12,8 +12,13 @@
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
-import { nativeObjectStaticCall, realmConstantRead } from "./realm-static-call.js";
-import { realmConstructorId, type RealmConstructor, type RealmFamily } from "./program/builtin-prototype-keys.js";
+import { nativeObjectStaticCall, objectTagCallReceiver, realmConstantRead } from "./realm-static-call.js";
+import {
+  WRAPPER_OF_PRIMITIVE,
+  realmConstructorId,
+  type RealmConstructor,
+  type RealmFamily,
+} from "./program/builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
@@ -39,13 +44,33 @@ export function programObjects(
   const wrappers = new Set<NativeWrapperConstructor>();
   // (#7354 G1) The family of the realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it
   // the same way, through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such
-  // read, nor (#7350 B3a) the receiver of a constant the front end folds (`realmConstantRead`).
+  // read, nor a receiver the front end folds, which reaches no object: (#7350 B3a) of a constant
+  // (`realmConstantRead`), (#7574) of a native `Object` static's call (`nativeObjectStaticCall`) or of the object tag
+  // (`objectTagCallReceiver`).
   const constructorRead = (node: ts.Identifier): RealmConstructor | undefined => {
     const ctor = realmConstructorId(node.text);
     if (ctor === undefined || isMemberName(node) || !isPristineGlobal(node)) return undefined;
     const access = node.parent;
-    const folded = ts.isPropertyAccessExpression(access) && realmConstantRead(access, isPristineGlobal) !== undefined;
+    if (!ts.isPropertyAccessExpression(access)) return ctor;
+    const call = access.parent;
+    const tag = access.parent.parent?.parent;
+    const folded =
+      realmConstantRead(access, isPristineGlobal) !== undefined ||
+      (ts.isCallExpression(call) && nativeObjectStaticCall(call, isPristineGlobal) !== undefined) ||
+      (tag !== undefined && ts.isCallExpression(tag) && objectTagCallReceiver(tag) === node);
     return folded ? undefined : ctor;
+  };
+  // (#7574) The wrapper kinds `Object(v)` / `new Object(v)` may make of its first argument: a literal's, else all.
+  const objectWraps = (node: ts.Identifier): readonly NativeWrapperConstructor[] => {
+    const site = node.parent;
+    if (!(ts.isCallExpression(site) || ts.isNewExpression(site)) || site.expression !== node) return [];
+    const [argument] = site.arguments ?? [];
+    if (argument === undefined) return [];
+    if (ts.isStringLiteralLike(argument)) return [WRAPPER_OF_PRIMITIVE.string];
+    if (ts.isNumericLiteral(argument)) return [WRAPPER_OF_PRIMITIVE.number];
+    if (argument.kind === ts.SyntaxKind.TrueKeyword || argument.kind === ts.SyntaxKind.FalseKeyword)
+      return [WRAPPER_OF_PRIMITIVE.boolean];
+    return Object.values(WRAPPER_OF_PRIMITIVE);
   };
   const visit = (node: ts.Node): void => {
     const ctor = ts.isIdentifier(node) ? constructorRead(node) : undefined;
@@ -58,6 +83,7 @@ export function programObjects(
         (ts.isPropertyAccessExpression(access) && access.name.text === "prototype"))
     )
       wrappers.add(ctor.name);
+    if (ctor?.family === "object") objectWraps(node as ts.Identifier).forEach((kind) => wrappers.add(kind));
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||

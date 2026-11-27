@@ -11,7 +11,9 @@
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  NATIVE_OBJECT_PROTOTYPE_CONVERSIONS,
   NATIVE_REALM_CATALOG,
+  OBJECT_PROTOTYPE_ID,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
   REALM_BRAND,
@@ -19,6 +21,7 @@ import {
   modelledRow,
   realmMethodId,
   type NativeErrorConstructor,
+  type NativeObjectPrototypeConversion,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
@@ -56,11 +59,22 @@ export function nativeObjectStatic(
  * a built-in function object (`NATIVE_OBJECT_PROTOTYPE_METHODS`).
  */
 export const nativeObjectPrototypeMethod = (name: string): NativeObjectPrototypeMethod | undefined =>
-  nativeLength("Object.prototype", name) === undefined ? undefined : (name as NativeObjectPrototypeMethod);
+  nativeLength("Object.prototype", name) === undefined || objectPrototypeConversion(name) !== undefined
+    ? undefined
+    : (name as NativeObjectPrototypeMethod);
 
-/** (#7354 P1) The catalog id of the native Object.prototype method `name`. */
-export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): string =>
+/** (#7354 P1) The catalog id of the native Object.prototype method `name`, (#7574) a conversion method's too. */
+export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod | NativeObjectPrototypeConversion): string =>
   realmMethodId("Object.prototype", name);
+
+/** (#7574) `name` when it is an Object.prototype method a realm holds with `Object` (`toString`, `valueOf`, …). */
+export const objectPrototypeConversion = (name: string): NativeObjectPrototypeConversion | undefined =>
+  (NATIVE_OBJECT_PROTOTYPE_CONVERSIONS as readonly string[]).includes(name)
+    ? (name as NativeObjectPrototypeConversion)
+    : undefined;
+
+/** (#7574) The realm's root, `Object.prototype`, by catalog id. */
+export { OBJECT_PROTOTYPE_ID };
 
 /** (#7354 G1) The catalog ids of `%Error%` and of `Error.prototype.toString`. */
 export const ERROR_ID = "%Error%";
@@ -71,6 +85,7 @@ interface RealmFamilyNames {
   readonly error: NativeErrorConstructor;
   readonly wrapper: NativeWrapperConstructor;
   readonly array: "Array";
+  readonly object: "Object";
 }
 export type RealmFamily = keyof RealmFamilyNames;
 /**
@@ -93,6 +108,7 @@ const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map<string
   ...constructors("error", NATIVE_ERROR_CONSTRUCTORS),
   ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
   ...constructors("array", ["Array"]),
+  ...constructors("object", ["Object"]),
 ]);
 
 /** (#7352) The catalog id of `Array.isArray`, a static the realm holds as a function value. */
@@ -210,6 +226,17 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  * setter is %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties).
  */
 export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
+
+/**
+ * (#7574) The keys the realm's root holds where the program holds the Object family: its properties whose value is a
+ * row a family brings (`constructor`, the conversion methods), seeded with the family (`familyObjects`).
+ */
+export const OBJECT_FAMILY_ROOT_KEYS: ReadonlySet<string> = stringKeys(
+  propertiesOf([OBJECT_PROTOTYPE_ID]).filter((property) => {
+    const value = property.kind === "data" && property.value.kind === "intrinsic" ? property.value.id : undefined;
+    return NATIVE_REALM_CATALOG.intrinsics.some(({ id, heldWith }) => heldWith !== undefined && id === value);
+  }),
+);
 
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */
 const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(

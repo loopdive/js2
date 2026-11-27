@@ -111,7 +111,7 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
     isOrdinaryObject(kind)
       ? (s: IrValueId) => [realmCall("js.object.inherits", [argument, receiver], s)]
       : kind === "function"
-        ? (s: IrValueId) => functionChainAnswer(b, instr, b.errors, receiver, constant(false), s, BOOLEAN)
+        ? (s: IrValueId) => functionChainAnswer(b, instr, b.program, receiver, constant(false), s, BOOLEAN)
         : constant(false);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => boxed(b, instr, walk(kind), r);
   return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);

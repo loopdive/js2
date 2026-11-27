@@ -11,11 +11,19 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { ERROR_TO_STRING_ID, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE, isArrayIndexKey } from "./builtin-prototype-keys.js";
+import {
+  ERROR_TO_STRING_ID,
+  OBJECT_PROTOTYPE_ID,
+  WRAPPER_DATA,
+  WRAPPER_OF_PRIMITIVE,
+  isArrayIndexKey,
+  objectPrototypeMethodId,
+} from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { IS_OBJECT, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
+import { objectTagOf } from "./dynamic-object-tag.js";
 
 /** A built-in method a call may reach: whether the method read is it (`instrs` into `cond`), and its answer. */
 export interface BuiltinMethodTest {
@@ -118,9 +126,41 @@ function errorToString(b: ChainBuilders, instr: IrInstr, receiver: IrValueId, wr
 }
 
 /**
+ * (#7574) Object.prototype's `toString` (§20.1.3.6, the tag of `receiver`) and `valueOf` (§20.1.3.7: ToObject of an
+ * object is itself; a primitive `this` reaches it only through a wrapper prototype written to hold it, the run-time
+ * abort) called on `receiver` through `method`.
+ */
+function objectPrototypeMethodTest(
+  b: BuiltinMethodBuilders,
+  instr: IrInstr,
+  program: LegalizationProgram,
+  name: "valueOf" | "toString",
+  method: IrValueId,
+  receiver: IrValueId,
+): BuiltinMethodTest {
+  const answer: Arm =
+    name === "toString"
+      ? (r) => {
+          const tag = b.fresh();
+          return [...objectTagOf(b, program, instr, receiver, tag), carried(tag, r)];
+        }
+      : (r) =>
+          b.kindChain(
+            instr,
+            receiver,
+            r,
+            (kind, s) => (IS_OBJECT[kind] ? [carried(receiver, s)] : b.abort(instr, s)),
+            b.kinds.kindsOf(receiver),
+            CARRIER,
+          );
+  return identityTest(b, instr, objectPrototypeMethodId(name), method, answer);
+}
+
+/**
  * The realm's conversion methods a method read under `name` may be, in the order a call tests them:
  * Error.prototype.toString where a value may be an error, a wrapper prototype's `valueOf` / `toString` where a value
- * may be a wrapper. The one list OrdinaryToPrimitive and P1's call share.
+ * may be a wrapper, (#7574) Object.prototype's where the program can obtain the root. The one list OrdinaryToPrimitive,
+ * P1's call and the object tag share.
  */
 export function conversionMethodTests(
   b: BuiltinMethodBuilders,
@@ -139,6 +179,34 @@ export function conversionMethodTests(
     ...((name === "valueOf" || name === "toString") && wrappers
       ? [() => wrapperMethodTest(b, instr, name, method, receiver, radix)]
       : []),
+    ...((name === "valueOf" || name === "toString") && holdsFamily(program, "object")
+      ? [() => objectPrototypeMethodTest(b, instr, program, name, method, receiver)]
+      : []),
+  ];
+}
+
+/**
+ * `Object.prototype.toString.call(v)` (`dyn.object_tag`) into its result: the tag of `v`; (#7574) where the program can
+ * obtain the root it can write its `toString`, so the call is of the method the root holds, answered by the table
+ * above, and any other method is the run-time abort.
+ */
+export function dynamicObjectTag(
+  b: BuiltinMethodBuilders,
+  program: LegalizationProgram,
+  instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
+): IrInstr[] {
+  if (!holdsFamily(program, "object")) return objectTagOf(b, program, instr, instr.value, instr.result!);
+  const [root, text, key, method, tag] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+  const tests = conversionMethodTests(b, instr, program, "toString", method, instr.value);
+  // Every method of the table answers a string.
+  b.kinds.learn(tag, ["string"]);
+  return [
+    ...b.realmIntrinsic(OBJECT_PROTOTYPE_ID, root),
+    b.text("toString", text),
+    carried(text, key),
+    realmCall("js.object.get", [root, key, root], method),
+    ...builtinMethodChain(b, tests, (r) => b.abort(instr, r), CARRIER)(tag),
+    ...b.stringOf(instr, tag, instr.result!),
   ];
 }
 

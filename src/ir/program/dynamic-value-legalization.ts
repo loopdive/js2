@@ -41,8 +41,9 @@ import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-stat
 import { dynamicPrototypeMethodCall } from "./dynamic-prototype-methods.js";
 import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
 import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
+import { dynamicObjectConstruction } from "./dynamic-object-constructors.js";
 import { dynamicArrayConstruction } from "./dynamic-array-constructors.js";
-import { dynamicObjectTag } from "./dynamic-object-tag.js";
+import { dynamicObjectTag } from "./dynamic-builtin-methods.js";
 import { realmConstructorOf, realmIntrinsicOfHelper, type RealmConstruction } from "./dynamic-realm-calls.js";
 import type { RealmConstructor } from "./builtin-prototype-keys.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
@@ -113,13 +114,14 @@ export function legalizeDynamicValues(
     kindsOf: kinds.kindsOf,
     errors,
     wrappers: program.objects.wrappers,
+    root: holdsFamily(program, "object"),
   };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
   // (#7354 O1, P1, G1) What a recognised `Object` static (`dynamic-object-statics.ts`), a call of a prototype method the
   // realm holds (`dynamic-prototype-methods.ts`) or of a realm constructor (`dynamic-error-constructors.ts`, (#7350
   // B3a) `dynamic-wrapper-constructors.ts`) is written with.
-  const objectStatics = { ...builders, stringOf, toNumber, errors, program, definitions };
+  const objectStatics = { ...builders, stringOf, toNumber, program, definitions };
   const realmConstruction = (instr: RealmConstruction, ctor: RealmConstructor, args: readonly IrValueId[]) => {
     switch (ctor.family) {
       case "error":
@@ -128,6 +130,8 @@ export function legalizeDynamicValues(
         return dynamicWrapperConstruction(objectStatics, instr, ctor, args);
       case "array":
         return dynamicArrayConstruction(objectStatics, instr, args);
+      case "object":
+        return dynamicObjectConstruction(objectStatics, instr, args);
     }
   };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
@@ -220,7 +224,7 @@ export function legalizeDynamicValues(
         return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
       // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts (`dynamic-object-tag.ts`).
       case "dyn.object_tag":
-        return dynamicObjectTag(builders, program, instr);
+        return dynamicObjectTag({ ...builders, stringOf }, program, instr);
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":

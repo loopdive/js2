@@ -14,13 +14,7 @@ import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-i
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import {
-  IS_OBJECT,
-  holdsFamily,
-  isOrdinaryObject,
-  type CarrierKind,
-  type LegalizationProgram,
-} from "./dynamic-value-kinds.js";
+import { IS_OBJECT, isOrdinaryObject, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
@@ -186,7 +180,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
-        : functionChainAnswer(b, instr, holdsFamily(b.program, "error"), prototype, (t) => [unread(t)], s, BOOLEAN);
+        : functionChainAnswer(b, instr, b.program, prototype, (t) => [unread(t)], s, BOOLEAN);
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,

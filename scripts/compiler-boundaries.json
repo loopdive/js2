@@ -17430,6 +17430,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-object-constructors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/shared/contracts/descriptor-word.ts",
       "state": "clean",
       "layer": "foundation"

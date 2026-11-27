@@ -505,6 +505,7 @@ function operands(
     typeError: dd.errors.newTypeError.handle,
     createWithPrototype: dd.storage.createWithPrototype.handle,
     text: (text) => literal(text),
+    rootProperties: pack.requests.requirements.root ?? [],
     objects: (pack.requests.requirements.objects ?? []).map((row, index) => ({
       ...row,
       global: tx.physicalIndex(pack.objects[index]!.global),

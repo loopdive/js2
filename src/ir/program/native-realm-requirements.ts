@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  NATIVE_OBJECT_PROTOTYPE_CONVERSIONS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
@@ -8,7 +9,12 @@ import {
   modelledRow,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
-import { ERROR_TO_STRING_ID, IS_ARRAY_ID } from "./builtin-prototype-keys.js";
+import {
+  ERROR_TO_STRING_ID,
+  IS_ARRAY_ID,
+  OBJECT_PROTOTYPE_ID,
+  objectPrototypeMethodId,
+} from "./builtin-prototype-keys.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
@@ -117,7 +123,7 @@ const intrinsicOf = (use: Use): string | undefined =>
   use.feature === "js.object.intrinsic" && use.selector !== undefined
     ? NATIVE_VALUE_INTRINSICS[use.selector]
     : undefined;
-const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
+const METHOD_IDS = NATIVE_OBJECT_PROTOTYPE_METHODS.map(objectPrototypeMethodId);
 /** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
 const readsPrototypeMethod = (use: Use): boolean =>
   METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
@@ -178,6 +184,12 @@ const ARRAY_PROTOTYPE: PinnedPrototype = {
   creates: (use) => use.feature === "js.object.create-array",
   always: [],
 };
+/** (#7574) The realm's root, which every program that holds `Object` can obtain (its `prototype`). */
+const OBJECT_PROTOTYPE: PinnedPrototype = {
+  name: "Object",
+  creates: (use) => intrinsicOf(use) === "%Object%",
+  always: [],
+};
 /**
  * (#7350 condition 2) The members a realm holds of the prototypes `prototypes`: each prototype the IR reads or creates
  * an object of, with its constructor, the methods it always holds, and the methods whose name a use spells as a
@@ -233,6 +245,13 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
     base: ["%Array%", IS_ARRAY_ID],
     pinned: pinnedMembers([ARRAY_PROTOTYPE]),
     throws: ["%RangeError%"],
+  },
+  // (#7574) The Object family: `Object` and the realm's root; the root's methods as pinned.
+  {
+    members: ["%Object%", OBJECT_PROTOTYPE_ID, ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS.map(objectPrototypeMethodId)],
+    contracts: new Set(),
+    base: ["%Object%", OBJECT_PROTOTYPE_ID],
+    pinned: pinnedMembers([OBJECT_PROTOTYPE]),
   },
 ];
 /**

@@ -58,6 +58,8 @@ export interface RealmFamilyOperands {
     readonly array?: true;
     readonly properties: readonly RealmFamilyProperty[];
   }[];
+  /** (#7574) The root's properties whose value is a held family member (`constructor`, the held methods). */
+  readonly rootProperties: readonly RealmFamilyProperty[];
   /** (#7561) Where the realm holds a wrapper prototype: the wrapper `id` of `primitiveData` over `prototype`. */
   readonly wrapperAllocation?: (id: string, primitiveData: string | number | boolean, prototype: Instr[]) => Instr[];
 }
@@ -65,8 +67,9 @@ export interface RealmFamilyOperands {
 const global = (index: number): Instr => ({ op: "global.get", index });
 const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => asOrdinaryObject(d.objectTypeIdx);
 
-/** The externref of the realm's entry or object `id`. */
+/** The externref of the realm's entry or object `id` (`object-prototype`: the realm's root). */
 function intrinsic(d: RealmFamilyOperands, id: string): Instr[] {
+  if (id === "object-prototype") return [global(d.objectPrototype)];
   const object = d.objects.find((row) => row.id === id);
   if (object) return [global(object.global)];
   const entry = d.entries.find((row) => row.id === id);
@@ -89,8 +92,7 @@ const word = (property: Pick<RealmFamilyProperty, "writable" | "configurable">):
  */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
   return d.objects.flatMap((object): Instr[] => {
-    const prototype =
-      object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype);
+    const prototype = intrinsic(d, object.prototype);
     const created =
       object.primitiveData === undefined
         ? [...prototype, ...asObject(d), { op: "call", funcIdx: d.createWithPrototype } as Instr]
@@ -131,7 +133,7 @@ function define(d: RealmFamilyOperands, target: readonly Instr[], property: Real
 }
 
 /**
- * The members' own properties (on their bags), then the objects'; last, (#7350 B3a) the identity mark on the bag of
+ * The members' own properties (on their bags), then the objects', then (#7574) the root's; last, (#7350 B3a) the identity mark on the bag of
  * each identity-only member, once nothing more is defined on it.
  */
 export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
@@ -145,6 +147,7 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
     ...d.objects.flatMap((object) =>
       object.properties.flatMap((property) => define(d, [global(object.global)], property)),
     ),
+    ...d.rootProperties.flatMap((property) => define(d, [global(d.objectPrototype)], property)),
     ...d.entries.flatMap((entry) =>
       entry.identityOnly ? markObjectFlag(d.objectTypeIdx, bag(entry), BUILTIN_IDENTITY_ONLY_FLAG) : [],
     ),

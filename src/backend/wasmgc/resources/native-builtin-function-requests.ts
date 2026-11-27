@@ -81,6 +81,8 @@ export interface NativeBuiltinFunctionRequirements {
   readonly intrinsics: readonly NativeBuiltinFunctionRequirement[];
   /** (#7354 G1) The held families' ordinary objects, each after the object it links to. */
   readonly objects?: readonly NativeBuiltinObject[];
+  /** (#7574) The realm root's properties whose value is a held family member (its `constructor`, held methods). */
+  readonly root?: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequestDependencies {
   readonly arguments: NativeArgumentVectorReservations;
@@ -163,7 +165,7 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
   dataTree(input);
   if (typeof input.key !== "string" || !input.key || !Array.isArray(input.intrinsics) || !input.intrinsics.length)
     fail("invalid key or empty intrinsic population");
-  if (Object.keys(input).some((key) => !["key", "intrinsics", "objects"].includes(key)))
+  if (Object.keys(input).some((key) => !["key", "intrinsics", "objects", "root"].includes(key)))
     fail("unknown requirement field");
   const ids = new Set<string>(),
     aliases = new Set<string>(),

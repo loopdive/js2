@@ -20,7 +20,10 @@
  * value on a function's chain a program can hold (`F.prototype = Error; TypeError instanceof F`).
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { ERROR_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
+import { ERROR_ID, OBJECT_PROTOTYPE_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
+import { builtinMethodChain, identityTest } from "./dynamic-builtin-methods.js";
+import { holdsFamily, type LegalizationProgram } from "./dynamic-value-kinds.js";
+import { BOOLEAN } from "./dynamic-value-types.js";
 import type { IrType } from "../core/types.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
@@ -60,23 +63,28 @@ export function dynamicErrorConstruction(
 
 /**
  * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
- * isPrototypeOf's step 3): `no` (false), but where `errors` and `prototype` is `%Error%` the run-time abort, which ends
- * the program before the arm's own (unread) answer (module doc).
+ * isPrototypeOf's step 3): `no` (false), but (#7574) `true` where the program holds the Object family and `prototype`
+ * is the realm's root, which ends every function's chain, and where the program holds the Error family and
+ * `prototype` is `%Error%` the run-time abort, which ends the program before the arm's own (unread) answer (module
+ * doc).
  */
 export function functionChainAnswer(
   b: ChainBuilders,
   instr: IrInstr,
-  errors: boolean,
+  program: LegalizationProgram,
   prototype: IrValueId,
   no: (r: IrValueId) => IrInstr[],
   r: IrValueId,
   resultType: IrType,
 ): IrInstr[] {
-  if (!errors) return no(r);
-  const [error, same] = [b.fresh(), b.fresh()];
-  return [
-    ...b.realmIntrinsic(ERROR_ID, error),
-    b.intrinsic(instr, "js.value.strict_eq", [prototype, error], same),
-    b.branch(same, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no, r, resultType),
+  const yes = (s: IrValueId): IrInstr[] => [
+    { kind: "const", value: { kind: "bool", value: true }, result: s, resultType: BOOLEAN },
   ];
+  const tests = [
+    ...(holdsFamily(program, "object") ? [() => identityTest(b, instr, OBJECT_PROTOTYPE_ID, prototype, yes)] : []),
+    ...(holdsFamily(program, "error")
+      ? [() => identityTest(b, instr, ERROR_ID, prototype, (s) => [...b.abort(instr, b.fresh()), ...no(s)])]
+      : []),
+  ];
+  return builtinMethodChain(b, tests, no, resultType)(r);
 }

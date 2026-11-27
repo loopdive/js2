@@ -155,6 +155,14 @@ export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
   "propertyIsEnumerable",
 ] as const);
 export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
+/**
+ * (#7574) The Object.prototype methods a realm holds with `Object` (§20.1.3.5-7), each as its own row; the Prepared
+ * path answers a call of one by identity (`dynamic-builtin-methods.ts`).
+ */
+export const NATIVE_OBJECT_PROTOTYPE_CONVERSIONS = Object.freeze(["toLocaleString", "toString", "valueOf"] as const);
+export type NativeObjectPrototypeConversion = (typeof NATIVE_OBJECT_PROTOTYPE_CONVERSIONS)[number];
+/** (#7574) The catalog id of the root every ordinary object's chain ends at. */
+export const OBJECT_PROTOTYPE_ID = objectPrototype;
 /** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
 export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "Error",
@@ -183,7 +191,7 @@ export const REALM_BRAND = { error: 0x800, array: 0x1000 } as const;
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
-  "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
+  "Object.prototype": [...NATIVE_OBJECT_PROTOTYPE_METHODS, ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS],
   "Error.prototype": ["toString"],
   // (#7561) thisXValue and its ToString (`dynamic-builtin-methods.ts`).
   ...Object.fromEntries(NATIVE_WRAPPER_CONSTRUCTORS.map((name) => [`${name}.prototype`, ["toString", "valueOf"]])),
@@ -453,7 +461,8 @@ const arrayMethods: readonly Method[] = (
  * (#7354 G1) The values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)` numbers
  * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a) the
  * wrapper constructors, (#7561) their prototype objects and those prototypes' methods, (#7352) `Array`, its prototype,
- * `Array.isArray` and Array.prototype's methods. Positional: new rows are appended.
+ * `Array.isArray` and Array.prototype's methods, (#7574) `Object`, the realm's root and the root's methods held with
+ * `Object`. Positional: new rows are appended.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
@@ -470,6 +479,9 @@ export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   "%Array.prototype%",
   realmMethodId("Array", "isArray"),
   ...arrayMethods.map(([method]) => realmMethodId("Array.prototype", method)),
+  "%Object%",
+  OBJECT_PROTOTYPE_ID,
+  ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS.map((name) => realmMethodId("Object.prototype", name)),
 ]);
 /** (#7350 B3b-0) §22.1.3, §21.1.3, §20.3.3: a wrapper prototype's primitive value. */
 const WRAPPER_PRIMITIVE_DATA: Readonly<Record<NativeWrapperConstructor, string | number | boolean>> = {
@@ -634,19 +646,25 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       "function-prototype",
     ),
     callable(throwTypeError, "", 0, "ThrowTypeError", ["TypeError"], [], false, "throw-type-error"),
-    callable(
-      "%Object%",
-      "Object",
-      1,
-      "Object",
-      ["OrdinaryCreateFromConstructor", "ToObject"],
-      [
-        ...methodProperties("Object", objectStatics.slice(0, 20)),
-        reference("prototype", objectPrototype, false, false),
-        ...methodProperties("Object", objectStatics.slice(20)),
-      ],
-      true,
-    ),
+    // (#7574) Held with itself, identity-only: a realm holds its `prototype`, not its statics.
+    {
+      ...callable(
+        "%Object%",
+        "Object",
+        1,
+        "Object",
+        ["OrdinaryCreateFromConstructor", "ToObject"],
+        [
+          ...methodProperties("Object", objectStatics.slice(0, 20)),
+          reference("prototype", objectPrototype, false, false),
+          ...methodProperties("Object", objectStatics.slice(20)),
+        ],
+        true,
+        "native",
+      ),
+      identityOnly: ["length", "name", "prototype"],
+      heldWith: "%Object%",
+    },
     callable(
       "%Function%",
       "Function",
@@ -657,7 +675,11 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       true,
     ),
     ...members("Object", objectStatics),
-    ...members("Object.prototype", objectMethods),
+    ...members("Object.prototype", objectMethods).map((row) =>
+      (NATIVE_OBJECT_PROTOTYPE_CONVERSIONS as readonly string[]).includes(row.callable!.initialName)
+        ? { ...row, heldWith: row.id }
+        : row,
+    ),
     callable(
       "%get Object.prototype.__proto__%",
       "get __proto__",
@@ -719,7 +741,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
  * ({@link modelledRow}).
  */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function+Error+Wrappers+Array:v6" as const,
+  version: "ecma262-2026:Object+Function+Error+Wrappers+Array:v7" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [

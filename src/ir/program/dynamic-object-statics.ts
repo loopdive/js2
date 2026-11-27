@@ -26,8 +26,6 @@ export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undef
 /** The legalization's builders, with its ToString (`stringOf`, ToPropertyKey here). */
 export type ObjectStaticBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
-  /** (#7354 G1) A value may be an error (`holdsFamily`). */
-  readonly errors: boolean;
   /** (#7561) What the program allows its values (the wrapper kinds it can hold). */
   readonly program: LegalizationProgram;
   readonly definitions: ReadonlyMap<IrValueId, IrInstr>;

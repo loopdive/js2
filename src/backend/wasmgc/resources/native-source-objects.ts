@@ -53,6 +53,7 @@ import {
 } from "./native-builtin-functions.js";
 import {
   NATIVE_VALUE_INTRINSICS,
+  OBJECT_PROTOTYPE_ID,
   NATIVE_WRAPPER_CONSTRUCTORS,
   realmMethodId,
 } from "../../../runtime/contracts/native-realm-catalog.js";
@@ -293,8 +294,10 @@ const ROWS = {
     signature: { params: [I32], results: [EXTERNREF] },
     body: ({ kernel }, tx) => {
       const d = nativeBuiltinFunctionOperands(tx, kernel);
-      // (#7561) A held prototype object is read after the realm's initialization.
+      // (#7561) A held prototype object, (#7574) and the realm's root, is read after the realm's initialization.
       const value = (id: string): readonly Instr[] | undefined => {
+        if (id === OBJECT_PROTOTYPE_ID && kernel.requests.requirements.root)
+          return [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }];
         if (kernel.entries.some((entry) => entry.id === id))
           return [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }];
         const object = d.objects.find((row) => row.id === id);

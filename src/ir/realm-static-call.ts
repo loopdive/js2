@@ -47,6 +47,26 @@ export function nativeObjectStaticCall(
 }
 
 /**
+ * (#7574) The `Object` identifier of `Object.prototype.toString.call(v)` (one argument, no spread): the call from-ast
+ * lowers as the object tag (`dyn.object_tag`), which reads no value of `Object`.
+ */
+export function objectTagCallReceiver(call: ts.CallExpression): ts.Identifier | undefined {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "call") return undefined;
+  const method = callee.expression;
+  if (!ts.isPropertyAccessExpression(method) || method.name.text !== "toString") return undefined;
+  const prototype = method.expression;
+  if (!ts.isPropertyAccessExpression(prototype) || prototype.name.text !== "prototype") return undefined;
+  const receiver = prototype.expression;
+  return ts.isIdentifier(receiver) &&
+    receiver.text === "Object" &&
+    call.arguments.length === 1 &&
+    !ts.isSpreadElement(call.arguments[0]!)
+    ? receiver
+    : undefined;
+}
+
+/**
  * (#7350 B3a) `X.<key>` with `X` the unchanged global of a realm constructor and `key` one of its constant value
  * properties (`nativeConstantStatic`: `Number.MAX_VALUE`, …): that number. The fold reads nothing, so the realm holds
  * nothing for it.
