@@ -2,7 +2,6 @@
 
 import { ts } from "../ts-api.js";
 import { sourceBooleanAnyResult } from "../frontend/boolean-return-boundary.js";
-import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import { checkerScalar, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import { lowerSourceUnit, type SourceUnitLowering } from "./program-source-units.js";
@@ -42,7 +41,7 @@ import { literalEvalSiteRefusal, verifyLiteralEvalSources, type LiteralEvalSourc
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
-import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
+import type { IrDirectCallSignature, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
@@ -55,7 +54,7 @@ import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
-import { prepareSourceDirectCalls } from "./program-source-direct-calls.js";
+import { prepareSourceDirectCalls, sourceCallSignature } from "./program-source-direct-calls.js";
 import { functionDeclarationValues, type FunctionValueGlobal } from "./function-declaration-values.js";
 import { scriptBlockFunctionHomes } from "./annexb-block-function-values.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
@@ -1366,7 +1365,7 @@ function prepareSourceFunctionSignatures(
   types: ReturnType<typeof buildIrUnitTypeMap>,
   certifiedDelays: NativePromiseDelaySourcePlans["certifiedDelays"],
   nativeFamily: NativeAsyncSourceFamilies | undefined,
-  signatures: Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
+  signatures: Map<IrUnitId, IrDirectCallSignature>,
   bodyResults: Map<IrUnitId, IrType | null>,
   dynamic: ProgramDynamicContracts,
   diagnostic: SourceDiagnosticOwner,
@@ -1415,11 +1414,8 @@ function prepareSourceFunctionSignatures(
                 : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
                   dynamic.propagatedResult(declaration, propagated && lowerTypeToIrType(propagated.returnType)));
     bodyResults.set(unit.id, result);
-    const callableResults = preparedIrProgramCallableResults({
-      funcKind: isAsync ? "async" : "regular",
-      resultTypes: result ? [result] : [],
-    });
-    signatures.set(unit.id, { params: params as IrType[], returnType: callableResults[0] ?? null });
+    const signature = sourceCallSignature(declaration, params as IrType[], result, isAsync === true, dynamic.resolver);
+    signatures.set(unit.id, signature);
   }
 }
 
@@ -1574,7 +1570,7 @@ export function prepareIrProgramSources(
   const derivedUnits: ProgramAbiDerivedUnitRecord[] = [];
   const globalById = new Map<string, IrProgramSourcePreparation["globals"][number]>();
   const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
-  const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
+  const signatures = new Map<IrUnitId, IrDirectCallSignature>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
   const delayPlans: NativePromiseDelaySourcePlans = {
     promiseDelaysBySource: new Map(),
