@@ -18,8 +18,8 @@ it("resolves a shadowing parameter first", async () => {
   await agreesWithNode("function f(hasOwnProperty){return typeof hasOwnProperty;}var out=f(1);", true, runnerOptions());
 }, 60000);
 
-it.each(["valueOf", "constructor", "toLocaleString"])(
-  "keeps unsupported inherited %s distinct from an absent name",
+it.each(["valueOf", "constructor", "toLocaleString", "$262"])(
+  "keeps the realm or host name %s distinct from an absent name",
   async (name) => {
     expect(await refusal("if(typeof " + name + "!=='function')throw 1;", runnerOptions())).toContain(
       'identifier "' + name + '" is not in scope',

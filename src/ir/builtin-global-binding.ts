@@ -23,6 +23,7 @@ import {
   sourceMayWriteGlobalObject,
   sourceMayWriteUnspelledMember,
 } from "../shared/intrinsic-prototype-writes.js";
+import { isProvidedGlobalName } from "../shared/always-undefined-binding.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 
 export interface GlobalBindingResolver {
@@ -141,6 +142,7 @@ export function unchangedUndeclaredGlobal(
 ): boolean {
   return (
     isValueReference(node) &&
+    !isProvidedGlobalName(node.text) &&
     isUndeclaredInFile(node) &&
     checker.getSymbolAtLocation(node) === undefined &&
     !files.some(
