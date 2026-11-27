@@ -1077,10 +1077,17 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   ambientNamespaceConstant?(expr: ts.PropertyAccessExpression): number | undefined;
   /**
    * (#7106 propertyHelper) The runtime wrapper a dynamic `delete` at `site`
-   * calls (strict / sloppy, decided like legacy's `compileDeleteExpression`),
-   * or undefined where the dynamic carrier is not an externref.
+   * calls (strict / sloppy, decided like legacy's `compileDeleteExpression`;
+   * (#7471) on the Prepared path by its code strictness), or undefined where
+   * the dynamic carrier is not an externref.
    */
   dynamicDeleteSymbol?(site: ts.DeleteExpression): string | undefined;
+  /**
+   * (#7471) The delete boxes a raw externref receiver (a Prepared function-local object) onto the carrier, as a read
+   * and a write do. Only the Prepared native lane answers, so the ordinary pipeline's delete keeps the dynamic
+   * receivers its selector admits (PRV-7471 B3).
+   */
+  dynamicDeleteBoxesExternref?(): boolean;
   /**
    * (#7106) Does legacy route this `<value> instanceof <parameter>` through its
    * generic runtime operator? The same question the selector asked.
@@ -5352,13 +5359,13 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       );
     return lowerRegExpLiteral(expr, cx);
   }
-  // (#7106) `delete <expr>`: the selector refuses every form
-  // (`expr-delete-no-ir-lowering`) because the IR has no delete operation.
-  // Slice 11 (#1169n) used to answer a constant `true` here, which removed
-  // nothing and never threw. Fail closed if a delete ever reaches lowering.
+  // (#7106, #7471) `delete <expr>`: a declared binding or a non-reference
+  // answers a constant (`lowerReferencelessDelete`); a member of a dynamic
+  // receiver calls the resolver's delete helper (`lowerDynamicDelete`). Any
+  // other form demotes.
   if (ts.isDeleteExpression(expr)) {
-    const dynamicDelete = lowerDynamicDelete(expr, cx);
-    if (dynamicDelete !== null) return dynamicDelete;
+    const deleted = lowerReferencelessDelete(expr, cx) ?? lowerDynamicDelete(expr, cx);
+    if (deleted !== null) return deleted;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: delete has no IR lowering in ${cx.funcName}`);
   }
   // Preserve operand effects; dynamic consumers need canonical undefined,
@@ -8220,12 +8227,12 @@ function lowerClosureCall(
  * (#7106 propertyHelper) `delete <dyn>.name` / `delete <dyn>[key]` on a
  * dynamic receiver: the receiver and the (boxed) key as carriers, then the
  * site's runtime wrapper — legacy's generic externref delete arm
- * (`codegen/ir-dynamic-delete.ts`). Returns the delete's boolean, or null when
- * the operand is not that shape (the caller demotes).
+ * (`codegen/ir-dynamic-delete.ts`), or (#7471) on the Prepared path the
+ * realm's [[Delete]] (`dynamic-member-access.ts`). Returns the delete's
+ * boolean, or null when the operand is not that shape (the caller demotes).
  */
 function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
-  let operand: ts.Expression = expr.expression;
-  while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+  const operand = skipOuterExpressions(expr.expression);
   let receiverExpr: ts.Expression;
   let keyExpr: ts.Expression | undefined;
   let keyName: string | undefined;
@@ -8240,7 +8247,11 @@ function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId 
   }
   const symbol = cx.resolver?.dynamicDeleteSymbol?.(expr);
   if (symbol === undefined) return null;
-  const receiver = lowerExpr(receiverExpr, cx, irDynamic());
+  const lowered = lowerExpr(receiverExpr, cx, irDynamic());
+  const receiver =
+    cx.resolver?.dynamicDeleteBoxesExternref?.() === true && isRawExternrefReceiver(cx.builder.typeOf(lowered), cx)
+      ? cx.builder.emitBox(lowered, irDynamic())
+      : lowered;
   if (cx.builder.typeOf(receiver).kind !== "dynamic") return null;
   const key =
     keyName !== undefined
@@ -8252,6 +8263,36 @@ function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId 
     throw new Error(`ir/from-ast: dynamic delete produced no value in ${cx.funcName}`);
   }
   return result;
+}
+
+/**
+ * (#7471) `delete` of an operand that is no property reference (§13.5.1.2), reached only on the Prepared path (the
+ * ordinary selector refuses it, `expr-delete-no-ir-lowering`). A name a function or the script declares is a
+ * declarative binding, or a script `var` / function the global object holds non-configurable: `false`, the name
+ * unevaluated (steps 3–4; strict code rejects the form early). Any other expression is evaluated and answers `true`
+ * (step 2). A `with` binding (an object environment's, whose [[Delete]] can remove it) and a name only the global
+ * object holds refuse by name. Returns null for a property reference.
+ */
+function lowerReferencelessDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
+  const operand = skipOuterExpressions(expr.expression);
+  if (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) return null;
+  if (!ts.isIdentifier(operand)) {
+    lowerDiscardedExpression(expr.expression, cx);
+    return cx.builder.emitConst({ kind: "bool", value: true }, IR_BOOL);
+  }
+  const read = classifyIdentifierRead(operand, cx);
+  if (read.kind === "scope" && read.binding.kind === "withField")
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: delete of a with-scope binding in ${cx.funcName}`);
+  // An unshadowed `arguments` inside a non-arrow function is that function's own binding.
+  const ownArguments =
+    operand.text === "arguments" &&
+    ts.findAncestor(operand, (node) => ts.isFunctionLike(node) && !ts.isArrowFunction(node)) !== undefined;
+  if (read.kind !== "scope" && read.kind !== "module-binding" && read.kind !== "top-level-function" && !ownArguments)
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: delete of "${operand.text}", which names no binding this lowering resolves, in ${cx.funcName}`,
+    );
+  return cx.builder.emitConst({ kind: "bool", value: false }, IR_BOOL);
 }
 
 /**

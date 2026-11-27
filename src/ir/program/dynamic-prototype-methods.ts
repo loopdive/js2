@@ -14,22 +14,18 @@
  * receiver and takes the dispatcher.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrType } from "../core/types.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
 import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, booleanConst, carried } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
-
-/** The Boolean the realm's tests answer, boxed into the call's carrier. */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** A realm method this module writes: an Object.prototype method by name, or (#7354 G1) `Error.prototype.toString`. */
 export type RealmMethod = NativeObjectPrototypeMethod | "Error.prototype.toString";
@@ -66,9 +62,7 @@ function boxed(b: ObjectStaticBuilders, instr: Call, test: (value: IrValueId) =>
 }
 const constant =
   (answer: boolean) =>
-  (result: IrValueId): IrInstr[] => [
-    { kind: "const", value: { kind: "bool", value: answer }, result, resultType: BOOLEAN },
-  ];
+  (result: IrValueId): IrInstr[] => [booleanConst(answer, result)];
 
 /**
  * §20.1.3.2 / §20.1.3.4: ToPropertyKey(V) first, then ToObject(this value) and its own property `P` (enumerable too

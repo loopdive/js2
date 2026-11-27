@@ -27,14 +27,7 @@ import { isStrictContext } from "../shared/is-strict-function.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
-
-export const IR_DYN_DELETE_STRICT_HELPER = "__ir_dyn_delete_strict";
-export const IR_DYN_DELETE_SLOPPY_HELPER = "__ir_dyn_delete_sloppy";
-
-/** The wrapper a delete in code of this strictness calls. */
-export function irDynamicDeleteHelperName(strict: boolean): string {
-  return strict ? IR_DYN_DELETE_STRICT_HELPER : IR_DYN_DELETE_SLOPPY_HELPER;
-}
+import { irDynamicDeleteHelperName } from "../shared/contracts/dynamic-delete-helper.js";
 
 /** Is `node` strict code, decided exactly as legacy's `compileDeleteExpression` decides it? */
 export function irDeleteSiteIsStrict(node: ts.Node): boolean {
