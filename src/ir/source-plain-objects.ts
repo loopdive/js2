@@ -12,12 +12,23 @@
  * names (`programFamilies`), and a primitive's member access then reads through the realm's prototype objects. A
  * program that names none obtains no built-in prototype (tests/issue-7354-m-prototype-premise.test.ts pins the
  * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none. (#7557) It records whether
- * the source spells an Object.prototype method's name (`objectMethods`): only then can the realm hold one.
+ * the names of the realm's prototype methods the source spells (`methodNames`): only those can the realm hold.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { ARRAY_ID, NATIVE_OBJECT_PROTOTYPE_METHODS, realmConstructorId } from "./program/builtin-prototype-keys.js";
+import {
+  ARRAY_ID,
+  NATIVE_FUNCTION_PROTOTYPE_METHODS,
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  realmConstructorId,
+} from "./program/builtin-prototype-keys.js";
+
+/** (#7557) The realm's prototype methods whose rungs the built-in caller has only where the source spells them. */
+const REALM_METHOD_NAMES: ReadonlySet<string> = new Set([
+  ...NATIVE_OBJECT_PROTOTYPE_METHODS,
+  ...NATIVE_FUNCTION_PROTOTYPE_METHODS,
+]);
 import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
 import { stringPrototypeBorrowShape } from "./array-prototype-borrow-call.js";
 
@@ -39,7 +50,7 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
-  let objectMethods = false;
+  const methodNames = new Set<string>();
   const constructors = new Set<string>();
   const visit = (node: ts.Node): void => {
     const id = ts.isIdentifier(node) ? realmConstructorId(node.text) : undefined;
@@ -52,13 +63,12 @@ export function programObjects(
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
-    objectMethods ||=
-      (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) &&
-      (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly string[]).includes(node.text);
+    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && REALM_METHOD_NAMES.has(node.text))
+      methodNames.add(node.text);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || constructors.size > 0, functions, namesSymbol, objectMethods, constructors };
+  return { present: present || constructors.size > 0, functions, namesSymbol, methodNames, constructors };
 }
 
 /**

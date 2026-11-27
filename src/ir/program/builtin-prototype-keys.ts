@@ -90,8 +90,9 @@ const REALM_CONSTRUCTOR_NAMES: ReadonlySet<string> = new Set([
 export const realmConstructorId = (name: string): string | undefined =>
   errorConstructorId(name) ?? (REALM_CONSTRUCTOR_NAMES.has(name) ? `%${name}%` : undefined);
 
-/** (#7557) The catalog id of `%Function%`. */
+/** (#7557) The catalog ids of `%Function%` and `Function.prototype.call`. */
 export const FUNCTION_ID = "%Function%";
+export const FUNCTION_CALL_ID = realmMethodId("Function.prototype", "call");
 
 /** (#7354 A1) The catalog ids of `%Array%` and `Array.isArray`. */
 export const ARRAY_ID = "%Array%";
