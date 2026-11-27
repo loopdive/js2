@@ -125,6 +125,43 @@ describe("#7558 changed-root-tests selector", () => {
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
+  it("selects a renamed file under its new path and keeps a name with spaces whole", () => {
+    git(repo, "checkout", "-q", "-b", "rename", "main");
+    try {
+      git(repo, "mv", "tests/old.test.ts", "tests/renamed.test.ts");
+      git(repo, "commit", "-q", "-m", "rename");
+      commitFile(repo, "tests/with space.test.ts", "a name with a space");
+      expect(select(repo, ["--list"]).stdout.trim().split("\n")).toEqual([
+        "tests/renamed.test.ts",
+        "tests/with space.test.ts",
+      ]);
+      writeFileSync(calls, "");
+      expect(select(repo, [], { PATH: `${bin}:${process.env.PATH}` }).status).toBe(0);
+      expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
+        expect.stringMatching(/^exec vitest run tests\/renamed\.test\.ts /),
+        expect.stringMatching(/^exec vitest run tests\/with space\.test\.ts /),
+      ]);
+    } finally {
+      git(repo, "checkout", "-q", "queue");
+    }
+  });
+
+  it("--run-list runs exactly the given selection without recomputing it", () => {
+    const list = join(dir, "selection.txt");
+    writeFileSync(list, "tests/issue-2.test.ts\n");
+    writeFileSync(calls, "");
+    // An unresolvable base proves no selection is recomputed.
+    const r = select(repo, ["--run-list", list], {
+      PATH: `${bin}:${process.env.PATH}`,
+      CHANGED_ROOT_TESTS_BASE: "refs/remotes/nowhere/main",
+    });
+    expect(r.status).toBe(0);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
+      expect.stringMatching(/^exec vitest run tests\/issue-2\.test\.ts /),
+    ]);
+    expect(select(repo, ["--run-list", join(dir, "missing.txt")]).status).toBe(1);
+  });
+
   it("prints nothing and exits 0 when no root test changed", () => {
     const r = select(repo, ["--list"], { CHANGED_ROOT_TESTS_BASE: "HEAD" });
     expect(r.status).toBe(0);

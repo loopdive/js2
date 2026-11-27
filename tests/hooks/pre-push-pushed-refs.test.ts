@@ -94,9 +94,33 @@ describe("#7558 pre-push section (6) reads the pushed refs", () => {
     expect(ranRootTests()).toBe(true);
   });
 
+  // `git push origin HEAD:x` passes the local ref as `HEAD`, `<sha>:refs/heads/x`
+  // as the raw sha: classification must read the REMOTE ref.
+  for (const [form, line] of [
+    ["HEAD:<branch>", () => `HEAD ${head} refs/heads/pr-x ${NULL_OID}`],
+    ["<sha>:refs/heads/<branch>", () => `${head} ${head} refs/heads/pr-y ${other}`],
+  ] as const)
+    it(`runs the checks for the ${form} push form`, () => {
+      writeFileSync(calls, "");
+      const r = push([line()]);
+      expect(r.output).toContain("Pre-push: changed root test files OK.");
+      expect(r.status).toBe(0);
+      expect(ranRootTests()).toBe(true);
+    });
+
+  it("refuses HEAD:<branch> when the pushed commit is not HEAD", () => {
+    const r = push([`HEAD ${other} refs/heads/pr-z ${NULL_OID}`]);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("not the checked-out HEAD");
+  });
+
   it("skips section (6) on a branch delete or a tag push", () => {
     writeFileSync(calls, "");
-    const r = push([`(delete) ${NULL_OID} refs/heads/gone ${head}`, `refs/tags/v1 ${head} refs/tags/v1 ${NULL_OID}`]);
+    const r = push([
+      `(delete) ${NULL_OID} refs/heads/gone ${head}`,
+      `refs/tags/v1 ${head} refs/tags/v1 ${NULL_OID}`,
+      `HEAD ${head} refs/tags/v2 ${NULL_OID}`,
+    ]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("no branch update in this push");
     expect(ranRootTests()).toBe(false);

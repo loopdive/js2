@@ -596,14 +596,15 @@ jobs:
         # `issue-tests-gate` runs every root file once its baseline is seeded.
         # (#7558) Runs in the merge queue, not on the PR: the pre-push hook runs
         # the same selector locally, and this is the gate for pushes without
-        # it (forks). The selection step above prepared the history it diffs.
+        # it (forks). It runs exactly the list the selection step above wrote,
+        # so the two cannot disagree.
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'merge_group' && steps.root_tests.outputs.count != '0'
         env:
           # Keep this broad, toolchain-light gate on the native engine. The
           # dedicated QuickJS artifact workflow exercises the default engine;
           # the selector tests below still delete this env to prove the default.
           JS2WASM_EVAL_ENGINE: interpreter
-        run: pnpm run test:changed-root
+        run: sh scripts/hooks/changed-root-tests.sh --run-list "$RUNNER_TEMP/changed-root-tests.txt"
 
       - name: Archive Linear append parent evidence (quality)
         if: always() && hashFiles('.tmp/6915-ci/run-*/**') != ''

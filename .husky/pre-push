@@ -338,7 +338,10 @@ fi
 #
 # They judge the commits being PUSHED, read from the ref list git hands the
 # hook on stdin (`<local ref> <local sha> <remote ref> <remote sha>` per line).
-# Branch deletes and tag pushes carry no new code and skip this section. The
+# A line is classified by its REMOTE ref: the local ref is whatever was typed
+# (`HEAD` for `git push origin HEAD:x`, a raw sha for `<sha>:refs/heads/x`), so
+# it cannot tell a branch update from a tag. Branch deletes (all-zero local sha)
+# and tag pushes carry no new code and skip this section. The
 # checks read the checked-out tree, so a pushed branch must be HEAD and the
 # tracked tree must be clean — otherwise the result would describe something
 # other than what is pushed, and the push is refused.
@@ -346,11 +349,11 @@ fi
 pushed_branches=""
 foreign_push=""
 head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
-while read -r local_ref local_sha _remote_ref _remote_sha; do
-  case "$local_ref" in refs/heads/*) ;; *) continue ;; esac
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac
   case "$local_sha" in *[!0]*) ;; *) continue ;; esac # all zeros: a delete
-  pushed_branches="$pushed_branches $local_ref"
-  [ "$local_sha" = "$head_sha" ] || foreign_push="$foreign_push $local_ref"
+  pushed_branches="$pushed_branches $remote_ref"
+  [ "$local_sha" = "$head_sha" ] || foreign_push="$foreign_push $remote_ref"
 done <<EOF_REFS
 $push_refs
 EOF_REFS
@@ -360,7 +363,7 @@ if [ -z "$pushed_branches" ]; then
   exit 0
 fi
 if [ -n "$foreign_push" ]; then
-  echo "PRE-PUSH BLOCKED: pushing$foreign_push, which is not the checked-out HEAD."
+  echo "PRE-PUSH BLOCKED: updating$foreign_push to a commit that is not the checked-out HEAD."
   echo "The changed-root tests run on the working tree; check the branch out and push from it."
   exit 1
 fi

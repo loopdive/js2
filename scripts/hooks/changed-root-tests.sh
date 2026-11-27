@@ -9,7 +9,9 @@
 # of this one (#7558). Every failure to compute the selection exits 1: a gate
 # that passes having selected nothing because git failed is the defect.
 #
-#   --list   print the selection (one path per line) and exit, running nothing
+#   --list             print the selection (one path per line), run nothing
+#   --run-list <file>  run the selection a `--list` call wrote, without
+#                      recomputing it (CI selects once, then runs that list)
 
 set -u
 
@@ -37,29 +39,38 @@ resolve_main_ref() {
     printf 'origin/main'
   fi
 }
-base_ref="${CHANGED_ROOT_TESTS_BASE:-$(resolve_main_ref)}"
-base="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
-if [ -z "$base" ]; then
-  echo "changed-root-tests: cannot resolve a merge base with $base_ref." >&2
-  echo "Fetch $base_ref or set CHANGED_ROOT_TESTS_BASE to a local base ref." >&2
-  exit 1
-fi
+if [ "${1:-}" = "--run-list" ]; then
+  if [ ! -r "${2:-}" ]; then
+    echo "changed-root-tests: --run-list needs a readable selection file." >&2
+    exit 1
+  fi
+  changed="$(cat "$2")"
+else
+  base_ref="${CHANGED_ROOT_TESTS_BASE:-$(resolve_main_ref)}"
+  base="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
+  if [ -z "$base" ]; then
+    echo "changed-root-tests: cannot resolve a merge base with $base_ref." >&2
+    echo "Fetch $base_ref or set CHANGED_ROOT_TESTS_BASE to a local base ref." >&2
+    exit 1
+  fi
 
-# Comparing the base to the working tree includes both the existing branch
-# commits and the staged commit that pre-commit is about to create.
-if ! diff_out="$(git diff --name-only --diff-filter=AM "$base" -- tests/)"; then
-  echo "changed-root-tests: git diff against $base failed; refusing to pass unchecked." >&2
-  exit 1
-fi
-changed="$(
-  printf '%s\n' "$diff_out" |
-    grep -E '^tests/[^/]+\.test\.ts$' |
-    grep -vE '^tests/(linear-|c-abi\.|simd|test262-(chunk|vitest))' || true
-)"
+  # Comparing the base to the working tree includes both the existing branch
+  # commits and the staged commit that pre-commit is about to create. R: a
+  # renamed test file is selected under its new path (--name-only prints it).
+  if ! diff_out="$(git diff --name-only --diff-filter=AMR "$base" -- tests/)"; then
+    echo "changed-root-tests: git diff against $base failed; refusing to pass unchecked." >&2
+    exit 1
+  fi
+  changed="$(
+    printf '%s\n' "$diff_out" |
+      grep -E '^tests/[^/]+\.test\.ts$' |
+      grep -vE '^tests/(linear-|c-abi\.|simd|test262-(chunk|vitest))' || true
+  )"
 
-if [ "${1:-}" = "--list" ]; then
-  if [ -n "$changed" ]; then printf '%s\n' "$changed"; fi
-  exit 0
+  if [ "${1:-}" = "--list" ]; then
+    if [ -n "$changed" ]; then printf '%s\n' "$changed"; fi
+    exit 0
+  fi
 fi
 
 if [ -z "$changed" ]; then
@@ -102,18 +113,21 @@ export VITEST_FORK_MAX_OLD_SPACE_SIZE
 #
 # Stops at the first failing file; every changed file after it — the rest of
 # the first $max and anything beyond them — is listed as not run.
+#
+# One path per line, read with `IFS= read -r` so a name with spaces stays one
+# path; each runner gets /dev/null as stdin so it cannot eat the list.
 index=0
-for test_file in $to_run; do
+while IFS= read -r test_file; do
   index=$((index + 1))
   if [ "$test_file" = "tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts" ]; then
-    node scripts/hooks/run-linear-append-provenance.mjs
+    node scripts/hooks/run-linear-append-provenance.mjs < /dev/null
     test_status=$?
   else
     pnpm exec vitest run "$test_file" \
     --pool=forks \
     --poolOptions.forks.singleFork=true \
     --dangerouslyIgnoreUnhandledErrors \
-    --no-file-parallelism
+    --no-file-parallelism < /dev/null
     test_status=$?
   fi
   if [ "$test_status" -ne 0 ]; then
@@ -124,4 +138,6 @@ for test_file in $to_run; do
     fi
     exit 1
   fi
-done
+done <<EOF_RUN
+$to_run
+EOF_RUN

@@ -242,3 +242,22 @@ the `needs` cascade); no copied job bodies; no step left that can never run
   preparation is skipped when no root test changed.
 - N5: corrected the cheap-gate, `issue-tests.yml`, test262-workflow,
   auto-enqueue and dev-self-merge statements.
+
+## Review r2 (2026-11-27) — fixed
+
+- Pre-push classified a pushed line by its LOCAL ref, which is literally
+  `HEAD` for `git push origin HEAD:x` and a raw sha for `<sha>:refs/heads/x`,
+  so those forms skipped section (6) as "delete or tag". It now classifies by
+  the remote ref (`refs/heads/*`) plus a non-zero local sha.
+- The selector selects renamed test files (`--diff-filter=AMR`), keeps file
+  names with spaces whole, and CI runs the list its selection step wrote
+  (`--run-list`) instead of computing it twice.
+
+## Follow-up to file (pre-existing, out of scope)
+
+`quality` and `changes` classify a change as npm-compat-only with `--base
+HEAD^`, and the #3131 change-scoped ratchets diff against `HEAD^1`. In a merge
+group with several PRs, that is only the last PR's delta — the same hole as
+review r1's B1. A group that ends in an npm-compat-only PR can skip `quality`
+and `equivalence-gate` for the PRs ahead of it, whose own queue runs are
+cancelled when the group merges.
