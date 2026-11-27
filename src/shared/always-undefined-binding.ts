@@ -48,6 +48,11 @@ const HOST_GLOBAL_NAMES: ReadonlySet<string> = new Set([
   "Temporal",
 ]);
 
+/** Names supplied by the language or the host before script evaluation. */
+export function isProvidedGlobalName(name: string): boolean {
+  return GLOBAL_VALUE_NAMES.has(name) || HOST_GLOBAL_NAMES.has(name);
+}
+
 /** Per file and name: the scopes whose `var` declarators prove the name, or `undefined` when it is not proven. */
 const cache = new WeakMap<ts.SourceFile, Map<string, ReadonlySet<ts.Node> | undefined>>();
 
@@ -91,10 +96,7 @@ function provingScopes(sourceFile: ts.SourceFile, name: string): ReadonlySet<ts.
   visit(sourceFile);
   if (declined || scopes.size === 0) return undefined;
   const scriptLevel = scopes.has(sourceFile);
-  if (
-    scriptLevel &&
-    (GLOBAL_VALUE_NAMES.has(name) || HOST_GLOBAL_NAMES.has(name) || sourceMayWriteGlobalObject(sourceFile))
-  ) {
+  if (scriptLevel && (isProvidedGlobalName(name) || sourceMayWriteGlobalObject(sourceFile))) {
     return undefined;
   }
   return scopes;

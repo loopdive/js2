@@ -92,14 +92,14 @@ export function classifyIdentifierRead<Binding>(
  */
 export function realmIntrinsicRead(
   expr: ts.Identifier,
-  resolver: Pick<IrFromAstResolver, "createsFunctionObjects" | "isPristineBuiltinGlobal"> | undefined,
+  resolver:
+    | Pick<IrFromAstResolver, "createsFunctionObjects" | "isPristineBuiltinGlobal" | "inheritedGlobalIntrinsic">
+    | undefined,
 ): string | undefined {
-  const id = realmConstructorId(expr.text)?.id;
-  return id !== undefined &&
-    resolver?.createsFunctionObjects?.() === true &&
-    resolver.isPristineBuiltinGlobal?.(expr) === true
-    ? id
-    : undefined;
+  if (resolver?.createsFunctionObjects?.() !== true) return undefined;
+  const ctor = realmConstructorId(expr.text);
+  if (ctor) return resolver.isPristineBuiltinGlobal?.(expr) ? ctor.id : undefined;
+  return resolver.inheritedGlobalIntrinsic?.(expr);
 }
 
 /** The build-time `typeof` answer for an absent global, from the same classification the read uses. */

@@ -43,7 +43,13 @@ import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import { realmBuiltinOperand } from "./realm-static-call.js";
-import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
+import {
+  unchangedUndeclaredGlobal,
+  type GlobalBindingResolver,
+  inheritedMethodRead,
+  pristineBuiltinGlobal,
+  scriptVarOfRealmGlobal,
+} from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -56,7 +62,7 @@ import {
   type SourceDynamicProvenance,
 } from "./source-dynamic-provenance.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
-import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./program/builtin-prototype-keys.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
@@ -312,10 +318,9 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    * all refuse before a catch today; the slice that makes one reachable updates
    * tests/issue-7354-x-dynamic-throw.test.ts, which pins each.
    */
-  readonly resolver: {
+  readonly resolver: GlobalBindingResolver & {
     readonly resolveDynamic?: () => ValType;
     readonly dynamicCarrierIsExternref?: () => boolean;
-    readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
     /** (#7354 Fa) The all-dynamic signature of an unannotated function expression, if the lane admits one. */
     readonly dynamicClosureSignature?: (expression: ts.FunctionLikeDeclaration) => Signature | undefined;
     /** (#7354 Fa) {@link staticFunctionValue}. */
@@ -323,7 +328,6 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
     readonly createsFunctionObjects?: () => boolean;
     /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
-    readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
     /**
      * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
@@ -385,10 +389,13 @@ export function programDynamicContracts(
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
   const blockFunctions = functionObjects ? scriptBlockFunctions(sourceFiles) : [];
+  const inheritedGlobalIntrinsic = (node: ts.Identifier) =>
+    functionObjects ? inheritedMethodRead(node, checker, sourceFiles) : undefined;
   const objects = programObjects(
     sourceFiles,
     functionDeclarationValues.length > 0 || blockFunctions.length > 0,
     pristineBuiltinGlobal(checker, sourceFiles),
+    inheritedGlobalIntrinsic,
   );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
     const functionCodeStrict = input.codeStrictness?.(code);
@@ -421,7 +428,9 @@ export function programDynamicContracts(
       ? {
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
-          unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
+          unresolvedNameIsAbsent: (node) =>
+            !OBJECT_PROTOTYPE_KEYS.has(node.text) && unchangedUndeclaredGlobal(node, checker, sourceFiles),
+          inheritedGlobalIntrinsic,
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
             !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
@@ -461,20 +470,6 @@ export function programDynamicContracts(
         converts,
       ),
   };
-}
-
-/**
- * (#7354 Ty, T) `typeof X` answers "undefined" only for a name that nothing declares: the checker resolves it to no
- * symbol, neither the program's nor the loaded TypeScript lib's (`globalThis` resolves to a symbol without
- * declarations). The lib stands in for the list of standard globals; it is not exactly that list (see #7354 "Slice T
- * result", known limits: a later-edition global it does not declare, DOM names it does). A
- * standard global this path does not provide yet (`Math`, `parseInt`, `Object`, …) is not absent: its `typeof`, like
- * every other read of it, refuses by name (an abort body inside a function under the test262 entry), never
- * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the
- * checker as the lib declarations alone, hence the file check.
- */
-function absentGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
-  return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
 }
 
 /**
