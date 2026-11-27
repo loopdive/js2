@@ -45,7 +45,6 @@
     return {
       mode,
       edition: rawEdition || null,
-      irAvailable: true,
       ir: mode !== "host" && (!search.has(IR_PARAM) || search.get(IR_PARAM) === "1"),
     };
   };

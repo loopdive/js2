@@ -1,7 +1,8 @@
 ---
 id: 7537
 title: "test262 after #7551: legacy ES5 on every push with label-and-alarm attribution, compile timeouts gated only when repeated, daily full run, IR as the site's default view"
-status: in-progress
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-26
 updated: 2026-11-27
@@ -468,6 +469,40 @@ reason text says:
   - the push lane reuses `test262-shard` and `merge-report` instead of
     parallel jobs;
   - no new inline program in YAML.
+
+## Implementation notes (2026-11-27)
+
+Where the code differs from the plan text above, and why:
+
+- **One verdict script instead of a separate re-check step.**
+  `scripts/test262-edition-verdict.sh` runs report → re-check → report, and
+  both the IR queue gate and the legacy push lane call it. Without it, each
+  job would have repeated the three steps.
+- **The ratchet consumes the edition report's classification.** It does not
+  re-classify rows: `--listed-timeouts <edition-report.json>` excuses exactly
+  the report's `diff.timeouts`, and only while those rows are still
+  `compile_timeout`. The rule is applied once, in
+  `scripts/lib/test262-timeout-watch.mjs` (`classifyRow`, `nextWatch`), and
+  `compareEditionRuns` uses it.
+- **The re-check env sits on the re-check step, not on the job.**
+  `merge-report` and `merge-ir-measurement` each carry their shard's
+  verdict-affecting env on the one step that runs the re-check.
+- **`meta` command.** `test262-edition-scope.ts meta` writes `scope.json` for
+  both lanes and replaces the IR job's inline node program.
+- **Website.** On an IR page, an `unavailable` IR status reloads the page as
+  the legacy view (`ir=0`). On a legacy page, it shows the reason above the
+  numbers (`t262ViewState.applyIrStatus`). The constant `irAvailable` field
+  is gone.
+- **Validation.**
+  - `actionlint` 1.7.7 reports no findings on `test262-sharded.yml` beyond
+    the 4 it reports on main.
+  - The verdict script was smoke-run locally on the IR lane: a fake
+    regression was re-checked, its row was replaced and marked, and the final
+    report used the overridden row.
+  - No `workflow_dispatch` dry run was made (that needs the lead's approval).
+- **Pre-existing failures, untouched:** `tests/issue-1778`, `tests/issue-3344`,
+  `tests/issue-3426` (2 tests) and `tests/issue-3451-linked-harness-lane`
+  (2 tests) fail on main `4caef358` too.
 
 ## False-positive record (phase 1, kept by the lead)
 

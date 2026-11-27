@@ -717,10 +717,8 @@
       const irProvenance = document.getElementById("conformance-ir-provenance");
       const irStatusNode = document.getElementById("conformance-ir-status");
       const overviewLink = document.getElementById("conformance-overview-link");
-      if (initialViewState.irAvailable) {
-        overviewLink.hidden = false;
-        overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, initialViewState);
-      }
+      overviewLink.hidden = false;
+      overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, initialViewState);
       if (IR_SELECTED) {
         irProvenance.hidden = false;
         irProvenance.textContent = "IR conformance is unmeasured until a completed IR measurement is available.";
