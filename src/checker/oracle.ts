@@ -75,6 +75,13 @@ export type TypeFact =
  */
 export type OracleTypeKey = symbol & { readonly __brand: "OracleTypeKey" };
 
+/**
+ * (#7439) What a read of the identifier `undefined` reads: the global value, a program binding of that name, or
+ * cannot be told. A consumer acts only on the answer that is safe for it: the IR claims a global read only on
+ * `ambient`, legacy reads the binding only on `shadowed`.
+ */
+export type UndefinedRead = "ambient" | "shadowed" | "unknown";
+
 export interface TypeOracle {
   /** The workhorse: the registry-free fact for a node's type. */
   typeFactOf(node: ts.Node): TypeFact;
@@ -127,6 +134,8 @@ export interface TypeOracle {
   declaredNameOf(node: ts.Node): string | undefined;
   /** Whether an identifier has no value binding in the checker environment. */
   isUnresolvableIdentifier(id: ts.Identifier): boolean;
+  /** (#7439) What `id`, spelled `undefined`, reads. */
+  undefinedReadOf(id: ts.Identifier): UndefinedRead;
   /**
    * (#869) Immutable-`const` binding resolution for compile-time default-param
    * folding. If `id` is an identifier that references a `const` variable
@@ -229,6 +238,18 @@ export const BUILTIN_NAMES = new Set([
  * #1029) implements the same interface over
  * `src/checker/language-service.ts` without `createProgram`.
  */
+const checkerOracles = new WeakMap<ts.TypeChecker, TsCheckerOracle>();
+
+/** The one checker-backed oracle per checker, for a caller that holds a checker and no compile oracle. */
+export function checkerOracleOf(checker: ts.TypeChecker): TsCheckerOracle {
+  let oracle = checkerOracles.get(checker);
+  if (!oracle) {
+    oracle = new TsCheckerOracle(checker);
+    checkerOracles.set(checker, oracle);
+  }
+  return oracle;
+}
+
 export class TsCheckerOracle implements TypeOracle {
   private readonly factCache = new WeakMap<ts.Node, TypeFact>();
   private readonly keyCache = new WeakMap<object, OracleTypeKey>();
@@ -392,6 +413,23 @@ export class TsCheckerOracle implements TypeOracle {
       return this.checker.getSymbolAtLocation(id) === undefined;
     } catch {
       return true;
+    }
+  }
+
+  undefinedReadOf(id: ts.Identifier): UndefinedRead {
+    try {
+      // No symbol inside a `with` body or on a synthesized node.
+      const symbol = this.checker.getSymbolAtLocation(id);
+      if (!symbol) return "unknown";
+      if (symbol === this.checker.resolveName("undefined", undefined, ts.SymbolFlags.Value, false)) {
+        // A `declare global { var undefined: T }` or a script `var undefined` merges into the ambient symbol.
+        return symbol.declarations?.length ? "unknown" : "ambient";
+      }
+      return symbol.declarations?.some((declaration) => !declaration.getSourceFile().isDeclarationFile)
+        ? "shadowed"
+        : "unknown";
+    } catch {
+      return "unknown";
     }
   }
 

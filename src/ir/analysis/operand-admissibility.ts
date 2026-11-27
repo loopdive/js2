@@ -13,6 +13,7 @@
 // prove before lowering (`plannedClosureOperandFamily`). A family the selector
 // cannot name is `unknown`, which every predicate refuses.
 
+import type { UndefinedRead } from "../../checker/oracle.js";
 import { skipOuterExpressions } from "../../shared/binding-writes.js";
 import { ts } from "../../ts-api.js";
 
@@ -91,15 +92,17 @@ export function isUndefinedCompareOperand(
 
 /**
  * The identifier `undefined` reads the global value: no local of that name
- * (`locals`) and no script binding (`isModuleBinding`). The selector and the
- * builder ask this one rule over their own scopes.
+ * (`locals`), and the compile's oracle proves the read `ambient` (#7439). "No
+ * binding found" is not a proof: inside `with`, without an oracle, or for a
+ * binding the resolver does not track, the answer is `unknown` and the read is
+ * refused. The selector and the builder ask this one rule over their own scopes.
  */
 export function isGlobalUndefinedIdentifier(
   id: ts.Identifier,
   locals: { has(name: string): boolean },
-  isModuleBinding: (id: ts.Identifier) => boolean,
+  undefinedReadOf: (id: ts.Identifier) => UndefinedRead,
 ): boolean {
-  return id.text === "undefined" && !locals.has("undefined") && !isModuleBinding(id);
+  return id.text === "undefined" && !locals.has("undefined") && undefinedReadOf(id) === "ambient";
 }
 
 /**

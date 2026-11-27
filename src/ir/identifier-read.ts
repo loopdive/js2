@@ -6,7 +6,10 @@
  * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. Pure: it emits nothing.
  */
 import ts from "typescript";
+import type { TypeOracle } from "../checker/oracle.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { isGlobalUndefinedIdentifier } from "./analysis/operand-admissibility.js";
+import { checkerOracleOf } from "./module-bindings.js";
 import { errorConstructorId } from "./program/builtin-prototype-keys.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
@@ -42,7 +45,21 @@ export type IdentifierRead<Binding> =
 interface IdentifierReadContext<Binding> extends FunctionValueLoweringPlans {
   readonly scope: ReadonlyMap<string, Binding>;
   readonly resolver?: IrFromAstResolver;
+  readonly oracle?: TypeOracle;
+  readonly checker?: ts.TypeChecker;
   readonly funcName: string;
+}
+
+/**
+ * (#7439) The builder's `isGlobalUndefinedIdentifier`: its own scope, and the compile's oracle, else the checker's
+ * (the Prepared path hands the builder a checker and no oracle). With neither, the answer is `unknown`.
+ */
+export function isGlobalUndefinedRead(
+  id: ts.Identifier,
+  cx: Pick<IdentifierReadContext<unknown>, "scope" | "oracle" | "checker">,
+): boolean {
+  const oracle = cx.oracle ?? (cx.checker ? checkerOracleOf(cx.checker) : undefined);
+  return isGlobalUndefinedIdentifier(id, cx.scope, (node) => oracle?.undefinedReadOf(node) ?? "unknown");
 }
 
 export function classifyIdentifierRead<Binding>(
@@ -60,7 +77,7 @@ export function classifyIdentifierRead<Binding>(
   const intrinsic = realmIntrinsicRead(expr, resolver);
   if (intrinsic !== undefined) return { kind: "realm-intrinsic", id: intrinsic };
   // Selector-admitted on the dynamic host-free lanes only.
-  if (expr.text === "undefined" && resolver?.stringIsExternref?.() !== true) return { kind: "global-undefined" };
+  if (isGlobalUndefinedRead(expr, cx) && resolver?.stringIsExternref?.() !== true) return { kind: "global-undefined" };
   if (expr.text === "NaN" || expr.text === "Infinity")
     return { kind: "global-number", value: expr.text === "NaN" ? NaN : Infinity };
   const dom = resolver?.standaloneDomOperation?.(expr);

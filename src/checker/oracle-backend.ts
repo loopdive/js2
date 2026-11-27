@@ -25,6 +25,7 @@ import {
   type SignatureFact,
   type TypeFact,
   type TypeOracle,
+  type UndefinedRead,
 } from "./oracle.js";
 import { InHouseOracle, factKey } from "./inhouse-oracle.js";
 import { classifyDivergence, type DivergenceVerdict } from "./divergence-classifier.js";
@@ -309,6 +310,10 @@ export class DifferentialOracle implements TypeOracle {
 
   isUnresolvableIdentifier(id: ts.Identifier): boolean {
     return this.compare("isUnresolvableIdentifier", id, (o) => o.isUnresolvableIdentifier(id), String);
+  }
+
+  undefinedReadOf(id: ts.Identifier): UndefinedRead {
+    return this.compare("undefinedReadOf", id, (o) => o.undefinedReadOf(id), String);
   }
 
   constInitializerOf(id: ts.Node): ts.Expression | undefined {

@@ -80,7 +80,6 @@ import {
   isToNumericOperator,
   wrapperComparisonIsIdentity,
   isUndefinedCompareOperand,
-  isGlobalUndefinedIdentifier,
   nullComparedOperand,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
@@ -448,7 +447,12 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
+import {
+  absentGlobalTypeof,
+  classifyIdentifierRead,
+  isGlobalUndefinedRead,
+  unboundIdentifierDetail,
+} from "./identifier-read.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -2712,17 +2716,9 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
       return;
     }
   }
-  // A checker-proven global undefined read has neither a value consumer nor
-  // effects here. Keep shadowed and unchecked identifiers on the normal path.
-  if (ts.isIdentifier(expr) && expr.text === "undefined" && !cx.scope.has(expr.text) && cx.checker) {
-    const ambient = cx.checker.resolveName("undefined", undefined, ts.SymbolFlags.Value, false);
-    if (
-      ambient &&
-      cx.checker.getSymbolAtLocation(expr) === ambient &&
-      (cx.checker.getTypeAtLocation(expr).flags & ts.TypeFlags.Undefined) !== 0
-    )
-      return;
-  }
+  // A proven global undefined read has neither a value consumer nor effects
+  // here. Keep shadowed and unproven identifiers on the normal path.
+  if (ts.isIdentifier(expr) && isGlobalUndefinedRead(expr, cx)) return;
   void lowerExpr(expr, cx, irVal({ kind: "externref" }));
 }
 
@@ -8176,12 +8172,9 @@ function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): t
 function isUnshadowedGlobalExpression(expr: ts.Expression, name: string, cx: LowerCtx): boolean {
   let candidate = expr;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
-  return (
-    ts.isIdentifier(candidate) &&
-    candidate.text === name &&
-    !cx.scope.has(name) &&
-    cx.resolver?.resolveModuleBinding?.(candidate) === undefined
-  );
+  if (!ts.isIdentifier(candidate) || candidate.text !== name) return false;
+  if (name === "undefined") return isGlobalUndefinedRead(candidate, cx);
+  return !cx.scope.has(name) && cx.resolver?.resolveModuleBinding?.(candidate) === undefined;
 }
 
 function lowerClosureCall(
@@ -10436,9 +10429,7 @@ function lowerStringMethodArgument(
   receiverExpr: ts.Expression,
   cx: LowerCtx,
 ): LoweredStringMethodArgument {
-  const literal = staticStringMethodArgument(arg, (identifier) =>
-    isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
-  );
+  const literal = staticStringMethodArgument(arg, (identifier) => isGlobalUndefinedRead(identifier, cx));
   const textual = parameter.role === "search" || parameter.role === "fill";
   if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
@@ -15945,7 +15936,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // Phase 1 has no first-class undefined value to materialize here, so record
   // the precise representation gap rather than recursing into the identifier
   // arm and surfacing an "identifier not in scope" invariant.
-  if (ts.isIdentifier(other) && other.text === "undefined" && !cx.scope.has("undefined")) {
+  if (ts.isIdentifier(other) && isGlobalUndefinedRead(other, cx)) {
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",

@@ -3538,7 +3538,7 @@ function dynamicUsesAreMoveOnly(
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
     // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
-    if (ts.isIdentifier(e) && e.text === "undefined" && !dynNames.has("undefined")) return true;
+    if (isUnshadowedUndefinedIdentifier(e, dynNames)) return true;
     if (ts.isIdentifier(e)) return dynNames.has(e.text) || isAmbientIntrinsicValue(e);
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
@@ -3694,7 +3694,7 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isIdentifier(e)) {
       // (#7106 item 1) `undefined` as a value is only ever the dynamic carrier.
-      if (e.text === "undefined" && !dynNames.has("undefined")) return expectDyn;
+      if (isUnshadowedUndefinedIdentifier(e, dynNames)) return expectDyn;
       // (#7118) An ambient intrinsic is read off the realm as a dynamic value
       // (`isDynShaped` already says so); it is never a moved binding.
       if (expectDyn && !dynNames.has(e.text) && isAmbientIntrinsicValue(e)) return true;
@@ -4216,7 +4216,7 @@ function dynamicUsesAreMoveOnly(
       const concrete = unwrap(s.expression);
       // (#7104 / #7106 item 1) `return undefined;` on a dynamic result is the
       // carrier's undefined (from-ast's `dyn.undefined` arm, no box needed).
-      if (ts.isIdentifier(concrete) && concrete.text === "undefined" && !dynNames.has("undefined")) return true;
+      if (isUnshadowedUndefinedIdentifier(concrete, dynNames)) return true;
       // `coerceReturnValue` boxes only after the expression has lowered.
       // A mixed concrete ternary cannot form its join before that boundary;
       // keep it on direct codegen until branch-local boxing is represented.
@@ -8102,7 +8102,7 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
     isGlobalUndefinedIdentifier(
       candidate,
       scope,
-      (id) => currentModuleBindingResolver?.isDirectModuleBinding(id) === true,
+      (id) => currentModuleBindingResolver?.undefinedReadOf(id) ?? "unknown",
     )
   );
 }
@@ -11977,7 +11977,7 @@ function dynamicLogicalValueOperands(expr: ts.BinaryExpression): boolean {
 function dynamicLogicalValueCarrier(operand: ts.Expression): boolean {
   const e = unwrapPhase1Parens(operand);
   // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
-  if (ts.isIdentifier(e) && e.text === "undefined" && !currentDynamicParamNames.has("undefined")) return true;
+  if (isUnshadowedUndefinedIdentifier(e, currentDynamicParamNames)) return true;
   if (ts.isIdentifier(e)) return currentDynamicParamNames.has(e.text) || mixedConditionalCarrierLocal(e);
   if (
     ts.isBinaryExpression(e) &&
@@ -12810,10 +12810,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // (or refuses the bare `null`) and withdraws after the claim.
     if (dynamicConditionalValueArm(expr.whenTrue) !== dynamicConditionalValueArm(expr.whenFalse)) {
       const other = unwrapPhase1Parens(dynamicConditionalValueArm(expr.whenTrue) ? expr.whenFalse : expr.whenTrue);
-      if (
-        other.kind === ts.SyntaxKind.NullKeyword ||
-        (ts.isIdentifier(other) && other.text === "undefined" && !scope.has("undefined"))
-      ) {
+      if (other.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefinedIdentifier(other, scope)) {
         return shapeNo("expr-conditional-dynamic-nullish-join", expr);
       }
     }
