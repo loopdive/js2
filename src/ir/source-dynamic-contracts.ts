@@ -42,8 +42,8 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
-import { realmBuiltinOperand } from "./realm-static-call.js";
-import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
+import { realmBuiltinOperand, type RealmGlobals } from "./realm-static-call.js";
+import { builtinMembersFold, pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -324,6 +324,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly createsFunctionObjects?: () => boolean;
     /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
     readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
+    /** (#7350) `builtinMembersFold`: the escape rule, a fold of the identifier's writable members reads the built-in. */
+    readonly foldsBuiltinMembers?: (identifier: ts.Identifier) => boolean;
     /**
      * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
@@ -427,6 +429,7 @@ export function programDynamicContracts(
           dynamicCompoundMemberWrites: () => true,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
+          foldsBuiltinMembers: builtinMembersFold(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
           dynamicForInPlan: () => FOR_IN_PLAN,
         }
@@ -495,7 +498,7 @@ function refuseImplicitDynamicFlows(
   roots: readonly ts.Node[],
   carries: Carries,
   aborted: RefusalOwners["aborted"],
-  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+  globals: RealmGlobals,
   converts: (call: ts.CallExpression) => boolean,
 ): void {
   const any = checker.getAnyType();
@@ -503,7 +506,7 @@ function refuseImplicitDynamicFlows(
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
     const exempt = (e: ts.Expression) =>
-      passedOn(e) || converted || (ts.isCallExpression(e) && converts(e)) || realmBuiltinOperand(e, isPristineGlobal);
+      passedOn(e) || converted || (ts.isCallExpression(e) && converts(e)) || realmBuiltinOperand(e, globals);
     if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
@@ -635,7 +638,10 @@ function legalizeSourceDynamicValues(
       roots,
       carries,
       owners.aborted,
-      pristineBuiltinGlobal(checker, sourceFiles),
+      {
+        isPristineGlobal: pristineBuiltinGlobal(checker, sourceFiles),
+        foldsMembers: builtinMembersFold(checker, sourceFiles),
+      },
       converts,
     );
   legalizeDynamicAllocations(legalized, allocations);

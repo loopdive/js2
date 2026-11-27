@@ -1034,6 +1034,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
   isPristineBuiltinGlobal?(identifier: ts.Identifier): boolean; // (#7354 O1) `builtin-global-binding.ts`
+  foldsBuiltinMembers?(identifier: ts.Identifier): boolean; // (#7350) the escape rule, `builtinMembersFold`
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
@@ -7755,6 +7756,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
     createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
     isPristineGlobal: (identifier) => cx.resolver?.isPristineBuiltinGlobal?.(identifier) === true,
+    foldsMembers: (identifier) => cx.resolver?.foldsBuiltinMembers?.(identifier) === true,
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -9437,17 +9439,15 @@ function lowerArrayPrototypeBorrowCall(borrow: PrototypeBorrowCall, cx: LowerCtx
 }
 
 /**
- * Is `receiver` the unshadowed ambient global of its name — no scope, module or
- * source binding of it? The self-host stdlib builder has no checker-backed
- * ambient callback; user-source builds do, and an explicit `false` preserves
- * shadow safety; (#7354 O1) Prepared also asks `builtin-global-binding.ts`.
+ * Is `receiver` the unshadowed ambient global of its name, whose members fold? The self-host stdlib builder has no
+ * checker-backed callback; an explicit `false` preserves shadow safety; (#7354 O1, #7350) Prepared asks the escape rule.
  */
 function isAmbientReceiver(receiver: ts.Identifier, isDirectModuleBinding: boolean, cx: LowerCtx): boolean {
   return (
     !isDirectModuleBinding &&
     cx.scope.get(receiver.text) === undefined &&
     cx.resolver?.isAmbientBinding?.(receiver) !== false &&
-    cx.resolver?.isPristineBuiltinGlobal?.(receiver) !== false
+    cx.resolver?.foldsBuiltinMembers?.(receiver) !== false
   );
 }
 

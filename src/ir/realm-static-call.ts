@@ -35,16 +35,16 @@ import {
 
 /**
  * The catalog's native `Object` static `call` names, with its `length`, when the receiver is the unchanged global
- * `Object` (`isPristineGlobal`, `builtin-global-binding.ts`).
+ * `Object` whose writable members fold (`foldsMembers`, the escape rule of `builtin-global-binding.ts`).
  */
 export function nativeObjectStaticCall(
   call: ts.CallExpression,
-  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+  foldsMembers: (identifier: ts.Identifier) => boolean,
 ): ReturnType<typeof nativeObjectStatic> {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
   if (callee.expression.text !== "Object" || callee.questionDotToken || call.questionDotToken) return undefined;
-  return isPristineGlobal(callee.expression) ? nativeObjectStatic(callee.name.text) : undefined;
+  return foldsMembers(callee.expression) ? nativeObjectStatic(callee.name.text) : undefined;
 }
 
 /**
@@ -123,6 +123,9 @@ export function realmToNumber(value: IrValueId, operand: ts.Expression, host: Fu
   return b.emitDynToNumber(dynamicStoreOperand(value, operand, host, "conversion operand"));
 }
 
+/** The two answers of `builtin-global-binding.ts` a realm call asks: the name is pristine; its members fold. */
+export type RealmGlobals = Pick<FunctionObjectLoweringHost, "isPristineGlobal" | "foldsMembers">;
+
 /**
  * How deep an argument's object literals hold descriptor fields: a descriptor (`defineProperty`'s third argument) one
  * level, a map of descriptors (`defineProperties`' and `create`'s second) two; any other argument none.
@@ -134,14 +137,17 @@ const DESCRIPTOR_DEPTH: Readonly<Record<NativeObjectStatic, readonly number[]>> 
   getOwnPropertyDescriptor: [0, 0],
 };
 
-/** (#7564) `Math.<method>(…)` off the unchanged global `Math`, whose intrinsic converts each argument (ToNumber). */
-function pristineMathCall(call: ts.CallExpression, isPristineGlobal: (identifier: ts.Identifier) => boolean) {
+/**
+ * (#7564) `Math.<method>(…)` off the unchanged global `Math` whose members fold (#7350), whose intrinsic converts each
+ * argument (ToNumber).
+ */
+function pristineMathCall(call: ts.CallExpression, foldsMembers: (identifier: ts.Identifier) => boolean) {
   const callee = call.expression;
   return (
     ts.isPropertyAccessExpression(callee) &&
     ts.isIdentifier(callee.expression) &&
     callee.expression.text === "Math" &&
-    isPristineGlobal(callee.expression) &&
+    foldsMembers(callee.expression) &&
     Object.hasOwn(IR_MATH_METHOD_TABLE, callee.name.text)
   );
 }
@@ -154,10 +160,7 @@ function pristineMathCall(call: ts.CallExpression, isPristineGlobal: (identifier
  * `message?: string` does not bind a message object, which ToString reads through the program); (#7564) so is an
  * argument of a pristine `Math` method call, which converts it.
  */
-export function realmBuiltinOperand(
-  node: ts.Expression,
-  isPristineGlobal: (identifier: ts.Identifier) => boolean,
-): boolean {
+export function realmBuiltinOperand(node: ts.Expression, globals: RealmGlobals): boolean {
   let operand: ts.Expression = node;
   let depth = 0;
   for (; ts.isPropertyAssignment(operand.parent); depth++) operand = operand.parent.parent;
@@ -167,13 +170,13 @@ export function realmBuiltinOperand(
     call.arguments?.includes(operand) === true &&
     ts.isIdentifier(call.expression) &&
     realmConstructorId(call.expression.text)?.family === "error" &&
-    isPristineGlobal(call.expression)
+    globals.isPristineGlobal(call.expression)
   )
     return true;
   if (!ts.isCallExpression(call)) return false;
-  const name = nativeObjectStaticCall(call, isPristineGlobal)?.name;
+  const name = nativeObjectStaticCall(call, globals.foldsMembers)?.name;
   const index = call.arguments.indexOf(operand);
-  if (index >= 0 && pristineMathCall(call, isPristineGlobal)) return true;
+  if (index >= 0 && pristineMathCall(call, globals.foldsMembers)) return true;
   return name !== undefined && index >= 0 && depth <= (DESCRIPTOR_DEPTH[name][index] ?? 0);
 }
 
@@ -220,7 +223,7 @@ function identityOnlyTargetRefusal(
 /** The lowered call, or `null` when `call` is not such a static here. */
 export function tryLowerRealmStaticCall(call: ts.CallExpression, host: FunctionObjectLoweringHost): IrValueId | null {
   if (!createsFunctionObjects(host)) return null;
-  const native = nativeObjectStaticCall(call, host.isPristineGlobal);
+  const native = nativeObjectStaticCall(call, host.foldsMembers);
   if (!native) return null;
   const { name, length } = native;
   const refused = call.arguments.some(ts.isSpreadElement)

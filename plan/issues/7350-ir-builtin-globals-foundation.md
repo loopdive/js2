@@ -1476,3 +1476,80 @@ All three are measured on the branch.
   (`--base HEAD^1` and `--base origin/main`).
 - With `LOC_GATE_BASE=origin/main`, the loc and func gates fail, but only on files this branch does not touch:
   `src/codegen/*` and `src/ir/from-ast.ts` (+2). Main has moved past the base.
+
+### Slice 1 result (2026-11-27, branch `claude/7350-expando-escape` on main `2af9fc6e7c`)
+
+**Built** (one code commit):
+
+- *Expando fix.* `makeIrAmbientBindingPredicate` gains the quantifier `"every-but-expando"`: `"every"`, except that a
+  JS property declaration on the name (`X.k = v;`, `X["k"] = v;`, `Object.defineProperty(X, "k", d);`) does not count
+  against "lib only". It reuses `isJsPropertyDeclarationTarget` (`shared/binding-writes.ts`, already imported). Only
+  `pristineBuiltinGlobal` asks it.
+- *Escape rule.* `builtin-global-binding.ts` walks the sources once (`bindingFacts`, which replaces
+  `boundOrWrittenNames`) for two facts: the names declared or assigned (as before), and the names some reference of
+  which escapes (`keepsValue`). A reference keeps the value when it is a callee, the object of a member read that is no
+  store target (`occurrenceIsWriteTarget`: assignment, compound, `++` / `--`, `delete`, destructuring, for-in / for-of)
+  and is not `__defineGetter__` / `__defineSetter__`, a `typeof` operand, or the right side of `instanceof`. Type
+  positions are skipped; `extends X` counts. The new export `builtinMembersFold(checker, sourceFiles)` answers
+  "pristine and never escapes", from the same cached facts as `pristineBuiltinGlobal`.
+- *The folds that ask it:* the resolver's `foldsBuiltinMembers` (`source-dynamic-contracts.ts`), read by from-ast's
+  `isAmbientReceiver` (Math methods, the static predicates `Number.isNaN` / `isFinite` / `Object.is`,
+  `JSON.stringify`, the unadmitted-`defineProperty` check), and the host's `foldsMembers`
+  (`FunctionObjectLoweringHost`), read by `realm-static-call.ts` for the `Object` statics' call form and the pristine
+  `Math` call; `realmBuiltinOperand` takes both answers (`RealmGlobals`). Number's constants (`realmConstantRead`),
+  the realm read of a name and the Error constructor's argument exemption keep the pristine answer.
+- `realm-static-call.ts` gets the fact through its host interface; no new import edge, no new `src/` file.
+- `tests/issue-7350-slice1-expando-escape.test.ts` (65 tests): the two facts per spelling; the expando statement forms
+  for `eval`, `Object`, `Error`, `String`, `Number`, `Boolean`; S8.5_A9's shape, constants beside writes, Error's
+  expandos and alias write against node with a wrong twin; every escape spelling of `Number.isNaN` refusing by name; the
+  non-escaping folds still answering node's value. Mutation check: with `foldsBuiltinMembers` wired to the pristine
+  answer, 3 of the rows fail (alias write, write through a parameter, a write in an uncalled function).
+
+**Deviations from the plan:**
+
+- *The expando acceptance is a fourth quantifier, not a change of `"every"`.* `"every"` serves about twenty
+  lib-only consumers in both pipelines (`select-object-statics`, `object-create-call`, `ambient-intrinsics`' Math and
+  static values, RegExp statics, `builtin-proto-member`, …) that fold writable members without the escape fact. Changing
+  `"every"` would admit, for example, `Object.create = f; Object.create(null)` to the native fold there, and would change
+  ordinary-pipeline bytes. On the Prepared path the realm names are read through `pristineBuiltinGlobal`
+  (`realmIntrinsicRead`, `realm-static-call.ts`), so that one predicate is where the fix is needed.
+- *B3a's pin of `Boolean.prototype = 1;`* changes from `identifier "Boolean" is not in scope` to
+  `Boolean.prototype is not reachable on this path yet (#7350 B3bc)`: the statement is an expando.
+- *What an escaping member does today:* every wrapper row and `Number.isNaN` refuse by name at the identity row
+  (`X.k is not reachable on this path yet`); `Object`, `eval` and `Math` are no values on this path, so their member
+  writes refuse as `identifier "X" is not in scope`; an alias write of `String` / `Boolean` keeps B3a's run-time abort.
+  No row folds. B3b-1 turns the identity refusals into reads through the realm.
+- `prepare-number-conversion.ts`'s own `canonical()` lib-file test is not relaxed, so a program with an expando on
+  `String` / `Number` / `Boolean` loses the source-bound conversion plan for `X(v)` (the call reaches the realm's
+  value). No census row is affected; relax it with B3b-1 if a row needs it.
+
+**Holes for #7503** (its issue file is on `origin/claude/prepared-eval-a7`; S2 adds these rows there):
+
+- A reference through the global object (`globalThis.Number`, `this.Number`, a global-object alias) is not seen by
+  the escape walk.
+- Code run by eval or the `Function` constructor is not walked. **Once S2's A4 lands (pristine `eval`), the escape walk
+  must cover eval sources**, as `bindingFacts` covers the program's files; A4's planned `DeleteExpression` edit to
+  `boundOrWrittenNames` now goes into `bindingFacts`' visit (the expando fix also widens A4's pristine `eval`: an
+  expando on `eval` no longer disqualifies it).
+- A route that names no `X`: `X.prototype.constructor`, `(1).constructor`, `"".constructor`, `({}).constructor`. All
+  refuse or abort today (no wrapper prototype is reachable; `.constructor` on a string refuses); B3b-1 makes them
+  reachable and must treat a `constructor` read off a held prototype as an escape of its constructor.
+
+**Measured** (base `2af9fc6e7c`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804 identical (744 bytes, 59 refused, 1 threw on both); the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline: 110 test262 files (30 whose source has an expando statement on a realm name or `Math`, plus 80
+  carriers), each compiled with `assert.js` + `sta.js` at the default and the standalone target: 220 / 220 identical.
+- Census (`prepared-census.mts --harness real`):
+
+  | list | base pass | head pass | gained | lost | new crashes |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | carriers (1,977) | 228 | 229 | 1 (`S8.5_A9.js`) | 0 | 0 |
+  | o411 (411) | 83 | 83 | 0 | 0 | 0 |
+
+  On carriers the only changed row is `S8.5_A9.js`; on o411 no row changes.
+- Tests: the new test, B3a's test, B3b-0's test and the 7 B3a pin files pass. `tests/issue-2856-module-bindings.test.ts`
+  fails 14 rows on base and head alike (ordinary pipeline, unrelated).
+- Gates exit 0: loc, func (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet, dead exports,
+  typecheck, import cycles, compiler boundaries (`--base HEAD^1` and `--base origin/main`).

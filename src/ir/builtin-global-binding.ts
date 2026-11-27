@@ -1,16 +1,19 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 O1) Whether an identifier reads the global built-in its name names, unchanged: the checker's symbol is
- * declared in lib files only, no source declares a binding of that name at any level (a `var`, `let`, `const`,
- * `function`, `class`, parameter or pattern element: the checker resolves a script's top-level `function Object(){}`
- * reference to the lib's symbol, so the declaration is looked for by name), and no source assigns the name:
+ * declared in lib files only (#7350: or by an expando statement on it), no source declares a binding of that name at
+ * any level (a `var`, `let`, `const`, `function`, `class`, parameter or pattern element: the checker resolves a
+ * script's top-level `function Object(){}` reference to the lib's symbol, so the declaration is looked for by name),
+ * and no source assigns the name:
  * `Object = …`, a compound assignment, `++` / `--`, a destructuring target, or a write through a global-object alias
  * (`globalThis.Object = …`).
  * The one answer for "this is the global `Object`" of the native statics' call form and of the flow rule beside it.
+ * (#7350) Its second answer is the escape rule ({@link builtinMembersFold}): whether a fold of a writable member of
+ * the name still reads the built-in's.
  */
 import { ts } from "../ts-api.js";
 import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
-import { skipOuterExpressions } from "../shared/binding-writes.js";
+import { occurrenceIsWriteTarget, outermostParenthesized, skipOuterExpressions } from "../shared/binding-writes.js";
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
@@ -46,10 +49,52 @@ function boundNames(name: ts.BindingName, into: Set<string>): void {
   else for (const element of name.elements) if (!ts.isOmittedExpression(element)) boundNames(element.name, into);
 }
 
-/** Every name any of `sourceFiles` declares (at any level) or assigns. */
-function boundOrWrittenNames(sourceFiles: readonly ts.SourceFile[]): ReadonlySet<string> {
+/**
+ * `node` names a member, a declaration or a label (`o.X`, `{ X: 1 }`, `var { X: y } = o`, `X:`), not a value: every
+ * `name` but a shorthand property's (`{ X }` reads `X`).
+ */
+function isNonReferenceName(node: ts.Identifier): boolean {
+  if (ts.isShorthandPropertyAssignment(node.parent)) return false;
+  const parent = node.parent as { readonly name?: ts.Node; readonly propertyName?: ts.Node; readonly label?: ts.Node };
+  return parent.name === node || parent.propertyName === node || parent.label === node;
+}
+
+/** Members whose call defines a property on its receiver (Annex B.2.2.2-3). */
+const DEFINING_MEMBERS = new Set(["__defineGetter__", "__defineSetter__"]);
+
+/**
+ * (#7350) `reference`, a reference to a name, keeps the value inside the name: it is a callee (`X(v)`, `new X(v)`), the
+ * object of a member read that is no store target and defines nothing (`X.k`, `X.k(…)`; not `X.k = …`, `X.k++`,
+ * `delete X.k`, `[X.k] = …`, `for (X.k in o)`, `X.__defineGetter__(…)`), a `typeof` operand or the right side of
+ * `instanceof`. Anything else (an argument, an initializer, an element access, a property value) lets the value
+ * escape, and code holding it can change the name's members unseen.
+ */
+function keepsValue(reference: ts.Identifier): boolean {
+  const use = outermostParenthesized(reference);
+  const parent = use.parent;
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent) || ts.isTypeOfExpression(parent))
+    return parent.expression === use;
+  if (ts.isBinaryExpression(parent))
+    return parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword && parent.right === use;
+  return (
+    ts.isPropertyAccessExpression(parent) && !DEFINING_MEMBERS.has(parent.name.text) && !occurrenceIsWriteTarget(parent)
+  );
+}
+
+/**
+ * One walk over `sourceFiles`: `taken`, every name they declare (at any level) or assign; (#7350) `escaped`, every
+ * name some reference of which lets its value escape ({@link keepsValue}).
+ */
+function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
+  readonly taken: ReadonlySet<string>;
+  readonly escaped: ReadonlySet<string>;
+} {
   const names = new Set<string>();
+  const escaped = new Set<string>();
   const visit = (node: ts.Node): void => {
+    // A type names no value; `extends X` is an expression and is visited.
+    if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
+    if (ts.isIdentifier(node) && !isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
     if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isFunctionExpression(node)) && node.name)
       names.add(node.name.text);
     else if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
@@ -68,30 +113,63 @@ function boundOrWrittenNames(sourceFiles: readonly ts.SourceFile[]): ReadonlySet
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return names;
+  return { taken: names, escaped };
 }
 
-const predicates = new WeakMap<readonly ts.SourceFile[], (identifier: ts.Identifier) => boolean>();
+interface BuiltinGlobalFacts {
+  readonly pristine: (identifier: ts.Identifier) => boolean;
+  readonly foldsWritableMembers: (identifier: ts.Identifier) => boolean;
+}
 
-/** The predicate for the program of `sourceFiles`, built once per source list. */
+const programFacts = new WeakMap<readonly ts.SourceFile[], BuiltinGlobalFacts>();
+
+/**
+ * The facts for the program of `sourceFiles`, built once per source list. An expando statement on the name
+ * (`X.k = v;`, `Object.defineProperty(X, "k", d);`) binds nothing, so the name stays pristine
+ * (`makeIrAmbientBindingPredicate`'s `"every-but-expando"`); it lets `X` escape, so `X`'s writable members do not fold.
+ */
+function builtinGlobalFacts(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFile[]): BuiltinGlobalFacts {
+  const known = programFacts.get(sourceFiles);
+  if (known) return known;
+  const libOnly = makeIrAmbientBindingPredicate(checker, "every-but-expando");
+  const { taken, escaped } = bindingFacts(sourceFiles);
+  const pristine = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
+  const facts: BuiltinGlobalFacts = {
+    pristine,
+    foldsWritableMembers: (identifier) => !escaped.has(identifier.text) && pristine(identifier),
+  };
+  programFacts.set(sourceFiles, facts);
+  return facts;
+}
+
+/** The predicate for the program of `sourceFiles`: the identifier reads the unchanged built-in of its name. */
 export function pristineBuiltinGlobal(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
 ): (identifier: ts.Identifier) => boolean {
-  const known = predicates.get(sourceFiles);
-  if (known) return known;
-  const libOnly = makeIrAmbientBindingPredicate(checker, "every");
-  const taken = boundOrWrittenNames(sourceFiles);
-  const predicate = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
-  predicates.set(sourceFiles, predicate);
-  return predicate;
+  return builtinGlobalFacts(checker, sourceFiles).pristine;
+}
+
+/**
+ * (#7350) The escape rule, for the program of `sourceFiles`: the identifier is pristine and no reference of its name
+ * lets the value escape ({@link keepsValue}), so no code can have changed its members and a fold of a writable member
+ * (an `Object` static's call form, `Number.isNaN`, a `Math` method, …) reads the built-in. A non-writable,
+ * non-configurable constant (`Number.MAX_VALUE`) folds wherever the name is pristine: a write of it fails.
+ * Not yet seen: a reference through the global object (`globalThis.Number`) or in code eval or `Function` runs (#7503;
+ * both refuse on the Prepared path today).
+ */
+export function builtinMembersFold(
+  checker: ts.TypeChecker,
+  sourceFiles: readonly ts.SourceFile[],
+): (identifier: ts.Identifier) => boolean {
+  return builtinGlobalFacts(checker, sourceFiles).foldsWritableMembers;
 }
 
 /**
  * (#7354 G1) The first script-level `var` without an initializer declaring a global the realm serves a built-in for
  * (`REALM_GLOBAL_NAMES`): such a `var` binds the global object's existing property (§16.1.7
  * GlobalDeclarationInstantiation), so the name keeps reading the built-in, while this path gives a script `var` its
- * own home starting at `undefined`. The name is no pristine global either (`boundOrWrittenNames`); the Prepared path
+ * own home starting at `undefined`. The name is no pristine global either (`bindingFacts`); the Prepared path
  * refuses the program by this declaration rather than read either value. A `var` with an initializer replaces the
  * built-in where it runs (a read before it still sees the home's `undefined`: not handled here, as before G1); a `var`
  * inside a function binds a local.

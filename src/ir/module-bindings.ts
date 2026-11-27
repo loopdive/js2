@@ -479,21 +479,19 @@ export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr:
 }
 
 /**
- * Build a checker-only ambient-binding predicate. Unlike the full module
- * binding resolver, this exposes no source storage capability, so backends
- * without module-global lowering can still distinguish the real lib `Math`
- * object from a source declaration or parameter with the same name.
+ * Build a checker-only ambient-binding predicate. Unlike the full module binding resolver, this exposes no source
+ * storage capability, so backends without module-global lowering can still distinguish the real lib `Math` object
+ * from a source declaration or parameter with the same name.
  *
- * `quantifier` picks how many of the symbol's declarations must be
- * declaration-file ones: `"some"` (the default) is the ambient test;
- * `"every"` (#7118) is the stricter lib-only test — a script's
- * `function Number() {}` merges with the lib's `declare var Number`, so
- * "some" calls it ambient and "every" does not. `"no-user"` (#7106) also
- * accepts a symbol with no declaration at all, the intrinsic `undefined`.
+ * `quantifier` picks how many of the symbol's declarations must be declaration-file ones: `"some"` (the default) is
+ * the ambient test; `"every"` (#7118) is the stricter lib-only test — a script's `function Number() {}` merges with
+ * the lib's `declare var Number`, so "some" calls it ambient and "every" does not. `"no-user"` (#7106) also accepts a
+ * symbol with no declaration at all, the intrinsic `undefined`. `"every-but-expando"` (#7350, `pristineBuiltinGlobal`
+ * only, whose escape rule guards the folds) also accepts a JS expando, `X.k = v;`, which binds nothing.
  */
 export function makeIrAmbientBindingPredicate(
   checker: ts.TypeChecker,
-  quantifier: "some" | "every" | "no-user" = "some",
+  quantifier: "some" | "every" | "every-but-expando" | "no-user" = "some",
 ): (node: ts.Identifier) => boolean {
   return (node) => {
     try {
@@ -504,7 +502,9 @@ export function makeIrAmbientBindingPredicate(
       );
       const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
       if (quantifier === "some") return declarations.some(isLib);
-      return (quantifier === "no-user" || declarations.length > 0) && declarations.every(isLib);
+      const binds = (d: ts.Declaration) =>
+        !isLib(d) && !(quantifier === "every-but-expando" && isJsPropertyDeclarationTarget(d));
+      return (quantifier === "no-user" || declarations.some(isLib)) && !declarations.some(binds);
     } catch {
       return false;
     }
