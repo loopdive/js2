@@ -1,7 +1,8 @@
 ---
 id: 7564
 title: "Prepared IR path: Math.* calls (inline ops, ToNumber of arguments); self-hosted transcendentals stay refused"
-status: in-progress
+status: done
+completed: 2026-11-27
 created: 2026-11-27
 updated: 2026-11-27
 priority: high
@@ -103,3 +104,31 @@ Acceptance:
   only that op; ordinary pipeline byte-identical on ~30 programs.
 - Code quality: no new table, no new IR→codegen/runtime edge, `src/ir/from-ast.ts` does not grow, one ToNumber body
   shared by `Number(v)` and the Math arm.
+
+## Result
+
+Admitted on the Prepared path (wasmgc standalone), each agreeing with node in `tests/issue-7564-prepared-math.test.ts`
+(every program with a wrong twin that throws):
+- `Math.abs`, `floor`, `ceil`, `sqrt`, `trunc`, `fround`, `clz32` on 19 edge inputs each (±0, ±0.5, -2.5,
+  0.49999999999999994, 2^52-0.5, ±Infinity, NaN, 2^31, -(2^32-1), …); `Math.max`, `min`, `imul` on 11 pairs (±0
+  ordering, NaN either side, ±Infinity, 2^32-1).
+- Non-number arguments convert as node does: `null`, `undefined`, strings (`""`, `" 7 "`, `"x"`, `"-0"`), Booleans,
+  objects with `valueOf` / `toString`; all arguments are evaluated before the first conversion; a throwing `valueOf`
+  stops the call and is catchable; untyped function parameters convert.
+
+Still refused (by name, never a wrong value): `Math.pow` and `**` and every other self-hosted member (precision table
+above; `round` and `sign` agree but need the support-batch mechanism), `Math.random`, any arity but the table's
+(`Math.max()`, `Math.max(a, b, c)`), the constants (`Math.PI`, …: `identifier "Math" is not in scope`), `Math` as a
+value (`var m = Math`, `typeof Math`, `Math.pow.length`), spread arguments, `Math.abs?.()`, writes through `Math`.
+
+Byte identity: 30 ordinary-pipeline programs (Math-heavy, both the default and the standalone target) and 10 Prepared
+programs without Math compile byte-identical before and after (`.tmp/bytes.mts`, file-copy A/B on 9bee2d81a2).
+Cost: an inline member adds its op (`f64.abs`); a function whose untyped result is a call result
+(`return Math.abs(x)`, as `return Number(x)`) gets a dynamic result contract and pays the lane's boxing runtime
+(~5.6 KB), which is the lane's existing rule for call results, not this slice's.
+
+test262: not run in this session (machine load stayed above the lane's limit of 3).
+
+Follow-ups (not filed here): the self-hosted Math library's precision against node (it is what the ordinary pipeline
+ships today; `pow(2, -1074)` returns 0); a generalised runtime-support batch so `round`/`sign` (and correct
+transcendentals) can reach the Prepared path; variadic `max`/`min`; `Math` constants on this lane.
