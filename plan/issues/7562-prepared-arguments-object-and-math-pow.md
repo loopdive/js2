@@ -1,7 +1,8 @@
 ---
 id: 7562
-title: "Prepared IR path: the `arguments` object (length, indexed reads) and Math.pow"
-status: in-progress
+title: "Prepared IR path: `arguments.length`"
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-27
 updated: 2026-11-27
@@ -16,7 +17,7 @@ depends_on: []
 related: [7354, 7350]
 ---
 
-# #7562 — Prepared IR path: the `arguments` object and Math.pow
+# #7562 — Prepared IR path: `arguments.length`
 
 ## Problem
 
@@ -24,17 +25,14 @@ Measured on main (merge-queue ES5 IR run, `781ef2e4ee`): 1979 pass / 762 fail /
 6276 compile error / 12 other of 9029 ES5 tests on the Prepared path. About 900
 ES5 tests include `harness/propertyHelper.js`. Of the 43 such rows in the
 411-row sample, 26 stop at compile time at `arguments.length`
-(`verifyProperty` asserts `arguments.length > 2`) and 8 at `Math.pow`.
+(`verifyProperty` asserts `arguments.length > 2`). Math.pow: Out of scope → #7564.
 
 On main, the Prepared path:
 
 - lowers `arguments.length` in a function declaration to `dyn.arguments_length`
   (from-ast, #7106 S1e) and a caller's under-arity count to `dyn.publish_argc`,
   but its dynamic-value legalization has no arm for either, so the function
-  becomes a run-time abort body;
-- refuses `Math.pow(x, y)` and `x ** y`: the `math.pow` intrinsic's provider is
-  self-hosted (`selfhost.math.pow`, `Math_pow` in `src/stdlib/math.ts`) and the
-  Prepared physical plan has no materialization for self-hosted providers.
+  becomes a run-time abort body.
 
 ## Implementation Plan
 
@@ -65,7 +63,7 @@ no extra parameter.
   dispatcher's count and extras still installed, so a direct call from it to a
   reader must replace both.
 - **Every direct call to a reader publishes on the Prepared path** (from-ast's
-  `planUnderArityDirectCall`, extended to exact arity when the unit is
+  `planDirectCallArgumentCount`, extended to exact arity when the unit is
   `unselected`). The ordinary pipeline keeps publishing only under-arity calls
   (byte identity). Over-arity direct calls stay refused, as on main.
 - Requirements and reservations: `NativeInvocationRequirements` gains the two
@@ -77,14 +75,6 @@ no extra parameter.
 
 Legalization arms sit in `src/ir/program/dynamic-function-operations.ts`, beside
 `dynamicCurrentThis` (the other read of the dispatcher's invocation state).
-
-### Math.pow
-
-Reuse the self-hosted `Math_pow` body (and its callees `Math_exp`, `Math_log`)
-— no second pow. Where and how the Prepared plan materializes self-hosted
-providers is decided after step 1 is in, from what the ordinary pipeline's
-`stdlib-selfhost.ts` driver can share without an IR→codegen edge; the result
-section records it and which other `Math.*` functions the same mechanism frees.
 
 ### Out of scope / refused
 
@@ -104,18 +94,17 @@ Correctness:
 2. Shadowed `arguments` (parameter, `var`), nested functions, top-level script
    and dead code naming `arguments` refuse, abort or agree — never a wrong
    value, trap where JS throws, invalid Wasm or a `compile()` exception.
-3. `Math.pow` / `**` exact per ES5 §15.8.2.13 on the listed special cases.
-4. Ordinary pipeline output byte-identical on ~30 programs.
+3. Ordinary pipeline output byte-identical on ~30 programs.
 
 Code quality:
 
-5. One count protocol (the dispatcher's), one count body shared with legacy,
+4. One count protocol (the dispatcher's), one count body shared with legacy,
    the new arms beside their siblings in the same shape; `src/ir/from-ast.ts`
    does not grow; no new IR→runtime or IR→codegen import edges.
 
-## Progress (2026-11-27, step 1 done; steps 2–4 open)
+## Result (2026-11-27)
 
-### Built (step 1, `arguments.length`)
+### Built
 
 As planned: `js.closure.arguments-length` / `js.closure.publish-argc` in the
 invocation pack (`native-invocation.ts`), declared in
@@ -125,7 +114,7 @@ program validation enforces it), required in
 `dynamic-function-operations.ts` (`argumentsCount`). The count body is
 `buildArgumentsCountBody` (`closure-invocation-bodies.ts`), now also legacy's
 `__ir_arguments_length` body. from-ast: one condition in
-`planUnderArityDirectCall` (line count unchanged).
+`planDirectCallArgumentCount` (line count unchanged).
 
 Example: `function f(a, b) { return arguments.length; } var g = f;
 g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
@@ -156,21 +145,32 @@ g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
   the lane's built-in branches land.
 - 411-row sample: not run (1-min load 7–13 during the session, rule is < 3).
 
-### Next session
+### Review r1 (2026-11-27)
 
-1. Step 4, Math.pow: provide self-hosted providers (`Math_pow`, `Math_exp`,
-   `Math_log`, from `src/stdlib/math.ts`) on the Prepared plan. The precedent
-   is the number-formatter support batch
-   (`src/frontend/builtins/prepare-number-format.ts` →
-   `IrRuntimeSupport` → `program-physical-plan.ts` formatter arm): build each
-   body with `buildSelfHostedIrBody` and add a runtime-support batch kind
-   rather than a second pow. `missingIntrinsicMaterialization` is where
-   `math.pow` is refused today. The same batch frees every `self-hosted`
-   provider in `src/ir/runtime/manifest.ts` (exp, log, log2, log10, sin, cos,
-   tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh, cbrt,
-   expm1, log1p, round, sign) and `x ** y`.
-2. Step 2, `arguments[i]` and `typeof arguments`: needs the entry read to keep
+- Blocking, fixed: `var arguments;` lowered as a block-local `undefined`
+  (`k(1,2,3)` threw where node gives 3; `typeof` wrong), and an initialized
+  `var arguments` in a block read after it gave the count where node gives
+  `undefined`. Rule: a non-arrow function's implicit `arguments` is one of its
+  bindings (§10.2.11 step 27 starts a `var arguments` as the arguments object),
+  so `isRepeatedVarBinding` (`function-local-var.ts`) counts it and every
+  `var arguments` there is a repeated var: the body aborts. Covers
+  no-initializer, initializer, nested block, for-head, read-before (hoisting),
+  function expressions. Arrows, `let`, `catch (arguments)` and a parameter keep
+  their own binding.
+- One predicate, `readsOwnArgumentsObject` (`select.ts`), for the entry read
+  and a direct call's publication; `function p(arguments) { return arguments }`
+  called directly now returns its argument (was the count read's `unreachable`).
+- `planUnderArityDirectCall` → `planDirectCallArgumentCount`.
+- Ordinary pipeline: 12 compiles (6 programs × gc/standalone) identical except
+  `function p(arguments)` on standalone, which loses its dead `__argc` entry
+  read (legacy's `needsImplicitArgumentsObject` reads nothing there either).
+  Prepared output identical on 3 programs without `arguments`.
+
+### Next (follow-up issues)
+
+1. `arguments[i]` and `typeof arguments`: needs the entry read to keep
    the extras vector (a second result of the count call or a sibling
    callable), formals all dynamic, and a refusal when a parameter is assigned.
-3. Over-arity direct calls to readers: publish the extras (a vector operand to
+2. Over-arity direct calls to readers: publish the extras (a vector operand to
    `js.closure.publish-argc`).
+3. A `var arguments` that keeps the arguments object (today: abort).
