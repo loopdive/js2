@@ -26,7 +26,7 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { nextModuleGlobalIdx } from "./registry/imports.js";
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { isStrictFunction } from "../shared/is-strict-function.js";
 import { ts } from "../ts-api.js";
 import { walkChildren } from "./walk-instructions.js";
 import { definedFuncHandleOf } from "./func-space.js";

@@ -23,6 +23,7 @@
 // alone) and which never started (queue them again).
 
 import { appendFileSync } from "node:fs";
+import { relative } from "node:path";
 
 const STATUS = {
   fail: "failed",
@@ -73,6 +74,19 @@ function toEntry(file) {
   };
 }
 
+/**
+ * (#7501) An unhandled error stays unattributed, and the gate still refuses it. When a worker's own
+ * uncaughtException / unhandledRejection handler catches it, vitest tags it with the file that worker was running
+ * (with forks and isolation, one worker per file). The record keeps that file, repo-relative. vitest's test name is
+ * dropped: it names whichever test was running when the error fired, not the test that caused it. A worker RPC timeout
+ * is not caught there: it reaches the main process with no file and stays unnamed.
+ */
+function describeUnhandledError(error) {
+  const text = error?.stack || error?.message || String(error);
+  if (!error?.VITEST_TEST_PATH) return text;
+  return `[raised while running ${relative(process.cwd(), error.VITEST_TEST_PATH)}] ${text}`;
+}
+
 export default class KnownFailuresReporter {
   constructor() {
     this.out = process.env.KNOWN_FAILURES_PROGRESS || "";
@@ -105,7 +119,7 @@ export default class KnownFailuresReporter {
     this.write({
       event: "run-end",
       reason,
-      errors: unhandledErrors.map((error) => error.stack || error.message || String(error)),
+      errors: unhandledErrors.map(describeUnhandledError),
     });
   }
 

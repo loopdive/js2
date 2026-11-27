@@ -6,12 +6,13 @@
  * and whether a use reads a slot that has been written.
  *
  * (#7354 H2) On the Prepared path a script binding (a top-level `var` or function declaration) is written only by
- * the identifier writes {@link preparedBindingRewritten} sees. The binding is a property of the global object
- * (§9.1.1.4, §16.1.7), so other routes reach it too, and on this path each refuses or aborts at its own site:
+ * the identifier writes and (#7372 2a-3) the Annex B block-function evaluations of its name (§B.3.2.2,
+ * `annexBWritesScriptBinding`) that {@link preparedBindingRewritten} sees. The binding is a property of the global
+ * object (§9.1.1.4, §16.1.7), so other routes reach it too, and on this path each refuses or aborts at its own site:
  *   - the global object as a value: script or sloppy-function `this`, `globalThis`, `Object.defineProperty(this, …)`;
  *   - dynamic code: `eval`, `Function`, `x.constructor(…)`;
  *   - `with`: the checker resolves no symbol for a name in its body, so a write there is invisible to the query;
- *   - an Annex B block function (§B.3.3.2) and `delete`;
+ *   - `delete`;
  *   - a parameter initializer (`function w(a = (f = v)) { var f; }`): the checker resolves `f` to the body's `var`,
  *     but the write hits the outer binding (§10.2.11).
  * A slice that admits one of these routes writes the binding's home or refuses;
@@ -31,6 +32,7 @@ import {
   sourceMayWriteGlobalObject,
   sourceRunsDynamicCode,
 } from "../shared/intrinsic-prototype-writes.js";
+import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var-declaration-lists.js";
 
 const identifierWritesCache = new WeakMap<ts.Identifier, readonly IdentifierWrite[]>();
@@ -50,10 +52,21 @@ export function scriptVarWrites(
 
 /**
  * (#7354 H2) Whether anything but its own declaration stores into the binding `name` declares (a `var`'s or a
- * function declaration's name), on the Prepared path (module doc).
+ * function declaration's name), on the Prepared path (module doc). (#7372 2a-3) An Annex B block function of the
+ * script writes a script binding of its name when it is evaluated.
  */
 export function preparedBindingRewritten(checker: ts.TypeChecker, name: ts.Identifier): boolean {
-  return identifierWrites(checker, name).some((write) => write.target !== name);
+  return (
+    identifierWrites(checker, name).some((write) => write.target !== name) ||
+    (isScriptBindingName(name) && annexBWritesScriptBinding(name.getSourceFile(), name.text))
+  );
+}
+
+/** A script-level binding's name: a `var`'s (at any depth outside functions) or a top-level function's. */
+function isScriptBindingName(name: ts.Identifier): boolean {
+  const { parent } = name;
+  if (ts.isFunctionDeclaration(parent)) return ts.isSourceFile(parent.parent);
+  return ts.isVariableDeclaration(parent) && ts.findAncestor(parent, ts.isFunctionLike) === undefined;
 }
 
 /**

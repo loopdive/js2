@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * #2502 — `Array.prototype.sort()` on an externref-element array emitted invalid
@@ -29,8 +29,7 @@ async function compileAndRun(source: string): Promise<Record<string, Function>> 
   if (!WebAssembly.validate(result.binary)) {
     throw new Error(`Invalid Wasm binary (WebAssembly.validate failed)\nWAT:\n${result.wat}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, Function>;
 }
 

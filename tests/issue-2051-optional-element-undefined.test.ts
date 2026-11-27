@@ -23,11 +23,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(src: string): Promise<number | string> {
   const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
-  const { instance } = await WebAssembly.instantiate(r.binary, r.importObject ?? {});
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { test(): number | string }).test();
 }
 

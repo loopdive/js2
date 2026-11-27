@@ -20,13 +20,16 @@
 //       float compare it had);
 //   (b) results stay byte-faithful, including the receivers where the compare
 //       boundary matters (empty string, single char, long string);
-//   (c) the narrowing holds — host-string mode, whose `.length` is an engine
-//       call rather than a struct field, keeps the generic condition.
+//   (c) the default lane (no options) gets the same shape. It used to assert
+//       that host-string mode kept the generic condition; since #6708 S6
+//       (612cea9864) the default JS environment runs on native strings, so
+//       the default lane takes the native fix and is one of the shape lanes.
 
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -72,6 +75,7 @@ async function watOf(source: string, fnName: string, opts: Record<string, unknow
 }
 
 const NATIVE_CONFIGURATIONS: Array<{ tag: string; opts: Record<string, unknown> }> = [
+  { tag: "default (no options; native since #6708 S6)", opts: {} },
   { tag: "fast+nativeStrings", opts: { fast: true, nativeStrings: true } },
   { tag: "nativeStrings", opts: { nativeStrings: true } },
   { tag: "standalone", opts: { target: "standalone" } },
@@ -96,11 +100,6 @@ describe("#4517 the recognised char-read loop tests its bound in i32", () => {
     });
   }
 
-  it("host mode keeps the generic condition (the fix is deliberately native-only)", async () => {
-    const wat = await watOf(HASH_SRC, "hashStr", {});
-    expect(wat).not.toContain("$$slot___cca_len");
-  });
-
   it("hash results stay byte-faithful across the compare boundary", async () => {
     const subjects = [
       "", // len 0 — the loop must not execute once
@@ -124,11 +123,12 @@ describe("#4517 the recognised char-read loop tests its bound in i32", () => {
       }
       const built = buildImports(r.imports, ENV_STUB, r.stringPool);
       const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-      const exports = instance.exports as Record<string, unknown>;
-      built.setExports?.(exports as Record<string, Function>);
-      const toNative = exports.__test_str_from_externref as (s: string) => unknown;
-      const hashStr = exports.hashStr as (s: unknown) => number;
-      for (const s of subjects) expect(hashStr(toNative(s))).toBe(refHash(s));
+      built.setExports?.(instance.exports as Record<string, Function>);
+      // Strings cross through the JS value adapter (#6708); the test-only
+      // `__test_str_from_externref` export needs `wasm:js-string` imports,
+      // which the native JS environment no longer requests (#6979).
+      const hashStr = jsFacingExports(r, instance).hashStr as (s: string) => number;
+      for (const s of subjects) expect(hashStr(s)).toBe(refHash(s));
     }
   });
 
@@ -146,13 +146,11 @@ describe("#4517 the recognised char-read loop tests its bound in i32", () => {
     expect(r.success).toBe(true);
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);
     const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-    const exports = instance.exports as Record<string, unknown>;
-    built.setExports?.(exports as Record<string, Function>);
-    const toNative = exports.__test_str_from_externref as (s: string) => unknown;
-    const hashTail = exports.hashTail as (s: unknown, from: number) => number;
+    built.setExports?.(instance.exports as Record<string, Function>);
+    const hashTail = jsFacingExports(r, instance).hashTail as (s: string, from: number) => number;
     const subject = "The quick brown fox 0123456789!";
     for (const from of [0, 1, 7, subject.length - 1, subject.length]) {
-      expect(hashTail(toNative(subject), from)).toBe(refHash(subject.substring(from)));
+      expect(hashTail(subject, from)).toBe(refHash(subject.substring(from)));
     }
   });
 });

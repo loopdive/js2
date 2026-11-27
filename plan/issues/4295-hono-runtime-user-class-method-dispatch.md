@@ -4,7 +4,7 @@ title: "codegen: dispatch untyped user-class methods by runtime identity"
 status: in-progress
 sprint: current
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-11-26
 priority: high
 horizon: s
 feasibility: medium
@@ -65,3 +65,9 @@ values, and Hono advances from mis-dispatch to its next nested route-tuple
 carrier defect. Different-arity overrides and class rest methods deliberately
 remain outside that fast path until their dispatchers can apply full JS arity
 semantics rather than silently selecting a matching base method.
+
+## Root-test status (2026-11-26, lane S24)
+
+Measured on main 1a726b3e. With the raw harness the test fails earlier, on an opaque native ref (`expected {} …`); routed through the shared `instantiateWithRuntime` harness (branch `s24-classb-parked`) it reaches the failure below. The shared harness unmasks this failure but does not fix it, so it is not a stale-harness (class B) issue.
+
+`tests/issue-4295-runtime-user-class-method-dispatch.test.ts` fails the case the ticked acceptance box claims ("dynamic spread vector reaches the method"): it returns `'02'`, not `322`. The box is ticked but the behaviour has regressed.

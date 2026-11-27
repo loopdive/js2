@@ -18,9 +18,7 @@ import type { IntrinsicSourceLocation } from "../core/intrinsic-contracts.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "../runtime/contracts/prepared.js";
 import { classifyIrFailure, IrInvariantError } from "../../shared/contracts/ir-preparation-errors.js";
-import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
-import { PreparedIrProgramInvariantError } from "./errors.js";
-import { preparedIrProgramOwner } from "./owner.js";
+import { locatedFailure, preparedIrProgramOwner } from "./owner.js";
 import { preparedIrReadonlyMap } from "./data.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
@@ -51,23 +49,6 @@ import {
 import type { RuntimeFeature } from "../runtime/contracts/manifest.js";
 
 type ProducerInput = PreparedIrProgramProducerInput;
-
-export function locatedFailure(
-  input: ProducerInput,
-  unitId: IrUnitId,
-  failure: IrPreparationFailure,
-): PreparedIrProgramFailure {
-  const owner = preparedIrProgramOwner(input, unitId);
-  if (!owner) {
-    throw new PreparedIrProgramInvariantError(
-      "invalid-prepared-data",
-      `runtime producer cannot locate ${unitId}: ${failure.detail}`,
-    );
-  }
-  // Error instances/callbacks must not escape into the serializable diagnostic contract.
-  const { cause: _cause, ...diagnostic } = failure;
-  return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
-}
 
 export function invariant(input: ProducerInput, unitId: IrUnitId, detail: string): PreparedIrProgramFailure {
   return locatedFailure(input, unitId, { kind: "invariant", code: "verifier-failure", stage: "verify", detail });

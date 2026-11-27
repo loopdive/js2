@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // #3557 — the logical-NOT (`!` / `!!`) result is ALWAYS a JS boolean, so its
 // i32 result must carry the boolean brand (`{kind:"i32", boolean:true}`). Before
@@ -19,7 +19,7 @@ import { compileAndInstantiate } from "../src/runtime.js";
 // in both gc/host and standalone).
 
 async function run<T>(src: string): Promise<T> {
-  const exports = await compileAndInstantiate(src);
+  const exports = await compileToWasm(src);
   return (exports as { f: () => T }).f();
 }
 

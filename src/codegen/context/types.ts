@@ -266,6 +266,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    *  `CompileOptions.deferTopLevelInit`. WASI is unaffected (it already exports
    *  `_start`). */
   deferTopLevelInit?: boolean;
+  /** (#7453) See `CompileOptions.exceptionKindExport`. */
+  exceptionKindExport?: boolean;
   /**
    * Experimental: route a narrow set of functions through the middle-end IR
    * (see `src/ir/`). Defaults to **on** since #1131 (the front-end driver
@@ -4301,6 +4303,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  runs it after `setExports` (symmetric with the standalone `_start` model).
    *  Default false. WASI is unaffected. */
   deferTopLevelInit: boolean;
+  /** (#7453) Publish `__exn_render_kind` (exn-render-kind.ts). Default false. */
+  exceptionKindExport: boolean;
   /** (#5193) A host-lane call site needs compiled→host MARSHALLING to work while
    *  the wasm `start` section runs — where `instance.exports` does not exist yet.
    *  Set by `emitHostTaBufferConstruct`; consumed by

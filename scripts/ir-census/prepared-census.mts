@@ -27,6 +27,7 @@ import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { isWasmTrap, wasmErrorSite } from "../lib/wasm-exn-render.mjs";
 import { childLoop, errorText, runPool } from "./pool.mts";
 import { assembleStandIn } from "./stand-in-harness.mjs";
 
@@ -83,12 +84,21 @@ interface Assembly {
   readonly unmodelled?: boolean;
 }
 
+/**
+ * The harness parts in assembly order. The body is passed because the harness
+ * may elide parts the body does not use (#7376's runtime shim on demand); an
+ * older harness ignores the third argument.
+ */
+function harnessParts(harness: Harness, meta: ReturnType<Runner["parseMeta"]>, body: string) {
+  return harness.harnessSourceParts(meta, meta.flags?.includes("async") === true, body);
+}
+
 function realAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner["parseMeta"]>): Assembly {
   const variant = tools.harness.assembleOriginalHarness(source, meta).primary;
   const starts: [number, string][] = [];
   let line = variant.strict ? 2 : 1;
   if (variant.bodyLineOffset > 0) {
-    for (const part of tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true)) {
+    for (const part of harnessParts(tools.harness, meta, source)) {
       starts.push([line, part.name]);
       line += part.source.split("\n").length - 1;
     }
@@ -99,7 +109,7 @@ function realAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner[
 function standInAssembly(tools: Toolchain, source: string, meta: ReturnType<Runner["parseMeta"]>): Assembly {
   const strict = meta.flags?.includes("onlyStrict") === true;
   if (meta.flags?.includes("raw")) return { source, starts: [], bodyLine: 1 };
-  const parts = tools.harness.harnessSourceParts(meta, meta.flags?.includes("async") === true);
+  const parts = harnessParts(tools.harness, meta, source);
   return assembleStandIn(source, parts, strict);
 }
 
@@ -165,8 +175,23 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
     (instance.exports.__module_init as (() => void) | undefined)?.();
     return { file, status: "pass", ...flags };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error) };
+    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, error) };
   }
+}
+
+/**
+ * Where a run-time trap fired: the innermost Wasm frame's function name and, when that function got an abort
+ * body (#7354 U), the refusal the abort stands for. Only a Wasm trap counts; a host error (a stack-overflow
+ * `RangeError`) is not attributed to the frame it happened in.
+ */
+function trapOf(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>, error: unknown) {
+  if (!isWasmTrap(error)) return {};
+  const { frames, aborted } = wasmErrorSite(error, tools.entry.requiredPreparedAbortBodies?.(result) ?? []);
+  if (frames.length === 0) return {};
+  return {
+    trapFrame: frames[0],
+    ...(aborted ? { abort: { code: aborted.code, detail: aborted.detail.slice(0, DETAIL_CAP) } } : {}),
+  };
 }
 
 const argv = process.argv.slice(2);

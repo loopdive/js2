@@ -1006,6 +1006,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // execute at instantiation, and the test records fail
                   // (import-attribute-key-string-* flipped pass→fail this way).
                   allowJs: !isNegative,
+                  // (#7453) The runtime-negative verdict reads a thrown payload's kind through `__exn_render_kind`.
+                  exceptionKindExport: true,
                 });
                 const compileRecordMetadata = metadataFromImports(result.imports, false);
                 const reachedRecordMetadata = metadataFromImports(result.imports, true);
@@ -1218,7 +1220,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     isRuntimeNegative &&
                     runtimeNegativeThrowAccepted(execErr, readThrownValue(execErr, { instance: fixtureInstance }), {
                       expectedErrorType: meta.negative!.type,
-                      originalHarness: true,
                       prepared: REQUIRED_PREPARED,
                     })
                   ) {
