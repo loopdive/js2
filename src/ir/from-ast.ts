@@ -16446,7 +16446,7 @@ function lowerHostVoidCallbackExpression(
  * (#7354 Fa) A function value with the Prepared lane's all-dynamic contract (`dynamicClosureSignature`), or `null`
  * when the lane gives it none. (L0c) A function declaration inside a function is one too.
  */
-function lowerDynamicClosure(expr: IrClosureLiteral | ts.FunctionDeclaration, cx: LowerCtx): IrValueId | null {
+function lowerDynamicClosure(expr: IrClosureLiteral, cx: LowerCtx): IrValueId | null {
   const signature = cx.resolver?.dynamicClosureSignature?.(expr);
   return signature
     ? lowerClosureExpressionWithSignature(expr, signature, undefined, cx, {
@@ -16457,7 +16457,7 @@ function lowerDynamicClosure(expr: IrClosureLiteral | ts.FunctionDeclaration, cx
 }
 
 function lowerClosureExpressionWithSignature(
-  expr: IrClosureLiteral | ts.FunctionDeclaration,
+  expr: IrClosureLiteral,
   signature: IrClosureSignature,
   expectedReadonlyCaptures: ReadonlySet<string> | undefined,
   cx: LowerCtx,
@@ -16753,7 +16753,7 @@ function innerName(fn: ts.FunctionDeclaration): string {
  */
 function liftClosureBody(
   liftedIdentity: IrFunctionIdentity,
-  expr: IrClosureLiteral | ts.FunctionDeclaration,
+  expr: IrClosureLiteral,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
