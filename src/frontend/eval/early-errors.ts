@@ -6,7 +6,7 @@
  * the responsibility of eval-inline's conservative dynamic-eval fallback.
  */
 import { ts } from "../typescript.js";
-import { isUseStrictDirectiveExpression } from "../use-strict-directive.js";
+import { isUseStrictDirectiveExpression } from "../../shared/use-strict-directive.js";
 
 const STRICT_RESERVED_WORDS = new Set([
   "implements",
@@ -53,15 +53,6 @@ export interface StaticEarlyErrorGoal {
 
 /** The goal of sloppy global Script code. */
 export const SLOPPY_SCRIPT_GOAL: StaticEarlyErrorGoal = { strict: false, caller: NO_CAPABILITIES };
-
-/** The eval-site form of `staticEarlyError`: an eval Script's strictness and its call site's capabilities. */
-export function foldedEvalEarlyError(
-  sourceFile: ts.SourceFile,
-  scriptIsStrict: boolean,
-  caller: EvalCallerCapabilities = NO_CAPABILITIES,
-): string | undefined {
-  return staticEarlyError(sourceFile, { strict: scriptIsStrict, caller });
-}
 
 /** Return the first early-error message of a Script text under `goal`, or undefined when it is valid. */
 export function staticEarlyError(sourceFile: ts.SourceFile, goal: StaticEarlyErrorGoal): string | undefined {
@@ -250,7 +241,7 @@ function evalNodeHasStrictScope(node: ts.Node): boolean {
 function hasUseStrictDirective(statements: readonly ts.Statement[]): boolean {
   for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false;
-    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    // §11.2.2 matches the RAW token — see src/shared/use-strict-directive.ts.
     if (isUseStrictDirectiveExpression(statement.expression)) return true;
   }
   return false;

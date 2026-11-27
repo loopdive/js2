@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("string support", () => {
   it("string parameter passes as externref", async () => {
@@ -18,7 +18,7 @@ describe("string support", () => {
     expect(result.wat).toContain("externref");
   });
 
-  it("string literal compiles to global import from string_constants", async () => {
+  it("string literal compiles and returns its value through the runtime", async () => {
     const result = await compile(`
       export function hello(): string {
         return "world";
@@ -29,18 +29,14 @@ describe("string support", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    // Should have a string_constants global import (externref global)
-    expect(result.wat).toContain("string_constants");
-    expect(result.wat).toContain('(import "string_constants"');
-    expect(result.wat).toContain("(global");
-    // Pure literals need only immutable globals; unused string callables are eliminated.
-    expect(result.wat).not.toContain("wasm:js-string");
-
-    // String pool should contain the value
-    expect(result.stringPool).toContain("world");
+    // Strings are native by default since #6708 S6 (612cea9864: semanticProviders
+    // defaults to native-first), so the host-only string_constants import and
+    // stringPool shape no longer exist; assert the observable string instead.
+    const exports = (await instantiateWithRuntime(result)).exports as any;
+    expect(exports.hello()).toBe("world");
   });
 
-  it("string concatenation uses wasm:js-string concat", async () => {
+  it("string concatenation compiles and concatenates through the runtime", async () => {
     const result = await compile(`
       export function greet(name: string): string {
         return "Hello, " + name;
@@ -51,8 +47,10 @@ describe("string support", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    expect(result.wat).toContain("concat");
-    expect(result.stringPool).toContain("Hello, ");
+    // Native strings by default since #6708 S6 (612cea9864); the literal no longer
+    // lands in the host stringPool, so assert the concatenated result instead.
+    const exports = (await instantiateWithRuntime(result)).exports as any;
+    expect(exports.greet("there")).toBe("Hello, there");
   });
 
   it("string equality uses wasm:js-string equals", async () => {
@@ -91,26 +89,7 @@ describe("string support", () => {
     `);
     expect(result.success).toBe(true);
 
-    const env: Record<string, Function> = {
-      console_log_number: () => {},
-      console_log_bool: () => {},
-      console_log_string: () => {},
-    };
-
-    const jsStringPolyfill = {
-      concat: (a: string, b: string) => a + b,
-      length: (s: string) => s.length,
-      equals: (a: string, b: string) => (a === b ? 1 : 0),
-      substring: (s: string, start: number, end: number) => s.substring(start, end),
-      charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-    };
-
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env,
-      "wasm:js-string": jsStringPolyfill,
-      string_constants: buildStringConstants(result.stringPool),
-    } as WebAssembly.Imports);
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.hello()).toBe("world");
   });
 
@@ -122,26 +101,7 @@ describe("string support", () => {
     `);
     expect(result.success).toBe(true);
 
-    const env: Record<string, Function> = {
-      console_log_number: () => {},
-      console_log_bool: () => {},
-      console_log_string: () => {},
-    };
-
-    const jsStringPolyfill = {
-      concat: (a: string, b: string) => a + b,
-      length: (s: string) => s.length,
-      equals: (a: string, b: string) => (a === b ? 1 : 0),
-      substring: (s: string, start: number, end: number) => s.substring(start, end),
-      charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-    };
-
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env,
-      "wasm:js-string": jsStringPolyfill,
-      string_constants: buildStringConstants(result.stringPool),
-    } as WebAssembly.Imports);
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.greet("World")).toBe("Hello, World");
   });
 });

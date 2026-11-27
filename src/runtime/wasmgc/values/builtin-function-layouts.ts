@@ -5,6 +5,12 @@ import { createBuiltinFunctionMetadataShape } from "./closure-layouts.js";
 export const BUILTIN_FUNCTION_PROTOTYPE_FIELD = 5;
 export const BUILTIN_FUNCTION_REALM_FIELD = 6;
 export const BUILTIN_FUNCTION_INITIAL_NAME_FIELD = 7;
+/**
+ * (#7350 B2b, B3a) The `$Object.flags` bit of a bag whose object the realm models only as an identity (a built-in the
+ * program names whose other own properties it lacks): a miss among its own properties is unknown, not absent. The bits
+ * below it are the object runtime's (`OBJ_FLAG_*`, codegen/object-runtime.ts).
+ */
+export const BUILTIN_IDENTITY_ONLY_FLAG = 0x100;
 
 /** Identity is the allocation, not an integer brand or a canonicalized type. */
 export function createBuiltinFunctionRealmType(name: string): StructTypeDef {

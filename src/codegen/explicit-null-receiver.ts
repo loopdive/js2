@@ -55,7 +55,7 @@ import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { ensureAnyValueType } from "./any-helpers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { emitExplicitNullThis } from "./helpers/sloppy-this-global.js";
 import { nextModuleGlobalIdx } from "./registry/imports.js";
 

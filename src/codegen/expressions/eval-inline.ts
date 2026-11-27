@@ -35,7 +35,7 @@ import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { compileAndEmitToString } from "../coercion-engine.js";
 import { emitThrowJsError } from "./helpers.js";
 import { reportError } from "../context/errors.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import { addFoldedEvalBindingNames, foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
@@ -1577,7 +1577,7 @@ function containsThisKeyword(root: ts.Node): boolean {
 /**
  * (#2924) Resolve whether an identifier named `Function` refers to the global
  * `Function` intrinsic (declared only in `.d.ts`) rather than a local shadow.
- * Mirrors `isGlobalEvalIdentifier` (eval-tiering.ts / calls.ts).
+ * Mirrors `isGlobalEvalIdentifier` (eval-tiering.ts / global-builtin-identifier.ts).
  */
 export function isGlobalFunctionIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): boolean {
   if (ident.text !== "Function") return false;

@@ -18,17 +18,22 @@
 import { ts } from "../ts-api.js";
 import { foldedEvalDeclarationNames } from "../frontend/eval/declaration-names.js";
 import {
+  bindsOrEvaluates,
   evalBodyHasUseStrictDirective,
   foldedEvalStaticSyntaxError,
+  hasHtmlLikeComment,
+  hasScriptOnlyEarlyError,
   parseEvalSource,
   sloppyScriptHasStaticSyntaxError,
-  superIsSupplied,
 } from "../frontend/eval/script.js";
 import { fitsFunctionSourceText, functionSourceText } from "../interp/function-source-text.js";
-import { identifierWritesOf } from "../shared/binding-writes.js";
+import { isCommaExpression } from "../shared/binding-writes.js";
 import { planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { resolvesToSourceBinding } from "./analysis/ast-scope.js";
+import { MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import { IrUnsupportedError } from "./outcomes.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import type { ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 
 export type LiteralDynamicCodeKind = "eval" | "function";
 
@@ -142,6 +147,87 @@ export function verifyLiteralDynamicCodeSources(
   };
 }
 
+/**
+ * (#7363 A4, A5; #7487) Admission of the related sites, before any unit lowers: the first site's select-time refusal
+ * of the program, or undefined when every site lowers as the call of its text or a fresh function object.
+ */
+export function literalDynamicCodeSiteRefusal(
+  code: Pick<LiteralDynamicCodeReceipt, "evalCalls" | "functionSites">,
+  contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
+): IrUnsupportedError | undefined {
+  for (const call of code.evalCalls.keys()) {
+    const refusal = literalEvalSiteRefusal(call, contracts);
+    if (refusal) return refusal;
+  }
+  for (const site of code.functionSites.keys())
+    if (!builtinIsPristine(site.expression as ts.Identifier, contracts))
+      return siteRefusal("Function literal: the global Function is not pristine (#7487)");
+  return undefined;
+}
+
+/**
+ * (#7363 A4, A5) The select-time refusal of the program when an eval site's value is used (A5), or else when the
+ * global `eval` may not be the realm's %eval% there (A4). Otherwise nothing, and lowering emits the site as the call
+ * of its text. The label keeps the text the lowering gave it, so census rows compare across the move.
+ */
+function literalEvalSiteRefusal(
+  call: ts.CallExpression,
+  contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
+): IrUnsupportedError | undefined {
+  const gap = !discardsValue(call)
+    ? "its completion value needs #7363 A5"
+    : !builtinIsPristine(call.expression as ts.Identifier, contracts)
+      ? "the global eval is not pristine (#7363 A4)"
+      : undefined;
+  return gap === undefined ? undefined : siteRefusal(`eval literal: ${gap}`);
+}
+
+/**
+ * The global the site names is the realm's built-in at every site: no source rebinds it (`isPristineBuiltinGlobal`,
+ * absent off the native lane), and no sloppy function lets its ambient `this`, the global object, escape and write it
+ * unseen.
+ */
+function builtinIsPristine(
+  name: ts.Identifier,
+  contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
+): boolean {
+  return contracts.resolver.isPristineBuiltinGlobal?.(name) === true && !contracts.ambientThisMayBeGlobal;
+}
+
+function siteRefusal(gap: string): IrUnsupportedError {
+  return new IrUnsupportedError(
+    "literal-eval-site-unsupported",
+    "select",
+    `ir/from-ast: ${gap} in ${MODULE_INIT_UNIT_NAME}`,
+  );
+}
+
+/**
+ * The call's value is discarded: through parentheses, it is the expression of an expression statement, the operand
+ * of `void`, or the left operand of a comma. from-ast lowers each of these in statement position
+ * (`lowerDiscardedExpression`), which a site needs: its call returns nothing. from-ast's other statement positions
+ * are left out because their value goes on: a comma's right operand and a conditional's arm are the value of the
+ * enclosing expression. A for head's expressions are values there, and so is each clause of an incrementor's comma
+ * list (`lowerForUpdateExpr` splits it before `lowerDiscardedExpression` could see the comma), so a left operand there
+ * is not discarded either.
+ */
+export function discardsValue(call: ts.CallExpression): boolean {
+  let node: ts.Expression = call;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const parent = node.parent;
+  if (ts.isExpressionStatement(parent) || ts.isVoidExpression(parent)) return true;
+  return (
+    ts.isBinaryExpression(parent) && isCommaExpression(parent) && parent.left === node && !incrementorClause(parent)
+  );
+}
+
+/** The comma is the for incrementor or, through unparenthesized commas, one of its clauses. */
+function incrementorClause(comma: ts.BinaryExpression): boolean {
+  let node: ts.Expression = comma;
+  while (ts.isBinaryExpression(node.parent) && isCommaExpression(node.parent)) node = node.parent;
+  return ts.isForStatement(node.parent) && node.parent.incrementor === node;
+}
+
 /** The one declaration a `function` source holds: the receipt matched its text with a qualifying site's. */
 export function literalFunctionDeclaration(source: ts.SourceFile): ts.FunctionDeclaration {
   return source.statements[0] as ts.FunctionDeclaration;
@@ -203,75 +289,35 @@ function literalFunctionText(site: ts.CallExpression | ts.NewExpression, name: s
     return undefined;
   const parameters = texts.slice(0, -1).join(",");
   const text = functionSourceText(name, parameters, texts.at(-1) ?? "");
-  return !texts.some(usesHtmlLikeComment) && functionTextIsValid(text, name, parameters) ? text : undefined;
+  return !texts.some(hasHtmlLikeComment) && functionTextIsValid(text, name, parameters) ? text : undefined;
 }
 
 /**
  * The assembled text is what CreateDynamicFunction's separate parses accept (`fitsFunctionSourceText`), has no early
- * error, and keeps every rule the eval texts keep: it stores into no identifier and names neither `eval` nor the
- * reserved prefix. Only the assembled declaration is checked for early errors, never a wrapper of the parameters
- * alone: an arrow wrapper would reject sloppy duplicate parameters (`Function("a,a", "return a")` is valid).
+ * error the shared checks report, and keeps every rule the eval texts keep: it stores into no identifier and names
+ * neither `eval` nor the reserved prefix. Only the assembled declaration is checked for early errors, never a wrapper
+ * of the parameters alone: an arrow wrapper would reject sloppy duplicate parameters (`Function("a,a", "return a")` is
+ * valid). An early error those checks miss fails the compile's own gates on the joined source, as an eval text's does.
  */
 function functionTextIsValid(text: string, name: string, parameters: string): boolean {
   const { sourceFile } = parseEvalSource(text, false, false);
-  const declaration = sourceFile.statements[0];
+  if (sloppyScriptHasStaticSyntaxError(sourceFile)) return false;
+  // A parse without errors of a text that starts `function <name>(` holds that declaration first; only one with
+  // more statements than it, which the span check refuses, may hold it without a body.
+  const declaration = literalFunctionDeclaration(sourceFile);
   return (
-    !sloppyScriptHasStaticSyntaxError(sourceFile) &&
-    declaration !== undefined &&
-    ts.isFunctionDeclaration(declaration) &&
-    declaration.body !== undefined &&
     fitsFunctionSourceText(
       text,
       name,
       parameters,
       sourceFile.statements.length,
-      declaration.body.getStart(sourceFile),
-      declaration.body.end,
+      declaration.body?.getStart(sourceFile) ?? -1,
+      declaration.body?.end ?? -1,
     ) &&
-    !scriptEarlyError(sourceFile, undefined) &&
-    uncoveredEarlyErrorRule(sourceFile, false, new Set()) === undefined &&
+    !hasScriptOnlyEarlyError(sourceFile) &&
     !bindsOrEvaluates(declaration) &&
     !reservedPrefixIdentifier(declaration, declaration.name)
   );
-}
-
-/**
- * An Annex B.1.1 HTML-like comment: `<!--`, or `-->` that only whitespace and block comments precede on its line.
- * TypeScript's parser does not implement them, so such a piece is no site.
- */
-function usesHtmlLikeComment(piece: string): boolean {
-  return /<!--|(?:^|[\n\r\u2028\u2029])\s*(?:\/\*[\s\S]*?\*\/\s*)*-->/.test(piece);
-}
-
-/**
- * The first early error of CreateDynamicFunction that neither the shared check nor the parse reports
- * (`sloppyScriptHasStaticSyntaxError`): a function with a `"use strict"` body and non-simple parameters, a label
- * nested in a label of the same name, `with` in strict code, or `super` outside a method (`superIsSupplied`). A text
- * with one is no site; the rule is the name its site refuses by (#7487 item 3).
- */
-function uncoveredEarlyErrorRule(
-  node: ts.Node,
-  strict: boolean,
-  labels: ReadonlySet<string>,
-): "use-strict-non-simple-params" | "duplicate-label" | "strict-with" | "super-outside-method" | undefined {
-  let inner = labels;
-  if (ts.isFunctionLike(node)) {
-    const body = (node as ts.FunctionLikeDeclaration).body;
-    const directive = body !== undefined && ts.isBlock(body) && evalBodyHasUseStrictDirective(body.statements);
-    const simple = node.parameters.every(
-      (parameter) => ts.isIdentifier(parameter.name) && !parameter.initializer && !parameter.dotDotDotToken,
-    );
-    if (directive && !simple) return "use-strict-non-simple-params";
-    strict ||= directive;
-    inner = new Set();
-  } else if (ts.isClassLike(node)) strict = true;
-  else if (ts.isWithStatement(node) && strict) return "strict-with";
-  else if (node.kind === ts.SyntaxKind.SuperKeyword && !superIsSupplied(node)) return "super-outside-method";
-  else if (ts.isLabeledStatement(node)) {
-    if (labels.has(node.label.text)) return "duplicate-label";
-    inner = new Set([...labels, node.label.text]);
-  }
-  return ts.forEachChild(node, (child) => uncoveredEarlyErrorRule(child, strict, inner));
 }
 
 /** Whether an identifier under `node`, other than `own`, starts with the dynamic functions' prefix. */
@@ -314,54 +360,23 @@ function isLexicalList(node: ts.Node): boolean {
 
 /**
  * The text is a Script, not a Module, that PerformEval runs without a SyntaxError, declares nothing, stores into no
- * identifier, holds no nested eval, names no reserved identifier, and lowers as one init chunk. The static check here
- * is the spec's; the Prepared entry also keeps a text only when the compile's gates pass it as they pass an entry
+ * identifier, holds no nested eval, names no reserved identifier, and lowers as one init chunk. A text that may hold
+ * an HTML-like comment is none: its TypeScript parse is not the Script PerformEval runs. The static check here is the
+ * spec's; the Prepared entry also keeps a text only when the compile's gates pass it as they pass an entry
  * (`test262-prepared-entry.ts`).
  */
 function textRunsAsScript(call: ts.CallExpression, text: string): boolean {
+  if (hasHtmlLikeComment(text)) return false;
   const script = parseEvalSource(text, false, false);
   const names = foldedEvalDeclarationNames(script.sourceFile);
   return (
     !ts.isExternalModule(script.sourceFile) &&
     foldedEvalStaticSyntaxError(call, true, script, names, undefined) === undefined &&
-    !scriptEarlyError(script.sourceFile, undefined) &&
+    !hasScriptOnlyEarlyError(script.sourceFile) &&
     names.varNames.size === 0 &&
     names.blockFunctionNames.size === 0 &&
     !bindsOrEvaluates(script.sourceFile) &&
     !reservedPrefixIdentifier(script.sourceFile, undefined) &&
     planModuleInitChunks(script.statements.map((node) => ({ node }))).length <= 1
   );
-}
-
-/**
- * A `return` outside every function of the text, or an `await` outside every async one (`async`: undefined at the
- * top level, else whether the nearest enclosing function is async): Script early errors the shared check does not
- * report. TypeScript parses both and reports them only as semantic diagnostics, which no compile gate refuses. Adding
- * the `return` rule to the shared check would change the legacy fold's output for `eval("return;")`
- * (parse-failure-5.js).
- */
-function scriptEarlyError(node: ts.Node, async: boolean | undefined): boolean {
-  if ((ts.isReturnStatement(node) && async === undefined) || (ts.isAwaitExpression(node) && async !== true))
-    return true;
-  const inner = ts.isFunctionLike(node)
-    ? (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Async) !== 0
-    : async;
-  return ts.forEachChild(node, (child) => scriptEarlyError(child, inner)) === true;
-}
-
-/**
- * A `var`/`let`/`const` list or a class anywhere in the text, a store into an identifier, or the name `eval`. A store
- * could rewrite a binding of the caller, and the proofs over a script binding see only the writes in its own file
- * (`preparedBindingRewritten`). A store into the text's own parameter or local refuses too: no scope walk tells it
- * from a caller binding (RV7432 B2 fix (b), which both kinds take).
- */
-function bindsOrEvaluates(node: ts.Node): boolean {
-  if (
-    ts.isVariableDeclarationList(node) ||
-    ts.isClassDeclaration(node) ||
-    (ts.isIdentifier(node) && node.text === "eval") ||
-    identifierWritesOf(node).length > 0
-  )
-    return true;
-  return ts.forEachChild(node, bindsOrEvaluates) === true;
 }

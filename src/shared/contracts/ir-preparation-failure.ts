@@ -103,6 +103,10 @@ export type IrUnsupportedCode =
   | IrFallbackReason
   | "anonymous-class"
   | "static-class-initialization"
+  | "class-definition-evaluation"
+  | "class-export-unsupported"
+  | "export-target-unsupported"
+  | "restricted-global-lexical"
   | "void-call-expression"
   | "array-representation-unsupported"
   | "nullish-value-unsupported"
@@ -193,7 +197,11 @@ export type IrUnsupportedCode =
   | "abi-signature-parity"
   | "new-target-threading"
   | "static-class-member"
-  | "module-init-legacy-coupling";
+  | "module-init-legacy-coupling"
+  // (#7363 A4, A5) A literal direct eval site whose value is used, or whose global `eval` may not be %eval%: a
+  // select-time refusal of the program (`eval-literal.ts`). The test262 entry reads the code, not the message, to
+  // keep this refusal instead of compiling again without the texts.
+  | "literal-eval-site-unsupported";
 
 export type IrInvariantCode =
   | "unknown-function-ref"

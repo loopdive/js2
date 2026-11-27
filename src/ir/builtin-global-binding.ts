@@ -10,6 +10,7 @@
  */
 import { ts } from "../ts-api.js";
 import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
+import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
@@ -19,11 +20,12 @@ const isAssignment = (kind: ts.SyntaxKind): boolean =>
   kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 
 /** The names an assignment target writes: identifiers of a destructuring pattern, a global alias's member. */
-function targetNames(target: ts.Expression, into: Set<string>): void {
-  if (ts.isParenthesizedExpression(target)) targetNames(target.expression, into);
-  else if (ts.isIdentifier(target)) into.add(target.text);
+function targetNames(written: ts.Expression, into: Set<string>): void {
+  // (#7350 B3a) A type assertion (`(String as any) = …`) writes what it asserts, like a parenthesis.
+  const target = skipOuterExpressions(written);
+  if (ts.isIdentifier(target)) into.add(target.text);
   else if (ts.isPropertyAccessExpression(target)) {
-    const object = target.expression;
+    const object = skipOuterExpressions(target.expression);
     if (object.kind === ts.SyntaxKind.ThisKeyword || (ts.isIdentifier(object) && GLOBAL_ALIASES.has(object.text)))
       into.add(target.name.text);
   } else if (ts.isArrayLiteralExpression(target))

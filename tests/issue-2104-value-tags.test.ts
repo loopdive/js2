@@ -14,6 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { JsTag, emitIsUndefF64, jsStaticType, pushUndefF64, UNDEF_F64_BITS } from "../src/codegen/value-tags.js";
 import { ts } from "../src/ts-api.js";
 import type { Instr } from "../src/ir/types.js";
@@ -100,7 +101,7 @@ describe("#2104 boxToAny — behaviour preserved end-to-end", () => {
   async function run(src: string): Promise<unknown> {
     const r = await compile(src, { fileName: "t.ts" });
     expect(r.success, r.success ? "" : `CE: ${r.errors?.[0]?.message}`).toBe(true);
-    const { instance } = await WebAssembly.instantiate(r.binary, (r.importObject ?? {}) as WebAssembly.Imports);
+    const instance = await instantiateWithRuntime(r);
     return (instance.exports as { test(): unknown }).test();
   }
 

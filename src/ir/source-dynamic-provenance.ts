@@ -21,9 +21,11 @@ import { ts } from "../ts-api.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
+import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
+import { realmConstantRead } from "./realm-static-call.js";
 
 type Carries = (expression: ts.Expression) => boolean;
 
@@ -35,13 +37,15 @@ export interface SourceDynamicProvenance {
 }
 
 /**
- * The provenance of a program, over its `startupSources` (see `irOwnedScriptVarHome`). Without a `dynamicCarrier`
- * on the lane no script `var` gets the dynamic home. `resultIsDynamic` is the unannotated-result contract, which
- * asks `carries` of each returned value; `parameterIsDynamic` the parameter contract.
+ * The provenance of a program, over its `startupSources` (see `irOwnedScriptVarHome`); `pristine` is the program's
+ * `pristineBuiltinGlobal`, over every source. Without a `dynamicCarrier` on the lane no script `var` gets the dynamic
+ * home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value;
+ * `parameterIsDynamic` the parameter contract.
  */
 export function sourceDynamicProvenance(
   checker: ts.TypeChecker,
   startupSources: readonly ts.SourceFile[],
+  pristine: (identifier: ts.Identifier) => boolean,
   dynamicCarrier: boolean,
   resultIsDynamic: (declaration: ts.FunctionDeclaration, carries: Carries) => boolean,
   parameterIsDynamic: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => boolean,
@@ -59,10 +63,14 @@ export function sourceDynamicProvenance(
   };
   // Every store after the declaration. Fail-closed: without a write list (`with`, direct `eval`) anything may be
   // stored, and only a ToNumeric update (`++`, `-=`) is known to store a number.
+  // (#7372 2a-3) An Annex B block function of the name stores a function object.
   const storesCarry = (declaration: ts.VariableDeclaration): boolean =>
-    scriptVarWrites(checker, declaration)?.some((write) =>
+    (ts.isIdentifier(declaration.name) &&
+      annexBWritesScriptBinding(declaration.getSourceFile(), declaration.name.text)) ||
+    (scriptVarWrites(checker, declaration)?.some((write) =>
       write.kind === "value" ? carries(write.expr, declaration) : write.kind !== "numeric",
-    ) ?? true;
+    ) ??
+      true);
   const classify = irOwnedScriptVarHome(checker, startupSources, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
@@ -94,7 +102,7 @@ export function sourceDynamicProvenance(
     // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and
     // the resolver refuses a dynamic store into it). (#7372) So is a script `var` nested in top-level code. Any
     // other variable is a local.
-    if (isTopLevelStatementDeclaration(declaration) || isModuleInitVarList(declaration.parent))
+    if (isTopLevelStatementDeclaration(declaration) || isModuleInitVarList(declaration.parent, "with-for-in-heads"))
       return scriptVarHome(declaration) === "dynamic";
     return localCarries(declaration);
   };
@@ -111,6 +119,8 @@ export function sourceDynamicProvenance(
     if (ts.isCallExpression(node)) return callCarries(node);
     if (ts.isConditionalExpression(node)) return carries(node.whenTrue, self) || carries(node.whenFalse, self);
     if (ts.isBinaryExpression(node)) return binaryCarries(node, self);
+    // (#7350 B3a) A constant a realm constructor holds (`Number.MAX_VALUE`) is folded to its number.
+    if (ts.isPropertyAccessExpression(node) && realmConstantRead(node, pristine) !== undefined) return false;
     switch (node.kind) {
       // Number, Boolean and (#7354 Str) string literals, and the prefix operators whose result is a number or a
       // Boolean whatever the operand (`-v`, `!v`, `++v`). Every other kind (members, calls of anything but a source

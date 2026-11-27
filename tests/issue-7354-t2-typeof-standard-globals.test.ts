@@ -15,9 +15,6 @@ const UNPROVIDED = [
   "Math",
   "Object",
   "Array",
-  "String",
-  "Number",
-  "Boolean",
   "RegExp",
   "Date",
   "JSON",
@@ -39,11 +36,18 @@ describe("#7354 T — typeof of a standard global", () => {
     ]);
   });
 
-  // (#7354 G1) The Error constructors are the realm's function objects now.
+  // (#7354 G1) The Error constructors are the realm's function objects now; (#7350 B3a) so are the wrappers.
   it("answers typeof of an Error constructor as node does", async () => {
     await agreesWithNode(
       "var out = typeof Error + typeof TypeError + typeof RangeError + typeof SyntaxError + typeof ReferenceError" +
         ' + typeof EvalError + typeof URIError + (typeof TypeError === "function");',
+    );
+  });
+
+  it("answers typeof of a wrapper constructor as node does", async () => {
+    await agreesWithNode(
+      'var out = typeof String + typeof Number + typeof Boolean + (typeof Number === "function");\n' +
+        "function f() { return typeof Boolean; }\nout = out + f();",
     );
   });
 

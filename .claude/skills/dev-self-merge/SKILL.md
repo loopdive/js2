@@ -20,7 +20,10 @@ description: Merge self-check for a green PR. Reads the PR's required-check stat
 > fires right after the required-check workflows finish, and its grace window is
 > now 0 (#2786), so it enqueues every just-green PR within ~one workflow-startup —
 > no dependence on any agent surviving. The required checks are `cheap gate
-(main-ancestor + lint)`, `merge shard reports`, and `quality`.
+(main-ancestor + lint)`, `merge shard reports`, `quality`, `equivalence-gate`,
+`check for test262 regressions` and `cla-check`. Since #7558 only `cla-check`
+and the cheap gate really run on the PR; the rest report `skipped` or a green
+no-op there and run in full in `merge_group`.
 >
 > **The merge queue then re-validates on the merged state.** `merge_group` re-runs
 > the required checks (the regression-gate #1943 — the hard block), and `auto-park`
@@ -253,8 +256,9 @@ Stop.
 > `REGRESSION_BUCKET_LIMIT` / `REGRESSION_BUCKET_PATH_DEPTH` in
 > `scripts/diff-test262.ts`) — this table is the documentation twin of those
 > constants; they are byte-identical by construction. Because the gate runs
-> both on the PR and again in the `merge_group` (against the merged state), a
-> regression cannot slip through whether the dev runs this self-check or not.
+> in the `merge_group` (against the merged state — on the PR it is a no-op,
+> #7558), a regression cannot slip through whether the dev runs this
+> self-check or not.
 > So this skill is a **pre-enqueue gate**: a clean result means MERGE (mark the
 > task completed and stand down — Step 5; the server-side workflow enqueues); a
 > failing criterion means ESCALATE to tech lead instead.

@@ -38,7 +38,8 @@ import { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
-import { verifyLiteralDynamicCodeSources, type LiteralDynamicCodeSource } from "./literal-dynamic-code.js";
+import { literalDynamicCodeSiteRefusal, verifyLiteralDynamicCodeSources } from "./literal-dynamic-code.js";
+import type { LiteralDynamicCodeSource } from "./literal-dynamic-code.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
@@ -48,7 +49,8 @@ import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import { preparedIrProgramOwner } from "./program.js";
+import { locatedFailure } from "./program/owner.js";
+import { preparedSelectRefusal } from "./prepared-select-refusals.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -56,6 +58,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { prepareSourceDirectCalls } from "./program-source-direct-calls.js";
 import { functionDeclarationValues, type FunctionValueGlobal } from "./function-declaration-values.js";
+import { scriptBlockFunctionHomes } from "./annexb-block-function-values.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
@@ -1505,12 +1508,12 @@ function prepareSourceGlobals(
   diagnostic: SourceDiagnosticOwner,
 ): void {
   for (const source of sourceFiles) {
-    for (const bound of source.statements.flatMap(moduleInitBindings)) {
+    for (const bound of source.statements.flatMap((statement) => moduleInitBindings(statement, "with-for-in-heads"))) {
       const declaration = "unmapped" in bound ? bound.unmapped : bound.declaration;
       diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
       if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name))
         unsupported("whole-program binding pattern requires the existing destructuring producer");
-      if (!isModuleInitGlobalDeclaration(declaration)) continue; // (#7372) a nested `var` is a global in a script
+      if (!isModuleInitGlobalDeclaration(declaration, "with-for-in-heads")) continue; // (#7372) a nested `var` is a global in a script
       const inspected = moduleResolver.inspectDirectBinding(declaration.name);
       if (inspected.kind !== "supported")
         unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
@@ -1559,6 +1562,8 @@ export function prepareIrProgramSources(
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
+  const refused = preparedSelectRefusal(inventory, identity);
+  if (refused) return refused;
   const sourceMapCatalog =
     sourceMapRequest === undefined
       ? undefined
@@ -1588,7 +1593,14 @@ export function prepareIrProgramSources(
       identityContext: identity,
     });
     const startupSources = sourceFiles.filter((source) => !code.sources.has(source));
-    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources);
+    const dynamicFunctions = code.functionSites.size > 0;
+    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources, dynamicFunctions);
+    // (#7363 A4, A5; #7487) A site that does not lower refuses the program at select, owned by the entry's init.
+    const refusal = literalDynamicCodeSiteRefusal(code, dynamicContracts);
+    if (refusal) {
+      diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(input.entrySource);
+      throw refusal;
+    }
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {
@@ -1598,6 +1610,7 @@ export function prepareIrProgramSources(
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
         oracle: input.oracle,
         scriptVarHome: dynamicContracts.scriptVarHome,
+        scriptVarModel: "with-for-in-heads",
       },
       identity,
     );
@@ -1615,6 +1628,10 @@ export function prepareIrProgramSources(
             (value) => value.getSourceFile() === sourceFile,
           ),
           called: code.calledSources.has(sourceFile),
+          scriptVarModel: "with-for-in-heads",
+          blockFunctions: dynamicContracts.blockFunctions.filter(
+            (block) => block.declaration.getSourceFile() === sourceFile,
+          ),
         }),
       );
     }
@@ -1671,6 +1688,16 @@ export function prepareIrProgramSources(
       globalById.set(value.home.globalRef.binding.bindingId, value.global);
       globalByDeclaration.set(value.declaration, value.global);
     }
+    diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFiles[0]!);
+    const blockFunctionHomes = scriptBlockFunctionHomes(
+      input.checker,
+      sourceFiles,
+      identity,
+      dynamicContracts,
+      globalByDeclaration,
+    );
+    for (const global of blockFunctionHomes?.globals ?? [])
+      globalById.set(global.binding.globalRef.binding.bindingId, global);
     const globals = [...globalById.values()];
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
@@ -1700,6 +1727,7 @@ export function prepareIrProgramSources(
       closureInvocations,
       closureCallableParameters,
       functionValues,
+      blockFunctionHomes,
       directCalls,
       nativeFamily,
       nativeStringValues,
@@ -1753,15 +1781,12 @@ export function prepareIrProgramSources(
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
     return prepared;
   } catch (error) {
-    const owner = diagnostic.active
-      ? preparedIrProgramOwner({ inventory, derivedUnits }, diagnostic.active)
-      : undefined;
-    if (!owner)
+    const failure = classifyIrFailure(error, "build");
+    if (!diagnostic.active)
       throw new PreparedIrProgramInvariantError(
         "invalid-prepared-data",
-        `source preparation failed without an original owner: ${String(error)}`,
+        `source preparation failed without an original owner: ${failure.detail}`,
       );
-    const { cause: _cause, ...failureDiagnostic } = classifyIrFailure(error, "build");
-    return { ...failureDiagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile };
+    return locatedFailure({ inventory, derivedUnits }, diagnostic.active, failure);
   }
 }

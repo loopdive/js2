@@ -5,7 +5,8 @@
 // `number` / `string`, which legacy's class descriptor registers) on the
 // host-free lanes. Methods carry no lattice entry, so before this the selector
 // refused every such JS method as `return-type-not-resolvable`. The
-// host-assisted lane keeps the refusal so its legacy output stays byte-identical.
+// host-assisted lane kept the refusal so its legacy output stayed
+// byte-identical, until #6979 (S7) removed that lane.
 
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -109,11 +110,14 @@ describe("#7129 — literal-returning unannotated methods resolve their primitiv
     }
   }
 
+  // #6979 (S7) removed the host-assisted lane: selecting it is a compile error,
+  // so there is no longer a host-assisted output to keep byte-identical. The
+  // same cases run on the native lanes above.
   for (const testCase of CASES) {
-    it(`${testCase.name} (gc host-assisted) keeps the method legacy and matches node`, async () => {
-      const ir = await compileAndRun(testCase.source, GC_HOST_ASSISTED, true, testCase.fileName);
-      expect(ir.codes).toContain(`${testCase.method}:return-type-not-resolvable`);
-      expect(ir.value).toBe(nodeRun(testCase.source));
+    it(`${testCase.name} (gc host-assisted) is rejected since #6979 removed the lane`, async () => {
+      await expect(compileAndRun(testCase.source, GC_HOST_ASSISTED, true, testCase.fileName)).rejects.toThrow(
+        'Compile option semanticProviders: "host-assisted" selected the host-assisted semantic profile, which #6979 removed',
+      );
     });
   }
 

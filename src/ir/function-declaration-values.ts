@@ -10,8 +10,8 @@
  * The script must be the program's only startup source, whose module-init runs before any code that could read the
  * home (a script that runs first would read the home before its value is stored). (#7363 A3) A called eval source
  * runs only from its site, after that prologue, declares no function and stores into no identifier: a text that does
- * is no site (`literal-dynamic-code.ts`), since the write walk below sees only the declaring file. (#7354 H2) The
- * binding is writable (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this
+ * is no site (`eval-literal.ts`), since the write walk below sees only the declaring file. (#7354 H2) The binding is
+ * writable (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this
  * path), the home is mutable and untagged, and a call of the name reads it: the call planner plans no direct call of a
  * reassigned declaration (`imported-functions.ts`).
  */
@@ -26,6 +26,7 @@ import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
   type IrDerivedUnitProvenance,
+  type IrBindingId,
   type IrSourceId,
   type IrUnitId,
 } from "./identity.js";
@@ -37,13 +38,15 @@ import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
+import { annexBDeclaringRange, annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
 /**
  * The top-level function declarations of a program with one startup source that some identifier of that source reads
- * as a value, in source order. A call's callee is no value read: a call stays the declaration's direct call.
- * (#7354 C2) `new`'s constructor is one: [[Construct]] takes the function object, its `prototype` included.
+ * as a value, or that an Annex B block function writes, in source order. A call's callee is no value read: a call
+ * stays the declaration's direct call. (#7354 C2) `new`'s constructor is one: [[Construct]] takes the function object,
+ * its `prototype` included.
  */
 export function functionDeclarationsReadAsValues(
   checker: ts.TypeChecker,
@@ -61,8 +64,11 @@ export function functionDeclarationsReadAsValues(
     ts.forEachChild(node, visit);
   };
   visit(source);
+  // (#7372 2a-3) An Annex B block function of its name writes the binding: calls of the name then read the home.
   return source.statements.filter(
-    (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && read.has(statement),
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) &&
+      (read.has(statement) || (statement.name !== undefined && annexBWritesScriptBinding(source, statement.name.text))),
   );
 }
 
@@ -155,7 +161,10 @@ export function functionDeclarationValues(
     const unitId = identity.unitIdByDeclaration.get(declaration)!;
     diagnostic.active = unitId;
     // A JS symbol also lists the member stores of its function (`f.x = 1`), which declare no binding.
-    if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration).length > 1)
+    // (#7372 2a-3) An Annex B block function the checker binds to the file is no second declaration: it has its own
+    // block binding and writes this home (`annexb-block-function-values.ts`).
+    const declarations = checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration);
+    if (declarations.filter((other) => annexBDeclaringRange(other) === null).length > 1)
       refuse(name, "has a second declaration");
     const rewritten = preparedBindingRewritten(checker, declaration.name!);
     const unit = functionDeclarationUnit(identity, signatures, declaration);
@@ -164,28 +173,34 @@ export function functionDeclarationValues(
     const binding = plan.bindings.find((row) => row.names[0] === name && row.start === start)!;
     // A script without top-level code has no module-init to make the value: nothing of it runs.
     const moduleInit = plan.unitId ?? refuse(name, "is in a script that runs no top-level code");
-    const home: ModuleBindingGlobal = {
-      ownerUnitId: moduleInit,
-      globalRef: irSourceGlobalRef(binding.globalBindingId!, name),
-      tdzGlobalRef: null,
-      globalName: name,
-      tdzGlobalName: null,
+    const global = moduleInitDynamicHome(moduleInit, plan.sourceId, binding.globalBindingId!, name, {
       type: irDynamic(rewritten ? undefined : JS_TAG_IDS.Function),
-    };
-    return {
-      ...unit,
-      home,
-      global: {
-        binding: home,
-        identity: {
-          ownerUnitId: moduleInit,
-          storageOwnerUnitId: moduleInit,
-          sourceId: plan.sourceId,
-          mutable: rewritten,
-        },
-      },
-    };
+      mutable: rewritten,
+    });
+    return { ...unit, home: global.binding, global };
   });
+}
+
+/**
+ * A home in the dynamic carrier: a module-init global named `adapterName` (the key its storage is found by), owned
+ * and stored by the module-init. (#7372 2a) An Annex B block function's homes are built the same way.
+ */
+export function moduleInitDynamicHome(
+  moduleInit: IrUnitId,
+  sourceId: IrSourceId,
+  bindingId: IrBindingId,
+  adapterName: string,
+  { type, mutable }: { readonly type: IrType; readonly mutable: boolean },
+): FunctionValueGlobal {
+  const binding: ModuleBindingGlobal = {
+    ownerUnitId: moduleInit,
+    globalRef: irSourceGlobalRef(bindingId, adapterName),
+    tdzGlobalRef: null,
+    globalName: adapterName,
+    tdzGlobalName: null,
+    type,
+  };
+  return { binding, identity: { ownerUnitId: moduleInit, storageOwnerUnitId: moduleInit, sourceId, mutable } };
 }
 
 function refuse(name: string, why: string): never {
@@ -204,6 +219,8 @@ export interface FunctionValueHost {
   readonly lifted: IrFunction[];
   readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   readonly allocRegistry?: AllocSiteRegistry;
+  /** (#7489) The program's code strictness, for a function object's own `caller` (`emitFunctionObjectInit`). */
+  readonly resolver?: Parameters<typeof emitFunctionObjectInit>[3];
 }
 
 /** The module-init prologue: each declaration's closure, stored in its home. */
@@ -218,10 +235,14 @@ export function emitFunctionDeclarationValues(
  * A fresh function object of the declaration, as a dynamic value: a closure of its trampoline, made a function object
  * (`emitFunctionObjectInit`, named `name` when given). (#7487) A literal `Function` site makes one per evaluation.
  */
-export function emitFunctionDeclarationObject(cx: FunctionValueHost, unit: FunctionDeclarationUnit, name?: string) {
+export function emitFunctionDeclarationObject(
+  cx: FunctionValueHost,
+  unit: FunctionDeclarationUnit,
+  name?: string,
+): IrValueId {
   const signature: IrClosureSignature = { params: unit.params, returnType: DYNAMIC };
   const closure = cx.builder.emitClosureNew(liftTrampoline(cx, unit, signature), signature, [], []);
-  emitFunctionObjectInit(cx.builder, closure, unit.declaration, name);
+  emitFunctionObjectInit(cx.builder, closure, unit.declaration, cx.resolver, name);
   const callable = cx.builder.emitCallablePack(closure, signature);
   return cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [callable], irDynamic())!;
 }

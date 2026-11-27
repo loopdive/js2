@@ -66,7 +66,7 @@ export function staticPredicateLiteralFamily(
   let candidate = operand;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
-  return isUndefinedCompareOperand(candidate, () => !isGlobalUndefined(candidate)) ? "undefined" : undefined;
+  return isUndefinedCompareOperand(candidate, (_, id) => !isGlobalUndefined(id)) ? "undefined" : undefined;
 }
 
 export interface IrStaticPredicateHost {

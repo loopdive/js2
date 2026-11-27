@@ -6,19 +6,19 @@ import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
 import { ts } from "../ts-api.js";
 import { elideDeadBindings } from "./prepared-dead-bindings.js";
 import {
-  isHardTypeScriptDiagnostic,
   preparedFrontendRejectionObservation,
   runPreparedIrPipelinePresentation,
-  TOLERATED_SYNTAX_CODES,
+  sourceFailsCompileGates,
 } from "../compiler.js";
-import { sourceEarlyErrors } from "../compiler/prepared-pipeline-boundary.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
 import {
+  type LiteralDynamicCodeSource,
   type LiteralDynamicCodeText,
   literalDynamicCodeTexts,
+  literalFunctionDeclaration,
   pairLiteralDynamicCodeSources,
   usesReservedDynamicFunctionPrefix,
 } from "../ir/literal-dynamic-code.js";
@@ -387,9 +387,11 @@ type GraphCompile = (graph: Record<string, string>, ast: MultiTypedAST, added: n
  * error outside the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a
  * read of an undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member
  * store in it declares a JS expando property of a caller binding; such a change names no text, so then none joins.
- * (A4) A failure with the texts does not name its cause either: a text the IR cannot lower fails the program even
- * where its site never runs, so the program is then the one without them. When that fails too, the failure with the
- * texts is the answer: it names the site's own refusal.
+ * (A4, A5) A site that does not lower refuses the program at select by its own code, and that refusal is the answer:
+ * without the texts the program only refuses the same site by slice 1's label. Any other failure with the texts does
+ * not name its cause: a text the IR cannot lower fails the program even where its site never runs, so the program is
+ * then the one without them. When that fails too, the failure with the texts is the answer: it shows how far the
+ * program with its texts got.
  */
 function withLiteralDynamicCodeSources(
   files: Record<string, string>,
@@ -412,15 +414,6 @@ function withLiteralDynamicCodeSources(
   const ast = analyze(graph);
   const isCodeSource = (file: ts.SourceFile | undefined) =>
     file !== undefined && codeNames.has(normalizeMultiFileName(file.fileName));
-  const failsCompile = (source: ts.SourceFile) =>
-    ast.syntacticDiagnostics.some(
-      (diagnostic) =>
-        diagnostic.file === source &&
-        diagnostic.category === ts.DiagnosticCategory.Error &&
-        !TOLERATED_SYNTAX_CODES.has(diagnostic.code),
-    ) ||
-    ast.diagnostics.some((diagnostic) => diagnostic.file === source && isHardTypeScriptDiagnostic(diagnostic, ast.checker)) ||
-    sourceEarlyErrors(source, options).some((error) => error.severity !== "warning");
   const othersReport = (diagnostics: readonly ts.Diagnostic[]) =>
     diagnostics
       .filter((diagnostic) => !isCodeSource(diagnostic.file))
@@ -430,13 +423,17 @@ function withLiteralDynamicCodeSources(
       .sort()
       .join("\n");
   const quiet =
-    !ast.sourceFiles.some((source) => isCodeSource(source) && failsCompile(source)) &&
+    !ast.sourceFiles.some((source) => isCodeSource(source) && sourceFailsCompileGates(source, ast, options)) &&
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
   if (!quiet) return compileGraph(files, without, 0);
   const joined = compileGraph(graph, ast, texts.length);
-  if (joined.success) return joined;
+  if (joined.success || refusesLiteralCodeSite(joined)) return joined;
   const alone = compileGraph(files, without, 0);
   return alone.success ? alone : joined;
+}
+function refusesLiteralCodeSite(result: CompileResult): boolean {
+  const failure = requiredPreparedFailure(result);
+  return failure?.kind === "unsupported" && failure.failure.code === "literal-eval-site-unsupported";
 }
 function present(
   files: Record<string, string>,
@@ -510,20 +507,37 @@ interface PresentRequest {
   readonly unlowerableBodies: UnlowerableBodies;
 }
 /** `present`'s compile of one analyzed graph, whose last `added` scripts are the entry's literal dynamic-code texts. */
+/**
+ * (#7487) `ast` without TypeScript's TS2300 on a repeated parameter name of a `function` source: sloppy duplicate
+ * parameters are valid JavaScript (`Function("a,a", "return a")`), and a strict body's are no source at all.
+ */
+function withoutSloppyDuplicateParameters(ast: MultiTypedAST, rows: readonly LiteralDynamicCodeSource[]): MultiTypedAST {
+  const functionSources = new Set(rows.filter((row) => row.kind === "function").map((row) => row.source));
+  const duplicate = (diagnostic: ts.Diagnostic) =>
+    diagnostic.code === 2300 &&
+    diagnostic.file !== undefined &&
+    functionSources.has(diagnostic.file) &&
+    literalFunctionDeclaration(diagnostic.file).parameters.some(
+      (parameter) => parameter.name.getStart(diagnostic.file) === diagnostic.start,
+    );
+  return ast.diagnostics.some(duplicate) ? { ...ast, diagnostics: ast.diagnostics.filter((d) => !duplicate(d)) } : ast;
+}
 function presentAnalyzed(
   { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies }: PresentRequest,
   graph: Record<string, string>,
-  ast: MultiTypedAST,
+  analyzed: MultiTypedAST,
   added: number,
 ): CompileResult {
-  if (!completeAnalyzedGraph(graph, entryFile, ast))
+  if (!completeAnalyzedGraph(graph, entryFile, analyzed))
     return adapterRefusal(
       entryFile,
       "prepared-source-graph-incomplete",
       "frontend did not retain the complete supplied name/text graph",
     );
   const literalDynamicCodeSources =
-    added === 0 ? [] : pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, added);
+    added === 0 ? [] : pairLiteralDynamicCodeSources(analyzed.entryFile, analyzed.sourceFiles, added);
+  // (#7487) The one place a dynamic-code source's diagnostics enter the result.
+  const ast = withoutSloppyDuplicateParameters(analyzed, literalDynamicCodeSources);
   // (#7363) A dynamic-code source's supplied text is its own; the entry's is the unelided one.
   const supplied = new Map(
     [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [

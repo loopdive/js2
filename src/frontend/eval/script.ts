@@ -4,9 +4,10 @@
  * Pure syntax over a foreign SourceFile; the legacy fold, the runtime-eval provider and the IR read it.
  */
 import { ts } from "../typescript.js";
-import { isUseStrictDirectiveExpression } from "../use-strict-directive.js";
+import { isUseStrictDirectiveExpression } from "../../shared/use-strict-directive.js";
 import type { FoldedEvalDeclarationNames } from "./declaration-names.js";
-import { evalCallerCapabilities, foldedEvalEarlyError, SLOPPY_SCRIPT_GOAL, staticEarlyError } from "./early-errors.js";
+import { identifierWritesOf } from "../../shared/binding-writes.js";
+import { evalCallerCapabilities, SLOPPY_SCRIPT_GOAL, staticEarlyError } from "./early-errors.js";
 
 /**
  * Synthetic file name for the foreign `SourceFile` an eval source is parsed into. Nodes in this file are absent from
@@ -25,8 +26,6 @@ export interface ParsedEvalScript {
   readonly evalIsStrict: boolean;
 }
 
-export type EvalDeclarationNames = FoldedEvalDeclarationNames;
-
 /**
  * (#2923 park fix) Does the eval Script begin with a `"use strict"` directive
  * prologue? Per §11.2.1 a directive prologue is the leading run of
@@ -41,7 +40,7 @@ export function evalBodyHasUseStrictDirective(stmts: ts.NodeArray<ts.Statement>)
     if (!ts.isExpressionStatement(s)) break;
     // Only a plain StringLiteral counts as a directive (a template does not).
     if (!ts.isStringLiteral(s.expression)) break;
-    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    // §11.2.2 matches the RAW token — see src/shared/use-strict-directive.ts.
     if (isUseStrictDirectiveExpression(s.expression)) return true;
     // Some other directive (e.g. "use asm") → keep scanning the prologue.
   }
@@ -66,6 +65,21 @@ export function parseEvalSource(source: string, inheritedStrict: boolean, caller
   return { sourceFile, statements, bodyIsStrict, evalIsStrict: bodyIsStrict || callerStrict };
 }
 
+// A line that may begin, after white space and comments, with Annex B's `-->`. The optional prefix up to a comment's
+// end lets a comment opened on an earlier line count as well.
+const HTML_CLOSE_COMMENT_LINE = /^(?:.*\*\/)?(?:\s|\/\*.*?\*\/)*-->/;
+
+/**
+ * The text may hold an Annex B (B.1.1) HTML-like comment: `<!--` anywhere, or `-->` at the start of a line. TypeScript
+ * does not implement them, so it parses `a <!--b` as `a < !(--b)`. A consumer that runs such a text from its parse
+ * refuses it. Conservative: an occurrence in a string or a comment counts too, which only refuses.
+ */
+export function hasHtmlLikeComment(text: string): boolean {
+  return (
+    text.includes("<!--") || text.split(/\r\n?|[\n\u2028\u2029]/).some((line) => HTML_CLOSE_COMMENT_LINE.test(line))
+  );
+}
+
 /**
  * (#7487) Whether a sloppy global Script text, such as a dynamic function's assembled declaration, has a static
  * SyntaxError: a parse failure or an early error of the shared check.
@@ -75,13 +89,40 @@ export function sloppyScriptHasStaticSyntaxError(sourceFile: ts.SourceFile): boo
 }
 
 /**
- * (#7487) Whether the code around a `super` keyword supplies it: a property in a method, a call in a derived
- * constructor. The shared check does not ask inside a function, which supplies its own `super` only as a method.
+ * A `return` outside every function of the text, or an `await` outside every async one: Script early errors the
+ * shared check does not report. TypeScript parses both and reports them only as semantic diagnostics, which no
+ * compile gate refuses. Adding the `return` rule to the shared check would change the legacy fold's output for
+ * `eval("return;")` (parse-failure-5.js).
  */
-export function superIsSupplied(superKeyword: ts.Node): boolean {
-  const caller = evalCallerCapabilities(superKeyword, true);
-  const call = ts.isCallExpression(superKeyword.parent) && superKeyword.parent.expression === superKeyword;
-  return call ? caller.superCall : caller.superProperty;
+export function hasScriptOnlyEarlyError(sourceFile: ts.SourceFile): boolean {
+  return scriptOnlyEarlyError(sourceFile, undefined);
+}
+
+/** `async`: undefined at the top level, else whether the nearest enclosing function is async. */
+function scriptOnlyEarlyError(node: ts.Node, async: boolean | undefined): boolean {
+  if ((ts.isReturnStatement(node) && async === undefined) || (ts.isAwaitExpression(node) && async !== true))
+    return true;
+  const inner = ts.isFunctionLike(node)
+    ? (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Async) !== 0
+    : async;
+  return ts.forEachChild(node, (child) => scriptOnlyEarlyError(child, inner)) === true;
+}
+
+/**
+ * A `var`/`let`/`const` list or a class anywhere under `node`, a store into an identifier, or the name `eval`. A text
+ * run as a separate script of the program may hold none (#7363 RV7432 B2 fix (b)): a store could rewrite a binding of
+ * its caller, and the proofs over a script binding see only the writes in its own file. A store into the text's own
+ * parameter or local counts too: no scope walk tells it from a caller binding.
+ */
+export function bindsOrEvaluates(node: ts.Node): boolean {
+  if (
+    ts.isVariableDeclarationList(node) ||
+    ts.isClassDeclaration(node) ||
+    (ts.isIdentifier(node) && node.text === "eval") ||
+    identifierWritesOf(node).length > 0
+  )
+    return true;
+  return ts.forEachChild(node, bindsOrEvaluates) === true;
 }
 
 /** Whether the parser reported a syntax error in a foreign Script. */
@@ -103,17 +144,16 @@ export function foldedEvalStaticSyntaxError(
   call: ts.CallExpression,
   directEval: boolean,
   script: ParsedEvalScript,
-  declarationNames: EvalDeclarationNames,
+  declarationNames: FoldedEvalDeclarationNames,
   globalLexicals: ReadonlySet<string> | undefined,
 ): string | undefined {
   if (hasParseDiagnostics(script.sourceFile)) return "Invalid eval source";
   // (#5157) §15.1.1 NewTarget / SuperProperty / SuperCall admissibility is a
   // property of the CALL SITE, not of the eval source.
-  const earlyError = foldedEvalEarlyError(
-    script.sourceFile,
-    script.evalIsStrict,
-    evalCallerCapabilities(call, directEval),
-  );
+  const earlyError = staticEarlyError(script.sourceFile, {
+    strict: script.evalIsStrict,
+    caller: evalCallerCapabilities(call, directEval),
+  });
   if (earlyError !== undefined || script.evalIsStrict || globalLexicals === undefined) return earlyError;
   for (const name of declarationNames.varNames) {
     if (globalLexicals.has(name)) return `Identifier '${name}' has already been declared`;

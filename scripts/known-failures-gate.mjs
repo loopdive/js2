@@ -73,6 +73,7 @@
 //   KNOWN_FAILURES_FORK_HEAP_MB  per-fork heap for the parallel pass (default 2048)
 //   KNOWN_FAILURES_RERUN_HEAP_MB per-fork heap for serial re-runs (default 4096)
 //   KNOWN_FAILURES_BATCH         files per vitest invocation (default 150)
+//   KNOWN_FAILURES_BISECT_BUDGET_S seconds of bisection runs per runFiles call (default 900)
 //   KNOWN_FAILURES_CONFIRM_MAX   status changes re-run to confirm, per direction (default 25)
 //   KNOWN_FAILURES_ONLY          regex narrowing the population (local debugging only)
 //
@@ -431,6 +432,87 @@ export function unaccountedRunErrors(run, files) {
   return errors;
 }
 
+/** (#7518) The key a bisection run's errors are matched by: the error's first line. */
+const errorKey = (error) => error.split("\n", 1)[0];
+
+/**
+ * (#7518) Names the file behind each unattributed run error of a parallel-pass batch, by re-running the batch in
+ * halves. vitest attaches no file to some run errors: a worker RPC timeout (`Timeout calling "onTaskUpdate"`)
+ * rejects inside the runner and reaches the main process bare. A file that blocks its worker past the RPC timeout
+ * raises it again when it runs on its own.
+ *
+ * Errors are matched per first line, so two different errors in one batch are traced to their own files. Errors
+ * that share a first line share their label, which says so. Skipped: errors the reporter already tagged with a file,
+ * and batches that hit their timeout, whose halves would each wait out the timeout again.
+ *
+ * Every bisection run counts against one budget per runFiles call (`bisection.budgetMs`, `bisection.spentMs`), and
+ * each run's timeout is capped at what is left. Returns a label per error; the errors stay refused either way.
+ * `runOnce` is vitestOnce; tests pass a stand-in.
+ */
+export async function bisectUntaggedErrors(
+  root,
+  toRel,
+  files,
+  runErrors,
+  run,
+  options,
+  bisection,
+  runOnce = vitestOnce,
+) {
+  const labels = new Map();
+  const untagged = runErrors.filter((error) => !error.startsWith("[raised while running "));
+  if (untagged.length === 0 || run.timedOut) return labels;
+  const search = { root, toRel, options, bisection, runOnce, located: new Map() };
+  const exhausted = await locateErrorFiles(search, files, new Set(untagged.map(errorKey)));
+  for (const error of untagged) {
+    const where = search.located.get(errorKey(error));
+    // Errors with the same first line cannot be told apart (two RPC timeouts share their whole stack), so a
+    // located key names every file it reproduced in, and says so when that is more than one.
+    const shared = where?.size > 1 ? " (same first line, not told apart)" : "";
+    labels.set(
+      error,
+      where
+        ? `(#7518 bisection: reproduces alone in: ${[...where].join(", ")}${shared})`
+        : `(#7518 bisection: ${exhausted ? "budget spent before it was located" : "not reproduced in a smaller run"})`,
+    );
+  }
+  return labels;
+}
+
+/**
+ * Recurses into the halves of `files` whose run raises one of `keys`, and records each key's single-file runs in
+ * `search.located`. Returns whether the budget ran out before every key was located.
+ */
+async function locateErrorFiles(search, files, keys) {
+  const { root, toRel, options, bisection, runOnce, located } = search;
+  if (files.length === 1) {
+    for (const key of keys) located.set(key, (located.get(key) ?? new Set()).add(files[0]));
+    return false;
+  }
+  const half = Math.ceil(files.length / 2);
+  let exhausted = false;
+  for (const part of [files.slice(0, half), files.slice(half)]) {
+    // The budget counts only time spent bisecting: the batches' own vitest runs between bisections do not use it.
+    const remaining = bisection.budgetMs - bisection.spentMs;
+    if (remaining <= 0) return true;
+    const t0 = Date.now();
+    const r = await runOnce(root, toRel, part, { ...options, timeoutMs: Math.min(options.timeoutMs, remaining) });
+    bisection.spentMs += Date.now() - t0;
+    const seen = new Set(
+      unaccountedRunErrors(r, part)
+        .map(errorKey)
+        .filter((key) => keys.has(key)),
+    );
+    console.log(
+      `known-failures-gate: ${bisection.label} bisection: ${part.length} file(s), ${seen.size} of ${keys.size} ` +
+        `error(s) reproduced${r.timedOut ? " (TIMED OUT)" : ""}, ${Math.round((Date.now() - t0) / 1000)}s`,
+    );
+    if (r.timedOut) exhausted ||= bisection.spentMs >= bisection.budgetMs;
+    else if (seen.size) exhausted ||= await locateErrorFiles(search, part, seen);
+  }
+  return exhausted;
+}
+
 export async function runFiles(root, toRel, files, { label, serial = false, onRunIntegrity }) {
   const batch = envInt("KNOWN_FAILURES_BATCH", 150);
   const heap = envInt("KNOWN_FAILURES_FORK_HEAP_MB", 2048);
@@ -439,6 +521,14 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
   const want = new Set(files);
   const suspects = serial ? [...files] : [];
 
+  const batchOptions = {
+    serial: false,
+    heapMb: heap,
+    timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
+  };
+  // (#7518) One bisection budget per call, counting only time spent bisecting, so naming files can never cost a
+  // shard its partial.
+  const bisection = { budgetMs: envInt("KNOWN_FAILURES_BISECT_BUDGET_S", 900) * 1000, spentMs: 0, label };
   let pending = serial ? [] : [...files];
   let pass = 0;
   while (pending.length) {
@@ -446,12 +536,12 @@ export async function runFiles(root, toRel, files, { label, serial = false, onRu
     pending = pending.slice(batch);
     pass++;
     const t0 = Date.now();
-    const r = await vitestOnce(root, toRel, chunk, {
-      serial: false,
-      heapMb: heap,
-      timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
-    });
-    if (onRunIntegrity) for (const error of unaccountedRunErrors(r, chunk)) onRunIntegrity(error);
+    const r = await vitestOnce(root, toRel, chunk, batchOptions);
+    if (onRunIntegrity) {
+      const runErrors = unaccountedRunErrors(r, chunk);
+      const labels = await bisectUntaggedErrors(root, toRel, chunk, runErrors, r, batchOptions, bisection);
+      for (const error of runErrors) onRunIntegrity(labels.get(error) ? `${error}\n    ${labels.get(error)}` : error);
+    }
     for (const [rel, entry] of r.ended) if (want.has(rel)) results.set(rel, { entry });
     const inflight = chunk.filter((f) => !results.has(f) && r.started.has(f));
     const unstarted = chunk.filter((f) => !results.has(f) && !r.started.has(f));

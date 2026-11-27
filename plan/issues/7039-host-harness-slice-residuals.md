@@ -4,7 +4,7 @@ title: "issue-tests host-harness slice residuals: static private brand check, fa
 status: ready
 sprint: Backlog
 created: 2026-10-17
-updated: 2026-10-17
+updated: 2026-11-26
 priority: low
 horizon: m
 feasibility: medium
@@ -34,6 +34,14 @@ Each item was measured on upstream/main 0727e2985b; none is a harness gap.
    JS caller passing `25` fails with "type incompatibility when transforming
    from/to JS". An export ABI must accept JS values (externref/f64). Bisect from
    `38dd745884`.
+   Same failure, added 2026-11-26 (lane S24, measured on main 1a726b3e with the
+   shared `instantiateWithRuntime` harness): `tests/issue-1755.test.ts`
+   ("erases the generic argument in param, return, variable, and field
+   positions": a `Uint8Array<ArrayBuffer>` export param) and
+   `tests/union-narrowing.test.ts` ("typeof narrowing: number branch" and
+   "string branch": a JS `42` or `"hello"` passed to a `number | string`
+   param), all "type incompatibility when transforming from/to JS", with the
+   raw and the shared harness alike.
 3. **`tests/issue-4628-temporal-global.test.ts` (2 red).** `Intl` closure denial
    count is 2 not 0, and an ambient `declare const Temporal` capture fails with
    `Cannot access property on null or undefined at 5:48`.
@@ -53,5 +61,5 @@ Each item was measured on upstream/main 0727e2985b; none is a harness gap.
 
 ## Acceptance criteria
 
-- [ ] 4154, 1211, 4628, 1058 green (each may be split into its own issue when picked up)
+- [ ] 4154, 1211 (+ 1755, union-narrowing), 4628, 1058 green (each may be split into its own issue when picked up)
 - [ ] item 5 reproduces as a unit test and is fixed

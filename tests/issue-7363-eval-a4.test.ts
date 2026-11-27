@@ -7,9 +7,26 @@
 // texts falls back to the compile without them. Every row goes through the Prepared entry with the census's options
 // (scripts/ir-census/prepared-census.mts).
 import { runInNewContext } from "node:vm";
-import { describe, expect, it } from "vitest";
-import { compile, requiredPreparedEmission } from "../src/test262/test262-prepared-entry.js";
+import { describe, expect, it, vi } from "vitest";
+import { compile, requiredPreparedEmission, requiredPreparedFailure } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import { literalDynamicCodeTexts } from "../src/ir/literal-dynamic-code.js";
+import { hasHtmlLikeComment } from "../src/frontend/eval/script.js";
+
+const literalEvalTexts = (file: string, text: string) => literalDynamicCodeTexts(file, text).map((row) => row.text);
+
+// Counts the entry's program compiles; every call passes through.
+const presentations = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../src/compiler.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/compiler.js")>();
+  return {
+    ...actual,
+    runPreparedIrPipelinePresentation: (...args: Parameters<typeof actual.runPreparedIrPipelinePresentation>) => {
+      presentations.count++;
+      return actual.runPreparedIrPipelinePresentation(...args);
+    },
+  };
+});
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -27,6 +44,7 @@ const options = {
 } as const;
 
 const NOT_PRISTINE = "ir/from-ast: eval literal: the global eval is not pristine (#7363 A4) in <module-init>";
+const A5 = "ir/from-ast: eval literal: its completion value needs #7363 A5 in <module-init>";
 
 type Result = Awaited<ReturnType<typeof compile>>;
 const compiled = (source: string) => compile(source, options as never);
@@ -76,9 +94,70 @@ describe("#7363 A4 — a write of the global eval anywhere refuses the site by n
   });
 
   it("refuses a site whose completion value is used by A5's name", async () => {
-    expect(await gaps('var v = eval("1");')).toEqual([
-      "ir/from-ast: eval literal: its completion value needs #7363 A5 in <module-init>",
-    ]);
+    expect(await gaps('var v = eval("1");')).toEqual([A5]);
+  });
+});
+
+describe("#7363 A4, A5 — admission decides a site before lowering (RV7502 2)", () => {
+  // `discardsValue`: each form lowers through from-ast's statement position.
+  it.each([
+    ["an expression statement", 'eval("1");'],
+    ["a labelled expression statement", 'L: eval("1");'],
+    ["a parenthesized expression statement", '(eval("1"));'],
+    ["the operand of void", 'void eval("1");'],
+    ["a comma's left operand", 'eval("1"), 0;'],
+    ["a parenthesized comma's left operand", '((eval("1")), 0);'],
+  ])("lowers %s", async (_label, source) => {
+    expect(run(await compiled(source))).toBe("returned");
+  });
+
+  // A comma's right operand and a conditional's arm hand their value on; a for incrementor's comma list is lowered
+  // clause by clause as values.
+  it.each([
+    ["a var initializer", 'var v = eval("1");'],
+    ["a comma's right operand", '0, eval("1");'],
+    ["an argument", 'function f(a) {}\nf(eval("1"));'],
+    ["a condition", 'if (eval("1")) {}'],
+    ["a conditional's arm", 'var c = 1;\nc ? eval("1") : 0;'],
+    ["a clause of a for incrementor", 'for (var i = 0; i < 1; eval("1"), i++) {}'],
+  ])("refuses %s by A5's name", async (_label, source) => {
+    expect(await gaps(source)).toEqual([A5]);
+  });
+
+  it("is a select-time refusal of the program, compiled once", async () => {
+    presentations.count = 0;
+    const result = await compiled('var f = 0;\neval("1");\neval = f;');
+    expect(presentations.count).toBe(1);
+    expect(requiredPreparedFailure(result)).toMatchObject({
+      kind: "unsupported",
+      failure: { code: "literal-eval-site-unsupported", stage: "select", detail: NOT_PRISTINE },
+    });
+  });
+
+  // Annex B.1.1: TypeScript parses `o.p <!--o.p` as `o.p < !(--o.p)`, so such a text makes no source and its site
+  // keeps the refusal it has without one.
+  it.each([
+    ["an HTML open comment", "o.p <!--o.p"],
+    ["an HTML close comment after a line terminator", "x = 1\n--> comment"],
+    ["an HTML close comment at the start", "-->x"],
+  ])("makes no source of %s", async (_label, text) => {
+    const source = `var o = { p: 1 }, x;\neval(${JSON.stringify(text)});`;
+    expect(literalEvalTexts("test.js", source)).toEqual([]);
+    expect(await gaps(source)).toEqual(["ir/from-ast: eval statement has no eval provider in <module-init>"]);
+  });
+
+  // `1 < !--y` holds none; its store into `y` already makes no source, so the member form is the one that does.
+  it("holds no HTML comment in `1 < !--y`, and `1 < !--o.p` makes a source", () => {
+    expect(hasHtmlLikeComment("1 < !--y")).toBe(false);
+    expect(literalEvalTexts("test.js", 'var o = { p: 1 };\neval("1 < !--o.p");')).toEqual(["1 < !--o.p"]);
+  });
+
+  it.each(["<!--", "a\r-->", "a\u2028 /* c */ -->", "/*\n*/ -->"])("hasHtmlLikeComment(%j)", (text) => {
+    expect(hasHtmlLikeComment(text)).toBe(true);
+  });
+
+  it("refuses a site lowering never reaches: admission sees every site", async () => {
+    expect(await gaps('var v;\ndo { break; v = eval("1"); } while (false);')).toEqual([A5]);
   });
 });
 
@@ -89,7 +168,6 @@ describe("#7363 A4 — a sloppy function whose this escapes refuses the site by 
     expect(await gaps(source)).toEqual([NOT_PRISTINE]);
   });
 
-  // `var h = f` makes `f` a value: only then does a plain call give it the global object as `this`.
   it.each([
     ["an alias member", "return this.globalThis;"],
     ["a computed member", 'return this["eval"];'],
@@ -101,6 +179,14 @@ describe("#7363 A4 — a sloppy function whose this escapes refuses the site by 
     ["a direct eval", 'eval("1");'],
   ])("%s", async (_label, body) => {
     expect(await gaps(`eval("1");\nfunction f() { ${body} }\nvar h = f;`)).toEqual([NOT_PRISTINE]);
+  });
+
+  // RV7502 4: no function is a value here, yet a sloppy plain call still gives `f` the global object as `this`.
+  it.each([
+    ["through a binding", 'function f(){ return this } var G = f(); G.eval = 1; eval("1");'],
+    ["directly", 'function f(){ return this } f().eval = 1; eval("1");'],
+  ])("a plain call %s", async (_label, source) => {
+    expect(await gaps(source)).toEqual([NOT_PRISTINE]);
   });
 
   it("a parameter initializer", async () => {
@@ -148,7 +234,9 @@ describe("#7363 A4 — a failure with the texts falls back to the compile withou
     ["a text that does not lower, never run", 'var x = 1;\ndo { break; eval("[x]"); } while (false);'],
     ["PRV-A4 B2", 'let y = 1;\ndo { break; eval("y"); } while (false);\nif (y !== 1) throw 1;'],
   ])("%s", async (_label, source) => {
+    presentations.count = 0;
     const result = await compiled(source);
+    expect(presentations.count).toBe(2);
     const without = await compiled(source.replace(/eval\((".*?")\)/, "eval($1, 0)"));
     expect(requiredPreparedEmission(result)!.units.sources.map((row) => row.file)).toEqual(["test.js"]);
     expect(run(result)).toBe("returned");

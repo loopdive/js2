@@ -32,6 +32,8 @@ const options = {
   fileName: "test.js",
   allowJs: true,
 } as Test262CompileOptions;
+const NO_SITE_PLAN = 'ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>';
+const NO_EVAL_PROVIDER = "ir/from-ast: eval statement has no eval provider in <module-init>";
 const SETTINGS = [
   ["semantic diagnostics", options],
   ["skipSemanticDiagnostics", { ...options, skipSemanticDiagnostics: true } as Test262CompileOptions],
@@ -103,29 +105,30 @@ describe("#7487 — the function site predicate", () => {
     expect(functionTexts(source)).toEqual([]);
   });
 
+  // The parse and the shared check do not report these; the compile's own gates do on the joined source, as for an
+  // eval text, so no source joins and the site keeps today's refusal.
   it.each([
-    ["use-strict-non-simple-params", `Function("a = 1", "'use strict'")`],
-    ["duplicate-label", 'Function("l: l: ;")'],
-    ["strict-with", `Function("'use strict'; with (o) {}")`],
-    ["super-outside-method", 'Function("super.x")'],
-    ["super-outside-method (through an arrow)", 'Function("return () => super.x")'],
-  ])("no source for an early error the shared check does not cover: %s", (_label, source) => {
-    expect(functionTexts(source)).toEqual([]);
+    ['`"use strict"` with non-simple parameters', `Function("a = 1", "'use strict'")`],
+    ["a duplicate label", 'Function("l: l: ;")'],
+    ["strict `with`", `Function("'use strict'; with (o) {}")`],
+    ["`super` outside a method", 'Function("super.x")'],
+    ["`super` through an arrow", 'Function("return () => super.x")'],
+  ])("an early error only the compile's gates report: %s", async (_label, source) => {
+    for (const [, settings] of SETTINGS)
+      expect(errorsOf(await compile(source, settings, undefined, "refuse"))).toEqual([NO_SITE_PLAN]);
   });
 
-  it("keeps the valid neighbours of those rules", () => {
-    expect(functionTexts('Function("with (o) {}")')).toHaveLength(1);
-    expect(functionTexts('Function("l: { m: ; } l: ;")')).toHaveLength(1);
-    expect(functionTexts('Function("return ({ m() { return super.x; } })")')).toHaveLength(1);
-    expect(functionTexts('Function("return new.target")')).toHaveLength(1);
-  });
-
+  // Annex B.1.1: TypeScript parses `a <!--b` as `a < !(--b)`, so a text that may hold one makes no source, for both
+  // kinds (`hasHtmlLikeComment`), and the site keeps today's refusal.
   it.each([
-    ["`<!--` in the body", 'Function("", "x <!-- y")'],
-    ["`<!--` in a parameter piece", 'Function("<!-- x", "")'],
-    ["a line-leading `-->`", 'Function("", "\\n-->")'],
-  ])("no source for an HTML-like comment: %s", (_label, source) => {
-    expect(functionTexts(source)).toEqual([]);
+    ["`<!--` in a Function body", 'Function("", "x <!-- y")', NO_SITE_PLAN],
+    ["`<!--` in a Function parameter piece", 'Function("<!-- x", "")', NO_SITE_PLAN],
+    ["a line-leading `-->` in a Function body", 'Function("", "\\n--> x")', NO_SITE_PLAN],
+    ["`<!--` in an eval text", 'eval("1 <!-- x");', NO_EVAL_PROVIDER],
+    ["a line-leading `-->` in an eval text", 'eval("\\n--> x");', NO_EVAL_PROVIDER],
+  ])("no source for an HTML-like comment: %s", async (_label, source, label) => {
+    expect(literalDynamicCodeTexts("test.js", source)).toEqual([]);
+    expect(errorsOf(await compile(source, options, undefined, "refuse"))).toEqual([label]);
   });
 
   it.each([
@@ -248,6 +251,11 @@ describe("#7487 — a pristine site evaluates to a fresh function object", () =>
     ["a site in a loop", 'for (var i = 0; i < 3; i++) if (Function("a", "return a * 2")(i) !== i * 2) throw 1;'],
   ])("%s agrees with node", async (_label, source) => {
     for (const [, settings] of SETTINGS) expect(await runs(source, settings)).toBe("ran");
+  });
+
+  it("reports no diagnostic for sloppy duplicate parameters, which are valid JavaScript", async () => {
+    const result = await compile('Function("a,a", "return a")(1, 2);', options, undefined, "refuse");
+    expect(result.errors.map((error) => error.message)).toEqual([]);
   });
 
   it("checks its answer: a wrong expectation throws", async () => {

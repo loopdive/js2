@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports as buildRuntimeImports } from "../src/runtime.js";
-import { buildImports } from "./equivalence/helpers.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #3430 — Integrity-level operations do not throw expected TypeError.
 //
@@ -40,16 +39,7 @@ async function compileToWasm(source: string, opts: Record<string, unknown> = {})
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const manualImports = buildImports(result);
-  let setExportsFn: ((exports: Record<string, Function>) => void) | undefined;
-  if (result.imports && result.imports.length > 0) {
-    const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setExportsFn = runtimeResult.setExports;
-    manualImports.env = { ...(manualImports.env as Record<string, Function>), ...runtimeResult.env };
-    if (runtimeResult.string_constants) manualImports.string_constants = runtimeResult.string_constants;
-  }
-  const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
-  if (setExportsFn) setExportsFn(instance.exports as Record<string, Function>);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, Function>;
 }
 

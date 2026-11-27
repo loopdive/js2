@@ -443,6 +443,7 @@ export function buildMultiPreparedModuleInitCensus(
       identityContext,
       target: input.target,
       deferTopLevelInit: input.deferTopLevelInit,
+      scriptVarModel: "statement-and-for-heads",
     });
     if (plan.sourceId !== source.id) {
       return censusInvariant(

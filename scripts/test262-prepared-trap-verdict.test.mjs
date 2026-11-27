@@ -4,6 +4,8 @@
 // marker fails the row. Other lanes keep their published trap verdicts (#7447).
 // #7354 X: on every lane a thrown value matches by its read kind only — never by
 // its message, and never when the reader could not read it.
+// #7453: an opaque payload's kind is the module's kind export, never its rendered text.
+// #7459: no lane has an any-throw escape.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readThrownValue, renderHostError } from "./lib/wasm-exn-render.mjs";
@@ -67,7 +69,6 @@ const render = (err) => readThrownValue(err).text;
 const accepted = (err, inst, expectedErrorType, prepared) =>
   runtimeNegativeThrowAccepted(err, readThrownValue(err, { instance: inst ?? undefined }), {
     expectedErrorType,
-    originalHarness: true,
     prepared,
   });
 
@@ -94,7 +95,6 @@ test("#7354 U: a trap whose top frame is an abort-body function names it and its
   assert.equal(
     runtimeNegativeThrowAccepted(trapUnderAssert, readThrownValue(trapUnderAssert, { instance, abortBodies: table }), {
       expectedErrorType: "Test262Error",
-      originalHarness: true,
       prepared: true,
     }),
     false,
@@ -116,7 +116,6 @@ for (const [lane, prepared] of [
     assert.equal(accepted(trapInTest262Error, instance, undefined, prepared), !prepared);
     assert.equal(
       runtimeNegativeThrowAccepted(trapInTest262Error, readThrownValue(trapInTest262Error, { instance }), {
-        originalHarness: false,
         prepared,
       }),
       !prepared,
@@ -205,5 +204,60 @@ for (const [lane, prepared] of [
   test(`${lane}: a trap matches only by the non-Prepared frame rule (#7447)`, () => {
     for (const type of TYPES)
       assert.equal(accepted(trapInTest262Error, instance, type, prepared), !prepared && type === "Test262Error", type);
+  });
+}
+
+// #7453: an opaque (WasmGC) payload's kind is what the module's `__exn_render_kind` answers, never its rendered
+// text split at ": ". The module is modelled in JS: each payload is a null-prototype object (no host-readable
+// `name` or `constructor`, like a WasmGC ref) that the exports render and classify.
+function opaqueModule({ kindExport = true } = {}) {
+  const tag = new WebAssembly.Tag({ parameters: ["externref"] });
+  const rows = new WeakMap();
+  let buffer = "";
+  const exports = {
+    __exn_tag: tag,
+    __exn_render_prepare: (payload) => ((buffer = rows.get(payload).text), buffer.length),
+    __exn_render_char: (i) => buffer.charCodeAt(i),
+    ...(kindExport
+      ? {
+          __exn_render_kind: (payload) =>
+            rows.get(payload).kind === undefined ? -1 : ((buffer = rows.get(payload).kind), buffer.length),
+        }
+      : {}),
+  };
+  const thrown = (text, kind) => {
+    const payload = Object.create(null);
+    rows.set(payload, { text, kind });
+    return new WebAssembly.Exception(tag, [payload]);
+  };
+  return { instance: { exports }, thrown };
+}
+
+for (const [lane, prepared] of [
+  ["Prepared", true],
+  ["non-Prepared", false],
+]) {
+  test(`${lane}: an opaque payload's kind is the module's kind export, never its rendered text (#7453)`, () => {
+    const { instance: inst, thrown } = opaqueModule();
+    // `throw "TypeError: x"` and an object whose toString returns that text: no kind.
+    assert.equal(accepted(thrown("TypeError: x"), inst, "TypeError", prepared), false);
+    // A real TypeError, and a Test262Error whose message names a TypeError.
+    assert.equal(accepted(thrown("TypeError: x", "TypeError"), inst, "TypeError", prepared), true);
+    assert.equal(accepted(thrown("Test262Error: TypeError", "Test262Error"), inst, "TypeError", prepared), false);
+    assert.equal(accepted(thrown("Test262Error: TypeError", "Test262Error"), inst, "Test262Error", prepared), true);
+    // A module without the kind export: the kind was not read.
+    const bare = opaqueModule({ kindExport: false });
+    assert.equal(accepted(bare.thrown("TypeError: x", "TypeError"), bare.instance, "TypeError", prepared), false);
+    assert.equal(readThrownValue(bare.thrown("TypeError: x"), { instance: bare.instance }).text, "TypeError: x");
+  });
+
+  test(`${lane}: a lane without the original harness matches by kind too (#7459)`, () => {
+    for (const type of TYPES) {
+      const other = type === "TypeError" ? "RangeError" : "TypeError";
+      const err = throwing({ name: other });
+      // A stale `originalHarness: false` no longer opens an any-throw escape.
+      const rule = { expectedErrorType: type, originalHarness: false, prepared };
+      assert.equal(runtimeNegativeThrowAccepted(err, readThrownValue(err, { instance }), rule), false, type);
+    }
   });
 }
