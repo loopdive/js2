@@ -3,15 +3,17 @@ import {
   HELD_OBJECT_STATICS,
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_CONVERSIONS,
-  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  NATIVE_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
   modelledRow,
+  realmMethodId,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
 import {
   ERROR_TO_STRING_ID,
+  FUNCTION_PROTOTYPE_ID,
   IS_ARRAY_ID,
   OBJECT_PROTOTYPE_ID,
   objectPrototypeMethodId,
@@ -125,12 +127,19 @@ const intrinsicOf = (use: Use): string | undefined =>
   use.feature === "js.object.intrinsic" && use.selector !== undefined
     ? NATIVE_VALUE_INTRINSICS[use.selector]
     : undefined;
-const METHOD_IDS = NATIVE_OBJECT_PROTOTYPE_METHODS.map(objectPrototypeMethodId);
-/** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
-const readsPrototypeMethod = (use: Use): boolean =>
-  METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
-  (use.feature === "js.object.get" &&
-    (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly (string | undefined)[]).includes(use.constantKey));
+/** (#7354 P1, #7557) Each prototype's methods held by name (`NATIVE_PROTOTYPE_METHODS`): their names and catalog ids. */
+const PROTOTYPE_METHODS = Object.entries(NATIVE_PROTOTYPE_METHODS).map(([parent, names]) => ({
+  names: names as readonly string[],
+  ids: names.map((name) => realmMethodId(parent, name)),
+}));
+/**
+ * (#7354 P1, #7557) The prototype methods the realm holds: a prototype's all where some use names one of them, by a
+ * constant key or as the method itself, since no other read can reach one.
+ */
+const heldPrototypeMethods = (uses: readonly Use[]): readonly string[] =>
+  PROTOTYPE_METHODS.flatMap(({ names, ids }) =>
+    uses.some((use) => ids.includes(intrinsicOf(use) ?? "") || names.includes(use.constantKey ?? "")) ? ids : [],
+  );
 /** Whether some function of `program` binds a caught value: the one way a thrown error becomes a program value. */
 function bindsCaughtValue(program: PreparedIrProgram): boolean {
   let binds = false;
@@ -261,6 +270,13 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
     base: ["%Object%", OBJECT_PROTOTYPE_ID],
     pinned: pinnedMembers([OBJECT_PROTOTYPE]),
   },
+  // (#7557) The Function family: `Function`, read itself or through `Function.prototype` (the realm's bootstrap
+  // function, seeded with its `constructor`). Function.prototype's methods are held by name (`heldPrototypeMethods`).
+  {
+    members: ["%Function%", FUNCTION_PROTOTYPE_ID],
+    contracts: new Set(),
+    base: ["%Function%"],
+  },
 ];
 /**
  * (#7354 G1, #7350 B3a) The family members the realm holds, derived only from what the program's IR emitted: for each
@@ -325,8 +341,7 @@ function calculate(
     !!source &&
     !!(source.signatures.length || source.shapes.length || source.units.length || source.allocations.length);
   const numbers = numberUses(access);
-  const families = heldFamilies(access.uses, program);
-  const methods = access.uses.some(readsPrototypeMethod);
+  const held = new Set([...heldFamilies(access.uses, program), ...heldPrototypeMethods(access.uses)]);
   if (!selectedSource && !access.uses.length && !numbers.length) return undefined;
   const anchor = program.inventory.sources.find((row) => row.kind === "entry");
   if (!anchor) fail("missing prepared entry anchor");
@@ -337,7 +352,7 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
-    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => (methods && METHOD_IDS.includes(id)) || families.has(id)),
+    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => held.has(id) && !NATIVE_REALM_CATALOG.bootstrap.includes(id)),
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

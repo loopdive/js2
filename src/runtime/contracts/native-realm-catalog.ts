@@ -161,6 +161,15 @@ export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
 ] as const);
 export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
 /**
+ * (#7354 P1, #7557) The prototype methods a realm holds by name, by the prototype that holds them: where a key of the
+ * program names one, the realm holds that prototype's all (`native-realm-requirements.ts`). Object.prototype's P1
+ * methods and Function.prototype's `call`.
+ */
+export const NATIVE_PROTOTYPE_METHODS = Object.freeze({
+  "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
+  "Function.prototype": Object.freeze(["call"] as const),
+});
+/**
  * (#7574) The Object.prototype methods a realm holds with `Object` (§20.1.3.5-7), each as its own row; the Prepared
  * path answers a call of one by identity (`dynamic-builtin-methods.ts`).
  */
@@ -168,6 +177,8 @@ export const NATIVE_OBJECT_PROTOTYPE_CONVERSIONS = Object.freeze(["toLocaleStrin
 export type NativeObjectPrototypeConversion = (typeof NATIVE_OBJECT_PROTOTYPE_CONVERSIONS)[number];
 /** (#7574) The catalog id of the root every ordinary object's chain ends at. */
 export const OBJECT_PROTOTYPE_ID = objectPrototype;
+/** (#7557) The catalog id of every function's [[Prototype]]. */
+export const FUNCTION_PROTOTYPE_ID = functionPrototype;
 /** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
 export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "Error",
@@ -196,6 +207,7 @@ export const REALM_BRAND = { error: 0x800, array: 0x1000 } as const;
 /** The one answer to "is `parent.name` native": the lists above. */
 const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
+  ...NATIVE_PROTOTYPE_METHODS,
   "Object.prototype": [...NATIVE_OBJECT_PROTOTYPE_METHODS, ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS],
   "Error.prototype": ["toString"],
   // (#7561) thisXValue and its ToString (`dynamic-builtin-methods.ts`).
@@ -467,7 +479,8 @@ const arrayMethods: readonly Method[] = (
  * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a) the
  * wrapper constructors, (#7561) their prototype objects and those prototypes' methods, (#7352) `Array`, its prototype,
  * `Array.isArray` and Array.prototype's methods, (#7574) `Object`, the realm's root and the root's methods held with
- * `Object`, (#7580) the statics it holds as values. Positional: new rows are appended.
+ * `Object`, (#7580) the statics it holds as values, (#7557) `Function`, every function's prototype and Function.prototype's
+ * methods held by name. Positional: new rows are appended.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
@@ -488,6 +501,9 @@ export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   OBJECT_PROTOTYPE_ID,
   ...NATIVE_OBJECT_PROTOTYPE_CONVERSIONS.map((name) => realmMethodId("Object.prototype", name)),
   ...HELD_OBJECT_STATICS.map((name) => realmMethodId("Object", name)),
+  "%Function%",
+  functionPrototype,
+  ...NATIVE_PROTOTYPE_METHODS["Function.prototype"].map((name) => realmMethodId("Function.prototype", name)),
 ]);
 /** (#7350 B3b-0) §22.1.3, §21.1.3, §20.3.3: a wrapper prototype's primitive value. */
 const WRAPPER_PRIMITIVE_DATA: Readonly<Record<NativeWrapperConstructor, string | number | boolean>> = {
@@ -671,15 +687,21 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       identityOnly: ["length", "name", "prototype", ...HELD_OBJECT_STATICS],
       heldWith: "%Object%",
     },
-    callable(
-      "%Function%",
-      "Function",
-      1,
-      "CreateDynamicFunction",
-      ["HostEnsureCanCompileStrings", "ParseText", "OrdinaryFunctionCreate", "MakeConstructor"],
-      [reference("prototype", functionPrototype, false, false)],
-      true,
-    ),
+    // (#7557) Held with itself, identity-only; its call (dynamic code) refuses.
+    {
+      ...callable(
+        "%Function%",
+        "Function",
+        1,
+        "CreateDynamicFunction",
+        ["HostEnsureCanCompileStrings", "ParseText", "OrdinaryFunctionCreate", "MakeConstructor"],
+        [reference("prototype", functionPrototype, false, false)],
+        true,
+        "native",
+      ),
+      identityOnly: ["length", "name", "prototype"],
+      heldWith: "%Function%",
+    },
     ...members("Object", objectStatics),
     ...members("Object.prototype", objectMethods).map((row) =>
       (NATIVE_OBJECT_PROTOTYPE_CONVERSIONS as readonly string[]).includes(row.callable!.initialName)
@@ -709,7 +731,12 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       true,
     ),
     ...members("Object.prototype", legacyMethods, true),
-    ...members("Function.prototype", functionMethods),
+    // (#7557) A method held by name is held with itself, so Function.prototype is seeded with it.
+    ...members("Function.prototype", functionMethods).map((row) =>
+      (NATIVE_PROTOTYPE_METHODS["Function.prototype"] as readonly string[]).includes(row.callable!.initialName)
+        ? { ...row, heldWith: row.id }
+        : row,
+    ),
     callable("%Function.prototype[@@hasInstance]%", "[Symbol.hasInstance]", 1, "OrdinaryHasInstance", [
       "OrdinaryHasInstance",
     ]),

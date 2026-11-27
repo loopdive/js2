@@ -6,6 +6,7 @@
  * `%Object.prototype%`, is the kernel's `object-prototype` wherever a row links or refers to it.
  */
 import {
+  FUNCTION_PROTOTYPE_ID,
   OBJECT_PROTOTYPE_ID,
   type NativeRealmIntrinsic,
   type NativeRealmProperty,
@@ -17,8 +18,9 @@ import type {
 
 const SEEDED_BY_THE_KERNEL = new Set(["length", "name"]);
 
-/** The kernel's name of the realm object `id`: the root is its `object-prototype`. */
-const kernelId = (id: string): string => (id === OBJECT_PROTOTYPE_ID ? "object-prototype" : id);
+/** The kernel's name of the realm object `id`: the root is its `object-prototype`, (#7557) Function.prototype its bootstrap entry. */
+const kernelId = (id: string): string =>
+  id === OBJECT_PROTOTYPE_ID ? "object-prototype" : id === FUNCTION_PROTOTYPE_ID ? "function-prototype" : id;
 
 /** `properties` as the kernel defines them (catalog order), on a row that is callable or not. */
 function kernelProperties(
@@ -57,6 +59,21 @@ export const isRootMethod = (heldRows: readonly NativeRealmIntrinsic[], row: Nat
 export const familyProperties = (row: NativeRealmIntrinsic): NativeBuiltinProperty[] => kernelProperties(row);
 
 /**
+ * The properties of the realm's object `id` (the root, (#7557) Function.prototype) whose value is a held family member,
+ * as the kernel seeds them: the realm's own objects, seeded only with what the program holds.
+ */
+export function heldMemberProperties(heldRows: readonly NativeRealmIntrinsic[], id: string): NativeBuiltinProperty[] {
+  const members = new Set(heldRows.flatMap((row) => (row.heldWith === undefined ? [] : [row.id])));
+  const row = heldRows.find((held) => held.id === id)!;
+  return kernelProperties(
+    row,
+    row.properties.filter(
+      (property) => property.kind === "data" && property.value.kind === "intrinsic" && members.has(property.value.id),
+    ),
+  );
+}
+
+/**
  * The held families' ordinary objects, each after the object it links to (catalog order), and (#7574) the root's
  * properties whose value is a held family member, as the kernel's requirement fields: none where the realm holds no
  * family, so such a realm's requirements are what they were.
@@ -73,13 +90,6 @@ export function familyObjects(
       ...(row.array ? { array: row.array } : {}),
       properties: familyProperties(row),
     }));
-  const members = new Set(heldRows.flatMap((row) => (row.heldWith === undefined ? [] : [row.id])));
-  const rootRow = heldRows.find((row) => row.id === OBJECT_PROTOTYPE_ID)!;
-  const root = kernelProperties(
-    rootRow,
-    rootRow.properties.filter(
-      (property) => property.kind === "data" && property.value.kind === "intrinsic" && members.has(property.value.id),
-    ),
-  );
+  const root = heldMemberProperties(heldRows, OBJECT_PROTOTYPE_ID);
   return { ...(objects.length === 0 ? {} : { objects }), ...(root.length === 0 ? {} : { root }) };
 }

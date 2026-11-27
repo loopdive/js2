@@ -53,6 +53,7 @@ import {
 } from "./native-builtin-functions.js";
 import {
   NATIVE_VALUE_INTRINSICS,
+  FUNCTION_PROTOTYPE_ID,
   OBJECT_PROTOTYPE_ID,
   NATIVE_WRAPPER_CONSTRUCTORS,
   realmMethodId,
@@ -298,7 +299,8 @@ const ROWS = {
       const value = (id: string): readonly Instr[] | undefined => {
         if (id === OBJECT_PROTOTYPE_ID && kernel.requests.requirements.root)
           return [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }];
-        if (kernel.entries.some((entry) => entry.id === id))
+        // (#7557) Function.prototype is the bootstrap entry (named by its behavior, aliased by its id).
+        if (id === FUNCTION_PROTOTYPE_ID || kernel.entries.some((entry) => entry.id === id))
           return [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }];
         const object = d.objects.find((row) => row.id === id);
         return (

@@ -61,6 +61,13 @@ export type RealmConstructionBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
 };
 
+/**
+ * (#7557) The front end's helper symbol for the realm's built-in caller's body (`realm-builtin-caller.ts`): its
+ * operands are the built-in, the call's `this` and the argument vector; the legalization writes the built-ins'
+ * algorithms (`dynamic-builtin-call.ts`).
+ */
+export const REALM_BUILTIN_CALL_HELPER = "__ir_realm_builtin_call";
+
 /** The builders a synthesized TypeError is written with. */
 export interface TypeErrorBuilders {
   readonly carrier: IrType;

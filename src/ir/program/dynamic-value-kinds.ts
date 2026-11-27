@@ -175,6 +175,8 @@ export interface ProgramObjects {
   readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
   readonly staticValues: ReadonlySet<string>;
   readonly replacedStatics: ReadonlySet<string>;
+  /** (#7557) The prototype methods held by name whose names the source spells (`hasOwnProperty`, `call`, …). */
+  readonly prototypeMethodNames: ReadonlySet<string>;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -194,6 +196,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   wrappers: new Set<NativeWrapperConstructor>(),
   staticValues: new Set<string>(),
   replacedStatics: new Set<string>(),
+  prototypeMethodNames: new Set<string>(),
 });
 
 /**

@@ -322,6 +322,12 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicCompoundMemberWrites?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
+    /**
+     * (#7557) Where closures are function objects, some function value exists and the realm may hold a callable
+     * built-in (the program names a realm constructor or a prototype method held by name), a value may be a built-in
+     * the dispatcher reaches: module-init installs the realm's built-in caller.
+     */
+    readonly realmBuiltinCaller?: () => boolean;
   };
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
@@ -415,6 +421,10 @@ export function programDynamicContracts(
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
+          realmBuiltinCaller: () =>
+            functionObjects &&
+            objects.functions &&
+            (objects.realmFamilies.size > 0 || objects.prototypeMethodNames.size > 0),
         }
       : {},
     result: (declaration) =>

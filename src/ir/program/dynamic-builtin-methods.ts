@@ -13,6 +13,8 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import {
   ERROR_TO_STRING_ID,
+  FUNCTION_PROTOTYPE_ID,
+  FUNCTION_PROTOTYPE_UNHELD_KEYS,
   OBJECT_PROTOTYPE_ID,
   OBJECT_PROTOTYPE_UNHELD_KEYS,
   WRAPPER_DATA,
@@ -103,11 +105,11 @@ function wrapperMethodTest(
 
 /**
  * (§20.5.3.4) Error.prototype.toString of `receiver`: the realm's for an object; a TypeError for a primitive, which
- * reaches it only where a program can write it to a wrapper prototype (`wrappers`).
+ * reaches it only where a program can write it to a wrapper prototype or (#7557) call it with any `this` (`primitives`).
  */
-function errorToString(b: ChainBuilders, instr: IrInstr, receiver: IrValueId, wrappers: boolean): Arm {
+function errorToString(b: ChainBuilders, instr: IrInstr, receiver: IrValueId, primitives: boolean): Arm {
   const object: Arm = (r) => [realmCall("js.object.error-to-string", [receiver], r)];
-  if (!wrappers) return object;
+  if (!primitives) return object;
   return (r) =>
     b.kindChain(
       instr,
@@ -161,7 +163,7 @@ function objectPrototypeMethodTest(
  * The realm's conversion methods a method read under `name` may be, in the order a call tests them:
  * Error.prototype.toString where a value may be an error, a wrapper prototype's `valueOf` / `toString` where a value
  * may be a wrapper, (#7574) Object.prototype's where the program can obtain the root. The one list OrdinaryToPrimitive,
- * P1's call and the object tag share.
+ * P1's call and the object tag share. (#7557) `detached`: the receiver may be any value (the built-in caller's `this`).
  */
 export function conversionMethodTests(
   b: BuiltinMethodBuilders,
@@ -171,11 +173,13 @@ export function conversionMethodTests(
   method: IrValueId,
   receiver: IrValueId,
   radix = false,
+  detached = false,
 ): (() => BuiltinMethodTest)[] {
+  const primitives = detached || program.objects.wrappers.size > 0;
   const wrappers = program.objects.wrappers.size > 0;
   return [
     ...(name === "toString" && holdsFamily(program, "error")
-      ? [() => identityTest(b, instr, ERROR_TO_STRING_ID, method, errorToString(b, instr, receiver, wrappers))]
+      ? [() => identityTest(b, instr, ERROR_TO_STRING_ID, method, errorToString(b, instr, receiver, primitives))]
       : []),
     ...((name === "valueOf" || name === "toString") && wrappers
       ? [() => wrapperMethodTest(b, instr, name, method, receiver, radix)]
@@ -214,7 +218,8 @@ export function dynamicObjectTag(
 /**
  * An own-property query of `object` with `key` (when it is a constant) that the realm could answer "absent" for a
  * property it lacks is the run-time abort; `then` otherwise: (#7574) where `object` is the root and `key` may be one
- * the root lacks (`OBJECT_PROTOTYPE_UNHELD_KEYS`), and where `object` is a String object ({@link unlessStringObject}).
+ * the root lacks (`OBJECT_PROTOTYPE_UNHELD_KEYS`), (#7557) where it is Function.prototype and `key` may be one that
+ * lacks (`FUNCTION_PROTOTYPE_UNHELD_KEYS`), and where `object` is a String object ({@link unlessStringObject}).
  */
 export function unlessUnheldOwnKey(
   b: ChainBuilders,
@@ -224,10 +229,17 @@ export function unlessUnheldOwnKey(
   key: string | undefined,
   then: Arm,
 ): Arm {
-  const string = unlessStringObject(b, instr, program, object, key, then);
-  if (!holdsFamily(program, "object") || (key !== undefined && !OBJECT_PROTOTYPE_UNHELD_KEYS.has(key))) return string;
-  const root = () => identityTest(b, instr, OBJECT_PROTOTYPE_ID, object, (r) => b.abort(instr, r));
-  return builtinMethodChain(b, [root], string, CARRIER);
+  const partial = (
+    [
+      ["object", OBJECT_PROTOTYPE_ID, OBJECT_PROTOTYPE_UNHELD_KEYS],
+      ["function", FUNCTION_PROTOTYPE_ID, FUNCTION_PROTOTYPE_UNHELD_KEYS],
+    ] as const
+  ).flatMap(([family, id, unheld]) =>
+    holdsFamily(program, family) && (key === undefined || unheld.has(key))
+      ? [() => identityTest(b, instr, id, object, (r) => b.abort(instr, r))]
+      : [],
+  );
+  return builtinMethodChain(b, partial, unlessStringObject(b, instr, program, object, key, then), CARRIER);
 }
 
 /**

@@ -17,6 +17,7 @@ import type { IrType } from "../core/types.js";
 import {
   BUILTIN_REACHABLE_KEYS,
   FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
+  functionPrototypeHolds,
   identityOnlyKeyRefusal,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
   isArrayIndexKey,
@@ -53,6 +54,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
   /** (#7574) The program can obtain the realm's root, `Object.prototype` (it holds the Object family). */
   readonly root: boolean;
+  /** (#7557) The program can obtain `Function.prototype` (it holds the Function family). */
+  readonly functionPrototype: boolean;
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -214,11 +217,14 @@ export function dynamicMemberRead(b: MemberAccessBuilders, member: MemberGet, re
 
 /** The read of the constant key `name`. */
 function constantRead(b: MemberAccessBuilders, instr: MemberGet, name: string, result: IrValueId): IrInstr[] {
-  // (#7561) A wrapper constructor's, (#7352) Array's or (#7574) Object's `prototype` is read only and non-configurable:
-  // the realm's prototype object.
+  // (#7561) A wrapper constructor's, (#7352) Array's, (#7574) Object's or (#7557) Function's `prototype` is read only
+  // and non-configurable: the realm's prototype object.
   const ctor = realmConstructorOf(instr.recv, b.definitions);
   const heldFamilyPrototype =
-    ctor?.family === "array" || ctor?.family === "object" || (ctor?.family === "wrapper" && b.wrappers.has(ctor.name));
+    ctor?.family === "array" ||
+    ctor?.family === "object" ||
+    ctor?.family === "function" ||
+    (ctor?.family === "wrapper" && b.wrappers.has(ctor.name));
   if (name === "prototype" && heldFamilyPrototype) return b.realmIntrinsic(`%${ctor.name}.prototype%`, result);
   // (#7354 P1) A method the realm's Object.prototype holds: an object's or a function's read finds it through the
   // realm's [[Get]]; a primitive's wrapper prototype lacks it, and no program can change one (M1), so its read answers
@@ -252,7 +258,9 @@ function constantRead(b: MemberAccessBuilders, instr: MemberGet, name: string, r
       if (kind === "object")
         return OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name) ? "Object.prototype's accessor" : undefined;
       if (kind === "function")
-        return BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined;
+        return BUILTIN_REACHABLE_KEYS.function.has(name) && !functionPrototypeHolds(name, b.functionPrototype)
+          ? "Function.prototype's properties"
+          : undefined;
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       // A string's own `length` and indexed characters come with arrays (#7352).

@@ -27,6 +27,7 @@ import {
   type NativeGetterInvocationUse,
 } from "./native-getter-invocation-requirements.js";
 import { definesAccessors } from "../runtime/ordinary-object-callables.js";
+import { irClosureInvocationCallableDeclaration } from "../runtime/closure-invocation-callables.js";
 
 export interface NativeInvocationUse {
   readonly occurrence: number;
@@ -65,10 +66,18 @@ export interface NativeInvocationRequirements {
    * Not a `use`: no call site of the program binds it.
    */
   readonly realmAccessors?: { readonly units: readonly IrUnitId[] };
+  /**
+   * (#7557) Module-init installs the realm's built-in caller (`js.closure.install-builtin-caller`): the dispatcher's
+   * built-in arm calls it through method 3. Its argument reads are `js.closure.argument` / `argument-count`.
+   */
+  readonly builtinCaller: boolean;
+  readonly argumentReads: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
 }
+/** (#7557) The caller's arity: the built-in, its `this` and its argument vector. */
+export const BUILTIN_CALLER_ARITY = 3;
 const invocationPacks = issuedPacks<NativeInvocationRequirements>(() =>
   fail("unissued or copied invocation requirements"),
 );
@@ -237,14 +246,15 @@ function calculate(
       if (!fn) fail("invocation occurrence has no actual selected owner");
       typeMaps.set(unitId, (types = nativeAsyncCallableValueTypes(fn)));
     }
-    if (call.result === null || !external(call.resultType ?? undefined))
+    const { params, results } = irClosureInvocationCallableDeclaration(call.target)!;
+    if (call.args.length !== params.length) fail(`canonical ${kind} callable operand count differs`);
+    if (results.some(external) && (call.result === null || !external(call.resultType ?? undefined)))
       fail("semantic invocation result is not externref");
-    if (kind === "undefined" || kind === "receiver") {
-      if (call.args.length) fail(`canonical ${kind} callable takes no operands`);
+    // Only a method call and an apply carry a closure; every other kind's operands are its declaration's.
+    if (kind !== "method" && kind !== "apply-vector") {
       uses.push({ occurrence, ownerUnitId: unitId, kind });
       continue;
     }
-    if (call.args.length !== (kind === "method" ? arity! + 2 : 3)) fail("semantic invocation argument count differs");
     const callee = call.args[kind === "method" ? 1 : 0]!;
     if (!external(types.get(callee))) fail("callee has no external invocation carrier");
     if (!external(types.get(call.args[kind === "method" ? 0 : 1]!))) fail("receiver is not an external value");
@@ -322,6 +332,7 @@ function calculate(
       callbacks,
     });
   }
+  const builtinCaller = uses.some((use) => use.kind === "install-builtin-caller");
   const dispatch = dispatchPartition(source);
   if (uses.some((use) => use.dynamicCallee)) gaps.push(...dispatch.gaps);
   const getters = objectAccess
@@ -336,10 +347,13 @@ function calculate(
         ...uses.flatMap((use) => (use.arity === undefined ? [] : [use.arity])),
         ...(getters.getterUses.length ? [0] : []),
         ...(realmAccessors ? [0, 1] : []),
+        ...(builtinCaller ? [BUILTIN_CALLER_ARITY] : []),
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
     receiver: uses.some((use) => use.kind === "receiver"),
+    builtinCaller,
+    argumentReads: uses.some((use) => use.kind === "argument" || use.kind === "argument-count"),
     ...(realmAccessors ? { realmAccessors: { units: dispatch.dispatchable } } : {}),
     gaps,
   };

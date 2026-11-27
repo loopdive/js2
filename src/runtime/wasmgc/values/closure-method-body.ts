@@ -13,6 +13,7 @@ import {
 import { buildClosureMethodArgument, type ClosureArgumentConversion } from "./closure-argument-bodies.js";
 import { buildClosureResultBody, type ClosureResultConversion } from "./closure-result-bodies.js";
 import { buildInstallableClosureReceiver } from "./closure-receiver-bodies.js";
+import { buildBuiltinCallerCall, type BuiltinCallerArm } from "./builtin-caller-bodies.js";
 
 export interface NativeClosureMethodEntry extends ClosureInvocationArityEntry {
   /** Exact selected allocation carrier, including capture or builtin metadata identity. */
@@ -41,23 +42,46 @@ export interface ClosureInvocationFailure {
    * calls accessor halves: there the arms are the dispatchable source closures, and any other closure aborts.
    */
   readonly builtinRootTypeIdx?: number;
+  /** (#7557) Where module-init installs the realm's built-in caller: a built-in callee is the caller's call. */
+  readonly builtinCaller?: BuiltinCallerArm;
 }
 
-/** The dispatch's last arm, for the callee in the externref local `callee`. */
-export function buildClosureInvocationFailure(failure: ClosureInvocationFailure, callee: number): Instr[] {
-  return [
-    ...(failure.builtinRootTypeIdx === undefined
-      ? []
-      : ([
-          ...buildClosureRootTest(callee, failure.builtinRootTypeIdx),
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-        ] satisfies Instr[])),
+/** (#7557) The call a built-in callee is the caller's call of: its receiver and its argument locals. */
+export interface BuiltinCallSite {
+  readonly receiver: Instr[];
+  readonly argumentLocals: readonly number[];
+  readonly undefinedGlobal: number;
+}
+
+/**
+ * The dispatch's last arm, for the callee in the externref local `callee`: a built-in (a closure-root callee) is the
+ * run-time abort, or (#7557) at a `site`, the installed built-in caller's call; any other value is the TypeError.
+ */
+export function buildClosureInvocationFailure(
+  failure: ClosureInvocationFailure,
+  callee: number,
+  site?: BuiltinCallSite,
+): Instr[] {
+  const typeError: Instr[] = [
     ...(failure.message.kind === "global"
       ? ([{ op: "global.get", index: failure.message.index }, { op: "extern.convert_any" }] satisfies Instr[])
       : ([{ op: "call", funcIdx: failure.message.handle }] satisfies Instr[])),
     { op: "call", funcIdx: failure.newTypeError },
     { op: "throw", tagIdx: failure.exceptionTag },
   ];
+  if (failure.builtinRootTypeIdx === undefined) return typeError;
+  const root = buildClosureRootTest(callee, failure.builtinRootTypeIdx);
+  if (!failure.builtinCaller || !site)
+    return [...root, { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] }, ...typeError];
+  const call = buildBuiltinCallerCall(
+    failure.builtinCaller,
+    site.receiver,
+    callee,
+    site.argumentLocals,
+    site.undefinedGlobal,
+    [{ op: "unreachable" }],
+  );
+  return [...root, { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: call, else: typeError }];
 }
 
 /**
@@ -150,7 +174,11 @@ export function buildNativeClosureMethodDefinition(
     result: anyLocal + 5,
   };
   const omittedLocal = anyLocal + 6;
-  let dispatch = buildClosureInvocationFailure(failure, 1);
+  let dispatch = buildClosureInvocationFailure(failure, 1, {
+    receiver: [{ op: "local.get", index: 0 }],
+    argumentLocals: Array.from({ length: arity }, (_, index) => index + 2),
+    undefinedGlobal: state.undefinedGlobal,
+  });
   for (const entry of [...entries].reverse()) {
     const argumentLocals = entry.params.map((_, index) => (index < arity ? index + 2 : omittedLocal));
     const argumentsBody = entry.params.flatMap((type, index) =>

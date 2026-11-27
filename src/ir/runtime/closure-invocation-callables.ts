@@ -8,6 +8,16 @@ import type { IrRuntimeCallableDeclaration } from "./callable-declarations.js";
 
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const VECTOR: IrType = Object.freeze({ kind: "vec", elementType: EXTERNAL, nullable: false });
+const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
+/** Each named kind's parameters and results; a method's are its arity's carriers. */
+const SIGNATURES = {
+  "apply-vector": [[EXTERNAL, EXTERNAL, VECTOR], [EXTERNAL]],
+  undefined: [[], [EXTERNAL]],
+  receiver: [[], [EXTERNAL]],
+  "install-builtin-caller": [[EXTERNAL], []],
+  argument: [[EXTERNAL, F64], [EXTERNAL]],
+  "argument-count": [[EXTERNAL], [F64]],
+} as const satisfies Record<string, readonly [readonly IrType[], readonly IrType[]]>;
 
 /**
  * Semantic signatures only. A matching spelling is not physical permission:
@@ -18,17 +28,14 @@ export function irClosureInvocationCallableDeclaration(ref: IrFuncRef): IrRuntim
   const { symbol } = ref.binding;
   const kind = closureInvocationKind(symbol);
   if (!kind) return undefined;
-  const arity = closureMethodArity(symbol);
+  const [params, results] =
+    kind === "method"
+      ? [Array.from({ length: closureMethodArity(symbol)! + 2 }, () => EXTERNAL), [EXTERNAL]]
+      : SIGNATURES[kind];
   return Object.freeze({
     feature: `js.closure.${kind}` as const,
     ref: irIntrinsicFuncRef(symbol),
-    params: Object.freeze(
-      kind === "method"
-        ? Array.from({ length: arity! + 2 }, () => EXTERNAL)
-        : kind === "apply-vector"
-          ? [EXTERNAL, EXTERNAL, VECTOR]
-          : [],
-    ),
-    results: Object.freeze([EXTERNAL]),
+    params: Object.freeze([...params]),
+    results: Object.freeze([...results]),
   });
 }

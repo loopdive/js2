@@ -44,7 +44,13 @@ import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
 import { dynamicObjectConstruction } from "./dynamic-object-constructors.js";
 import { dynamicArrayConstruction } from "./dynamic-array-constructors.js";
 import { dynamicObjectTag } from "./dynamic-builtin-methods.js";
-import { realmConstructorOf, realmIntrinsicOfHelper, type RealmConstruction } from "./dynamic-realm-calls.js";
+import {
+  REALM_BUILTIN_CALL_HELPER,
+  realmConstructorOf,
+  realmIntrinsicOfHelper,
+  type RealmConstruction,
+} from "./dynamic-realm-calls.js";
+import { dynamicBuiltinCall } from "./dynamic-builtin-call.js";
 import type { RealmConstructor } from "./builtin-prototype-keys.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
@@ -115,6 +121,7 @@ export function legalizeDynamicValues(
     errors,
     wrappers: program.objects.wrappers,
     root: holdsFamily(program, "object"),
+    functionPrototype: holdsFamily(program, "function"),
   };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
@@ -132,6 +139,9 @@ export function legalizeDynamicValues(
         return dynamicArrayConstruction(objectStatics, instr, args);
       case "object":
         return dynamicObjectConstruction(objectStatics, instr, args);
+      // (#7557) CreateDynamicFunction parses source text: the eval lane's.
+      case "function":
+        return gap("Function(…) (dynamic code)");
     }
   };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
@@ -264,6 +274,7 @@ export function legalizeDynamicValues(
         const symbol = instr.target.binding.kind === "runtime" ? instr.target.binding.symbol : undefined;
         const objectStatic = symbol === undefined ? undefined : objectStaticOfHelper(symbol);
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
+        if (symbol === REALM_BUILTIN_CALL_HELPER) return dynamicBuiltinCall(objectStatics, instr);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
         const dispatched = closureMethodArity(instr.target.name) !== undefined;

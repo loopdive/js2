@@ -1,33 +1,25 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 P1, G1) The dynamic-value legalization of a call of a prototype method the realm holds (an Object.prototype
- * method of `NATIVE_OBJECT_PROTOTYPE_METHODS`, and the conversion methods of `conversionMethodTests`:
- * `Error.prototype.toString` where the program holds the Error family, (#7561) a wrapper's `valueOf` / `toString`):
- * `o.m(v)` is F2's [[Get]] of `m` on the once-evaluated receiver, then the
- * dispatcher's call with the receiver as `this`. Where the callee is that [[Get]], the call is the method's own
- * algorithm when the value read is the realm's built-in (an own property, a user prototype's method or a write to `m`
- * is any other value, and takes the dispatcher), because the algorithm's first step, ToPropertyKey, can call the key's
- * `toString`, which only the program can run (`stringOf`). Called through any other value the built-in is the
- * dispatcher's run-time abort.
+ * (#7354 P1, G1) The dynamic-value legalization of a call whose callee may be a built-in the realm holds, answered by
+ * the callee's identity with the realm's function object: the Object.prototype methods held by name, the conversion
+ * methods of `conversionMethodTests` (`Error.prototype.toString`, (#7561) a wrapper's `valueOf` / `toString`, (#7574)
+ * Object.prototype's), (#7352) `Array.isArray`, (#7580) the `Object` statics the program reads as values and (#7557)
+ * `Function.prototype` itself. Each answers the built-in's own algorithm, because its steps (ToPropertyKey, ToString)
+ * can call the program's code, which only the program can run (`stringOf`).
  *
- * Only the method-call shape `o.m(v)` is such a call: its receiver is the receiver of the [[Get]] that read the callee,
- * so it is never `undefined` or `null` (that [[Get]] threw). A detached call (`var h = o.m; h(v)`) has another
- * receiver and takes the dispatcher. (#7352) `Array.isArray` reads no `this` and no key, so a call whose callee is it
- * is IsArray in either shape: `X.isArray(v)`, or detached (`var f = Array.isArray; f(v)`). A method read under another
- * name (`o.m = Array.isArray; o.m(v)`) takes the dispatcher, whose built-in arm aborts. (#7580) So does a native
- * `Object` static the program reads as a value (`staticValues`): `var d = Object.defineProperty; d(o, k, v)` and
- * `({ defineProperty: d }).defineProperty(o, k, v)` are its algorithm, `({ f: d }).f(o, k, v)` the abort. Testing
- * every name would inline each static's algorithm at every method call of the program.
- *
- * Where the program creates no source function no dispatcher exists, and a call that is none of these built-ins is the
- * run-time abort (a built-in the dispatcher could only abort for).
+ * (#7557) {@link heldBuiltinRungs} is the one list of those tests over a {@link BuiltinCall}. A method call `o.m(v)`
+ * tests the rungs named `m` at its site; any other built-in reached through a value is the dispatcher's built-in arm,
+ * which calls the realm's built-in caller, whose body tests every rung (`dynamic-builtin-call.ts`). Where the program
+ * creates no source function no dispatcher exists: the site tests the rungs named `m` first, then the others, and any
+ * other callee is the run-time abort.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import {
+  FUNCTION_PROTOTYPE_ID,
   IS_ARRAY_ID,
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
   REALM_BRAND,
-  nativeObjectPrototypeMethod,
   nativeObjectStatic,
   objectPrototypeMethodId,
 } from "./builtin-prototype-keys.js";
@@ -36,16 +28,34 @@ import {
   conversionMethodTests,
   identityTest,
   unlessUnheldOwnKey,
+  type BuiltinMethodTest,
 } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
-import { realmCall } from "./dynamic-realm-calls.js";
+import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import { objectStaticTest, toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-function-operations.js";
 
-type Call = Extract<IrInstr, { kind: "call" }>;
-const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
+export type Call = Extract<IrInstr, { kind: "call" }>;
+type Arm = (result: IrValueId) => IrInstr[];
+
+/**
+ * (#7557) A call of a built-in: its `this` and its arguments (`args[i]`, absent where the call passes none). A method
+ * call's receiver is never `undefined` or `null` (the [[Get]] that read the callee threw); a `detached` one, the
+ * caller's `this`, may be any value.
+ */
+export interface BuiltinCall {
+  readonly instr: Call;
+  readonly receiver: IrValueId;
+  readonly args: readonly IrValueId[];
+  readonly detached: boolean;
+}
+/** A built-in a callee may be: its name (`hasOwnProperty`, `toString`, …) and its identity test. */
+interface BuiltinRung {
+  readonly name: string;
+  readonly test: () => BuiltinMethodTest;
+}
 
 /** The name `call` calls, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a constant key on its receiver. */
 function methodNameOfCall(call: Call, definitions: ReadonlyMap<IrValueId, IrInstr>): string | undefined {
@@ -70,14 +80,27 @@ const constant =
     { kind: "const", value: { kind: "bool", value: answer }, result, resultType: BOOLEAN },
   ];
 
+/** The kinds the call's receiver may hold that ToObject(this value) admits: all of them for a detached call. */
+const receiverKinds = (b: ObjectStaticBuilders, call: BuiltinCall): readonly CarrierKind[] =>
+  b.kinds.kindsOf(call.receiver).filter((kind) => call.detached || MEMBER_ACCESS_ARM[kind] !== "type-error");
+
+/** ToObject(this value)'s TypeError for an `undefined` or `null` receiver, into the arm's unread answer. */
+const toObjectTypeError = (b: ObjectStaticBuilders, call: BuiltinCall, r: IrValueId): IrInstr[] =>
+  typeErrorThen(
+    { ...b, carrier: CARRIER },
+    "Cannot convert undefined or null to object",
+    b.intrinsic(call.instr, "js.value.undefined", [], r),
+  );
+
 /**
  * §20.1.3.2 / §20.1.3.4: ToPropertyKey(V) first, then ToObject(this value) and its own property `P` (enumerable too
  * for `propertyIsEnumerable`). An ordinary object's or a function's own properties are the kernel's; a number's or a
  * Boolean's wrapper owns none; a string's own `length` and indices need the String exotic the realm lacks: the run-time
  * abort.
  */
-function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, result: IrValueId): IrInstr[] {
-  const [receiver, , argument] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
+function ownProperty(b: ObjectStaticBuilders, call: BuiltinCall, enumerable: boolean, result: IrValueId): IrInstr[] {
+  const { instr, receiver } = call;
+  const argument = call.args[0];
   const [text, key] = [b.fresh(), b.fresh()];
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_ACCESS_ARM[kind]) {
@@ -88,6 +111,8 @@ function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, 
         const known = argument === undefined ? "undefined" : constantArgumentOf(b.definitions, argument);
         return unlessUnheldOwnKey(b, instr, b.program, receiver, known, own)(r);
       }
+      case "type-error":
+        return toObjectTypeError(b, call, r);
       default:
         return kind === "number" || kind === "boolean" ? boxed(b, instr, constant(false), r) : b.abort(instr, r);
     }
@@ -96,44 +121,106 @@ function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, 
     // A missing argument is `undefined`, whose ToString is "undefined".
     ...(argument === undefined ? [b.text("undefined", text)] : toPropertyKey(b, instr, argument, text)),
     carried(text, key),
-    // The receiver is no `undefined` or `null` (the module doc), so the chain runs over its other kinds.
-    ...b.kindChain(instr, receiver, result, arm, b.kinds.kindsOf(receiver).filter(isObjectCoercible), CARRIER),
+    ...b.kindChain(instr, receiver, result, arm, receiverKinds(b, call), CARRIER),
   ];
 }
 
 /**
  * §20.1.3.3: a V that is not an object answers false before ToObject(this value); else V's [[Prototype]] chain is
  * walked for `this`. Only an ordinary object's chain can hold a value the program has (an error's included); a
- * function's holds the realm's built-in prototypes alone, which no program obtains (M1), but (#7354 G1) %Error%
- * (`functionChainAnswer`).
+ * function's holds the realm's built-in prototypes alone (`functionChainAnswer`).
  */
-function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): IrInstr[] {
-  const [receiver, , argument] = instr.args as [IrValueId, IrValueId, IrValueId | undefined];
+function prototypeOf(b: ObjectStaticBuilders, call: BuiltinCall, result: IrValueId): IrInstr[] {
+  const { instr, receiver } = call;
+  const argument = call.args[0];
   if (argument === undefined) return boxed(b, instr, constant(false), result);
   const walk = (kind: CarrierKind) =>
     isOrdinaryObject(kind)
       ? (s: IrValueId) => [realmCall("js.object.inherits", [argument, receiver], s)]
       : kind === "function"
-        ? (s: IrValueId) => functionChainAnswer(b, instr, b.program, receiver, constant(false), s, BOOLEAN)
+        ? (s: IrValueId) => functionChainAnswer(b, instr, b.program, argument, receiver, constant(false), s, BOOLEAN)
         : constant(false);
-  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => boxed(b, instr, walk(kind), r);
+  const onObject = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
+    b.kindChain(
+      instr,
+      receiver,
+      r,
+      (thisKind, s) =>
+        MEMBER_ACCESS_ARM[thisKind] === "type-error" ? toObjectTypeError(b, call, s) : boxed(b, instr, walk(kind), s),
+      receiverKinds(b, call),
+      CARRIER,
+    );
+  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
+    kind === "function" || isOrdinaryObject(kind) ? onObject(kind, r) : boxed(b, instr, constant(false), r);
   return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
 }
 
 /** (#7352) §23.1.2.2 IsArray of the call's first argument: the realm's array brand of an object, else `false`. */
-function isArray(b: ObjectStaticBuilders, instr: Call, result: IrValueId): IrInstr[] {
-  const argument = instr.args[2];
-  if (argument === undefined) return boxed(b, instr, constant(false), result);
+function isArray(b: ObjectStaticBuilders, call: BuiltinCall, result: IrValueId): IrInstr[] {
+  const argument = call.args[0];
+  if (argument === undefined) return boxed(b, call.instr, constant(false), result);
   const brand = (s: IrValueId) => b.selectorCall("js.object.has-brand", [argument], REALM_BRAND.array, s);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
-    boxed(b, instr, isOrdinaryObject(kind) ? brand : constant(false), r);
-  return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
+    boxed(b, call.instr, isOrdinaryObject(kind) ? brand : constant(false), r);
+  return b.kindChain(call.instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
 }
 
 /**
- * The legalized dispatcher call, where its callee may be a built-in the realm holds: each such built-in's algorithm
- * where the callee is it (`builtinMethodChain`), else the call as it was (or, without a dispatcher, the run-time
- * abort); `undefined` for any other call.
+ * (#7557) Every built-in the realm may hold that a call through `callee` can answer, in the order a call tests them:
+ * the Object.prototype methods whose names the source spells, the conversion methods, `Array.isArray` where the program
+ * holds the Array family, the statics it reads as values, and `Function.prototype` (whose call answers `undefined`)
+ * where it holds the Function family. `radix`: Number.prototype.toString may meet an argument (`conversionMethodTests`).
+ */
+export function heldBuiltinRungs(
+  b: ObjectStaticBuilders,
+  call: BuiltinCall,
+  callee: IrValueId,
+  radix: boolean,
+): BuiltinRung[] {
+  const { instr, receiver } = call;
+  const { objects } = b.program;
+  const conversion = (name: "toString" | "valueOf") =>
+    conversionMethodTests(b, instr, b.program, name, callee, receiver, radix, call.detached).map((test) => ({
+      name,
+      test,
+    }));
+  return [
+    ...NATIVE_OBJECT_PROTOTYPE_METHODS.filter((name) => objects.prototypeMethodNames.has(name)).map((name) => ({
+      name,
+      test: () =>
+        identityTest(b, instr, objectPrototypeMethodId(name), callee, (r) =>
+          name === "isPrototypeOf" ? prototypeOf(b, call, r) : ownProperty(b, call, name === "propertyIsEnumerable", r),
+        ),
+    })),
+    ...conversion("toString"),
+    ...conversion("valueOf"),
+    ...(holdsFamily(b.program, "array")
+      ? [{ name: "isArray", test: () => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, call, r)) }]
+      : []),
+    ...[...objects.staticValues].flatMap((value) => {
+      const native = nativeObjectStatic(value)?.name;
+      return native === undefined
+        ? []
+        : [{ name: native, test: () => objectStaticTest(b, instr, native, callee, call.args) }];
+    }),
+    ...(holdsFamily(b.program, "function")
+      ? [
+          {
+            name: "",
+            test: () =>
+              identityTest(b, instr, FUNCTION_PROTOTYPE_ID, callee, (r) => [
+                b.intrinsic(instr, "js.value.undefined", [], r),
+              ]),
+          },
+        ]
+      : []),
+  ];
+}
+
+/**
+ * The legalized dispatcher call, where its callee may be a built-in the realm holds: the rungs named as the method the
+ * call reads (or, without a dispatcher, every rung), each answering where the callee is it (`builtinMethodChain`),
+ * else the call as it was (or, without a dispatcher, the run-time abort); `undefined` for any other call.
  */
 export function dynamicPrototypeMethodCall(
   b: ObjectStaticBuilders,
@@ -142,29 +229,16 @@ export function dynamicPrototypeMethodCall(
 ): IrInstr[] | undefined {
   if (closureMethodArity(instr.target.name) === undefined) return undefined;
   const name = methodNameOfCall(instr, definitions);
-  const [receiver, callee] = instr.args as [IrValueId, IrValueId];
-  const method = name === undefined ? undefined : nativeObjectPrototypeMethod(name);
-  const algorithm = (r: IrValueId): IrInstr[] =>
-    method === "isPrototypeOf" ? prototypeOf(b, instr, r) : ownProperty(b, instr, method === "propertyIsEnumerable", r);
-  // A static reads no `this`: a call may be it where it is detached or names it.
-  const reads = (key: string): boolean => name === undefined || name === key;
-  const tests = [
-    ...(method === undefined ? [] : [() => identityTest(b, instr, objectPrototypeMethodId(method), callee, algorithm)]),
-    ...(name === undefined
-      ? []
-      : conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2)),
-    ...(holdsFamily(b.program, "array") && reads("isArray")
-      ? [() => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))]
-      : []),
-    ...[...b.program.objects.staticValues].flatMap((value) => {
-      const native = nativeObjectStatic(value)?.name;
-      return native !== undefined && reads(native)
-        ? [() => objectStaticTest(b, instr, native, callee, instr.args.slice(2))]
-        : [];
-    }),
-  ];
+  const [receiver, callee, ...args] = instr.args as [IrValueId, IrValueId, ...IrValueId[]];
+  const call: BuiltinCall = { instr, receiver, args, detached: name === undefined };
+  const rungs = heldBuiltinRungs(b, call, callee, args.length > 0);
+  const named = rungs.filter((rung) => rung.name === name);
+  const dispatcher = b.program.objects.functions;
+  const tests = (dispatcher ? named : [...named, ...rungs.filter((rung) => rung.name !== name)]).map(
+    (rung) => rung.test,
+  );
   if (tests.length === 0) return undefined;
-  const call = (r: IrValueId): IrInstr[] =>
-    b.program.objects.functions ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r);
-  return builtinMethodChain(b, tests, call, CARRIER)(instr.result!);
+  const otherwise = (r: IrValueId): IrInstr[] =>
+    dispatcher ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r);
+  return builtinMethodChain(b, tests, otherwise, CARRIER)(instr.result!);
 }

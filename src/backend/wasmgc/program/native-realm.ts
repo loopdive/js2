@@ -40,7 +40,7 @@ import {
   type NativeStringValueReservations,
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
-import { familyObjects, familyProperties, isRootMethod } from "./native-realm-families.js";
+import { familyObjects, familyProperties, heldMemberProperties, isRootMethod } from "./native-realm-families.js";
 import {
   fillNativeRealmArrays,
   nativeRealmArrayInventory,
@@ -345,6 +345,10 @@ function beginRealm(
       constructible: row.constructible,
       aliases: row.aliases,
       ...(entry === "native" ? { properties: familyProperties(row) } : {}),
+      // (#7557) Function.prototype is seeded with the members the program holds, as the root (`familyObjects`).
+      ...(entry === "function-prototype" && heldMemberProperties(held, id).length > 0
+        ? { properties: heldMemberProperties(held, id) }
+        : {}),
       ...(row.identityOnly ? { identityOnly: true as const } : {}),
     };
   });

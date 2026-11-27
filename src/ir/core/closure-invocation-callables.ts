@@ -7,18 +7,31 @@ export const IR_CLOSURE_METHOD_PREFIX = "js.closure.call:";
 export const IR_CLOSURE_UNDEFINED = "js.closure.undefined";
 /** (#7354 C2) The receiver the dispatcher installed for the running call (`__current_this`): OrdinaryCallBindThis's input. */
 export const IR_CLOSURE_RECEIVER = "js.closure.receiver";
+/**
+ * (#7557) The realm's built-in caller: module-init installs the program's caller closure (`realm-builtin-caller.ts`),
+ * which the dispatcher's built-in arm calls with the built-in, its `this` and its arguments (an argument vector); the
+ * caller reads argument `i` of that vector (`undefined` past its end) and its length.
+ */
+export const IR_CLOSURE_INSTALL_BUILTIN_CALLER = "js.closure.install-builtin-caller";
+export const IR_CLOSURE_ARGUMENT = "js.closure.argument";
+export const IR_CLOSURE_ARGUMENT_COUNT = "js.closure.argument-count";
+const NAMED_KINDS = {
+  [IR_CLOSURE_VECTOR_APPLY]: "apply-vector",
+  [IR_CLOSURE_UNDEFINED]: "undefined",
+  [IR_CLOSURE_RECEIVER]: "receiver",
+  [IR_CLOSURE_INSTALL_BUILTIN_CALLER]: "install-builtin-caller",
+  [IR_CLOSURE_ARGUMENT]: "argument",
+  [IR_CLOSURE_ARGUMENT_COUNT]: "argument-count",
+} as const;
+export type ClosureInvocationKind = "method" | (typeof NAMED_KINDS)[keyof typeof NAMED_KINDS];
 export function irClosureMethodReference(arity: number) {
   if (!Number.isSafeInteger(arity) || arity < 0) throw new Error("invalid closure method arity");
   return irIntrinsicFuncRef(`${IR_CLOSURE_METHOD_PREFIX}${arity}`);
 }
 /** Which closure-invocation callable `symbol` names, if any: the one reading of the family's spellings. */
-export function closureInvocationKind(
-  symbol: string,
-): "method" | "apply-vector" | "undefined" | "receiver" | undefined {
+export function closureInvocationKind(symbol: string): ClosureInvocationKind | undefined {
   if (closureMethodArity(symbol) !== undefined) return "method";
-  if (symbol === IR_CLOSURE_VECTOR_APPLY) return "apply-vector";
-  if (symbol === IR_CLOSURE_UNDEFINED) return "undefined";
-  return symbol === IR_CLOSURE_RECEIVER ? "receiver" : undefined;
+  return Object.hasOwn(NAMED_KINDS, symbol) ? NAMED_KINDS[symbol as keyof typeof NAMED_KINDS] : undefined;
 }
 export function closureMethodArity(symbol: string): number | undefined {
   if (!symbol.startsWith(IR_CLOSURE_METHOD_PREFIX)) return undefined;

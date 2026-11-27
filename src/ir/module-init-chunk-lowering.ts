@@ -18,6 +18,7 @@ import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { IrFunctionBuilder } from "./builder.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
 import { emitFunctionDeclarationValues, type FunctionDeclarationValue } from "./function-declaration-values.js";
+import { emitRealmBuiltinCaller } from "./realm-builtin-caller.js";
 import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
@@ -31,6 +32,16 @@ import {
   planModuleInitChunks,
 } from "../shared/module-init-chunk-plan.js";
 
+/** The resolver's answers the `<module-init>` lowering reads (`IrFromAstResolver` extends it). */
+export interface ModuleInitResolver {
+  /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
+  moduleInitChunkName?(preferred: string): string;
+  /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
+  moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
+  /** (#7557) The realm may hold built-ins the program calls through values: install the realm's caller. */
+  realmBuiltinCaller?(): boolean;
+}
+
 /** The slice of the `<module-init>` lowering context this module reads and extends. */
 export interface ModuleInitChunkHost {
   readonly builder: IrFunctionBuilder;
@@ -39,14 +50,7 @@ export interface ModuleInitChunkHost {
   readonly lifted: IrFunction[];
   readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   readonly allocRegistry?: AllocSiteRegistry;
-  /**
-   * Reserves each chunk's Wasm name in the module being built (absent: the name as planned); (#7354 F1b) the
-   * function declarations the script reads as values.
-   */
-  readonly resolver?: {
-    moduleInitChunkName?(preferred: string): string;
-    moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
-  };
+  readonly resolver?: ModuleInitResolver;
 }
 
 /**
@@ -60,6 +64,7 @@ export function lowerModuleInitStatements<C extends ModuleInitChunkHost>(
   lowerStatement: (statement: ts.Statement, cx: C) => void,
 ): void {
   emitFunctionDeclarationValues(cx, cx.resolver?.moduleInitFunctionValues?.() ?? []);
+  if (cx.resolver?.realmBuiltinCaller?.() === true) emitRealmBuiltinCaller(cx);
   const chunks = planModuleInitChunks(statements.map((node) => ({ node })));
   if (chunks.length <= 1) {
     for (const statement of statements) lowerStatement(statement, cx);

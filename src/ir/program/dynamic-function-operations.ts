@@ -21,7 +21,7 @@ import {
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
-import { ERROR_ID, OBJECT_PROTOTYPE_ID } from "./builtin-prototype-keys.js";
+import { ERROR_ID, FUNCTION_PROTOTYPE_ID, OBJECT_PROTOTYPE_ID } from "./builtin-prototype-keys.js";
 import { builtinMethodChain, identityTest } from "./dynamic-builtin-methods.js";
 import { BOOLEAN } from "./dynamic-value-types.js";
 
@@ -185,7 +185,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
-        : functionChainAnswer(b, instr, b.program, prototype, (t) => [unread(t)], s, BOOLEAN);
+        : functionChainAnswer(b, instr, b.program, value, prototype, (t) => [unread(t)], s, BOOLEAN);
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,
@@ -213,15 +213,17 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
 }
 
 /**
- * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
+ * The answer of a walk over the function `fn`'s [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
  * isPrototypeOf's step 3): `no` (false), but (#7574) `true` where the program holds the Object family and `prototype`
- * is the realm's root, which ends every function's chain, and where the program holds the Error family and
+ * is the realm's root, which ends every function's chain, (#7557) where it holds the Function family and `prototype`
+ * is %Function.prototype%, on every function's chain but its own, and where the program holds the Error family and
  * `prototype` is `%Error%` the run-time abort, which ends the program before the arm's own (unread) answer (`dynamic-error-constructors.ts`).
  */
 export function functionChainAnswer(
   b: ChainBuilders,
   instr: IrInstr,
   program: LegalizationProgram,
+  fn: IrValueId,
   prototype: IrValueId,
   no: (r: IrValueId) => IrInstr[],
   r: IrValueId,
@@ -230,8 +232,16 @@ export function functionChainAnswer(
   const yes = (s: IrValueId): IrInstr[] => [
     { kind: "const", value: { kind: "bool", value: true }, result: s, resultType: BOOLEAN },
   ];
+  // Function.prototype's own [[Prototype]] is the root.
+  const functionPrototype = (s: IrValueId): IrInstr[] => {
+    const own = identityTest(b, instr, FUNCTION_PROTOTYPE_ID, fn, no);
+    return [...own.instrs, b.branch(own.cond, own.answer, yes, s, resultType)];
+  };
   const tests = [
     ...(holdsFamily(program, "object") ? [() => identityTest(b, instr, OBJECT_PROTOTYPE_ID, prototype, yes)] : []),
+    ...(holdsFamily(program, "function")
+      ? [() => identityTest(b, instr, FUNCTION_PROTOTYPE_ID, prototype, functionPrototype)]
+      : []),
     ...(holdsFamily(program, "error")
       ? [() => identityTest(b, instr, ERROR_ID, prototype, (s) => [...b.abort(instr, b.fresh()), ...no(s)])]
       : []),

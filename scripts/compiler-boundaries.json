@@ -15339,6 +15339,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/builtin-caller-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -17456,6 +17461,19 @@
       "destination": "frontend-ts",
       "owner": "7354-prepared-path",
       "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/realm-builtin-caller.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "The realm's built-in caller lifted into module-init (#7557); moves with module-init-chunk-lowering's frontend half."
+    },
+    {
+      "path": "src/ir/program/dynamic-builtin-call.ts",
+      "state": "clean",
+      "layer": "ir-program"
     },
     {
       "path": "src/ir/realm-static-call.ts",

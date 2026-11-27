@@ -13,8 +13,11 @@ import {
   HELD_OBJECT_STATICS,
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_CONVERSIONS,
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   OBJECT_PROTOTYPE_ID,
+  FUNCTION_PROTOTYPE_ID,
+  NATIVE_PROTOTYPE_METHODS,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
   REALM_BRAND,
@@ -90,6 +93,7 @@ interface RealmFamilyNames {
   readonly wrapper: NativeWrapperConstructor;
   readonly array: "Array";
   readonly object: "Object";
+  readonly function: "Function";
 }
 export type RealmFamily = keyof RealmFamilyNames;
 /**
@@ -113,10 +117,14 @@ const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map<string
   ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
   ...constructors("array", ["Array"]),
   ...constructors("object", ["Object"]),
+  ...constructors("function", ["Function"]),
 ]);
 
 /** (#7352) The catalog id of `Array.isArray`, a static the realm holds as a function value. */
 export const IS_ARRAY_ID = realmMethodId("Array", "isArray");
+/** (#7557) The catalog ids of `Function.prototype` and of `Function.prototype.call`; the P1 methods' names. */
+export { FUNCTION_PROTOTYPE_ID, NATIVE_OBJECT_PROTOTYPE_METHODS };
+export const FUNCTION_CALL_ID = realmMethodId("Function.prototype", "call");
 
 /**
  * (#7352) Whether a realm that holds the family of `path`'s constructor holds the static `path` (`"Array.isArray"`) as
@@ -234,15 +242,44 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  */
 export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
+/** The keys of the realm object `object` whose value is a row a family brings, seeded with the family. */
+const familyKeys = (object: string): ReadonlySet<string> =>
+  stringKeys(
+    propertiesOf([object]).filter((property) => {
+      const value = property.kind === "data" && property.value.kind === "intrinsic" ? property.value.id : undefined;
+      return NATIVE_REALM_CATALOG.intrinsics.some(({ id, heldWith }) => heldWith !== undefined && id === value);
+    }),
+  );
+
 /**
- * (#7574) The keys the realm's root holds where the program holds the Object family: its properties whose value is a
- * row a family brings (`constructor`, the conversion methods), seeded with the family (`familyObjects`).
+ * (#7574) The keys the realm's root holds where the program holds the Object family (`constructor`, the conversion
+ * methods), seeded with the family (`familyObjects`).
  */
-export const OBJECT_FAMILY_ROOT_KEYS: ReadonlySet<string> = stringKeys(
-  propertiesOf([OBJECT_PROTOTYPE_ID]).filter((property) => {
-    const value = property.kind === "data" && property.value.kind === "intrinsic" ? property.value.id : undefined;
-    return NATIVE_REALM_CATALOG.intrinsics.some(({ id, heldWith }) => heldWith !== undefined && id === value);
-  }),
+export const OBJECT_FAMILY_ROOT_KEYS = familyKeys(OBJECT_PROTOTYPE_ID);
+
+/** (#7557) The names of the prototype methods a realm holds by name (`NATIVE_PROTOTYPE_METHODS`). */
+export const PROTOTYPE_METHOD_NAMES: ReadonlySet<string> = new Set(Object.values(NATIVE_PROTOTYPE_METHODS).flat());
+
+/** (#7557) Function.prototype's methods the realm holds where a key names one. */
+const FUNCTION_PROTOTYPE_METHOD_KEYS: ReadonlySet<string> = new Set(NATIVE_PROTOTYPE_METHODS["Function.prototype"]);
+/** (#7557) Function.prototype's keys the realm holds where the program holds the Function family (`constructor`). */
+const FUNCTION_FAMILY_KEYS = familyKeys(FUNCTION_PROTOTYPE_ID);
+
+/**
+ * (#7557) Whether the realm's Function.prototype holds `key`, so a function's read of it is the realm's [[Get]]: its
+ * methods held by name, and its family keys where the program holds the Function family (`family`).
+ */
+export const functionPrototypeHolds = (key: string, family: boolean): boolean =>
+  FUNCTION_PROTOTYPE_METHOD_KEYS.has(key) || (family && FUNCTION_FAMILY_KEYS.has(key));
+
+/**
+ * (#7557) Function.prototype's keys the realm lacks even where the program holds the Function family (`apply`,
+ * `toString`, …): an own-property query of it with one of them is unknown, never absent.
+ */
+export const FUNCTION_PROTOTYPE_UNHELD_KEYS: ReadonlySet<string> = new Set(
+  [...realmStringKeys(FUNCTION_PROTOTYPE_ID)].filter(
+    (key) => key !== "length" && key !== "name" && !functionPrototypeHolds(key, true),
+  ),
 );
 
 /** (#7354 P1) Object.prototype's keys the realm's Object.prototype does not hold. */

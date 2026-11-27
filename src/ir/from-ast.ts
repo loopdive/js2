@@ -190,10 +190,9 @@ import type {
 } from "../shared/contracts/ir-unit-inventory.js";
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
-import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
+import { lowerModuleInitStatements, type ModuleInitResolver } from "./module-init-chunk-lowering.js";
 import { someReturnedValue } from "./function-returns.js";
 import { describeIrType } from "./describe-ir-type.js";
-import type { FunctionDeclarationValue } from "./function-declaration-values.js";
 import * as annexB from "./annexb-block-function-lowering.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
@@ -595,9 +594,7 @@ export type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) 
   readonly ambientThisStrict?: boolean;
 };
 
-export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
-  /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
-  moduleInitChunkName?(preferred: string): string;
+export interface IrFromAstResolver extends PreparedAsyncFromAstResolver, ModuleInitResolver {
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -934,8 +931,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * module declarations return undefined.
    */
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
-  /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
-  moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
   /** (#7372 2a) A script-level Annex B block function's homes (`annexb-block-function-values.ts`). */
   annexBBlockFunctionHomes?(declaration: ts.FunctionDeclaration): annexB.BlockFunctionHomeRefs | undefined;
   /**

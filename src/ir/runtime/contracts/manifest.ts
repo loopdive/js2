@@ -39,6 +39,9 @@ export type RuntimeFeature =
   | "js.closure.apply-vector"
   | "js.closure.undefined"
   | "js.closure.receiver"
+  | "js.closure.install-builtin-caller"
+  | "js.closure.argument"
+  | "js.closure.argument-count"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
   | NumberRemainderRuntimeFeature

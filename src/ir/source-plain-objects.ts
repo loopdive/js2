@@ -23,6 +23,7 @@ import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall, realmReceiverRead } from "./realm-static-call.js";
 import {
   HELD_OBJECT_STATICS,
+  PROTOTYPE_METHOD_NAMES,
   WRAPPER_OF_PRIMITIVE,
   realmConstructorId,
   type RealmFamily,
@@ -54,6 +55,7 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
+  const prototypeMethodNames = new Set<string>();
   const realmFamilies = new Set<RealmFamily>();
   const wrappers = new Set<NativeWrapperConstructor>();
   // (#7354 G1) The realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it the same way,
@@ -100,6 +102,8 @@ export function programObjects(
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
+    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && PROTOTYPE_METHOD_NAMES.has(node.text))
+      prototypeMethodNames.add(node.text);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
@@ -113,6 +117,7 @@ export function programObjects(
     present: present || realmFamilies.has("error"),
     functions,
     namesSymbol,
+    prototypeMethodNames,
     realmFamilies,
     wrappers,
     staticValues: escapes ? new Set(HELD_OBJECT_STATICS) : staticValues,
