@@ -128,9 +128,9 @@ import {
   emitIterableArg,
   emitJsonReplacerAllowList,
   isDynamicCombinatorArgEligible,
-  isGlobalBuiltinIdentifier,
   tryEmitJsonStringifyPrimitive,
 } from "./calls.js";
+import { isGlobalBuiltinIdentifier } from "./global-builtin-identifier.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
 
 function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {

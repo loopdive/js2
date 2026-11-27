@@ -8,6 +8,7 @@ import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
+import { nodeModulesBin } from "./helpers/repo-paths.js";
 
 function fixture() {
   const module = createEmptyModule(),
@@ -55,7 +56,7 @@ it("preserves numeric type slots when an earlier single-use signature precedes t
     const input = join(directory, "ordinary.wat"),
       output = join(directory, "ordinary.wasm");
     writeFileSync(input, wat);
-    const assembler = spawnSync("wat2wasm", [input, "-o", output], { encoding: "utf8" });
+    const assembler = spawnSync(nodeModulesBin("wat2wasm"), [input, "-o", output], { encoding: "utf8" });
     // Missing or incompatible assemblers leave evidence unresolved; never skip.
     // Baseline declaration omission must fail real assembly, before text checks.
     expect(assembler.error, assembler.stderr).toBeUndefined();

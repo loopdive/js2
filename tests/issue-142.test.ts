@@ -1,22 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
-
-const defaultImports = {
-  env: {
-    console_log_number: () => {},
-    console_log_bool: () => {},
-  },
-};
-
-async function compileAndRun(source: string, imports?: Record<string, any>): Promise<any> {
-  const result = await compile(source);
-  expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
-    true,
-  );
-
-  const { instance } = await WebAssembly.instantiate(result.binary, imports ?? defaultImports);
-  return instance.exports as any;
-}
+import { compileAndRunBuildImportsExpect as compileAndRun } from "./helpers/compile.js";
 
 describe("issue-142: destructuring assignment", () => {
   it("basic destructuring assignment into existing locals", async () => {

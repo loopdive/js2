@@ -139,10 +139,11 @@ describe("#7372 slice 1 — a var nested in top-level code", () => {
       "if (true) { var [p] = [1]; } if (p !== 1) throw 1;",
       "whole-program binding pattern requires the existing destructuring producer",
     ],
+    // (#7377) The head is a script var now; an array receiver is what stops it.
     [
-      "a for-in head var",
+      "a for-in head var over an array",
       'for (var key in [1]) {} if (key !== "0") throw 1;',
-      "module-init unit contains a nested var declaration",
+      "resolver cannot register vec for array literal",
     ],
     // Review RV7321b: crashed with an invariant on the base (`module-init var leaf 'a' has no slot its value fits`).
     [

@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
-import { compileAndRunStubs as compileAndRun } from "./helpers/compile.js";
+import { compileAndRunRuntimeDeps, compileAndRunStubs as compileAndRun } from "./helpers/compile.js";
 
 describe("logical assignment operators", () => {
   describe("??= (nullish coalescing assignment)", () => {
@@ -13,24 +12,14 @@ describe("logical assignment operators", () => {
           return a;
         }
       `;
-      const result = await compile(source);
-      expect(
-        result.success,
-        `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-      ).toBe(true);
       const constructed: number[] = [];
-      const { instance } = await WebAssembly.instantiate(result.binary, {
-        env: {
-          console_log_number: () => {},
-          console_log_string: () => {},
-          console_log_bool: () => {},
-          Box_new: (v: number) => {
-            constructed.push(v);
-            return { __box: v };
-          },
+      const exports = await compileAndRunRuntimeDeps(source, {
+        Box: class {
+          constructor(readonly __box: number) {
+            constructed.push(__box);
+          }
         },
       });
-      const exports = instance.exports as any;
       const r = exports.test();
       expect(r).toBeDefined();
       expect(r).not.toBeNull();
@@ -46,24 +35,14 @@ describe("logical assignment operators", () => {
           return a;
         }
       `;
-      const result = await compile(source);
-      expect(
-        result.success,
-        `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-      ).toBe(true);
       const constructed: number[] = [];
-      const { instance } = await WebAssembly.instantiate(result.binary, {
-        env: {
-          console_log_number: () => {},
-          console_log_string: () => {},
-          console_log_bool: () => {},
-          Box_new: (v: number) => {
-            constructed.push(v);
-            return { __box: v };
-          },
+      const exports = await compileAndRunRuntimeDeps(source, {
+        Box: class {
+          constructor(readonly __box: number) {
+            constructed.push(__box);
+          }
         },
       });
-      const exports = instance.exports as any;
       const sentinel = { __box: true };
       const r = exports.test(sentinel);
       // Should return the original sentinel, not a new Box

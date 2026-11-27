@@ -27,8 +27,12 @@ export const IR_STRING_REPEAT_FN = "__ir_string_repeat";
 export const IR_STRING_REPEAT_COUNTED_NATIVE_FN = "__ir_string_repeat_counted_native";
 /** Largest exact counted-repeat proof accepted by the native i32 kernel. */
 export const IR_COUNTED_STRING_REPEAT_I32_MAX = 0x7fff_ffff;
-/** Largest non-empty result whose rope-doubling intermediates stay signed-i32-safe. */
-export const IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS = 0x40000000;
+/**
+ * (#7442) The native string carrier's length limit, in UTF-16 code units: the largest result whose rope-doubling
+ * intermediates (repeat, pad fill) stay below 2^31. A builder asked for more throws RangeError, as an engine does past
+ * its own limit.
+ */
+export const NATIVE_STRING_MAX_LENGTH = 0x40000000;
 
 export function irCountedStringRepeatFitsNativeKernel(tripCount: number, fragmentCodeUnits: number): boolean {
   return (
@@ -37,7 +41,7 @@ export function irCountedStringRepeatFitsNativeKernel(tripCount: number, fragmen
     tripCount <= IR_COUNTED_STRING_REPEAT_I32_MAX &&
     Number.isSafeInteger(fragmentCodeUnits) &&
     fragmentCodeUnits >= 0 &&
-    BigInt(tripCount) * BigInt(fragmentCodeUnits) <= BigInt(IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS)
+    BigInt(tripCount) * BigInt(fragmentCodeUnits) <= BigInt(NATIVE_STRING_MAX_LENGTH)
   );
 }
 export const IR_STRING_EQUALS_FN = "__ir_string_equals";

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("playground vec patterns", () => {
   it("bench_array with i++ compiles and runs", async () => {
@@ -15,10 +15,8 @@ describe("playground vec patterns", () => {
     ].join("\n");
     const result = await compile(src);
     expect(result.success).toBe(true);
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: { console_log_number: () => {}, console_log_bool: () => {}, console_log_string: () => {} },
-    });
-    expect((instance.exports as any).bench_array()).toBe(4950);
+    const exports = (await instantiateWithRuntime(result)).exports as any;
+    expect(exports.bench_array()).toBe(4950);
   });
 
   it("DOM + array mix compiles and validates", async () => {
@@ -75,10 +73,8 @@ describe("playground vec patterns", () => {
     ].join("\n");
     const result = await compile(src);
     expect(result.success).toBe(true);
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: { console_log_number: () => {}, console_log_bool: () => {}, console_log_string: () => {} },
-    });
-    expect((instance.exports as any).fdow()).toBe(5);
+    const exports = (await instantiateWithRuntime(result)).exports as any;
+    expect(exports.fdow()).toBe(5);
   });
 
   it("string array literal access", async () => {
@@ -95,23 +91,7 @@ describe("playground vec patterns", () => {
     }
     expect(result.success).toBe(true);
 
-    const env: Record<string, Function> = {
-      console_log_number: () => {},
-      console_log_bool: () => {},
-      console_log_string: () => {},
-    };
-    const jsStringPolyfill = {
-      concat: (a: string, b: string) => a + b,
-      length: (s: string) => s.length,
-      equals: (a: string, b: string) => (a === b ? 1 : 0),
-      substring: (s: string, start: number, end: number) => s.substring(start, end),
-      charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-    };
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env,
-      "wasm:js-string": jsStringPolyfill,
-      string_constants: buildStringConstants(result.stringPool),
-    } as WebAssembly.Imports);
-    expect((instance.exports as any).test()).toBe("TUE");
+    const exports = (await instantiateWithRuntime(result)).exports as any;
+    expect(exports.test()).toBe("TUE");
   });
 });

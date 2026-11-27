@@ -93,6 +93,7 @@ class WasmExecPool {
     imports: any[],
     stringPool: string[],
     isRuntimeNegative: boolean,
+    expectedErrorType: string | undefined,
     timeoutMs: number,
     cachePath?: string,
   ): Promise<any> {
@@ -117,12 +118,13 @@ class WasmExecPool {
       this.pending.set(id, { resolve, timer });
 
       if (cachePath) {
-        this.worker!.postMessage({ id, cachePath, imports, stringPool, isRuntimeNegative });
+        this.worker!.postMessage({ id, cachePath, imports, stringPool, isRuntimeNegative, expectedErrorType });
       } else {
         const binaryBuf = binary!.buffer.slice(binary!.byteOffset, binary!.byteOffset + binary!.byteLength);
-        this.worker!.postMessage({ id, binary: new Uint8Array(binaryBuf), imports, stringPool, isRuntimeNegative }, [
-          binaryBuf,
-        ]);
+        this.worker!.postMessage(
+          { id, binary: new Uint8Array(binaryBuf), imports, stringPool, isRuntimeNegative, expectedErrorType },
+          [binaryBuf],
+        );
       }
     });
   }
@@ -678,6 +680,7 @@ for (const category of TEST_CATEGORIES) {
             compileResult.result.imports,
             compileResult.result.stringPool,
             isRuntimeNegative,
+            meta.negative?.type,
             EXEC_TIMEOUT_MS,
             compileResult.cachePath,
           );

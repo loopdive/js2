@@ -61,6 +61,7 @@ jobs:
           sparse-checkout: |
             scripts/auto-park-merge-group-failure.mjs
             scripts/enforce-pr-queue-hold.mjs
+            scripts/lib/regression-annotation.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v6
         with:

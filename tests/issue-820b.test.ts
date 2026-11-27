@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // #820b — Object literal computed-property accessor names silently dropped.
 // Tests cover test262 patterns:
@@ -9,14 +10,8 @@ import { compile } from "../src/index.js";
 //   - language/computed-property-names/object/accessor/setter.js
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  const { instance } = await WebAssembly.instantiate(result.binary, { env: {} });
-  return (instance.exports as any)[fn](...args);
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("#820b — Object literal computed accessor names with literal keys", () => {

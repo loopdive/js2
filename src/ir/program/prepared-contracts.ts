@@ -53,7 +53,8 @@ export interface PreparedIrProgramProducerInput {
 }
 
 export type PreparedIrProgramFailure = IrPreparationFailure & {
-  readonly unitId: IrUnitId;
+  /** Null for a refusal of source text no unit owns (a local `export { x }` in a file without units). */
+  readonly unitId: IrUnitId | null;
   readonly location: PreparedIrSourceLocation;
   readonly sourceFile: string;
 };

@@ -24,7 +24,7 @@ Gracefully terminate a dev teammate's session while preserving their working con
 
 2. **Is the user currently talking to this dev?** If yes, confirm with the user before shutting down.
 
-3. **Do they have uncommitted work in their worktree?** Check via their file-locks entries and any in-flight PRs. Warn them to commit before approving shutdown.
+3. **Do they have uncommitted work in their worktree?** Check their worktree (`git -C <wt> status`) and any in-flight PRs. Warn them to commit before approving shutdown.
 
 ## Step 1: Send the shutdown_request
 
@@ -104,7 +104,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 - Remove the dev from any active dispatch messaging
 - Update `plan/method/agent-sessions.md` if it tracks live sessions
-- Update `plan/method/file-locks.md` to drop any claims held by the dev
 
 ## Step 8: Confirm termination
 

@@ -9,8 +9,7 @@
  * and never generalised:
  *
  * - a `function` declaration: every omittable formal without a native
- *   annotation is `externref` (`lowerParamType` / `parameterMayBeOmitted`,
- *   declarations.ts);
+ *   annotation is `externref` (`lowerParamType` / `parameterMayBeOmitted`);
  * - an arrow / function expression: only a JSDoc-optional, unannotated,
  *   undefaulted formal (`@param {Number} [position= 0]`, closures.ts). A TS
  *   `(position?: number) =>` arrow keeps its f64 undefined-sentinel ABI.
@@ -24,20 +23,7 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
-
-/**
- * `parameterMayBeOmitted` (declarations.ts), restated here so this leaf does
- * not import declarations.ts and join the codegen import cycle (#6797).
- */
-function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
-  const jsdocType = ts.getJSDocType(param);
-  return (
-    param.initializer === undefined &&
-    (param.questionToken !== undefined ||
-      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
-      ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed === true))
-  );
-}
+import { parameterMayBeOmitted } from "../../shared/omittable-param.js";
 
 export function storedClosureWidensOmittableParam(ctx: CodegenContext, sym: ts.Symbol | undefined): boolean {
   const decl = sym?.valueDeclaration;

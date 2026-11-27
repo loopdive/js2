@@ -27,7 +27,7 @@
  * other module keeps its bytes.
  */
 import { ts } from "../../ts-api.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { protoIndexBrandCompanionHasInstrs, sourceOverridesBuiltinPrototypeMember } from "../helpers/core-delegates.js"; // (#6797) late-bound core
 import { builtinBrandOffsetOf } from "../builtin-brands.js";

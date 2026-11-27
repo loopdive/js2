@@ -1,10 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
-import { compileAndRunTestSyncJoined as compileAndRun } from "./helpers/compile.js";
+import { buildCompiledImports } from "../src/runtime.ts";
+import { compileAndRunTestSyncJoined } from "./helpers/compile.js";
+
+// (#6986) Intl has no native implementation on the native semantic regime:
+// these extern classes forward to the host's Intl only with the `intl` host
+// accelerator (`--host-accelerator intl`).
+const INTL = { hostAccelerators: ["intl"] } as const;
+
+const compileAndRun = (source: string) => compileAndRunTestSyncJoined(source, INTL);
 
 async function compileAndValidate(source: string): Promise<{ valid: boolean; error?: string }> {
-  const result = await compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts", ...INTL });
   if (!result.success) {
     return { valid: false, error: `Compile error: ${result.errors?.map((e) => e.message).join("; ")}` };
   }
@@ -13,7 +20,7 @@ async function compileAndValidate(source: string): Promise<{ valid: boolean; err
     if (!valid) {
       return { valid: false, error: "WebAssembly.validate failed" };
     }
-    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const imports = buildCompiledImports(result);
     const mod = new WebAssembly.Module(result.binary);
     new WebAssembly.Instance(mod, imports);
     return { valid: true };

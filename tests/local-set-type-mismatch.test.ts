@@ -1,35 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { compileToWasm, instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_bool: () => {},
-    console_log_string: () => {},
-  };
-  env["number_toString"] = (v: number) => String(v);
-
-  const jsStringPolyfill = {
-    concat: (a: string, b: string) => a + b,
-    length: (s: string) => s.length,
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => s.substring(start, end),
-    charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-  };
-
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports);
-  return (instance.exports as any)[fn](...args);
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("local.set type mismatch (#625)", () => {
@@ -71,21 +46,7 @@ describe("local.set type mismatch (#625)", () => {
     // Should compile successfully without Wasm validation errors
     expect(result.success).toBe(true);
     // Instantiation should not fail with local.set type mismatch
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-        console_log_string: () => {},
-      },
-      "wasm:js-string": {
-        concat: (a: string, b: string) => a + b,
-        length: (s: string) => s.length,
-        equals: (a: string, b: string) => (a === b ? 1 : 0),
-        substring: (s: string, start: number, end: number) => s.substring(start, end),
-        charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-      },
-      string_constants: buildStringConstants(result.stringPool),
-    } as WebAssembly.Imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe(1);
   }, 15000);
 });

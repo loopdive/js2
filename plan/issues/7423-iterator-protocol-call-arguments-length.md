@@ -1,10 +1,11 @@
 ---
 id: 7423
 title: "arguments.length is 1, not 0, in a class iterator's next()/return() called by for-of / spread / destructuring / Array.from"
-status: ready
-sprint: Backlog
+status: done
+sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
+completed: 2026-11-26
 priority: medium
 horizon: s
 feasibility: medium
@@ -12,31 +13,59 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7413]
+related: [7413, 7424]
 ---
 
 # #7423: `arguments.length` in padded iterator calls
 
 ## Problem
 
-Found by RV7342's review of PR #7342 (#7413), measured on main `89e47482`; details in https://github.com/loopdive/js2/pull/7342#issuecomment-7019348242. The probe encodes the argument as undefined→1, null→2, other→3, plus `10 * arguments.length`.
+Found by RV7342's review of PR #7342 (#7413), measured on main `89e47482`; details in https://github.com/loopdive/js2/pull/7342#issuecomment-7019348242.
 
 A class iterator's `next` / `return`, called by for-of, spread,
-destructuring or `Array.from`, sees `arguments.length === 1`. Node sees
-`0`: these protocol calls pass no argument. The `__call_next` /
-`__call_return` dispatchers pad to the method's fixed arity, so the callee
-cannot tell an omitted argument from a passed `undefined`. Object-literal
-spread shows the same.
+destructuring or `Array.from`, sees `arguments.length === 1`. Node sees `0`:
+these protocol calls pass no argument. Object-literal iterators were already
+correct.
 
-Probe answers (the tens digit is `arguments.length`):
+Re-measured on main `6694a8b8` (2026-11-26). Each probe returns
+`arguments.length * 10 + kind(arguments[0])`, where kind is 1 for undefined:
 
-| shape | node | base (gc, standalone, wasi) | after #7413 |
-| --- | ---: | ---: | ---: |
-| class for-of | 101 | 1212 | 1111 |
-| class spread / destructuring / `Array.from` | 101 | 1212 | 1111 |
-| object-literal spread | 101 | 1111 | 1111 |
+| call | node | gc / standalone / wasi |
+| --- | ---: | ---: |
+| for-of `next()` | 1 | 11 |
+| spread `next()` | 1 | 11 |
+| `Array.from` `next()` | 1 | 11 |
+| for-of `break` → `return()` | 1 | 11 |
+
+## Root cause
+
+The `__call_@@iterator` / `__call_next` / `__call_return` dispatchers
+(`emitMethodDispatch` in `src/codegen/index.ts`) call the class method with
+its declared formals padded with `undefined` (#7413). A method that reads
+`arguments` takes its length from the `__argc` global, and these dispatchers
+left `__argc` at its `-1` "unknown caller" sentinel, which means "use the
+formal count". The callee therefore saw one argument.
+
+## Fix
+
+`zeroArgCallInstrs` in `src/codegen/zero-arg-method-pad.ts` is the module for
+synthesized zero-argument method calls (#4644). It wraps the dispatcher's
+`call`. When the callee is in `funcUsesArguments`, it sets `__argc` to 0
+before the call. Methods that do not read `arguments` get exactly the call they
+had before.
+
+Nothing follows the call. The callee's prologue consumes `__argc` and resets
+it (`cacheParamDefaultArgc`, the same contract the IIFE call site relies on).
+The dispatcher boxes the call's result right after the call, so an `__argc`
+reset placed there made the module invalid whenever the method returns
+`externref`. Review RV7465 found this, and it is the fifth pin.
 
 ## Acceptance
 
-`arguments.length` is 0 in these calls on gc, standalone and wasi. A test
-pins node's answers.
+- `tests/issue-7423-iterator-call-arguments-length.test.ts` pins node's
+  answer (1) on gc, standalone and wasi for the four calls above. All four
+  fail on main `6694a8b8`.
+- A fifth pin covers a `next()` that reads `arguments` and returns
+  `externref` (node 9000).
+- Destructuring is covered by #7424, which routes array destructuring of a
+  user iterator through the same `__call_next` / `__call_return` dispatchers.

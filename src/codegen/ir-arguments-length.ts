@@ -15,7 +15,8 @@
  * `Instr[]`. Built in `preregisterDynamicSupport`, before any Phase-3 body.
  */
 
-import type { Instr, ValType } from "../ir/types.js";
+import type { ValType } from "../ir/types.js";
+import { buildArgumentsCountBody } from "../runtime/wasmgc/values/closure-invocation-bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addFuncType } from "./registry/types.js";
@@ -51,46 +52,11 @@ export function ensureIrArgumentsLengthHelper(ctx: CodegenContext): number | und
   const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const argcLocal = allocLocal(helper, "__argc_local", i32);
   const extrasLocal = allocLocal(helper, "__extras_argv_local", { kind: "ref_null", typeIdx: extrasVecTypeIdx });
-  const body: Instr[] = [
-    // argc = __argc; if (argc == -1) argc = formals;
-    { op: "global.get", index: argcGlobalIdx },
-    { op: "local.tee", index: argcLocal },
-    { op: "i32.const", value: -1 },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 0 },
-        { op: "local.set", index: argcLocal },
-      ],
-      else: [],
-    },
-    // Clear __argc so nested calls don't see stale data.
-    { op: "i32.const", value: -1 },
-    { op: "global.set", index: argcGlobalIdx },
-    // Consume the extras global: read it and immediately clear.
-    { op: "global.get", index: extrasGlobalIdx },
-    { op: "local.set", index: extrasLocal },
-    { op: "ref.null", typeIdx: extrasVecTypeIdx },
-    { op: "global.set", index: extrasGlobalIdx },
-    // argc + (extras != null ? extras.length : 0), as f64.
-    { op: "local.get", index: argcLocal },
-    { op: "local.get", index: extrasLocal },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: i32 },
-      then: [{ op: "i32.const", value: 0 }],
-      else: [
-        { op: "local.get", index: extrasLocal },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: extrasVecTypeIdx, fieldIdx: 0 },
-      ],
-    },
-    { op: "i32.add" },
-    { op: "f64.convert_i32_s" },
-  ];
+  const body = buildArgumentsCountBody(
+    { argc: argcGlobalIdx, extrasArgv: extrasGlobalIdx, extrasVecTypeIdx },
+    { argc: argcLocal, extras: extrasLocal },
+    [{ op: "local.get", index: 0 }],
+  );
   helper.body.push(...body);
 
   const typeIdx = addFuncType(ctx, [i32], [f64]);
