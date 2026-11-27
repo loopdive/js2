@@ -160,3 +160,42 @@ in the P1 notes): the dispatcher's built-in arm stops being the run-time abort.
   builders gain a `slot` (fresh function slot) and a `loop` builder. That is new shared builder code, sized in A1b-3.
 - **Order changes.** `Function` (the global, `Function.prototype` and its `call` / `apply` / `bind`) comes first in
   A1b-1, because every row stops there.
+
+## A1b-1 progress (2026-11-27; WIP on `claude/7354-a1b`, not ready for review)
+
+### Built: the caller route (proved)
+
+- **Front end** (`src/ir/realm-builtin-caller.ts`): where closures are function objects and some function value
+  exists (`realmBuiltinCaller`, `source-dynamic-contracts.ts`), the module-init prologue lifts one derived function
+  `(callee, this, args)`, recorded like F1b's declaration trampolines (`recordLiftedUnitProvenance`). Its closure is
+  installed through `js.closure.install-builtin-caller`. Its body is one helper call, `__ir_realm_builtin_call`.
+- **Runtime** (`builtin-caller-bodies.ts`, `native-invocation.ts`): the invocation pack reserves the caller's global,
+  the install, the argument reads (`js.closure.argument`, `argument-count`) and method 3. The dispatcher's built-in
+  arm calls the installed caller through method 3, with the built-in, the receiver and an `$ObjVec` of the call's
+  arguments. Without a caller, the arm and its bytes are as before.
+- **Legalization** (`dynamic-builtin-call.ts`): the helper becomes an identity ladder over the realm methods the
+  program may hold (`realmMethodsNamed`). The P1/G1/W2/A1 algorithms now take one `BuiltinCall` (`receiver`,
+  `receiverKinds`, `detached`, `argument(i)`): the call site and the caller share them. A detached `this` that is
+  `undefined` / `null` throws ToObject's TypeError; Error.prototype.toString on a non-object throws its TypeError.
+- **Proof** (probes against node, wrong twins throw): a detached `hasOwnProperty`, `propertyIsEnumerable`,
+  `Error.prototype.toString`, `Number.prototype.valueOf` and `String.prototype.toString` with an `undefined` `this`
+  throw a TypeError; `Array.isArray` read as a value answers; `isPrototypeOf(1)` answers false. The 152 A1a probes are
+  unchanged (145 OK, 4 abort, 3 refused, 0 wrong). Ordinary pipeline: 32/32 binaries identical.
+- **Cost:** prelude 103,439 → 110,121 B (+6.7 KB). The prelude has function values, so it gets the caller. Holding
+  the P1 methods (the ladder's identity tests) and method 3 are most of it.
+
+### Open, next
+
+- A non-call `apply-vector` that reaches a built-in still aborts; only the method dispatcher's arm calls the caller.
+- `isPrototypeOf({})` with an `undefined` `this` refuses ("a dynamic value flows into Object without a conversion"):
+  a from-ast flow rule, not the caller.
+- **`Function` in scope and `Function.prototype.call` / `apply` / `bind`.**
+  - Catalog: Function.prototype's native members; `%Function%` and the members held as values, appended.
+  - `realmConstructorId` names `Function`; `Function(…)` / `new Function` stay the built-in arm's abort.
+  - The function-value read of `call` / `apply` / `bind` is allowed where the realm holds them.
+  - The `call` rung dispatches `this` with `args[1..]`. It needs one runtime `apply-arguments(callee, this, args,
+    start)`: the vector-apply builder over the `$ObjVec` layout, with the caller as its built-in arm.
+  - `apply` takes a realm array (a kernel array-to-`$ObjVec`); any other array-like aborts.
+  - `bind` is BoundFunctionCreate (a closure-root subtype holding target, `this` and arguments), a rung of its own.
+- **Cost to recover:** an identity test that does not hold the method it tests, so that a program pays only for the
+  methods it reads.
