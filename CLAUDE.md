@@ -928,6 +928,14 @@ tail does not.** "Always get PRs into the queue" is satisfied by making them
 backstop rules under "PR-queue shepherd" for the only sanctioned manual enqueue,
 which is one-shot, PAT-authenticated, and never repeated.
 
+**Coordination thread: PR #7526 (project-lead order, 2026-11-27).** It is a
+standing draft PR that is never merged. Read its newest comments at session
+start. Post a comment there for every project-lead decision and every change
+that affects other lanes: CI and merge-queue behaviour, a rule in this file, a
+shared module you are about to restructure, another lane's PR you are about to
+push to, close or release. A decision that only one session knows does not
+exist for the others.
+
 **One issue per PR (project-lead order, 2026-11-27).** Every code PR has its
 own issue file, `plan/issues/<id>-<slug>.md`, with the plan and the result of
 that PR. Do not add a slice as a new section of a collection issue: #7354's
