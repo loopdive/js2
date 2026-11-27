@@ -50,8 +50,8 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
         table: [
           // (#7354 T) `typeof JSON` refuses by name: JSON is a standard global this path does not provide.
           'formatIdentityFreeValue: ir/from-ast: identifier "JSON" is not in scope in formatIdentityFreeValue',
-          "compareArray: dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
-          // (#7352) `compareArray.format` lowers: `Array` is the realm's value.
+          // (#7352) `compareArray.format` lowers: `Array` is the realm's value; (#7579) `compareArray` too: its
+          // `a[i]` is a computed key.
         ],
       });
     },
@@ -66,12 +66,15 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
     SLOW,
   );
 
+  // (#7579) compareArray runs on arrays: an equal pair answers true, an unequal one false.
   it(
-    "compareArray's abort is uncatchable: assert.throws does not see it as the expected throw",
-    async () =>
-      expect((await run("assert.throws(Test262Error, function(){ compareArray(1, 2); });\n")).outcome).toBe(
-        "trap in compareArray",
-      ),
+    "compareArray compares two array literals",
+    async () => {
+      const check = (equal: string) =>
+        `if (compareArray([1, "a"], [1, "a"]) !== ${equal} || compareArray([1], [2])) throw 1;\n`;
+      expect((await run(check("true"))).outcome).toBe("returned");
+      expect((await run(check("false"))).outcome).toBe("threw");
+    },
     SLOW,
   );
 });

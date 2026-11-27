@@ -126,22 +126,8 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
 
 describe("#7354 M1 — refusals that stay", () => {
   it.each([
-    // C5: from-ast lowers a computed key as ToNumber, wrong for a string key; no arm may legalize it silently.
-    [
-      "C5: a computed read",
-      "function f(o, k){ return o[k]; } f({a:1}, 'a');",
-      gapText("dyn.member_get with a computed key"),
-    ],
-    [
-      "C5: a computed write",
-      "function f(o, k){ o[k] = 1; } f({a:1}, 'a');",
-      gapText("dyn.member_set with a computed key"),
-    ],
-    [
-      "C5: a computed number key",
-      "function f(v, i){ return v[i]; } f('abc', 0);",
-      gapText("dyn.member_get with a computed key"),
-    ],
+    // C5 (a computed key) left this table: #7579 lowers the key as the dynamic value and legalizes it
+    // (tests/issue-7579-array-literals.test.ts).
     [
       "E38: Object.prototype.toString of an object in a program that names Symbol",
       "function f(v){ return Object.prototype.toString.call(v); } var s = typeof Symbol; f({});",

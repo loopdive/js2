@@ -133,7 +133,8 @@ const KEPT = [
   ],
   // `-{ valueOf }` calls valueOf (node throws): dropping it would return.
   ["its `-` runs a user valueOf", "var x = -({ valueOf: function () { throw 1; } });", MINUS],
-  ["its `+` converts an array", `var x = +[]; var r = 1;`, "empty array literal needs a vec-typed hint"],
+  // (#7579) An array literal is the realm's array; one with a spread element still refuses.
+  ["its `+` converts an array", `var x = +[...[]]; var r = 1;`, "array literal with a spread element"],
   ["its `-` converts a function", "var x = -function () { return 1; }; var r = 1;", MINUS],
   [
     "its `+` converts an arrow function",

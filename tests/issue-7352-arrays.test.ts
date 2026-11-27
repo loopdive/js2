@@ -2,12 +2,12 @@
 //
 // #7352 (array PR A) — `Array` as a realm value on the Prepared path: `Array` and `Array.prototype` as values,
 // `Array(…)` / `new Array(…)`, `Array.isArray` called and held, `length`, constant index keys, the "Array" tag,
-// `instanceof Array`, `constructor`. What PR A leaves out (literals, computed keys, iteration, every Array.prototype
-// method body, ToPrimitive of an array) refuses by name or aborts.
+// `instanceof Array`, `constructor`. What PR A leaves out (iteration, every Array.prototype method body, ToPrimitive of
+// an array) refuses or aborts; literals and computed keys are #7579's (tests/issue-7579-array-literals.test.ts).
 //
 // Each program computes `out` and is checked against node in a fresh realm, with a wrong answer that must throw
 // (tests/helpers/prepared-node-agreement.ts). Every program calls a function expression, as the test262 harness does.
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 import {
   abortsAtRunTime,
   agreesWithNode,
@@ -106,34 +106,10 @@ describe("#7352 — what PR A leaves out refuses or aborts", () => {
       "for-in over an array",
       'var f = function (a) { var s = ""; for (var p in a) s += p; return s; }; var out = f(Array(1, 2));',
     ],
-    [
-      "an array literal in a function",
-      "var f = function () { var a = [1, 2]; return a.length; }; var out = String(f());",
-    ],
   ])("aborts %s", async (_label, body) => aborts(body), SLOW);
 
   it.each([
-    [
-      "an array literal",
-      "var a = [1, 2]; var out = String(a.length);",
-      "resolver cannot register vec for array literal",
-    ],
-    [
-      "a computed index key",
-      "var a = Array(1, 2), i = 1; var out = String(a[i]);",
-      "dyn.member_get with a computed key",
-    ],
-    ["Array.from", "var out = String(Array.from);", "Array.from is not reachable on this path yet"],
-    [
-      "Array.isArray written on the global",
-      'Array.isArray = function () { return "f"; }; var out = 1;',
-      'identifier "Array" is not in scope',
-    ],
-  ])(
-    "refuses %s",
-    async (_label, body, reason) => {
-      expect(await refusal(body + CALLS, runnerOptions())).toContain(reason);
-    },
-    SLOW,
-  );
+    ["Array.from", "var out = String(Array.from);"],
+    ["Array.isArray written on the global", 'Array.isArray = function () { return "f"; }; var out = 1;'],
+  ])("refuses %s", async (_label, body) => refusal(body + CALLS, runnerOptions()), SLOW);
 });

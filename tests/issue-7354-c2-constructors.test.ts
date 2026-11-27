@@ -63,7 +63,7 @@ describe("#7354 C2 — new", () => {
     [
       "a spread argument",
       "function F(){} var xs = [1]; new F(...xs);",
-      "resolver cannot register vec for array literal",
+      "dynamic construct spread argument escaped selection",
     ],
     ["a member callee", "var a = {b: function(){}}; new a.b();", "only direct constructor names supported in slice 4"],
   ])("refuses %s", async (_label, source, reason) => {

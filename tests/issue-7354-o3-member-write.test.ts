@@ -57,12 +57,6 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
-async function refusal(source: string): Promise<string> {
-  const result = await compile(source, options());
-  expect(result.success).toBe(false);
-  return messages(result).join("\n");
-}
-
 /** Each program is run as written (node's answer) and with `!==` turned into `===` (a wrong answer). */
 const PROGRAMS: readonly [string, string][] = [
   [
@@ -113,12 +107,8 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
     180_000,
   );
 
-  it.each([
-    ["a computed key", 'var o = { a: 1 }; var k = "a"; o[k] = 2;', "dyn.member_set with a computed key"],
-    // (#7354 F1, D4) Object.prototype's other keys are writable data properties: a write creates an own property.
-  ])("refuses %s by name", async (_label, source, reason) => {
-    expect(await refusal(source)).toContain(reason);
-  });
+  // (#7579) A computed key is written now (tests/issue-7579-array-literals.test.ts). (#7354 F1, D4) Object.prototype's
+  // other keys are writable data properties: a write creates an own property.
 
   // (#7354 M2) In a program that reads a caught value the error kind is admitted. The realm's error has no property
   // storage, so (#7354 C2, C2-D1) a write whose receiver is that error ends at the run-time abort, and the write's other

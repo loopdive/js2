@@ -57,12 +57,6 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
-async function refusal(source: string): Promise<string> {
-  const result = await compile(source, options());
-  expect(result.success).toBe(false);
-  return messages(result).join("\n");
-}
-
 /** Each program is run as written (node's answer) and with `!==` turned into `===` (a wrong answer). */
 const PROGRAMS: readonly [string, string][] = [
   ["an own member of a script var's object", "var o = { a: 1 }; if (o.a !== 1) throw 1;"],
@@ -111,12 +105,7 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     180_000,
   );
 
-  it.each([["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"]])(
-    "refuses %s by name",
-    async (_label, source, reason) => {
-      expect(await refusal(source)).toContain(reason);
-    },
-  );
+  // (#7579) A computed key is read now (tests/issue-7579-array-literals.test.ts).
 
   // (#7354 C2, C2-D1) A script var's home may also hold `undefined` or `null`, whose arm answers (the TypeError), so the
   // kind the realm cannot answer for is the run-time abort; both refused at compile time before C2.

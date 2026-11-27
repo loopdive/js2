@@ -7483,9 +7483,9 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
   }
 
   // #3053 U1 / #2949 S5.4 — indexed read `recv[key]` on a dynamic receiver: the unified reader (#3053 U0), a
-  // string-literal key as `.k`'s, any other key lowered concrete and boxed.
+  // string-literal key as `.k`'s, (#7579) any other key the dynamic value its access converts (as a write's key).
   if (recvType.kind === "dynamic") {
-    if (!isStringLitKey) return dynamicIndexedRead(recv, arg, cx);
+    if (!isStringLitKey) return cx.builder.emitDynMemberGet(recv, lowerDynamicStoreOperand(arg, cx));
     return dynamicNamedPropertyRead(recv, (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text, cx);
   }
 

@@ -97,19 +97,14 @@ describe("#7354 O7 — a compound write of a dynamic value's member", () => {
   // The runner's options: a test262 script writes values its lib types do not admit (`o.s += "x"` on a number).
   it.each(PROGRAMS)("%s", async (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
 
-  it.each([
-    [
-      "a computed key",
-      'var o = { a: 1 }; var k = "a"; o[k] += 2;',
-      "compound element write on dynamic not in IR scope",
-    ],
-    ["**=", "var o = { x: 2 }; o.x **= 2;", "dynamic compound **= of"],
-    // B4: a script-var array never reaches the member arm on this lane: its literal refuses first (RV7491 F3 removed
-    // the arm's own guard as unreachable). The slice that registers array literals pins the compound.
-    ["a script-var array", "var a = [1, 2]; a.length += 1;", "resolver cannot register vec for array literal"],
-  ])("refuses %s by name", async (_label, source, reason) => {
-    expect(await refusal(source)).toContain(reason);
-  });
+  // (#7579) A computed key's compound and B4's script-var array (`a.length += 1`) run now
+  // (tests/issue-7579-array-literals.test.ts).
+  it.each([["**=", "var o = { x: 2 }; o.x **= 2;", "dynamic compound **= of"]])(
+    "refuses %s by name",
+    async (_label, source, reason) => {
+      expect(await refusal(source)).toContain(reason);
+    },
+  );
 
   // B3: no new JS-host work; the ordinary pipeline demotes the function with today's text, on both targets.
   it.each([undefined, "standalone" as const])(

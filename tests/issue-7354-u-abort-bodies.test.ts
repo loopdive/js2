@@ -23,7 +23,6 @@ const SLOW = 240_000;
 /** A construct the path refuses by name today; a slice that lowers it swaps this constant. */
 const UNLOWERABLE = "/a/";
 const REGEXP_REFUSAL = (unit: string) => `ir/from-ast: RegExp literal has no provider (${unit})`;
-const COMPUTED_KEY_REFUSAL = "dynamic operation dyn.member_get with a computed key has no Prepared intrinsic";
 
 /** `source` compiles, validates, and traps in the abort body of `name`, which its table lists. */
 async function abortsIn(source: string, name: string): Promise<void> {
@@ -75,7 +74,10 @@ describe("#7354 U — a function never entered: node's answer", () => {
       "`instanceof` with it on the right (no call)",
       `function G(){ this.r = ${UNLOWERABLE}; } function t(v){ return v instanceof G; } var out = String(t({}));`,
     ],
-    ["a legalization refusal (computed key on a dynamic value)", "function g(v){ return v[v]; } var out = typeof g;"],
+    [
+      "a legalization refusal (loose equality on a dynamic value)",
+      "function g(v){ return v == v; } var out = typeof g;",
+    ],
     [
       "strict code",
       `'use strict'; function g(){ return ${UNLOWERABLE}; } var f = function(){ return ${UNLOWERABLE}; };` +
@@ -96,9 +98,9 @@ describe("#7354 U — the table", () => {
       expect(
         await abortBodies(
           `function a(){ return ${UNLOWERABLE}; } function b(v){ var r = ${UNLOWERABLE}; return v[v]; }` +
-            " function c(v){ return v[v]; } var x = 1;",
+            ` function c(){ return ${UNLOWERABLE}; } var x = 1;`,
         ),
-      ).toEqual([`a: ${REGEXP_REFUSAL("a")}`, `b: ${REGEXP_REFUSAL("b")}`, `c: ${COMPUTED_KEY_REFUSAL}`]);
+      ).toEqual([`a: ${REGEXP_REFUSAL("a")}`, `b: ${REGEXP_REFUSAL("b")}`, `c: ${REGEXP_REFUSAL("c")}`]);
     },
     SLOW,
   );
@@ -156,10 +158,10 @@ describe("#7354 U — a function entered: the abort, which no catch or finally s
       "<module-init>__closure_0",
     ],
     ["strict code", `'use strict'; function g(){ return ${UNLOWERABLE}; } g();`, "g"],
-    ["a legalization refusal", "function g(v){ return v[v]; } g(1);", "g"],
+    ["a legalization refusal", "function g(v){ return v == v; } g(1);", "g"],
     [
       "each of two aborted functions in its own body",
-      `function a(){ return ${UNLOWERABLE}; } function b(v){ return v[v]; } try { b(1); } catch (e) {} a();`,
+      `function a(){ return ${UNLOWERABLE}; } function b(v){ return v == v; } try { b(1); } catch (e) {} a();`,
       "b",
     ],
     [

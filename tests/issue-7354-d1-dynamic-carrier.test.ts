@@ -221,11 +221,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     // (#7354 Str2-c) Dynamic `+` is expressed now (tests/issue-7354-str2c-dynamic-add.test.ts).
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
     // (#7354 O4) A member read with a constant key is expressed now (tests/issue-7354-o4-member-read.test.ts).
-    [
-      "a computed member read",
-      'return id(1)[id("x")] === 1 ? 1 : 0;',
-      "dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
-    ],
+    // (#7579) A computed member read is expressed now (tests/issue-7579-array-literals.test.ts).
     // (#7354 Ty, Str2) A typeof comparison and a typeof value are expressed now
     // (tests/issue-7354-ty-typeof-comparisons.test.ts, tests/issue-7354-str2-to-string.test.ts).
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
