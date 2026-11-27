@@ -97,6 +97,14 @@ var out = a[k1] + a[k3] + a[fo] + a.length + String(a["0"]) + String(a[c] === Ar
   + r["0.30000000000000004"] + r["1e+21"] + r[0] + r.length + r[0.30000000000000004] + "|" + sum + failures.length;`,
   ],
   [
+    "object keys: ToPrimitive at the access, after a write's value, twice in a compound (as V8)",
+    `var log = { s: "" }, n = { c: 0 }, o = { a: 0, b: 1 }, x = [];
+var key = { toString: function () { log.s = log.s + "k"; return "a"; } };
+var twice = { toString: function () { n.c++; return "b"; } };
+o[key] = (log.s = log.s + "v", 1); o[twice] += 1; o[twice]++; x[new Number(1)] = 2;
+var out = log.s + o.a + n.c + o.b + x[1] + x.length;`,
+  ],
+  [
     "keys through parameters; a nullish receiver's TypeError; strict and sloppy writes to read-only indices",
     `function f(o, k) { return o[k]; } function g(o, k) { o[k] = 1; return o; }
 var out = String(f({ a: 1 }, "a")) + String(f([5, 6], 1)) + String(g({ a: 0 }, "a").a) + String(g([0, 0], 1)[1]);
@@ -120,8 +128,8 @@ describe("#7579 — what this slice leaves out aborts or refuses", () => {
     // ToPrimitive of an array tests the brand first and aborts before any read.
     ["an array as a computed key", "var o = { 1: 2 }; var out = String(o[[1]]);"],
     [
-      "an object key (its ToPrimitive)",
-      'var o = { x: 1 }, key = { toString: function () { return "x"; } }; var out = String(o[key]);',
+      "an object key whose string names a member the realm did not materialise",
+      'var key = { toString: function () { return "join"; } }; var out = typeof [][key];',
     ],
     ["a method call on a literal", 'var out = [1, 2].join("-");'],
     ["a computed read of a member the realm did not materialise", 'var k = "join"; var out = typeof [][k];'],

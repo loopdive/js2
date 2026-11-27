@@ -361,16 +361,17 @@ function constantWrite(b: MemberAccessBuilders, instr: MemberSet, name: string):
 }
 
 /**
- * (#7579) A read or write whose key is computed, over the key's kinds: a string is the key; any other primitive is the
- * program's ToString of it (`"1"`, `"true"`, `"null"`); an object or a function is the run-time abort (its ToPrimitive
- * runs program code, in an order not written here). A primitive receiver is the run-time abort, and so is an object
- * where the program can make a String object, whose index keys the realm lacks.
+ * (#7579) A read or write whose key is computed, over the key's kinds: a string is the key; any other value is the
+ * program's ToString of it (ToPropertyKey: `"1"`, `"true"`, `"null"`, an object's ToPrimitive, which runs at the
+ * access, so after a write's value and once per access of a compound, as V8 does; an array's aborts). A primitive
+ * receiver is the run-time abort, and so is an object where the program can make a String object, whose index keys
+ * the realm lacks.
  *
  * The realm holds a built-in object member by member (#7561's pin rule over constant keys), so a string key no use
  * spells may name a member it did not materialise (a method, an accessor, an own member of a built-in prototype the
  * key is written to): a string key the receiver's chain lacks is the run-time abort, but for a canonical numeric
  * string (ToString(ToNumber(key)) is key), which no built-in member is named, and which a read answers as absent and
- * a write creates. A key the chain holds is answered exactly, and a ToString'd key is never a member's name.
+ * a write creates. A key the chain holds is answered exactly, and a primitive's string is never a member's name.
  */
 function computedAccess(b: MemberAccessBuilders, instr: MemberGet | MemberSet): Access {
   const write = instr.kind === "dyn.member_set" ? instr : undefined;
@@ -380,24 +381,27 @@ function computedAccess(b: MemberAccessBuilders, instr: MemberGet | MemberSet): 
       write === undefined
         ? [realmCall("js.object.get", [instr.recv, key, instr.recv], s)]
         : putValue(b, write, key, `Cannot assign to read only property of ${receiver}`, s, throwTypeError);
+    /** A string key: answered where the chain holds it, else where it is canonical numeric, else the abort. */
+    const named = (key: IrValueId, s: IrValueId): IrInstr[] => {
+      const found = b.fresh();
+      const absent = (t: IrValueId) =>
+        canonicalNumeric(b, instr, key, (u) => (write === undefined ? [unread(u)] : access(key, u)), t);
+      return [
+        realmCall("js.object.has", [instr.recv, key], found),
+        b.branch(found, (t) => access(key, t), absent, s, b.carrier),
+      ];
+    };
     // Each arm reads the key as the one kind it holds there, so a conversion of it is that kind's alone.
     const byKind = (kind: CarrierKind, s: IrValueId): IrInstr[] => {
-      if (MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function") return b.abort(instr, s);
       const key = b.fresh();
       b.kinds.learn(key, [kind]);
       const narrowed = carried(instr.key, key);
-      if (kind === "string") {
-        const found = b.fresh();
-        const absent = (t: IrValueId) =>
-          canonicalNumeric(b, instr, key, (u) => (write === undefined ? [unread(u)] : access(key, u)), t);
-        return [
-          narrowed,
-          realmCall("js.object.has", [instr.recv, key], found),
-          b.branch(found, (t) => access(key, t), absent, s, b.carrier),
-        ];
-      }
+      if (kind === "string") return [narrowed, ...named(key, s)];
       const [text, converted] = [b.fresh(), b.fresh()];
-      return [narrowed, ...b.stringOf(instr, key, text), carried(text, converted), ...access(converted, s)];
+      const conversion = [narrowed, ...b.stringOf(instr, key, text), carried(text, converted)];
+      // An object's string may be any name; a primitive's never names a member.
+      const objectKey = MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function";
+      return [...conversion, ...(objectKey ? named(converted, s) : access(converted, s))];
     };
     return b.kindChain(instr, instr.key, r, byKind, b.kindsOf(instr.key), b.carrier);
   };

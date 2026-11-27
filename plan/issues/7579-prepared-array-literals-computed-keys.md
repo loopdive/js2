@@ -125,8 +125,24 @@ string arm.
   functions as receivers, keys through parameters, `0.1 + 0.2` and `1e21` equal to the constant key's canonical
   string, nullish receivers' TypeError, strict / sloppy writes to read-only indices and frozen `length`.
 
+Object keys (2026-11-27, after a coordinator note): an object or function key is the program's ToString at the access
+(OrdinaryToPrimitive, then the string-key rule, so an object whose string names an unmaterialised member aborts).
+node converts a plain write's key after its value and a compound's key twice (`o[k] += 1` reads `toString` twice); the
+legalization does both the same way, and a test row pins order and count. A Boolean wrapper key and an object whose
+string comes from Object.prototype's `toString` still abort (their ToPrimitive is not built); a String object makes
+every computed access on an object abort.
+
+**Coordinator cohorts** (A1a numbers measured by the other lane on `c86f46cc81`): the 41 es5id files directly under
+`built-ins/Array/`: base 8 → head 27 (A1a 27, 28 with its indexed-read fix). `property-cast-number.js` passes. Not
+passing: `Object` / `Function` not in scope 8 (#7574), "a dynamic value flows into undefined without a conversion" 2
+(`Array(undefined, undefined)`, a from-ast argument rule), run-time aborts 5: `S15.4_A1.1_T6` (a Boolean wrapper key),
+`T8` (String objects exist), `T9` (an object key whose ToPrimitive needs Object.prototype's `toString`), and
+`S15.4.5.2_A3_T2` (`length = new Number(6)` / `"6"`: ArraySetLength's two conversions are not built, the abort is kept
+on purpose). The 23 es5id files under `built-ins/Array/isArray/`: base 15 → head 17 (A1a 17); the rest stop at
+`RegExp`, `JSON`, `Math`, `Date`, `this` at module level, and one run-time abort (`15.4.3.2-1-13`).
+
 **Aborts or refuses as on the base** (each a test row): ToPrimitive of an array (`o[[1]]` aborts brand-first;
-`[1] + ""` and `[] == 0` refuse in from-ast / the legalization), an object key (abort), a primitive receiver (abort),
+`[1] + ""` and `[] == 0` refuse in from-ast / the legalization), an object key naming an unmaterialised member (abort), a primitive receiver (abort),
 any receiver where a String object may exist (abort), an absent non-numeric name and a new non-numeric name (abort),
 `__proto__` (abort), method calls on a literal (abort), for-of / for-in over a literal (abort in a function, refuse at
 module level), spread (refuses by name), destructuring, `Array.of`, `Object.getOwnPropertyNames([1])`, `JSON`, `bind`
