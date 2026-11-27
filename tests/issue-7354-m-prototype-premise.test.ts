@@ -29,12 +29,16 @@ const options = (): Test262CompileOptions =>
 const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not in scope in f`;
 // (#7561) A wrapper prototype is obtainable (`String.prototype`, `new String(…)`): a primitive of that kind then reads
 // through the realm's prototype (tests/issue-7561-wrappers.test.ts). (#7352) So is `Array.prototype`, which is on no
-// primitive's and no function's chain (tests/issue-7352-arrays.test.ts). Every other built-in prototype is not.
+// primitive's and no function's chain (tests/issue-7352-arrays.test.ts). (#7574) So is `Object.prototype`, which every
+// primitive reads through where it is (tests/issue-7574-object-value.test.ts). Every other built-in prototype is not.
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
-    ["Object.prototype as a value", "function f(){ return Object.prototype; } f();", notInScope("Object")],
     ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
-    ["Object.getPrototypeOf", "function f(){ return Object.getPrototypeOf(1); } f();", notInScope("Object")],
+    [
+      "Object.getPrototypeOf",
+      "function f(){ return Object.getPrototypeOf(1); } f();",
+      "dynamic operation Object.getPrototypeOf is not reachable on this path yet (#7350 B3bc) has no Prepared intrinsic",
+    ],
     ["Reflect.getPrototypeOf", "function f(){ return Reflect.getPrototypeOf({}); } f();", notInScope("Reflect")],
     ["globalThis", "function f(){ return globalThis; } f();", notInScope("globalThis")],
     [

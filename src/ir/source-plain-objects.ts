@@ -6,9 +6,9 @@
  * the source decides whether the object kind is admitted. OrdinaryToPrimitive is decided at run time (`ordinary-to-primitive.ts`) and needs to know only
  * whether `@@toPrimitive` is reachable, i.e. whether the program names `Symbol`.
  *
- * (#7354 M1, C1) No question about the built-in prototypes is asked here: no Prepared program can obtain one as a
- * value (tests/issue-7354-m-prototype-premise.test.ts pins every route), so code cannot change one, and naming
- * `String` as a callee or the intercepted `Object.prototype.toString.call(v)` reaches none.
+ * (#7354 M1, C1) A built-in prototype is one a program can change only where it can obtain it: (#7561) a wrapper's
+ * (`wrappers`), (#7352, #7574) Array's or the root through its family (`realmFamilies`). A receiver the front end
+ * folds (a native `Object` static's call, the intercepted `Object.prototype.toString.call(v)`) reaches none.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";

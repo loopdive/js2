@@ -169,11 +169,11 @@ describe("#7354 M1 — refusals that stay", () => {
       "ir/from-ast: unsupported tail statement ForInStatement in f",
     ],
     // (#7354 O1) Object.defineProperty and its three siblings run (tests/issue-7354-o1-*); a static the catalog does
-    // not mark native stays refused.
+    // not mark native stays refused: (#7574) `Object` is a value, whose identity row lacks the static.
     [
       "G45: an Object static that is not native",
       "var o = {}; Object.freeze(o);",
-      'ir/from-ast: identifier "Object" is not in scope in <module-init>',
+      gapText("Object.freeze is not reachable on this path yet (#7350 B3bc)"),
     ],
     [
       "F41: a switch over a member",

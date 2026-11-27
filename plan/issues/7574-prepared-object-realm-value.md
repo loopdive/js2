@@ -375,3 +375,35 @@ Code quality (CLAUDE.md, "IR path: code quality comes first"):
   not run.
 - The size estimates.
 - That TypeScript's expando merge covers `Object["k"] = v` (the table lists "refuses or aborts" for that reason).
+
+## Result (2026-11-27, branch `claude/7574-object-value`, base `claude/7352-arrays-a` `a851be4a78`)
+
+**Built** (`src/`: about +450 / −130):
+
+- Catalog: `%Object%` an identity row (`length`, `name`, `prototype`), held with itself; `toString`, `valueOf`,
+  `toLocaleString` native and held one by one (`NATIVE_OBJECT_PROTOTYPE_CONVERSIONS`); `%Object%`,
+  `%Object.prototype%` and the three appended to `NATIVE_VALUE_INTRINSICS`. `METHOD_IDS` is P1's id list.
+- Holding: an `object` row of `REALM_CONSTRUCTORS` and of `HELD_FAMILIES`; the root is one more `PinnedPrototype` of
+  the one pin function (obtained wherever `%Object%` is read). The backend's `familyObjects` also yields the root's
+  properties whose value is a held family member (`constructor`, the held methods), seeded on the kernel's
+  `object-prototype`; `js.object.intrinsic` reads the root through the kernel's `objectPrototype`. No second root.
+- IR: `dynamic-object-constructors.ts` (`Object(v)` / `new Object(v)`: `create-default`, the value itself,
+  `create-wrapper`); `Object.prototype` reads the realm's root; a primitive reads and writes through the root where the
+  program holds the family (`primitiveBase`); Object.prototype's `toString` / `valueOf` are rows of the one
+  method-by-identity table, so P1's call, OrdinaryToPrimitive and the object tag share them; `dyn.object_tag` is a call
+  of the root's `toString` where the family is held (another method aborts); `functionChainAnswer` answers `true` for
+  the root (one identity chain with the `%Error%` abort); an own-property query of the root with a key it lacks
+  (`__proto__`, the Annex B helpers, or a computed key) aborts (`unlessUnheldOwnKey`, beside the String-object guard).
+- Source fact: `constructorRead` excludes the receivers the front end folds (a native static's call, the object tag,
+  whose shape test `objectTagCallReceiver` moved out of `from-ast.ts`); `Object(v)` adds the wrapper kinds it may make.
+- Folded: `ObjectStaticBuilders.errors` (dead after `functionChainAnswer` takes the program).
+
+**Refuses or aborts** (`tests/issue-7574-object-value.test.ts`): `Object.keys(o)`, any non-native static and a static
+read as a value (#7580); `Object.keys = f` (Object not pristine); a computed key off `Object`; `var O = Object;
+O.defineProperty = f` and the same through a parameter abort at the write; the root queried as own with a key it
+lacks; the object tag through a written `toString`; `delete Object.defineProperty` (no `delete`). Inside a function,
+`Object(o) === o` for a function-local literal aborts (the function-local object operand, as on the base).
+
+Not built: zero-argument `new Object()` stays the realm's `create-default` through `%Object%` (#7575 is not on this
+base); `toLocaleString` is held but its call aborts; a computed-key `Object.prototype.hasOwnProperty(k)` aborts
+instead of answering.
