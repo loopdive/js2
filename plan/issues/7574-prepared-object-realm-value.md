@@ -1,7 +1,7 @@
 ---
 id: 7574
 title: "Prepared path: `Object` as a realm value (the constructor, `Object.prototype`, `Object(v)` / `new Object(v)`)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-27
 updated: 2026-11-27
