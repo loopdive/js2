@@ -16,6 +16,7 @@ import { irIntrinsicFuncRef } from "../src/ir/core/callable-bindings.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { requireProgram, sourceInput, sourcePacket, typedOptions } from "./helpers/typed-program-fixtures.js";
+import { rebuiltPreparedData } from "./helpers/rebuilt-prepared-data.js";
 
 const HOST = { backend: "wasmgc", target: "host" } as const;
 let sqrt: PreparedIrProgram, asyncProgram: PreparedIrProgram, clockProgram: PreparedIrProgram;
@@ -223,7 +224,7 @@ describe("canonical whole-program runtime projection owners", () => {
   it("authenticates async attachment identity after exact data reconstruction", () => {
     const runtime = asyncProgram.runtime[0]!;
     expect(() => projection.assertPreparedIrRuntimeProjection(asyncProgram, runtime)).not.toThrow();
-    const copied = freezePreparedIrValue(runtime) as typeof runtime;
+    const copied = freezePreparedIrValue(rebuiltPreparedData(runtime)) as typeof runtime;
     expect(copied).toEqual(runtime);
     expect(() => projection.assertPreparedIrRuntimeProjection(asyncProgram, copied)).toThrowError(
       new Error("IR async runtime attachment for main does not retain its exact semantic plan owner"),
