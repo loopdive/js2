@@ -21,8 +21,8 @@ import {
 import type { ConvertingBuilders } from "./dynamic-value-chains.js";
 import { CARRIER, F64 } from "./dynamic-value-types.js";
 
-/** The names a realm method the program may hold is read under; each method once, each wrapper method by name. */
-const METHOD_NAMES = [...NATIVE_OBJECT_PROTOTYPE_METHODS, "toString", "valueOf", "isArray"];
+/** The names a realm method the program may hold is read under, but the Object.prototype methods'. */
+const METHOD_NAMES = ["toString", "valueOf", "isArray"];
 /** The most arguments a held method reads. */
 const READ_ARGUMENTS = 1;
 
@@ -59,9 +59,14 @@ export function dynamicBuiltinCall(b: ConvertingBuilders, instr: Call): IrInstr[
   ];
 }
 
-/** The realm methods the program may hold: each id once, and each held wrapper method by its name. */
+/**
+ * The realm methods the program may hold: each id once, and each held wrapper method by its name. The Object.prototype
+ * methods only where the source spells one (`families.objectMethods`); elsewhere a detached call of one is the
+ * run-time abort, as it was before the caller existed.
+ */
 function heldMethods(b: ConvertingBuilders): RealmMethods[] {
-  const named = METHOD_NAMES.flatMap((name) => realmMethodsNamed(name, b.families) ?? []);
+  const names = [...(b.families.objectMethods ? NATIVE_OBJECT_PROTOTYPE_METHODS : []), ...METHOD_NAMES];
+  const named = names.flatMap((name) => realmMethodsNamed(name, b.families) ?? []);
   const ids = [...new Set(named.flatMap((methods) => methods.ids))];
   return [{ ids }, ...named.flatMap((methods) => (methods.wrapper ? [{ ids: [], wrapper: methods.wrapper }] : []))];
 }

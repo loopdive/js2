@@ -25,6 +25,7 @@ import {
   buildSourceObjectSetDefinition,
   buildSourceObjectHasDefinition,
   buildSourceObjectIntrinsicDefinition,
+  buildSourceObjectIsIntrinsicDefinition,
   buildSourceObjectHasOwnDefinition,
   sourceObjectCreate,
   type SourceObjectCreateOperands,
@@ -146,6 +147,21 @@ function wrapperDataOperands(dependencies: NativeSourceObjectDependencies, tx: P
     undefinedGlobal: d.undefinedGlobal,
     sameValue: d.sameValue,
   };
+}
+/** The built-in function objects the realm holds, by their `NATIVE_VALUE_INTRINSICS` selector: each through its getter. */
+function heldFunctionIntrinsics(tx: PhysicalModuleReservations, kernel: NativeSourceObjectDependencies["kernel"]) {
+  return NATIVE_VALUE_INTRINSICS.flatMap((id, selector) =>
+    kernel.entries.some((entry) => entry.id === id)
+      ? [
+          {
+            selector,
+            value: [
+              { op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle },
+            ] as readonly Instr[],
+          },
+        ]
+      : [],
+  );
 }
 /** Creation's operands: a program creates a wrapper only of a family the realm then holds (`create-wrapper`'s selector). */
 function wrapperCreateOperands(dependencies: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
@@ -347,22 +363,22 @@ const ROWS = {
           ],
         ]),
       ]);
+      const functions = new Map(heldFunctionIntrinsics(tx, kernel).map((row) => [row.selector, row.value]));
       return buildSourceObjectIntrinsicDefinition({
         values: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) => {
-          if (kernel.entries.some((entry) => entry.id === id))
-            return [
-              {
-                selector,
-                value: [
-                  { op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle } as Instr,
-                ],
-              },
-            ];
-          const object = objects.get(id);
-          return object ? [{ selector, value: object }] : [];
+          const value = functions.get(selector) ?? objects.get(id);
+          return value === undefined ? [] : [{ selector, value }];
         }),
       });
     },
+  },
+  "js.object.is-intrinsic": {
+    signature: { params: [EXTERNREF, I32], results: [I32] },
+    body: ({ kernel }, tx) =>
+      buildSourceObjectIsIntrinsicDefinition({
+        functions: heldFunctionIntrinsics(tx, kernel),
+        sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
+      }),
   },
   "js.object.create-wrapper": {
     signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },

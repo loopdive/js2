@@ -11,12 +11,13 @@
  * obtain a built-in prototype and change it (`String.prototype.k = 5`); the legalization derives that from these
  * names (`programFamilies`), and a primitive's member access then reads through the realm's prototype objects. A
  * program that names none obtains no built-in prototype (tests/issue-7354-m-prototype-premise.test.ts pins the
- * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none.
+ * routes): `String(v)` and the intercepted `Object.prototype.toString.call(v)` name none. (#7557) It records whether
+ * the source spells an Object.prototype method's name (`objectMethods`): only then can the realm hold one.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
-import { ARRAY_ID, realmConstructorId } from "./program/builtin-prototype-keys.js";
+import { ARRAY_ID, NATIVE_OBJECT_PROTOTYPE_METHODS, realmConstructorId } from "./program/builtin-prototype-keys.js";
 import { isStringConversionCall, objectToStringCallRoot } from "./realm-constructor-forms.js";
 import { stringPrototypeBorrowShape } from "./array-prototype-borrow-call.js";
 
@@ -38,6 +39,7 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
+  let objectMethods = false;
   const constructors = new Set<string>();
   const visit = (node: ts.Node): void => {
     const id = ts.isIdentifier(node) ? realmConstructorId(node.text) : undefined;
@@ -50,10 +52,13 @@ export function programObjects(
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
+    objectMethods ||=
+      (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) &&
+      (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly string[]).includes(node.text);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || constructors.size > 0, functions, namesSymbol, constructors };
+  return { present: present || constructors.size > 0, functions, namesSymbol, objectMethods, constructors };
 }
 
 /**

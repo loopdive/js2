@@ -311,6 +311,33 @@ export function buildSourceObjectIntrinsicDefinition(d: {
 }
 
 /**
+ * (#7557) `js.object.is-intrinsic(value, selector) -> i32`: SameValue of `value` and the built-in function object
+ * `selector` names, for each one the realm holds (`functions`, as `js.object.intrinsic`'s); 0 for any other selector,
+ * whose function object no program value can be.
+ */
+export function buildSourceObjectIsIntrinsicDefinition(d: {
+  readonly functions: readonly { readonly selector: number; readonly value: readonly Instr[] }[];
+  readonly sameValue: FuncHandle;
+}): SourceObjectDefinition {
+  return {
+    locals: [],
+    body: [
+      ...d.functions.flatMap(({ value, selector }): Instr[] => [
+        { op: "local.get", index: 1 },
+        { op: "i32.const", value: selector },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: 0 }, ...value, { op: "call", funcIdx: d.sameValue }, { op: "return" }],
+        },
+      ]),
+      { op: "i32.const", value: 0 },
+    ],
+  };
+}
+
+/**
  * (#7354 P1) `js.object.has-own(object, key, selector) -> i32`: HasOwnProperty (§7.3.12) of a canonical key on an
  * ordinary or function object, through the kernel's own-property find (a function's own properties are in its bag);
  * selector 1 also requires the property to be enumerable (`propertyIsEnumerable`, §20.1.3.4).

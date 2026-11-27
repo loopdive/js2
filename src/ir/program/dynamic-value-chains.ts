@@ -295,7 +295,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     ...(name === "toString" && families.errors
       ? [
           () =>
-            identityTest(builtinMethodBuilders, instr, ERROR_TO_STRING_ID, method, (r) => [
+            identityTest(builtinMethodBuilders, ERROR_TO_STRING_ID, method, (r) => [
               realmCall("js.object.error-to-string", [object], r),
             ]),
         ]

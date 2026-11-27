@@ -168,6 +168,8 @@ export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
+  /** (#7557) The source spells an Object.prototype method's name (`hasOwnProperty`, …): the realm may hold them. */
+  readonly objectMethods: boolean;
   readonly constructors: ReadonlySet<string>;
 }
 
@@ -184,6 +186,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
   namesSymbol: false,
+  objectMethods: false,
   constructors: new Set<string>(),
 });
 
@@ -214,6 +217,8 @@ export interface ProgramFamilies {
   readonly prototypes: boolean;
   /** (A1) A value may be an array: the program names `Array` or writes an array literal. */
   readonly arrays: boolean;
+  /** (#7557) A value may be an Object.prototype method: the program spells one's name (`ProgramObjects`). */
+  readonly objectMethods: boolean;
 }
 
 export function programFamilies(program: LegalizationProgram): ProgramFamilies {
@@ -224,6 +229,7 @@ export function programFamilies(program: LegalizationProgram): ProgramFamilies {
     wrappers,
     prototypes: named.has("%Object%") || wrappers.size > 0,
     arrays: named.has(ARRAY_ID),
+    objectMethods: program.objects.objectMethods,
   };
 }
 

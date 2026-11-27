@@ -32,6 +32,16 @@ import {
   planModuleInitChunks,
 } from "../shared/module-init-chunk-plan.js";
 
+/** The resolver's answers the `<module-init>` lowering reads (`IrFromAstResolver` extends it). */
+export interface ModuleInitResolver {
+  /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
+  moduleInitChunkName?(preferred: string): string;
+  /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
+  moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
+  /** (#7557) The realm may hold built-ins the program calls through values: install the realm's caller. */
+  realmBuiltinCaller?(): boolean;
+}
+
 /** The slice of the `<module-init>` lowering context this module reads and extends. */
 export interface ModuleInitChunkHost {
   readonly builder: IrFunctionBuilder;
@@ -40,16 +50,7 @@ export interface ModuleInitChunkHost {
   readonly lifted: IrFunction[];
   readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   readonly allocRegistry?: AllocSiteRegistry;
-  /**
-   * Reserves each chunk's Wasm name in the module being built (absent: the name as planned); (#7354 F1b) the
-   * function declarations the script reads as values.
-   */
-  readonly resolver?: {
-    moduleInitChunkName?(preferred: string): string;
-    moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
-    /** (#7557) The realm may hold built-ins the program calls through values: install the realm's caller. */
-    realmBuiltinCaller?(): boolean;
-  };
+  readonly resolver?: ModuleInitResolver;
 }
 
 /**

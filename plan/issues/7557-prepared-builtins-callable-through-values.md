@@ -197,5 +197,20 @@ in the P1 notes): the dispatcher's built-in arm stops being the run-time abort.
     start)`: the vector-apply builder over the `$ObjVec` layout, with the caller as its built-in arm.
   - `apply` takes a realm array (a kernel array-to-`$ObjVec`); any other array-like aborts.
   - `bind` is BoundFunctionCreate (a closure-root subtype holding target, `this` and arguments), a rung of its own.
-- **Cost to recover:** an identity test that does not hold the method it tests, so that a program pays only for the
-  methods it reads.
+
+### Prelude cost recovered (A1b-1 step 1)
+
+- **Identity without holding.** `identityTest` asks `js.object.is-intrinsic(value, selector)`: SameValue with the
+  built-in the selector names where the realm holds it, `false` for any other selector (a function object the realm
+  does not hold is no program value). Only `js.object.intrinsic` reads still make the realm hold a method.
+- **Rungs only where reachable.** The caller's Object.prototype rungs exist only where the source spells one of
+  their names (`ProgramObjects.objectMethods`, `families.objectMethods`). Elsewhere a detached call of one is the
+  run-time abort, as before the caller. The caller body was 74 KB of WAT text in the prelude, almost all of it these
+  rungs' ToPropertyKey conversions.
+- `from-ast.ts` no longer grows: the module-init resolver members moved to `ModuleInitResolver`
+  (`module-init-chunk-lowering.ts`), which `IrFromAstResolver` extends (17,311 → 17,306 lines).
+- **Measured** (prelude + `assert.sameValue(1, 1);`, 3 compiles each, same session): A1a head c86f46cc81 103,374 B,
+  8.69 s median; caller route a16d62829e 110,121 B, 10.63 s; now 104,982 B (+1.6 KB over A1a), 8.76 s.
+- Probes: the 152 A1a probes unchanged (145 OK, 4 abort, 3 refused, 0 wrong); the 13 A1b-1 probes unchanged; 10 new
+  (override of `Object.prototype.hasOwnProperty` honoured, a folded key aborts, methods stored on objects and called
+  as `o.f(…)`): 7 OK with failing twins, 3 abort. Ordinary pipeline 32/32 identical.

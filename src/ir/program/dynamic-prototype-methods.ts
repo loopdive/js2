@@ -239,9 +239,7 @@ export function dynamicPrototypeMethodCall(
 /** The tests of `methods` on `callee`, each answering the method's algorithm for `call` (`realmMethodAlgorithm`). */
 export function realmMethodTests(b: ConvertingBuilders, call: BuiltinCall, callee: IrValueId, methods: RealmMethods) {
   return [
-    ...methods.ids.map(
-      (id) => () => identityTest(b, call.instr, id, callee, (r) => realmMethodAlgorithm(b, call, id, r)),
-    ),
+    ...methods.ids.map((id) => () => identityTest(b, id, callee, (r) => realmMethodAlgorithm(b, call, id, r))),
     ...(methods.wrapper !== undefined
       ? [
           () =>

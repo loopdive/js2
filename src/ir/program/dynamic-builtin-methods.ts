@@ -11,7 +11,7 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
+import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
 import type { ConvertingBuilders } from "./dynamic-value-chains.js";
 import type { CarrierKind } from "./dynamic-value-kinds.js";
 import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
@@ -26,32 +26,21 @@ export interface BuiltinMethodTest {
 /** The legalization's builders the tests are written with. */
 export type BuiltinMethodBuilders = Pick<
   ConvertingBuilders,
-  | "fresh"
-  | "intrinsic"
-  | "anyKind"
-  | "branch"
-  | "kindChain"
-  | "abort"
-  | "realmIntrinsic"
-  | "selectorCall"
-  | "kinds"
-  | "stringOf"
+  "fresh" | "intrinsic" | "anyKind" | "branch" | "kindChain" | "abort" | "selectorCall" | "kinds" | "stringOf"
 >;
 
-/** Whether `method` is the realm's function object `id` (SameValue), answering `answer`. */
+/**
+ * Whether `method` is the realm's function object `id` (SameValue), answering `answer`. (#7557) The test does not make
+ * the realm hold `id` (`js.object.is-intrinsic`): a program pays only for the methods it reads.
+ */
 export function identityTest(
   b: BuiltinMethodBuilders,
-  instr: IrInstr,
   id: string,
   method: IrValueId,
   answer: (result: IrValueId) => IrInstr[],
 ): BuiltinMethodTest {
-  const [builtin, cond] = [b.fresh(), b.fresh()];
-  return {
-    instrs: [...b.realmIntrinsic(id, builtin), b.intrinsic(instr, "js.value.strict_eq", [method, builtin], cond)],
-    cond,
-    answer,
-  };
+  const cond = b.fresh();
+  return { instrs: b.selectorCall("js.object.is-intrinsic", [method], realmIntrinsicSelector(id), cond), cond, answer };
 }
 
 const PRIMITIVES = Object.keys(WRAPPER_OF_PRIMITIVE) as CarrierKind[];
