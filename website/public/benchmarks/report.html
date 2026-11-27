@@ -2630,8 +2630,17 @@
                 return;
               }
               const filename = activeMode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-              irProvenance.textContent =
+              const fullRunLabel =
                 window.t262ViewState.irMeasurementLabel(view.report, activeMode) + ` · results/${filename}`;
+              irProvenance.textContent = fullRunLabel;
+              // #7616: an edition row from a later merge names its own commit and date.
+              window.t262ViewState
+                .fetchData(view.editionsSrc, "editions")
+                .then((editions) => {
+                  if (irProvenance.textContent === fullRunLabel)
+                    irProvenance.textContent = fullRunLabel + window.t262ViewState.irEditionSourcesLabel(editions);
+                })
+                .catch(() => {});
             }
             renderConformance(view, conformanceHost, preservedState);
           };

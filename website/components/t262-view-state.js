@@ -201,6 +201,23 @@
     );
   };
 
+  // #7616: a row measured by a later edition-only run names its own commit and date;
+  // every other row is the full run's, which irMeasurementLabel names.
+  const irEditionSourcesLabel = (editions) =>
+    editions
+      .filter((row) => row?.scope === "edition")
+      .map(
+        (row) =>
+          " · " +
+          row.edition +
+          " from a later edition-only run · source " +
+          row.sourceSha +
+          " · " +
+          row.measuredAt +
+          " · other editions from the full run",
+      )
+      .join("");
+
   const historicalHostLabel = (data) =>
     "Historical JS Host · retired 2026-10-12 · frozen results · source " +
     (data?.baseline_sha || "unknown") +
@@ -234,6 +251,7 @@
     fetchData,
     bindIrToggle,
     irMeasurementLabel,
+    irEditionSourcesLabel,
     historicalHostLabel,
     irStatus,
   };

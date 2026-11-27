@@ -2,7 +2,7 @@
 /**
  * #7551 — the per-merge test262 scope: the CURRENT ES edition, on the IR path.
  *
- * The full corpus is measured weekly. Every merge measures only the edition
+ * The full corpus is measured daily (#7616). Every merge measures only the edition
  * being worked on (`scripts/test262-current-edition.json`) and compares it,
  * test by test, with the nearest earlier IR measurement on the same lineage.
  * A test of the edition that passed there and does not pass now is a
@@ -232,7 +232,7 @@ export interface ArtifactRef {
  * comparable.
  *
  * Edition before full: only an edition baseline lets `compareEditionRuns`
- * catch tests a narrowed classifier dropped. The weekly full run lands on a
+ * catch tests a narrowed classifier dropped. The daily full run lands on a
  * main commit AFTER that commit's own edition measurement, so newest-first
  * alone would hand the next queue group the full one, the narrowing would
  * pass, and the group's own edition artifact would then lack the dropped
@@ -278,7 +278,7 @@ export function renderSummary(r: Report): string {
   const lines = [
     `## test262 on the IR path — ${r.edition} (current edition, #7551)`,
     "",
-    `Commit \`${r.sourceSha}\`. This is the edition only, not the full corpus (that runs weekly).`,
+    `Commit \`${r.sourceSha}\`. This is the edition only, not the full corpus (that runs daily).`,
     "",
     "| pass | fail | compile_error | other | total |",
     "|---:|---:|---:|---:|---:|",

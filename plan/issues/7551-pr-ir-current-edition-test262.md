@@ -567,6 +567,10 @@ Other decisions:
 
 ## Delta review fixes, Part B — weekly full run (2026-11-26)
 
+> **Superseded 2026-11-27 by #7616 (owner decision):** the full run is daily
+> again (`23 2 * * *`), and the site also shows the merge queue's edition
+> measurement. "Weekly" below records the decision of 2026-11-26.
+
 - **Weekly, not daily (owner decision).** `test262-sharded.yml` schedule
   `23 2 * * 0` (Sunday 02:23 UTC, the lowest-traffic slot for the queue)
   runs the full legacy matrix, the full-corpus IR run and promotion.

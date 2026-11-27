@@ -97,7 +97,7 @@ describe("#4153 — the heavy test262 matrix is not PR-gated, and the header say
     }
   });
 
-  // (#7551) The legacy matrix runs weekly (schedule) and on dispatch — never per
+  // (#7551) The legacy matrix runs daily (schedule, #7616) and on dispatch — never per
   // PR, never per merge; the queue gates on the IR current edition instead.
   it("test262-shard runs only on schedule and workflow_dispatch — never on a pull_request or a merge", () => {
     const condition = jobIf(jobBlock(WORKFLOW, "test262-shard"));
