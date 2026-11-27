@@ -4,7 +4,7 @@ title: "Prepared path: RegExp literals and unadmitted Object.defineProperty refu
 status: done
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-26
 completed: 2026-11-19
 priority: high
 horizon: s
@@ -87,3 +87,6 @@ member use on that extern receiver tripped the capability assert.
   defects on valid programs (empty program; bare declarations only). They
   should compile, not refuse, and sit in the startup plan and the native
   string census, outside this change.
+- Follow-up probe (2026-11-26, main `2a213940e9`): the valid script `function f(){}\nvar f;` refuses by name
+  (`type-resolution-unsupported`: "script var f shares its binding with a function declaration"). The compile also
+  reports two TypeScript `Duplicate identifier 'f'` (TS2300) diagnostics, which are wrong for a JavaScript file.

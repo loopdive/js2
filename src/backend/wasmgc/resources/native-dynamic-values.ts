@@ -10,6 +10,7 @@
 import type {
   PhysicalModuleReservations,
   FunctionReservation,
+  GlobalReservation,
   TypeReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
@@ -60,6 +61,8 @@ export interface NativeDynamicValueSelection {
   readonly isFunction: boolean;
   /** (#7354 F1) The run-time abort of a conversion the realm cannot answer yet. */
   readonly unsupported: boolean;
+  /** (#7486) The run-time abort that records its site's id in the exported global `__js_value_unsupported_site`. */
+  readonly unsupportedAt: boolean;
 }
 
 /**
@@ -87,6 +90,7 @@ export function selectNativeDynamicValues(
     asString: has("js.value.as_string"),
     isFunction: has("js.value.is_function"),
     unsupported: has("js.value.unsupported"),
+    unsupportedAt: has("js.value.unsupported_at"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
@@ -103,7 +107,10 @@ const ROWS = [
   ["asString", "as-string", "__js_as_string", { params: [EXTERNREF], results: ["any-string"] }],
   ["isFunction", "typeof-function", "__typeof_function", { params: [EXTERNREF], results: [I32] }],
   ["unsupported", "unsupported", "__js_value_unsupported", { params: [], results: ["any-string"] }],
+  ["unsupportedAt", "unsupported-at", "__js_value_unsupported_at", { params: [I32], results: ["any-string"] }],
 ] as const;
+/** (#7486) The global the site-naming abort stores its site's id in, exported under its name; -1 until a trap. */
+export const UNSUPPORTED_SITE = "__js_value_unsupported_site";
 
 /** `stringKey` names the native string owner whose AnyString type `as_string` answers. */
 export function declareNativeDynamicValueResources(
@@ -124,6 +131,15 @@ export function declareNativeDynamicValueResources(
       },
     }),
   );
+  if (selection.unsupportedAt)
+    declarations.push({
+      key: key + ":unsupported-site",
+      role: ["values", "unsupported-site"],
+      space: "global",
+      name: UNSUPPORTED_SITE,
+      valueType: I32,
+      mutable: true,
+    });
   return freezeNativeResourceRecipe({
     declarations,
     reservationSteps: declarations.map((row) => ({
@@ -143,6 +159,8 @@ export interface NativeDynamicValueReservations {
   readonly asString?: FunctionReservation;
   readonly isFunction?: FunctionReservation;
   readonly unsupported?: FunctionReservation;
+  readonly unsupportedAt?: FunctionReservation;
+  readonly unsupportedSite?: GlobalReservation;
 }
 /** (#7354 Str) The issued string resources strict equality's string arm calls. */
 export interface NativeDynamicValueStrings {
@@ -158,6 +176,7 @@ interface Owner {
   readonly requirements: NativeValueResourcePlan;
   readonly dependencies: NativeValueDependencies;
   filled: boolean;
+  published: boolean;
 }
 const owners = new WeakMap<NativeDynamicValueReservations, Owner>();
 function fail(detail: string): never {
@@ -191,15 +210,18 @@ export function reserveNativeDynamicValueResources(
     declareNativeDynamicValueResources(key, selection, typePack.key),
     new Map(typePack.types.map((token) => [token.key, token])),
   );
-  const pack: NativeDynamicValueReservations = Object.freeze(
-    Object.fromEntries(
+  const pack: NativeDynamicValueReservations = Object.freeze({
+    ...Object.fromEntries(
       ROWS.filter(([field]) => selection[field]).map(([field, role]) => [
         field,
         requireNativeDeclaredReservation(records, key + ":" + role, "function"),
       ]),
     ),
-  );
-  owners.set(pack, { tx, values, strings, booleans, requirements, dependencies, filled: false });
+    ...(selection.unsupportedAt
+      ? { unsupportedSite: requireNativeDeclaredReservation(records, key + ":unsupported-site", "global") }
+      : {}),
+  });
+  owners.set(pack, { tx, values, strings, booleans, requirements, dependencies, filled: false, published: false });
   return pack;
 }
 
@@ -284,7 +306,26 @@ export function fillNativeDynamicValueResources(
       body: closureRoot ? buildClosureRootTest(0, tx.physicalIndex(closureRoot)) : [{ op: "i32.const", value: 0 }],
     });
   if (pack.unsupported) tx.fillFunction(pack.unsupported, { locals: [], body: [{ op: "unreachable" }] });
+  if (pack.unsupportedAt) {
+    const site = tx.physicalIndex(pack.unsupportedSite!);
+    tx.fillGlobal(pack.unsupportedSite!, [{ op: "i32.const", value: -1 }]);
+    tx.fillFunction(pack.unsupportedAt, {
+      locals: [],
+      body: [{ op: "local.get", index: 0 }, { op: "global.set", index: site }, { op: "unreachable" }],
+    });
+  }
   owner.filled = true;
+}
+
+/** (#7486) Export the site-naming abort's global, where the program has one. */
+export function publishNativeDynamicValues(tx: PhysicalModuleReservations, pack: NativeDynamicValueReservations): void {
+  if (tx.state !== "filling") fail("publication requires filling phase");
+  requireCompletedNativeDynamicValues(tx, pack);
+  if (!pack.unsupportedSite) return;
+  const owner = owners.get(pack)!;
+  if (owner.published) fail("duplicate site publication");
+  tx.defineExport(pack.unsupportedSite.key + ":export", UNSUPPORTED_SITE, pack.unsupportedSite);
+  owner.published = true;
 }
 
 export function requireCompletedNativeDynamicValues(

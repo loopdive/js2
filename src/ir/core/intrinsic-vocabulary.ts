@@ -100,6 +100,7 @@ export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
   "js.value.to_boolean",
   "js.value.undefined",
   "js.value.unsupported",
+  "js.value.unsupported_at",
 ] as const);
 
 export type DynamicValueIntrinsicId = (typeof DYNAMIC_VALUE_INTRINSIC_IDS)[number];
