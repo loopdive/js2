@@ -8,7 +8,7 @@ import * as projection from "../src/ir/program/runtime-validation.js";
 import { irProgramRuntimeDemands } from "../src/ir/program/runtime-demands.js";
 import { preparedIrDraftAbiLookup } from "../src/ir/program/draft-abi-lookup.js";
 import { PreparedIrProgramInvariantError } from "../src/ir/program/errors.js";
-import { preparedIrProgramOwner } from "../src/ir/program/owner.js";
+import { locatedFailure, preparedIrProgramOwner } from "../src/ir/program/owner.js";
 import { freezePreparedIrValue, preparedIrReadonlyMap } from "../src/ir/program/data.js";
 import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
 import { asValueId, type IrInstr } from "../src/ir/core/nodes.js";
@@ -110,11 +110,29 @@ function changeClock(change: (body: readonly IrInstr[]) => readonly IrInstr[]): 
   };
 }
 
+/**
+ * An equal tree in which every object is new. `freezePreparedIrValue` alone cannot reconstruct prepared data: it
+ * returns data that is already deeply frozen unchanged (#7354 Perf6, 480572a14e / 5e9122134c), so the copy would keep
+ * every identity the attachment check authenticates. Prepared data holds no functions, so a `get`/`has` method marks
+ * a collection.
+ */
+function rebuilt(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(rebuilt);
+  const record = value as Record<PropertyKey, unknown>;
+  if (typeof record.get === "function")
+    return new Map([...(value as ReadonlyMap<unknown, unknown>)].map(([key, item]) => [rebuilt(key), rebuilt(item)]));
+  if (typeof record.has === "function") return new Set([...(value as ReadonlySet<unknown>)].map(rebuilt));
+  const copy = Object.create(null) as Record<PropertyKey, unknown>;
+  for (const key of Reflect.ownKeys(value)) copy[key] = rebuilt(record[key]);
+  return copy;
+}
+
 describe("canonical whole-program runtime projection owners", () => {
   it("forwards manifest producer and projection validators by identity", () => {
     expect(oldManifest.prepareWholeProgramRuntimeManifest).toBe(manifest.prepareWholeProgramRuntimeManifest);
     expect(oldManifest.checkFunctionPopulation).toBe(manifest.checkFunctionPopulation);
-    expect(oldManifest.locatedFailure).toBe(manifest.locatedFailure);
+    expect(oldManifest.locatedFailure).toBe(locatedFailure);
     expect(oldManifest.invariant).toBe(manifest.invariant);
     expect(oldProjection.assertPreparedIrRuntimeProjection).toBe(projection.assertPreparedIrRuntimeProjection);
     expect(oldProjection.assertPreparedIrSemanticRuntimeSeparation).toBe(
@@ -183,12 +201,12 @@ describe("canonical whole-program runtime projection owners", () => {
       }),
     );
     expect(error.code).toBe("invalid-prepared-data");
-    expect(error.message).toContain(`runtime producer cannot locate ${other.unitId}`);
+    expect(error.message).toContain(`prepared producer cannot locate ${other.unitId}`);
     expect(error).not.toHaveProperty("location");
   });
   it("removes nonserializable causes while retaining the supplied diagnostic and real owner", () => {
     const fn = sqrt.ir.functions[0]!;
-    const result = manifest.locatedFailure(request(sqrt), fn.unitId, {
+    const result = locatedFailure(request(sqrt), fn.unitId, {
       kind: "invariant",
       code: "verifier-failure",
       stage: "verify",
@@ -223,7 +241,7 @@ describe("canonical whole-program runtime projection owners", () => {
   it("authenticates async attachment identity after exact data reconstruction", () => {
     const runtime = asyncProgram.runtime[0]!;
     expect(() => projection.assertPreparedIrRuntimeProjection(asyncProgram, runtime)).not.toThrow();
-    const copied = freezePreparedIrValue(runtime) as typeof runtime;
+    const copied = freezePreparedIrValue(rebuilt(runtime)) as typeof runtime;
     expect(copied).toEqual(runtime);
     expect(() => projection.assertPreparedIrRuntimeProjection(asyncProgram, copied)).toThrowError(
       new Error("IR async runtime attachment for main does not retain its exact semantic plan owner"),

@@ -13,6 +13,7 @@ const descriptor = (name: string, intent: ImportDescriptor["intent"], paramCount
   paramCount,
 });
 
+const NATIVE_MISS = Symbol("native-miss");
 const capabilityContext = {
   deps: undefined,
   globalSandbox: undefined,
@@ -20,6 +21,8 @@ const capabilityContext = {
   getNodeRequire: () => undefined,
   wrapWasmClosure: () => null,
   wrapUnknownCallable: (value: unknown) => value,
+  nativePrimitiveToHost: () => NATIVE_MISS,
+  nativeMiss: NATIVE_MISS,
 };
 
 describe("#4399 extracted JavaScript adapters", () => {

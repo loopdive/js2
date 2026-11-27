@@ -431,10 +431,10 @@ import { fillProtoIteratorDriver, reserveArrayProtoIteratorOverrideGlobals } fro
 import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
 import { fillObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
+import { scriptGlobalLexicalNames } from "../shared/script-lexical-names.js";
 import {
   collectGlobalObjectPropertyNames,
   recordSloppyImplicitGlobalNames,
-  recordScriptGlobalLexicalBindingNames,
   recordScriptVarBindingNames,
   sourceContainsClass,
   scanModuleMemberDeletes,
@@ -4301,7 +4301,7 @@ function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.Sourc
   const vars = (ctx.globalObjectVarBindings ??= new Set());
   recordScriptVarBindingNames(vars, sourceFile);
   const lexicals = (ctx.globalLexicalBindings ??= new Set());
-  recordScriptGlobalLexicalBindingNames(lexicals, sourceFile);
+  for (const name of scriptGlobalLexicalNames(sourceFile)) lexicals.add(name.text);
   const implicit = (ctx.sloppyImplicitGlobals ??= new Set());
   recordSloppyImplicitGlobalNames(implicit, sourceFile, ctx.oracle, ctx.inferModuleStrictArguments ?? true);
   // (#3956) A top-level `this.p = v` creates a global-object property that a

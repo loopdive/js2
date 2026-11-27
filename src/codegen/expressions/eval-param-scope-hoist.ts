@@ -14,7 +14,7 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { getOrRegisterRefCellType } from "../registry/types.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 // Late-bound: a direct import of late-imports/eval-inline would close an import cycle (#6797).
 import {
   emitUndefined,

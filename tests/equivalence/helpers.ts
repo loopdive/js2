@@ -311,12 +311,15 @@ export function buildImports(
  * fallback work. Direct `buildImports` callers that skip `setInstance` see
  * `undefined` for opaque WasmGC struct fields, which makes destructuring
  * defaults wrongly fire in the harness even when the real runtime is correct.
+ *
+ * `deps` are the embedder's host values (e.g. a mock `document`), forwarded to
+ * the runtime's `buildImports` exactly as a real embedder passes them.
  */
-export async function instantiateWithRuntime(result: CompileResult) {
+export async function instantiateWithRuntime(result: CompileResult, deps?: Record<string, unknown>) {
   const imports = buildImports(result);
   let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (result.imports && result.imports.length > 0) {
-    const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
+    const runtimeResult = buildRuntimeImports(result.imports, deps, result.stringPool);
     setInstanceFn = runtimeResult.setInstance;
     imports.env = { ...(imports.env as Record<string, Function>), ...runtimeResult.env };
     if (runtimeResult.string_constants) imports.string_constants = runtimeResult.string_constants;

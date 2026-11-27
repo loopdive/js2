@@ -17,7 +17,7 @@ import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { funcSignatureOf } from "../func-space.js";
 import { coerceType, compileExpression, skipTransparentExpressions, valTypesMatch } from "../shared.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { findUserBindingDecl } from "../index.js";
 export { tryCompileCallableStaticField } from "./static-callable-field.js";
 

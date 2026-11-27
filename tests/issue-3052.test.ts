@@ -53,12 +53,24 @@ const COUNTER = `
   }
 `;
 
-describe("#3052 — IR class.call void method in statement position — genuine emission", () => {
-  for (const nativeStrings of [false, true]) {
-    const lane = nativeStrings ? "native/standalone ($AnyString)" : "host (externref)";
+// The host (externref) string lane was removed by #6979 (S7): `nativeStrings:
+// false` is now a compile error, asserted below. The standalone lane is the
+// other `$AnyString` environment the native lane's label already names.
+const LANES = [
+  { lane: "native/standalone ($AnyString)", options: { nativeStrings: true } },
+  { lane: "standalone target ($AnyString)", options: { target: "standalone" } },
+] as const;
 
+describe("#3052 — IR class.call void method in statement position — genuine emission", () => {
+  it("host (externref): nativeStrings: false is rejected since #6979 removed the host lane", async () => {
+    await expect(compile(COUNTER, { fileName: "test.ts", experimentalIR: true, nativeStrings: false })).rejects.toThrow(
+      "Compile option nativeStrings: false selected the host-assisted semantic profile, which #6979 removed",
+    );
+  });
+
+  for (const { lane, options } of LANES) {
     it(`Counter_run (void this.method() statement) is IR-emitted, not demoted — ${lane}`, async () => {
-      const r = await compile(COUNTER, { fileName: "test.ts", experimentalIR: true, nativeStrings });
+      const r = await compile(COUNTER, { fileName: "test.ts", experimentalIR: true, ...options });
       expect(r.success).toBe(true);
       const compiled = new Set(r.irCompiledFuncs ?? []);
       // THE acceptance criterion: the caller with the void statement-position

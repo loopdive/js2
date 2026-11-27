@@ -23,7 +23,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";

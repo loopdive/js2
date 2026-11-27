@@ -6,7 +6,7 @@
  * here.
  */
 import { ts } from "../ts-api.js";
-import { isStrictContext } from "../codegen/helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 import { enclosingFunctionBody } from "./function-declaration-values.js";

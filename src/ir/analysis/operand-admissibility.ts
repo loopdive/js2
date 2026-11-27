@@ -75,13 +75,18 @@ export type AdditiveProof = PrimitiveProof | "dynamic" | "regexp";
 
 /**
  * `tryLowerUndefinedCompare`'s `undefined` operand of a strict equality: the
- * unshadowed identifier `undefined` or a literal `void 0` — read DIRECTLY, as
- * the lowering does (`(void 0) === x` types the parenthesised operand like any
- * other). `=== void 0` is how TypeScript and Babel emit `=== undefined`.
+ * unshadowed identifier `undefined` or a literal `void 0`. `=== void 0` is how
+ * TypeScript and Babel emit `=== undefined`. (#7515) Parentheses and TS type
+ * wrappers (`as`, `<T>`, `satisfies`, `!`) change no value, so the operand is
+ * read through them; `isShadowed` is asked about the identifier inside.
  */
-export function isUndefinedCompareOperand(expr: ts.Expression, isShadowed: (name: string) => boolean): boolean {
-  if (ts.isIdentifier(expr)) return expr.text === "undefined" && !isShadowed(expr.text);
-  return isVoidZero(expr);
+export function isUndefinedCompareOperand(
+  expr: ts.Expression,
+  isShadowed: (name: string, id: ts.Identifier) => boolean,
+): boolean {
+  const operand = skipOuterExpressions(expr);
+  if (ts.isIdentifier(operand)) return operand.text === "undefined" && !isShadowed(operand.text, operand);
+  return isVoidZero(operand);
 }
 
 /**
@@ -367,7 +372,7 @@ function isI32Carrier(family: OperandFamily): boolean {
  * - a dynamic operand: equality and `+` box the other side (`tryLowerDynamicEq`,
  *   `IR_DYN_ADD_FN`); the numeric readers ToNumber it, so the other side must
  *   be the carrier or an f64 (`tryLowerDynamicRelational`,
- *   `tryLowerDynamicArithmetic`).
+ *   `lowerDynamicBinaryValues`).
  * - a string operand: `+` converts each side as its `+` proof names, so the
  *   `+` rule decides which sides it takes (#7066); the equalities and the
  *   relationals need a string on both sides.
@@ -622,6 +627,14 @@ export function numberCompoundBinaryOperator(op: ts.SyntaxKind): NumberBinaryOpe
 
 export function isNumberCompoundAssignOperator(op: ts.SyntaxKind): boolean {
   return numberCompoundBinaryOperator(op) !== undefined;
+}
+
+/** The binary operator a member compound applies: `op=`'s own, and `+` / `-` for `++` / `--` (a step of 1). */
+export function compoundStepOperator(token: ts.SyntaxKind): NumberBinaryOperator {
+  return (
+    numberCompoundBinaryOperator(token) ??
+    (token === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken)
+  );
 }
 
 /** `lowerIncrementDecrement`: `++` / `--` lower on an f64 or a dynamic slot. */

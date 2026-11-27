@@ -177,7 +177,7 @@ import { emitUndefined } from "./expressions/late-imports.js";
 import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "../shared/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
-import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { isSimpleParameterList, isStrictFunction } from "../shared/is-strict-function.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 

@@ -84,6 +84,10 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%SyntaxError%",
       "%TypeError%",
       "%URIError%",
+      // (#7350 B3a) the wrapper constructors, identity rows until B3bc
+      "%String%",
+      "%Number%",
+      "%Boolean%",
     ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);
@@ -183,11 +187,11 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(input.invocationRequirements).toBeUndefined();
     expect(input.plan.mode).toBe("realm-bootstrap");
   });
-  it("prepares Number of an object and selects the realm for the object", () => {
-    // js.number.from-value now has a native provider, so this program no longer refuses at preparation.
-    const program = prepareGetterProgram(REALM_NO_SOURCE);
-    const realm = deriveNativeRealmRequirements(program, program.runtime[0]!);
-    expect(realm?.description.objectUses.map((use) => use.feature)).toEqual(["js.object.create-default"]);
+  it("takes the legalized ToNumber for Number of an object, which this module policy cannot serve", () => {
+    // (#7350 B3a) On the Prepared lane `Number(v)` no longer routes an operand to js.number.from-value: the object is
+    // boxed into the carrier and converted by the legalization, whose kind tests need the extern-is-undefined probe
+    // this fixture's policy leaves unsupported (the test262 lane's policy has it).
+    expect(() => prepareGetterProgram(REALM_NO_SOURCE)).toThrow(/js\.extern\.is_undefined is unavailable/);
   });
   it("does not select a scalar program with no realm use", () => {
     const program = prepareGetterProgram("export function run(): number { return 7; }");

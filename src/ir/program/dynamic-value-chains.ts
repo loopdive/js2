@@ -23,7 +23,7 @@ import {
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   carrierKindOf,
-  holdsErrors,
+  holdsFamily,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
@@ -336,7 +336,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
-      ...(holdsErrors(program) ? { errorToString: errorToString(instr) } : {}),
+      ...(holdsFamily(program, "error") ? { errorToString: errorToString(instr) } : {}),
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);

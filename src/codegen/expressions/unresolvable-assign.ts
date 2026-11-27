@@ -27,7 +27,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { popBody, pushBody } from "../context/bodies.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { coerceType } from "../type-coercion.js";
 import { compileExpression } from "../expressions.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
