@@ -12,12 +12,20 @@
  *
  * Only the method-call shape `o.m(v)` is such a call: its receiver is the receiver of the [[Get]] that read the callee,
  * so it is never `undefined` or `null` (that [[Get]] threw). A detached call (`var h = o.m; h(v)`) has another
- * receiver and takes the dispatcher.
+ * receiver and takes the dispatcher. (#7352) `Array.isArray` reads no `this` and no key, so any call whose callee is
+ * it, in whatever shape (`var f = Array.isArray; f(v)`), is IsArray.
+ *
+ * Where the program creates no source function no dispatcher exists, and a call that is none of these built-ins is the
+ * run-time abort (a built-in the dispatcher could only abort for).
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrType } from "../core/types.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
-import { nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
+import {
+  IS_ARRAY_ID,
+  REALM_BRAND,
+  nativeObjectPrototypeMethod,
+  objectPrototypeMethodId,
+} from "./builtin-prototype-keys.js";
 import {
   builtinMethodChain,
   conversionMethodTests,
@@ -27,15 +35,13 @@ import {
 import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, carried } from "./dynamic-value-chains.js";
-import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
+import { BOOLEAN } from "./dynamic-value-types.js";
+import { MEMBER_ACCESS_ARM, holdsFamily, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import { toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
-
-/** The Boolean the realm's tests answer, boxed into the call's carrier. */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** The name `call` calls, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a constant key on its receiver. */
 function methodNameOfCall(call: Call, definitions: ReadonlyMap<IrValueId, IrInstr>): string | undefined {
@@ -110,26 +116,43 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
   return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
 }
 
+/** (#7352) §23.1.2.2 IsArray of the call's first argument: the realm's array brand of an object, else `false`. */
+function isArray(b: ObjectStaticBuilders, instr: Call, result: IrValueId): IrInstr[] {
+  const argument = instr.args[2];
+  if (argument === undefined) return boxed(b, instr, constant(false), result);
+  const brand = (s: IrValueId) => b.selectorCall("js.object.has-brand", [argument], REALM_BRAND.array, s);
+  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
+    boxed(b, instr, isOrdinaryObject(kind) ? brand : constant(false), r);
+  return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
+}
+
 /**
- * The legalized `o.m(…)`, where `m` may be a method the realm holds: each such method's algorithm where the callee is
- * it (`builtinMethodChain`), else the call as it was; `undefined` for any other call.
+ * The legalized dispatcher call, where its callee may be a built-in the realm holds: each such built-in's algorithm
+ * where the callee is it (`builtinMethodChain`), else the call as it was (or, without a dispatcher, the run-time
+ * abort); `undefined` for any other call.
  */
 export function dynamicPrototypeMethodCall(
   b: ObjectStaticBuilders,
   instr: Call,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
 ): IrInstr[] | undefined {
+  if (closureMethodArity(instr.target.name) === undefined) return undefined;
   const name = methodNameOfCall(instr, definitions);
-  if (name === undefined) return undefined;
   const [receiver, callee] = instr.args as [IrValueId, IrValueId];
-  const method = nativeObjectPrototypeMethod(name);
+  const method = name === undefined ? undefined : nativeObjectPrototypeMethod(name);
   const algorithm = (r: IrValueId): IrInstr[] =>
     method === "isPrototypeOf" ? prototypeOf(b, instr, r) : ownProperty(b, instr, method === "propertyIsEnumerable", r);
   const tests = [
     ...(method === undefined ? [] : [() => identityTest(b, instr, objectPrototypeMethodId(method), callee, algorithm)]),
-    ...conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2),
+    ...(name === undefined
+      ? []
+      : conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2)),
+    ...(holdsFamily(b.program, "array")
+      ? [() => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))]
+      : []),
   ];
   if (tests.length === 0) return undefined;
-  const call = (r: IrValueId): IrInstr[] => [{ ...instr, result: r, resultType: CARRIER }];
+  const call = (r: IrValueId): IrInstr[] =>
+    b.program.objects.functions ? [{ ...instr, result: r, resultType: CARRIER }] : b.abort(instr, r);
   return builtinMethodChain(b, tests, call, CARRIER)(instr.result!);
 }

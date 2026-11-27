@@ -54,6 +54,8 @@ export interface NativeBuiltinObject {
   readonly id: string;
   readonly prototype: string;
   readonly primitiveData?: string | number | boolean;
+  /** (#7352) %Array.prototype%, itself an array. */
+  readonly array?: true;
   readonly properties: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequirement {

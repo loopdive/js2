@@ -14,7 +14,7 @@ import type { IrType } from "../core/types.js";
 import { ERROR_TO_STRING_ID, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
-import { CARRIER, carried } from "./dynamic-value-types.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { IS_OBJECT, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
 /** A built-in method a call may reach: whether the method read is it (`instrs` into `cond`), and its answer. */
@@ -30,7 +30,6 @@ export type BuiltinMethodBuilders = ChainBuilders & {
   readonly stringOf: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
 };
 
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 const PRIMITIVES = Object.keys(WRAPPER_OF_PRIMITIVE) as CarrierKind[];
 
 /** Whether `method` is the realm's function object `id` (SameValue), answering `answer`. */

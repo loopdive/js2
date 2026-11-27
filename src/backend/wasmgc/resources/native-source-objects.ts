@@ -60,8 +60,9 @@ import {
 import { realmWrapperKinds, realmWrapperRepresentation, type NativeRealmWrappers } from "./native-realm-wrappers.js";
 import {
   buildErrorToStringDefinition,
-  buildIsErrorDefinition,
+  buildHasBrandDefinition,
 } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
+import type { NativeRealmArrays } from "./native-realm-arrays.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
@@ -79,6 +80,8 @@ export interface NativeSourceObjectDependencies {
   readonly errors: NativeErrorReservations;
   /** (#7561) Where the realm holds a wrapper prototype: its wrappers. */
   readonly wrappers?: NativeRealmWrappers;
+  /** (#7352) Where the realm holds the Array family: its array creation and define. */
+  readonly arrays?: NativeRealmArrays;
 }
 const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
@@ -204,16 +207,19 @@ const ROWS = {
   },
   "js.object.set": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF, EXTERNREF], results: [I32] },
-    body: ({ kernel }, tx) => buildSourceObjectSetDefinition(nativeBuiltinFunctionOperands(tx, kernel)),
+    body: ({ kernel, arrays }, tx) =>
+      buildSourceObjectSetDefinition(nativeBuiltinFunctionOperands(tx, kernel), arrays?.define.handle),
   },
   "js.object.has": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
     body: ({ kernel }) => buildSourceObjectHasDefinition({ has: kernel.functions.has.handle }),
   },
-  "js.object.is-error": {
-    signature: { params: [EXTERNREF], results: [I32] },
-    body: ({ layouts }) => buildIsErrorDefinition({ objectTypeIdx: layouts.object.typeIndex }),
+  "js.object.has-brand": {
+    signature: { params: [EXTERNREF, I32], results: [I32] },
+    body: ({ layouts }) => buildHasBrandDefinition({ objectTypeIdx: layouts.object.typeIndex }),
   },
+  // (#7352) Only a realm that holds the Array family creates arrays, and only it serves the contract.
+  "js.object.create-array": { binds: ({ arrays }) => arrays!.create },
   // (#7354 G1) Only a realm that holds the Error family has its error creation, and only it serves the contract.
   "js.object.create-error": { binds: ({ kernel }) => kernel.errorCreate! },
   "js.object.error-to-string": {

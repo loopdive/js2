@@ -32,6 +32,8 @@ export interface ToPrimitiveAnswer {
    * text. Also the never-produced value of the TypeError arm (`""`).
    */
   readonly text: (value: string | undefined, result: IrValueId) => IrInstr[];
+  /** (#7354 A1) The run-time abort, as the answer it never produces: the abort's text is the answer's operand. */
+  readonly unsupported: (result: IrValueId) => IrInstr[];
   /** The answer from the primitive a source method returned, a carrier value of a primitive kind. */
   readonly primitive: (value: IrValueId, result: IrValueId) => IrInstr[];
 }
@@ -59,6 +61,8 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
    * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
    */
   readonly builtinOnly?: (result: IrValueId) => IrInstr[];
+  /** (#7354 A1) Where the program holds arrays: whether `object` is one (its brand), into the i32 `result`. */
+  readonly isArray?: (object: IrValueId, result: IrValueId) => IrInstr[];
 }
 
 /**
@@ -96,7 +100,12 @@ export function ordinaryToPrimitive(
     const absent = (s: IrValueId) => answer.text(kind === "object" ? "[object Object]" : undefined, s);
     return [...named, realmCall("js.object.has", [object, key], held), b.branch(held, method, absent, r, answer.type)];
   };
-  return step(0, result);
+  // (#7354 A1) An array's `toString` is Array.prototype's (`join`, A1b), which the realm does not hold yet: whatever
+  // its chain holds (a program may write Object.prototype's `toString` / `valueOf`), an array aborts before any read.
+  const isArray = kind === "object" ? b.isArray : undefined;
+  if (!isArray) return step(0, result);
+  const array = b.fresh();
+  return [...isArray(object, array), b.branch(array, answer.unsupported, (r) => step(0, r), result, answer.type)];
 }
 
 /**

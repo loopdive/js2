@@ -8,7 +8,7 @@ import {
   modelledRow,
   type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
-import { ERROR_TO_STRING_ID } from "./builtin-prototype-keys.js";
+import { ERROR_TO_STRING_ID, IS_ARRAY_ID } from "./builtin-prototype-keys.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
@@ -136,8 +136,9 @@ function bindsCaughtValue(program: PreparedIrProgram): boolean {
 }
 /**
  * (#7354 G1, #7350 B3a) A family the realm can hold: its members (`NATIVE_VALUE_INTRINSICS` ids), the contracts that
- * use it, what it brings once used (`base`), what else makes it used (`implied`), and (#7561) the members the uses
- * pin beyond those the IR reads by selector (`pinned`).
+ * use it, what it brings once used (`base`), what else makes it used (`implied`), (#7561) the members the uses
+ * pin beyond those the IR reads by selector (`pinned`), and (#7352) the members of another family its own algorithms
+ * throw, held where that family is (`throws`).
  */
 interface HeldFamily {
   readonly members: readonly string[];
@@ -145,6 +146,7 @@ interface HeldFamily {
   readonly base: readonly string[];
   readonly implied?: (program: PreparedIrProgram) => boolean;
   readonly pinned?: (uses: readonly Use[], named: ReadonlySet<string>) => readonly string[];
+  readonly throws?: readonly string[];
 }
 /**
  * (#7561) The contracts whose key may be computed at run time (`hasOwnProperty`, `getOwnPropertyDescriptor`,
@@ -157,31 +159,56 @@ export const COMPUTED_KEY_CONTRACTS: ReadonlySet<string> = new Set([
   "js.object.descriptor-define",
 ]);
 /**
- * (#7350 condition 2) The wrapper members a realm holds: each prototype the IR reads or creates a wrapper of, with its
- * constructor, `valueOf` and `toString` (ToPrimitive's), and the methods whose name a use spells as a constant key, or
- * every method where a use's key may be computed. A member not held is then one no key of the program reaches.
+ * (#7350 condition 2) A constructor whose prototype object a realm holds member by member: whether a use creates an
+ * object of it, and the methods it holds with the prototype in any case (a wrapper's ToPrimitive reads `valueOf` and
+ * `toString`; (#7352) an array's ToPrimitive aborts before any read).
  */
-function pinnedWrapperMembers(uses: readonly Use[], named: ReadonlySet<string>): readonly string[] {
-  const keys = new Set(uses.flatMap((use) => use.constantKey ?? []));
-  const every = uses.some((use) => COMPUTED_KEY_CONTRACTS.has(use.feature) && use.constantKey === undefined);
-  return NATIVE_WRAPPER_CONSTRUCTORS.flatMap((name, selector) => {
-    const prototype = `%${name}.prototype%`;
-    const created = uses.some((use) => use.feature === "js.object.create-wrapper" && use.selector === selector);
-    if (!created && !named.has(prototype)) return [];
-    const methods = NATIVE_REALM_CATALOG.intrinsics
-      .find(({ id }) => id === prototype)!
-      .properties.flatMap((property) => {
-        const key = property.key.value;
-        return property.kind === "data" &&
-          property.value.kind === "intrinsic" &&
-          key !== "constructor" &&
-          (every || keys.has(key) || key === "valueOf" || key === "toString")
-          ? [property.value.id]
-          : [];
-      });
-    return [`%${name}%`, prototype, ...methods];
-  });
+interface PinnedPrototype {
+  readonly name: string;
+  readonly creates: (use: Use) => boolean;
+  readonly always: readonly string[];
 }
+const WRAPPER_PROTOTYPES: readonly PinnedPrototype[] = NATIVE_WRAPPER_CONSTRUCTORS.map((name, selector) => ({
+  name,
+  creates: (use) => use.feature === "js.object.create-wrapper" && use.selector === selector,
+  always: ["valueOf", "toString"],
+}));
+const ARRAY_PROTOTYPE: PinnedPrototype = {
+  name: "Array",
+  creates: (use) => use.feature === "js.object.create-array",
+  always: [],
+};
+/**
+ * (#7350 condition 2) The members a realm holds of the prototypes `prototypes`: each prototype the IR reads or creates
+ * an object of, with its constructor, the methods it always holds, and the methods whose name a use spells as a
+ * constant key, or every method where a use's key may be computed. A member not held is then one no key of the
+ * program reaches.
+ */
+const pinnedMembers =
+  (prototypes: readonly PinnedPrototype[]) =>
+  (uses: readonly Use[], named: ReadonlySet<string>): readonly string[] => {
+    const keys = new Set(uses.flatMap((use) => use.constantKey ?? []));
+    const every = uses.some((use) => COMPUTED_KEY_CONTRACTS.has(use.feature) && use.constantKey === undefined);
+    return prototypes.flatMap(({ name, creates, always }) => {
+      const prototype = `%${name}.prototype%`;
+      if (!uses.some(creates) && !named.has(prototype)) return [];
+      const methods = NATIVE_REALM_CATALOG.intrinsics
+        .find(({ id }) => id === prototype)!
+        .properties.flatMap((property) => {
+          const key = property.key.value;
+          return property.kind === "data" &&
+            property.value.kind === "intrinsic" &&
+            key !== "constructor" &&
+            (every || keys.has(key) || always.includes(key))
+            ? [property.value.id]
+            : [];
+        });
+      return [`%${name}%`, prototype, ...methods];
+    });
+  };
+/** The `NATIVE_VALUE_INTRINSICS` ids of the constructors `names` and their members (`%String%`, `%String.x%`). */
+const familyIntrinsics = (names: readonly string[]): readonly string[] =>
+  NATIVE_VALUE_INTRINSICS.filter((id) => names.some((name) => id === `%${name}%` || id.startsWith(`%${name}.`)));
 const HELD_FAMILIES: readonly HeldFamily[] = [
   // The Error family: the realm's own errors (`Error`, `TypeError`) and `Error.prototype.toString` come with any use,
   // and a bound caught value is one (the one way a realm error becomes a program value).
@@ -193,10 +220,19 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
   },
   // The wrapper families: each constructor the IR reads, alone; (#7561) each prototype and method as pinned.
   {
-    members: NATIVE_VALUE_INTRINSICS.slice(NATIVE_VALUE_INTRINSICS.indexOf(`%${NATIVE_WRAPPER_CONSTRUCTORS[0]}%`)),
+    members: familyIntrinsics(NATIVE_WRAPPER_CONSTRUCTORS),
     contracts: new Set(["js.object.create-wrapper", "js.object.wrapper-data"]),
     base: [],
-    pinned: pinnedWrapperMembers,
+    pinned: pinnedMembers(WRAPPER_PROTOTYPES),
+  },
+  // (#7352) The Array family: `Array` with its static `isArray`; the prototype and its methods as pinned. An array's
+  // `length` throws the realm's RangeError (ArraySetLength), which a caught value can be.
+  {
+    members: familyIntrinsics(["Array"]),
+    contracts: new Set(["js.object.create-array"]),
+    base: ["%Array%", IS_ARRAY_ID],
+    pinned: pinnedMembers([ARRAY_PROTOTYPE]),
+    throws: ["%RangeError%"],
   },
 ];
 /**
@@ -207,22 +243,25 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
  */
 function heldFamilies(uses: readonly Use[], program: PreparedIrProgram): ReadonlySet<string> {
   const named = new Set(uses.map(intrinsicOf).filter((id): id is string => id !== undefined));
+  const used = HELD_FAMILIES.filter(
+    (family) =>
+      family.members.some((id) => named.has(id)) ||
+      uses.some((use) => family.contracts.has(use.feature)) ||
+      family.implied?.(program) === true,
+  );
+  const thrown = used.flatMap((family) => family.throws ?? []);
   return new Set(
-    HELD_FAMILIES.flatMap((family) => {
-      const used =
-        family.members.some((id) => named.has(id)) ||
-        uses.some((use) => family.contracts.has(use.feature)) ||
-        family.implied?.(program) === true;
-      return used
-        ? [...family.base, ...family.members.filter((id) => named.has(id)), ...(family.pinned?.(uses, named) ?? [])]
-        : [];
-    }),
+    used.flatMap((family) => [
+      ...family.base,
+      ...family.members.filter((id) => named.has(id) || thrown.includes(id)),
+      ...(family.pinned?.(uses, named) ?? []),
+    ]),
   );
 }
 /**
  * (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its held values bring,
  * (#7350 B3b-0) each as far as a realm models it (`modelledRow`); (#7561) a family row without the properties whose
- * value the realm does not hold, which no key of the program reaches (`pinnedWrapperMembers`).
+ * value the realm does not hold, which no key of the program reaches (`pinnedMembers`).
  */
 export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {
   const held = description.catalog.intrinsics.flatMap((row) =>

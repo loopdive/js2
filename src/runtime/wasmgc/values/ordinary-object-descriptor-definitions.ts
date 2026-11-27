@@ -8,10 +8,12 @@ import {
 import {
   descriptorFlagBit,
   descriptorTypeError,
+  ifArrayBrand,
   type OrdinaryDescriptorResources,
   type OrdinaryDescriptorErrors,
 } from "./ordinary-object-descriptor-common.js";
 import { buildClosureUndefinedTest } from "./closure-receiver-bodies.js";
+import { FULL_DATA_DESCRIPTOR } from "../../../shared/contracts/descriptor-word.js";
 
 /** Exact local coordinates of the retained return-object donor bodies. */
 function locals(d: OrdinaryDescriptorResources): LocalDef[] {
@@ -62,9 +64,32 @@ export interface OrdinaryDescriptorCallBindings {
   readonly accessorIdx: FuncHandle;
   /** Receiver/mask/callable validation literals, not prebuilt semantic arms. */
   readonly errors: OrdinaryDescriptorErrors;
+  /**
+   * (#7354 A1) Where the realm holds arrays: its ArrayDefineOwnProperty `(o, key, value, get, set, word, throw) -> i32`
+   * (`realm-array-bodies.ts`), which an object carrying the Array exotic brand defines through instead.
+   */
+  readonly arrayDefineIdx?: FuncHandle;
 }
 function undefinedValue(d: OrdinaryDescriptorCallBindings): Instr[] {
   return [{ op: "global.get", index: d.undefinedGlobalIdx }, { op: "extern.convert_any" }];
+}
+/**
+ * (#7354 A1) An array target defines through the realm's ArrayDefineOwnProperty, throwing on a rejection (the pack's
+ * defines are DefinePropertyOrThrow), and the boundary returns; `operands` are its value, getter and setter.
+ */
+function arrayDefine(d: OrdinaryDescriptorCallBindings, operands: readonly Instr[], word: number): Instr[] {
+  if (d.arrayDefineIdx === undefined) return [];
+  const array: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    ...operands,
+    { op: "local.get", index: word },
+    { op: "i32.const", value: 1 },
+    { op: "call", funcIdx: d.arrayDefineIdx },
+    { op: "drop" },
+    { op: "return" },
+  ];
+  return ifArrayBrand(d.objectTypeIdx, [{ op: "local.get", index: 0 }], { kind: "empty" }, array, []);
 }
 function preflight(d: OrdinaryDescriptorCallBindings, flagLocal: number, allowed: number): Instr[] {
   return [
@@ -104,7 +129,7 @@ export function buildOrdinaryDefineDataDefinition(d: OrdinaryDescriptorCallBindi
   return {
     locals: [{ name: "flags", type: { kind: "i32" } }],
     body: [
-      ...preflight(d, 3, 191),
+      ...preflight(d, 3, FULL_DATA_DESCRIPTOR),
       { op: "local.get", index: 3 },
       { op: "i32.trunc_f64_s" },
       { op: "local.set", index: 4 },
@@ -115,6 +140,7 @@ export function buildOrdinaryDefineDataDefinition(d: OrdinaryDescriptorCallBindi
         blockType: { kind: "empty" },
         then: [...undefinedValue(d), { op: "local.set", index: 2 }],
       },
+      ...arrayDefine(d, [{ op: "local.get", index: 2 }, { op: "ref.null.extern" }, { op: "ref.null.extern" }], 3),
       { op: "local.get", index: 0 },
       { op: "local.get", index: 1 },
       { op: "local.get", index: 2 },
@@ -170,6 +196,7 @@ export function buildOrdinaryDefineAccessorDefinition(d: OrdinaryDescriptorCallB
       { op: "if", blockType: { kind: "empty" }, then: descriptorTypeError(d.errors, 1) },
       ...normalizeHalf(d, 2, 256),
       ...normalizeHalf(d, 3, 512),
+      ...arrayDefine(d, [...undefinedValue(d), { op: "local.get", index: 2 }, { op: "local.get", index: 3 }], 4),
       ...[0, 1, 2, 3, 4].map((index): Instr => ({ op: "local.get", index })),
       { op: "call", funcIdx: d.accessorIdx },
       { op: "drop" },

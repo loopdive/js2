@@ -1,10 +1,10 @@
 ---
 id: 7352
 title: "IR foundation: object literals are open objects; array literals share the typed vec slot"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-16
-updated: 2026-11-16
+updated: 2026-11-27
 priority: high
 horizon: xl
 feasibility: hard

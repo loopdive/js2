@@ -201,16 +201,17 @@ export const holdsFamily = (program: LegalizationProgram, family: RealmFamily): 
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
- * an error or (#7561) a wrapper, which are ordinary objects, and (F1) the function kind only where it creates function
- * values or (G1) may hold a built-in one (a realm constructor, an error's methods).
+ * an error, (#7561) a wrapper or (#7352) an array, which are ordinary objects, and (F1) the function kind only where it
+ * creates function values or (G1) may hold a built-in one (a realm constructor, an error's methods).
  */
 export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
-  const builtins = holdsFamily(program, "error") || holdsFamily(program, "wrapper");
+  const builtins = holdsFamily(program, "error") || program.objects.realmFamilies.size > 0;
   return KIND_ORDER.filter(
     (kind) =>
       (kind !== "object" ||
         program.objects.present ||
         holdsFamily(program, "error") ||
+        holdsFamily(program, "array") ||
         program.objects.wrappers.size > 0) &&
       (kind !== "function" || program.objects.functions || builtins),
   );

@@ -13,7 +13,7 @@ import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import { unlessStringObject } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf } from "./dynamic-member-access.js";
-import { MEMBER_ACCESS_ARM, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
 const HELPER_PREFIX = "__ir_object_static:";
 /** The front end's helper symbol for `Object.<name>`. */
@@ -40,12 +40,13 @@ const served = (kind: CarrierKind): boolean =>
   MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function";
 
 /**
- * ToPropertyKey of `value`, the program's ToString, into `text`; (#7561) where the program can hold a wrapper
- * prototype, a constant string key is that constant, so the realm's use names the one member it reaches
- * (`pinnedWrapperMembers`).
+ * ToPropertyKey of `value`, the program's ToString, into `text`; (#7561) where the program can hold a wrapper or
+ * (#7352) an array prototype, a constant string key is that constant, so the realm's use names the one member it
+ * reaches (`pinnedMembers`).
  */
 export function toPropertyKey(b: ObjectStaticBuilders, instr: IrInstr, value: IrValueId, text: IrValueId): IrInstr[] {
-  const known = b.program.objects.wrappers.size > 0 ? constantArgumentOf(b.definitions, value) : undefined;
+  const pins = b.program.objects.wrappers.size > 0 || holdsFamily(b.program, "array");
+  const known = pins ? constantArgumentOf(b.definitions, value) : undefined;
   return known === undefined ? b.stringOf(instr, value, text) : [b.text(known, text)];
 }
 

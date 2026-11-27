@@ -4,7 +4,7 @@
  * of the realm kernel's own algorithm, so no object algorithm is written twice.
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags, ifArrayBrand } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
 import { buildAccessorCall } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
@@ -148,7 +148,11 @@ type SourceObjectSetOperands = Pick<
   | "match"
   | "entries"
 >;
-export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): SourceObjectDefinition {
+export function buildSourceObjectSetDefinition(
+  d: SourceObjectSetOperands,
+  /** (#7354 A1) Where the realm holds arrays: its array define, which answers the define on an array receiver. */
+  arrayDefine?: FuncHandle,
+): SourceObjectDefinition {
   const [status, entry, storage, setter] = [4, 5, 6, 7];
   const calls = d.accessorCalls;
   const entryFlag = (flag: number): Instr[] => [
@@ -185,8 +189,9 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
   ];
-  // The define on the receiver's storage with descriptor word `word`, answering true.
-  const define = (word: number): Instr[] => [
+  // The define on the receiver's storage with descriptor word `word`, answering true; (#7354 A1) an array's answers
+  // whether ArrayDefineOwnProperty accepted it (a new index past a read-only `length` is rejected, not thrown).
+  const ordinaryDefine = (word: number): Instr[] => [
     { op: "local.get", index: storage },
     { op: "local.get", index: 1 },
     { op: "local.get", index: 2 },
@@ -194,6 +199,25 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     { op: "call", funcIdx: d.defineData },
     { op: "i32.const", value: 1 },
   ];
+  const define = (word: number): Instr[] =>
+    arrayDefine === undefined
+      ? ordinaryDefine(word)
+      : ifArrayBrand(
+          d.objectTypeIdx,
+          [{ op: "local.get", index: storage }],
+          { kind: "val", type: { kind: "i32" } },
+          [
+            { op: "local.get", index: storage },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "ref.null.extern" },
+            { op: "ref.null.extern" },
+            { op: "f64.const", value: word },
+            { op: "i32.const", value: 0 },
+            { op: "call", funcIdx: arrayDefine },
+          ],
+          ordinaryDefine(word),
+        );
   return {
     locals: [
       { name: "status", type: { kind: "i32" } },

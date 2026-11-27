@@ -9814,9 +9814,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     demoteToLegacy("method-call-unsupported", `ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
   // (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)`: typed by operand family, like Math above.
-  const staticPredicate = staticPredicatePlan(expr, (receiver) =>
-    isAmbientReceiver(receiver, receiverIsDirectModuleBinding, cx),
-  );
+  const ambient = (receiver: ts.Identifier) => isAmbientReceiver(receiver, receiverIsDirectModuleBinding, cx);
+  const staticPredicate = staticPredicatePlan(expr, ambient, functionObjects.realmStatics(cx.resolver));
   if (staticPredicate !== undefined) return lowerStaticPredicateCall(expr, staticPredicate, staticPredicateHost(cx));
 
   // (#3144) `C.m(args)` — static method call on a locally-declared class.

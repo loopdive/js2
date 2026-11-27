@@ -19,6 +19,7 @@ import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { realmIntrinsicRead } from "./identifier-read.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import { realmIntrinsicHelper } from "./program/dynamic-realm-calls.js";
+import { realmHoldsStatic } from "./program/builtin-prototype-keys.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -157,6 +158,15 @@ export function emitFunctionObjectInit(
 export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
   return resolver?.createsFunctionObjects?.() === true;
 }
+
+/**
+ * (#7352) Whether the realm holds the static `path` (`"Array.isArray"`) as a function value: only where closures are
+ * function objects, the lane whose program has a realm (`staticPredicatePlan`'s `realmHolds`).
+ */
+export const realmStatics =
+  (resolver: { createsFunctionObjects?(): boolean } | undefined) =>
+  (path: string): boolean =>
+    createsFunctionObjects(resolver) && realmHoldsStatic(path);
 
 export function functionObjectDynamicValue(
   value: IrValueId,

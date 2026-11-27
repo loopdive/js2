@@ -41,6 +41,7 @@ import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-stat
 import { dynamicPrototypeMethodCall } from "./dynamic-prototype-methods.js";
 import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
 import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
+import { dynamicArrayConstruction } from "./dynamic-array-constructors.js";
 import { dynamicObjectTag } from "./dynamic-object-tag.js";
 import { realmConstructorOf, realmIntrinsicOfHelper, type RealmConstruction } from "./dynamic-realm-calls.js";
 import type { RealmConstructor } from "./builtin-prototype-keys.js";
@@ -119,10 +120,16 @@ export function legalizeDynamicValues(
   // realm holds (`dynamic-prototype-methods.ts`) or of a realm constructor (`dynamic-error-constructors.ts`, (#7350
   // B3a) `dynamic-wrapper-constructors.ts`) is written with.
   const objectStatics = { ...builders, stringOf, toNumber, errors, program, definitions };
-  const realmConstruction = (instr: RealmConstruction, ctor: RealmConstructor, args: readonly IrValueId[]) =>
-    ctor.family === "error"
-      ? dynamicErrorConstruction(objectStatics, instr, ctor, args)
-      : dynamicWrapperConstruction(objectStatics, instr, ctor, args);
+  const realmConstruction = (instr: RealmConstruction, ctor: RealmConstructor, args: readonly IrValueId[]) => {
+    switch (ctor.family) {
+      case "error":
+        return dynamicErrorConstruction(objectStatics, instr, ctor, args);
+      case "wrapper":
+        return dynamicWrapperConstruction(objectStatics, instr, ctor, args);
+      case "array":
+        return dynamicArrayConstruction(objectStatics, instr, args);
+    }
+  };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -258,12 +265,12 @@ export function legalizeDynamicValues(
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const ctor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
         if (ctor !== undefined) return realmConstruction(instr, ctor, instr.args.slice(2));
+        const method = dynamicPrototypeMethodCall(objectStatics, instr, definitions);
+        if (method !== undefined) return method;
         // (#7354 F2) Without a source function no dispatcher exists: a call through a value would be the TypeError, or
         // (G1) a built-in's run-time abort.
         if (dispatched && !program.objects.functions)
           return gap(`${instr.target.name} in a program that creates no function value`);
-        const method = dynamicPrototypeMethodCall(objectStatics, instr, definitions);
-        if (method !== undefined) return method;
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&

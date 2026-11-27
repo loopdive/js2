@@ -91,6 +91,8 @@ export interface NativeObjectDescriptorDependencies {
   readonly errorDependencies: NativeErrorDependencies;
   /** Actual callable carrier classification; invocation remains a separate C2 owner. */
   readonly closures: NativeClosureReservations;
+  /** (#7354 A1) Where the realm holds arrays: its ArrayDefineOwnProperty, which an array target defines through. */
+  readonly arrayDefine?: FunctionReservation;
 }
 export interface NativeObjectDescriptorReservations {
   readonly defineData: FunctionReservation;
@@ -294,6 +296,7 @@ export function fillNativeObjectDescriptorResources(
     dataIdx: owner.functions[0]!.handle,
     accessorIdx: owner.functions[1]!.handle,
     errors: errors(BOUNDARY_MESSAGES),
+    ...(d.arrayDefine ? { arrayDefineIdx: d.arrayDefine.handle } : {}),
   };
   tx.fillFunction(pack.defineData, buildOrdinaryDefineDataDefinition(boundary));
   tx.fillFunction(pack.defineAccessor, buildOrdinaryDefineAccessorDefinition(boundary));

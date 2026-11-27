@@ -14,6 +14,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  REALM_BRAND,
   WRAPPER_DATA,
   modelledRow,
   realmMethodId,
@@ -69,6 +70,7 @@ export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 interface RealmFamilyNames {
   readonly error: NativeErrorConstructor;
   readonly wrapper: NativeWrapperConstructor;
+  readonly array: "Array";
 }
 export type RealmFamily = keyof RealmFamilyNames;
 /**
@@ -90,7 +92,17 @@ const constructors = <F extends RealmFamily>(family: F, names: readonly RealmFam
 const REALM_CONSTRUCTORS: ReadonlyMap<string, RealmConstructor> = new Map<string, RealmConstructor>([
   ...constructors("error", NATIVE_ERROR_CONSTRUCTORS),
   ...constructors("wrapper", NATIVE_WRAPPER_CONSTRUCTORS),
+  ...constructors("array", ["Array"]),
 ]);
+
+/** (#7352) The catalog id of `Array.isArray`, a static the realm holds as a function value. */
+export const IS_ARRAY_ID = realmMethodId("Array", "isArray");
+
+/**
+ * (#7352) Whether a realm that holds the family of `path`'s constructor holds the static `path` (`"Array.isArray"`) as
+ * a function value, so its call is the realm's method call (`dynamic-builtin-methods.ts`) and no static fold.
+ */
+export const realmHoldsStatic = (path: string): boolean => NATIVE_VALUE_INTRINSICS.includes(`%${path}%`);
 
 /**
  * (#7350 B3a) `X(v)` of a wrapper constructor with NewTarget undefined (§22.1.1.1, §21.1.1.1, §20.3.1.1): ToString,
@@ -166,8 +178,8 @@ export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
   NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),
 );
 
-/** (#7561) The selectors of `js.object.wrapper-data`, for every IR reader. */
-export { WRAPPER_DATA };
+/** (#7561) The selectors of `js.object.wrapper-data` and (#7352) `js.object.has-brand`, for every IR reader. */
+export { REALM_BRAND, WRAPPER_DATA };
 
 /** (#7561) The wrapper constructor of each primitive kind: the prototype its member access reads through. */
 export const WRAPPER_OF_PRIMITIVE = {
