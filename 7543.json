@@ -1,10 +1,11 @@
 {
   "id": "7543",
   "assignee": "ttraenkler/s4",
-  "requested_by": "ttraenkler/s4",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-7543-update-as-value",
   "claimed_at": "2026-11-26T13:49:07Z",
-  "updated_at": "2026-11-26T13:49:07Z",
-  "write_id": "12535-lmlkta2i"
+  "updated_at": "2026-11-27T21:10:58Z",
+  "write_id": "3002-bh91nldq",
+  "released_at": "2026-11-27T21:10:58Z"
 }
