@@ -74,10 +74,11 @@ describe("#7354 F1b — function objects", () => {
   );
 
   it.each([
+    // (#7557) `call`, `apply` and `bind` are the realm's (tests/issue-7557-builtins-through-values.test.ts).
     [
       "a Function.prototype key",
-      "function a() {} var c = a.call;",
-      "member read 'call' of a function needs Function.prototype's properties",
+      "function a() {} var c = a.toString;",
+      "member read 'toString' of a function needs Function.prototype's properties",
     ],
     [
       "an Object.prototype key the realm does not hold",
