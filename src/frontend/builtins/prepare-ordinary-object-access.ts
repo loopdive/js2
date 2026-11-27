@@ -71,7 +71,7 @@ export function prepareOrdinaryObjectAccessResolver(
   readonly preparedOrdinaryPropertyRead: (
     expression: ts.PropertyAccessExpression,
   ) => PreparedOrdinaryPropertyRead | undefined;
-  readonly preparedOrdinaryObjectLiteral: (literal: ts.ObjectLiteralExpression) => boolean;
+  readonly preparedRealmLiteral: (literal: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression) => boolean;
 } {
   const plans = new WeakMap<ts.PropertyAccessExpression, PreparedOrdinaryPropertyRead>();
   const roots: readonly ts.Node[] =
@@ -180,8 +180,9 @@ export function prepareOrdinaryObjectAccessResolver(
     preparedOrdinaryPropertyRead(expression: ts.PropertyAccessExpression) {
       return plans.get(expression);
     },
-    // (#7354 O1) The Prepared backend has no closed object struct: every literal it owns is an ordinary object.
-    preparedOrdinaryObjectLiteral(literal: ts.ObjectLiteralExpression) {
+    // (#7354 O1, #7579) The Prepared backend has no closed object struct and no vec: every literal it owns is the
+    // realm's, an ordinary object or an array.
+    preparedRealmLiteral(literal: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression) {
       return owned && sourceFiles.includes(literal.getSourceFile());
     },
   });

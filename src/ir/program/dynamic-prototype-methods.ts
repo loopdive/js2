@@ -35,8 +35,7 @@ import {
 } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-chains.js";
-import { BOOLEAN } from "./dynamic-value-types.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import { toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";

@@ -14,6 +14,7 @@ import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
+import { isArrayLiteralCall } from "./dynamic-realm-calls.js";
 import type { RealmFamily } from "./builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
 
@@ -221,10 +222,10 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
  * (#7354 M1, C2) The one answer to "which kind does the carrier hold `value` as". Without `boxTag`, `value` is in
  * carrier form (the coercion and throw rules); with it, `value` is the operand of a box to the dynamic value with that
  * tag refinement (the box arm, and the kind a box proves to the chains). The rules, in order: a Boolean (its tag or
- * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), the dynamic value itself, a
- * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2) the ordinary object
- * `js.object.create-default` answered (whatever its tag: a function-local object's member access boxes the externref
- * it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
+ * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), (#7579) an array literal's
+ * call (an object, though typed the dynamic value), the dynamic value itself, a native string (its own payload), a
+ * number (an f64 or `js.number.box`), (#7354 O2) the ordinary object `js.object.create-default` answered (whatever its
+ * tag: a function-local object's member access boxes the externref it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
  * tag a declaration's home holds), or, through a coercion or the function-value projection, its operand's kind. Any
  * other value has none.
  */
@@ -239,6 +240,7 @@ export function carrierKindOf(
   const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
   if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
   if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
+  if (isArrayLiteralCall(definition)) return "object";
   if (type?.kind === "dynamic") return type.tag === JS_TAG_IDS.Function ? "function" : "dynamic";
   if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";

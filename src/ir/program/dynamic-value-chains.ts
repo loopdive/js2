@@ -12,7 +12,7 @@ import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from 
 import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
-import { realmCall } from "./dynamic-realm-calls.js";
+import { isArrayLiteralCall, realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, F64, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
@@ -38,9 +38,9 @@ const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
- * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, and
- * the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
- * (`learn`). Any other value may hold every admitted kind.
+ * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, (#7579) an
+ * array literal an object, and the legalization records a concatenation's result as a string and (F2) a
+ * ToPrimitive's result as a primitive (`learn`). Any other value may hold every admitted kind.
  */
 export function knownKinds(
   fn: IrFunction,
@@ -58,7 +58,7 @@ export function knownKinds(
             ? carrierKindOf(i.value, types, definitions, i.toType.tag)
             : projected !== undefined
               ? carrierKindOf(projected, types, definitions)
-              : i.kind === "global.get"
+              : i.kind === "global.get" || isArrayLiteralCall(i)
                 ? carrierKindOf(i.result!, types, definitions)
                 : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, [kind]);

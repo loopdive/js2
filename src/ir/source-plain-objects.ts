@@ -50,6 +50,8 @@ export function programObjects(
   const visit = (node: ts.Node): void => {
     const ctor = ts.isIdentifier(node) ? constructorRead(node) : undefined;
     if (ctor !== undefined) realmFamilies.add(ctor.family);
+    // (#7579) An array literal makes an array, as `Array(…)` does.
+    if (ts.isArrayLiteralExpression(node)) realmFamilies.add("array");
     // (#7561) `new X(…)` and `X.prototype` are how a program obtains a wrapper of X or its prototype.
     const access = node.parent;
     if (

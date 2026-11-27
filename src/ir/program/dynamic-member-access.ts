@@ -3,7 +3,7 @@
  * (#7354 O4, O3, M1) A member read or write of the dynamic value with a constant key, as one chain over the receiver's
  * kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]] or [[Set]] for an object
  * ((#7354 G1) an error included), and for a primitive what its pristine wrapper answers. A key a built-in prototype
- * holds (the realm's prototypes do not hold it yet) or a computed key refuses by name.
+ * holds (the realm's prototypes do not hold it yet) refuses by name. (#7579) A computed key is {@link computedAccess}.
  *
  * (#7561) Where the program can obtain a wrapper prototype (`ProgramObjects.wrappers`) it can change it, so a
  * primitive of that kind reads through the realm's prototype (§7.3.2 GetV: [[Get]] with the primitive as receiver),
@@ -29,6 +29,10 @@ import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { carried } from "./dynamic-value-types.js";
+import type { KnownKinds } from "./dynamic-value-chains.js";
+
+/** One of the program's conversions of a dynamic value (`conversionBuilders`). */
+type Conversion = (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
 
 /** The legalization builders a member access is written with. */
 export interface MemberAccessBuilders extends TypeErrorBuilders {
@@ -49,6 +53,10 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly errors: boolean;
   /** (#7561) The wrapper kinds whose prototype the program can obtain (`ProgramObjects.wrappers`). */
   readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
+  /** (#7579) The program's ToString and ToNumber, and the kinds a computed key's arm narrows. */
+  readonly stringOf: Conversion;
+  readonly toNumber: Conversion;
+  readonly kinds: Pick<KnownKinds, "learn">;
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -106,19 +114,21 @@ export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key:
 }
 
 /**
- * The access's constant key: a once-boxed string, or (#7352) a once-boxed number constant as its canonical string
- * (Number::toString, the compiler's own), which is then the key the access reads; any other key refuses by name.
- * (#7350 B3a) So does a key the receiver, a pristine realm constructor the catalog models only as an identity
- * (`String.from`), does not own: the realm lacks it, and the kernel would abort the access at run time.
+ * The access's constant key, if it has one: a once-boxed string, or (#7352) a once-boxed number constant as its
+ * canonical string (Number::toString, the compiler's own, as the program's ToString of a computed number key), which
+ * is then the key the access reads. (#7350 B3a) A key the receiver, a pristine realm constructor the catalog models
+ * only as an identity (`String.from`), does not own refuses by name: the realm lacks it, and the kernel would abort the
+ * access at run time.
  */
 function constantKey<T extends MemberGet | MemberSet>(
   b: MemberAccessBuilders,
   member: T,
-): { readonly name: string; readonly prelude: IrInstr[]; readonly instr: T } {
+): { readonly name: string; readonly prelude: IrInstr[]; readonly instr: T } | undefined {
   const box = b.definitions.get(member.key);
   const number = box?.kind === "box" ? b.definitions.get(box.value) : undefined;
   const canonical = number?.kind === "const" && number.value.kind === "f64" ? String(number.value.value) : undefined;
-  const name = constantKeyOf(b.definitions, member.key) ?? canonical ?? gap(`${member.kind} with a computed key`);
+  const name = constantKeyOf(b.definitions, member.key) ?? canonical;
+  if (name === undefined) return undefined;
   const ctor = realmConstructorOf(member.recv, b.definitions);
   const miss = ctor === undefined ? undefined : identityOnlyKeyRefusal(ctor, name);
   if (miss !== undefined) gap(miss);
@@ -197,8 +207,9 @@ const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
 
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
 export function dynamicMemberRead(b: MemberAccessBuilders, member: MemberGet, result: IrValueId): IrInstr[] {
-  const { name, prelude, instr } = constantKey(b, member);
-  return [...prelude, ...constantRead(b, instr, name, result)];
+  const constant = constantKey(b, member);
+  if (constant === undefined) return memberAccess(b, member, computedAccess(b, member), result);
+  return [...constant.prelude, ...constantRead(b, constant.instr, constant.name, result)];
 }
 
 /** The read of the constant key `name`. */
@@ -273,26 +284,46 @@ function constantRead(b: MemberAccessBuilders, instr: MemberGet, name: string, r
  * (§10.1.9.2, §B.2.2.1.2), so it refuses by name until the realm holds the accessor.
  */
 export function dynamicMemberWrite(b: MemberAccessBuilders, member: MemberSet): IrInstr[] {
-  const { name, prelude, instr } = constantKey(b, member);
-  return [...prelude, ...constantWrite(b, instr, name)];
+  const constant = constantKey(b, member);
+  if (constant === undefined) return memberAccess(b, member, computedAccess(b, member), b.fresh());
+  return [...constant.prelude, ...constantWrite(b, constant.instr, constant.name)];
+}
+
+/**
+ * (#7354 F1b, O1) PutValue of the instruction's value under `key` through OrdinarySet, into the unread `result`.
+ * OrdinarySet answers `false` for a read-only data property (a function's own `length` and `name`, one
+ * `Object.defineProperty` made read only, an inherited one, (#7352) an index past an array's read-only `length`) and a
+ * setter-less accessor: PutValue ignores that in sloppy code and throws a TypeError with `message` in strict code.
+ */
+function putValue(
+  b: MemberAccessBuilders,
+  instr: MemberSet,
+  key: IrValueId,
+  message: string,
+  result: IrValueId,
+  throwTypeError: ThrowTypeError,
+): IrInstr[] {
+  const ok = b.fresh();
+  const write = realmCall("js.object.set", [instr.recv, key, instr.value, instr.recv], ok);
+  const unread = (r: IrValueId): IrInstr => b.intrinsic(instr, "js.value.undefined", [], r);
+  if (instr.sloppy === true) return [write, unread(result)];
+  return [
+    write,
+    b.branch(
+      ok,
+      (r) => [unread(r)],
+      (r) => throwTypeError(message, r),
+      result,
+      b.carrier,
+    ),
+  ];
 }
 
 /** The write of the constant key `name`. */
 function constantWrite(b: MemberAccessBuilders, instr: MemberSet, name: string): IrInstr[] {
   const unread = (r: IrValueId): IrInstr => b.intrinsic(instr, "js.value.undefined", [], r);
-  const set = (): { readonly ok: IrValueId; readonly instr: IrInstr } => {
-    const ok = b.fresh();
-    return { ok, instr: realmCall("js.object.set", [instr.recv, instr.key, instr.value, instr.recv], ok) };
-  };
-  // (#7354 F1b, O1) OrdinarySet answers `false` for a read-only data property (a function's own `length` and `name`,
-  // one `Object.defineProperty` made read only, an inherited one) and a setter-less accessor: PutValue ignores that in
-  // sloppy code and throws a TypeError in strict code.
-  const putValue = (kind: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] => {
-    const { ok, instr: write } = set();
-    if (instr.sloppy === true) return [write, unread(r)];
-    const readOnly = (s: IrValueId) => throwTypeError(`Cannot assign to read only property '${name}' of ${kind}`, s);
-    return [write, b.branch(ok, (s) => [unread(s)], readOnly, r, b.carrier)];
-  };
+  const put = (kind: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] =>
+    putValue(b, instr, instr.key, `Cannot assign to read only property '${name}' of ${kind}`, r, throwTypeError);
   const access: Access = {
     operation: `member write '${name}'`,
     // (#7354 C2) The write's value is unread, but it is the carrier so that an arm's run-time abort is its answer.
@@ -310,9 +341,8 @@ function constantWrite(b: MemberAccessBuilders, instr: MemberSet, name: string):
     },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
-    object: (r, abort, throwTypeError) =>
-      stringObjectIndex(b, name) ? abort(r) : putValue("object", r, throwTypeError),
-    function: (r, throwTypeError) => putValue("function", r, throwTypeError),
+    object: (r, abort, throwTypeError) => (stringObjectIndex(b, name) ? abort(r) : put("object", r, throwTypeError)),
+    function: (r, throwTypeError) => put("function", r, throwTypeError),
     primitive: (kind, r, throwTypeError) => {
       const absent = (s: IrValueId) =>
         instr.sloppy === true ? [unread(s)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, s);
@@ -328,4 +358,77 @@ function constantWrite(b: MemberAccessBuilders, instr: MemberSet, name: string):
     },
   };
   return memberAccess(b, instr, access, b.fresh());
+}
+
+/**
+ * (#7579) A read or write whose key is computed, over the key's kinds: a string is the key; any other primitive is the
+ * program's ToString of it (`"1"`, `"true"`, `"null"`); an object or a function is the run-time abort (its ToPrimitive
+ * runs program code, in an order not written here). A primitive receiver is the run-time abort, and so is an object
+ * where the program can make a String object, whose index keys the realm lacks.
+ *
+ * The realm holds a built-in object member by member (#7561's pin rule over constant keys), so a string key no use
+ * spells may name a member it did not materialise (a method, an accessor, an own member of a built-in prototype the
+ * key is written to): a string key the receiver's chain lacks is the run-time abort, but for a canonical numeric
+ * string (ToString(ToNumber(key)) is key), which no built-in member is named, and which a read answers as absent and
+ * a write creates. A key the chain holds is answered exactly, and a ToString'd key is never a member's name.
+ */
+function computedAccess(b: MemberAccessBuilders, instr: MemberGet | MemberSet): Access {
+  const write = instr.kind === "dyn.member_set" ? instr : undefined;
+  const unread = (r: IrValueId): IrInstr => b.intrinsic(instr, "js.value.undefined", [], r);
+  const keyed = (receiver: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] => {
+    const access = (key: IrValueId, s: IrValueId): IrInstr[] =>
+      write === undefined
+        ? [realmCall("js.object.get", [instr.recv, key, instr.recv], s)]
+        : putValue(b, write, key, `Cannot assign to read only property of ${receiver}`, s, throwTypeError);
+    // Each arm reads the key as the one kind it holds there, so a conversion of it is that kind's alone.
+    const byKind = (kind: CarrierKind, s: IrValueId): IrInstr[] => {
+      if (MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function") return b.abort(instr, s);
+      const key = b.fresh();
+      b.kinds.learn(key, [kind]);
+      const narrowed = carried(instr.key, key);
+      if (kind === "string") {
+        const found = b.fresh();
+        const absent = (t: IrValueId) =>
+          canonicalNumeric(b, instr, key, (u) => (write === undefined ? [unread(u)] : access(key, u)), t);
+        return [
+          narrowed,
+          realmCall("js.object.has", [instr.recv, key], found),
+          b.branch(found, (t) => access(key, t), absent, s, b.carrier),
+        ];
+      }
+      const [text, converted] = [b.fresh(), b.fresh()];
+      return [narrowed, ...b.stringOf(instr, key, text), carried(text, converted), ...access(converted, s)];
+    };
+    return b.kindChain(instr, instr.key, r, byKind, b.kindsOf(instr.key), b.carrier);
+  };
+  return {
+    operation: `member ${write === undefined ? "read" : "write"} with a computed key`,
+    resultType: b.carrier,
+    missing: () => undefined,
+    nullishMessage: (kind) => `Cannot ${write === undefined ? "read" : "set"} properties of ${kind}`,
+    unread,
+    object: (r, abort, throwTypeError) => (b.wrappers.has("String") ? abort(r) : keyed("object", r, throwTypeError)),
+    function: (r, throwTypeError) => keyed("function", r, throwTypeError),
+    primitive: (_kind, r) => b.abort(instr, r),
+  };
+}
+
+/** `then` where the string `key` is a canonical numeric string (ToString(ToNumber(key)) is key), else the abort. */
+function canonicalNumeric(
+  b: MemberAccessBuilders,
+  instr: IrInstr,
+  key: IrValueId,
+  then: (result: IrValueId) => IrInstr[],
+  result: IrValueId,
+): IrInstr[] {
+  const [number, boxed, text, round, same] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+  b.kinds.learn(boxed, ["number"]);
+  return [
+    ...b.toNumber(instr, key, number),
+    b.intrinsic(instr, "js.number.box", [number], boxed),
+    ...b.stringOf(instr, boxed, text),
+    carried(text, round),
+    b.intrinsic(instr, "js.value.strict_eq", [round, key], same),
+    b.branch(same, then, (s) => b.abort(instr, s), result, b.carrier),
+  ];
 }

@@ -41,9 +41,14 @@ import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-stat
 import { dynamicPrototypeMethodCall } from "./dynamic-prototype-methods.js";
 import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
 import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
-import { dynamicArrayConstruction } from "./dynamic-array-constructors.js";
+import { dynamicArrayConstruction, dynamicArrayLiteral } from "./dynamic-array-constructors.js";
 import { dynamicObjectTag } from "./dynamic-object-tag.js";
-import { realmConstructorOf, realmIntrinsicOfHelper, type RealmConstruction } from "./dynamic-realm-calls.js";
+import {
+  isArrayLiteralCall,
+  realmConstructorOf,
+  realmIntrinsicOfHelper,
+  type RealmConstruction,
+} from "./dynamic-realm-calls.js";
 import type { RealmConstructor } from "./builtin-prototype-keys.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
@@ -113,6 +118,8 @@ export function legalizeDynamicValues(
     kindsOf: kinds.kindsOf,
     errors,
     wrappers: program.objects.wrappers,
+    stringOf,
+    toNumber,
   };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
@@ -262,6 +269,7 @@ export function legalizeDynamicValues(
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
+        if (isArrayLiteralCall(instr)) return dynamicArrayLiteral(builders, instr);
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const ctor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
         if (ctor !== undefined) return realmConstruction(instr, ctor, instr.args.slice(2));

@@ -100,7 +100,7 @@ export function ordinaryToPrimitive(
     const absent = (s: IrValueId) => answer.text(kind === "object" ? "[object Object]" : undefined, s);
     return [...named, realmCall("js.object.has", [object, key], held), b.branch(held, method, absent, r, answer.type)];
   };
-  // (#7354 A1) An array's `toString` is Array.prototype's (`join`, A1b), which the realm does not hold yet: whatever
+  // (#7352) An array's `toString` is Array.prototype's (`join`), which the realm does not hold yet: whatever
   // its chain holds (a program may write Object.prototype's `toString` / `valueOf`), an array aborts before any read.
   const isArray = kind === "object" ? b.isArray : undefined;
   if (!isArray) return step(0, result);

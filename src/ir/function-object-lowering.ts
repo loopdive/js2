@@ -273,7 +273,7 @@ export function dynamicStoreOperand(
   value: IrValueId,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
-  role: "member-store" | "construct argument" | "Object static argument" | "conversion operand",
+  role: "member-store" | "construct argument" | "Object static argument" | "conversion operand" | "array element",
 ): IrValueId {
   const boxed = storedCarrierValue(value, source, cx);
   if (cx.builder.typeOf(boxed).kind === "dynamic") return boxed;

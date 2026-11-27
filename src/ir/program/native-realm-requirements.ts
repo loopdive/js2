@@ -151,7 +151,8 @@ interface HeldFamily {
 /**
  * (#7561) The contracts whose key may be computed at run time (`hasOwnProperty`, `getOwnPropertyDescriptor`,
  * `defineProperty` take it through ToPropertyKey). Every other key-taking contract has a constant key, or reads only
- * enumerable keys, which no wrapper prototype member is (tests/issue-7561-wrappers.test.ts lists them).
+ * enumerable keys, which no wrapper prototype member is (tests/issue-7561-wrappers.test.ts lists them), or (#7579) is
+ * a member access with a computed key, whose miss on a member name is the run-time abort (`computedAccess`).
  */
 export const COMPUTED_KEY_CONTRACTS: ReadonlySet<string> = new Set([
   "js.object.has-own",

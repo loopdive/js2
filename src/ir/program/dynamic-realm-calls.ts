@@ -54,6 +54,17 @@ export function realmConstructorOf(
   return id === undefined ? undefined : realmConstructorById(id);
 }
 
+/**
+ * (#7579) The front end's helper symbol for an array literal: its operands are the literal's length (an f64), then each
+ * present element's index key (a string) and value, in source order. The legalization writes it as the realm's array.
+ */
+export const ARRAY_LITERAL_HELPER = "__ir_array_literal";
+/** Whether `instr` is the front end's array literal call. */
+export const isArrayLiteralCall = (instr: IrInstr | undefined): boolean =>
+  instr?.kind === "call" &&
+  instr.target.binding.kind === "runtime" &&
+  instr.target.binding.symbol === ARRAY_LITERAL_HELPER;
+
 /** A call or construct whose callee is a realm constructor ({@link realmConstructorOf}). */
 export type RealmConstruction = Extract<IrInstr, { kind: "call" | "dyn.construct" }>;
 /** What a realm constructor's call or construct is written with: the chain builders and the program's ToString. */
