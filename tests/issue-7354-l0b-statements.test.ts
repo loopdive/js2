@@ -64,9 +64,10 @@ describe("#7354 L0b — statement shapes", () => {
     );
   });
 
+  // (#7562) `f` read as a value gives the program the invocation pack its `arguments.length` read needs.
   it("ends at the run-time abort where the callee reads the arguments an extra argument would show", async () => {
     await abortsAtRunTime(
-      "function f(a) { return arguments.length; }\nfunction t() { return f(1, 2); }\nvar r = t();",
+      "function f(a) { return arguments.length; }\nvar keep = f;\nfunction t() { return f(1, 2); }\nvar r = t();",
       runnerOptions(),
     );
   });

@@ -172,7 +172,7 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
     [
       "`arguments`",
       "function f(v) { return arguments.length; }\nif (f(1) !== 1) throw 1;",
-      "dynamic operation dyn.arguments_length has no Prepared intrinsic",
+      "intrinsic callable js.closure.arguments-length needs runtime function materialization",
     ],
     // (#7354 L0b) An extra argument is expressed now (tests/issue-7354-l0b-statements.test.ts).
   ])("refuses %s", async (_name, source, message) => {
