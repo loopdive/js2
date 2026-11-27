@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("Issue #190 — assignment target patterns", () => {
   it("property access assignment: obj.x = value", async () => {
@@ -16,13 +17,7 @@ describe("Issue #190 — assignment target patterns", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(50);
   });
 
@@ -40,13 +35,7 @@ describe("Issue #190 — assignment target patterns", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(420);
   });
 
@@ -64,13 +53,7 @@ describe("Issue #190 — assignment target patterns", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(30);
   });
 
@@ -88,13 +71,7 @@ describe("Issue #190 — assignment target patterns", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(20);
   });
 
@@ -113,13 +90,7 @@ describe("Issue #190 — assignment target patterns", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     expect(exports.test()).toBe(300);
   });
 
@@ -137,13 +108,7 @@ describe("Issue #190 — assignment target patterns", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
-    const exports = instance.exports as any;
+    const exports = (await instantiateWithRuntime(result)).exports as any;
     // a=2, b=1 -> 2*10+1 = 21
     expect(exports.test()).toBe(21);
   });
