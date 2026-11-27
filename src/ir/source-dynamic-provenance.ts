@@ -24,7 +24,7 @@ import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-scri
 import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
-import { enclosingFunctionBody, localDeclarationCaptures } from "./function-declaration-values.js";
+import { isVarBinding, sharesCell } from "./function-declaration-values.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import { realmConstantRead } from "./realm-static-call.js";
@@ -93,7 +93,8 @@ export function sourceDynamicProvenance(
           localNeedsDynamicCarrier(declaration)),
     );
   const localNeedsDynamicCarrier = (declaration: ts.VariableDeclaration): boolean =>
-    dynamicCarrier && (rewrittenStringLocal(checker, declaration) || capturedByLocalDeclaration(checker, declaration));
+    dynamicCarrier &&
+    (rewrittenStringLocal(checker, declaration) || (isVarBinding(declaration) && sharesCell(declaration, checker)));
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
@@ -164,12 +165,6 @@ export function sourceDynamicProvenance(
     }
   };
   return { scriptVarHome, carries: (expression) => carries(expression), localNeedsDynamicCarrier };
-}
-
-/** (#7354 L0c) A function's `var` a function declaration inside it reads or writes (`localDeclarationCaptures`). */
-function capturedByLocalDeclaration(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
-  const body = enclosingFunctionBody(declaration);
-  return body !== undefined && ts.isBlock(body) && localDeclarationCaptures(body, checker).has(declaration);
 }
 
 /**

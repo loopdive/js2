@@ -156,13 +156,10 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = (a) => a; f(1);",
       "module-level closure binding 'f' not in module-init Slice 2 scope",
     ],
-    // A mutable capture has no carrier arm yet; (#7354 F1) a closure returned as a dynamic result is a function value
-    // (tests/issue-7354-f1-function-expressions.test.ts), called through a value in slice F2.
-    [
-      "a captured local written after the closure is created",
-      "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
-      'captures non-local binding "x"',
-    ],
+    // (#7354 F1) A closure returned as a dynamic result is a function value
+    // (tests/issue-7354-f1-function-expressions.test.ts), called through a value in slice F2. (#7354 L0c) A captured
+    // `var` written after the closure is created, or declared after it, is the function's one cell now
+    // (tests/issue-7354-l0c-captured-writes.test.ts).
     // A written parameter: what the slot does not serve yet, each by its own name.
     [
       "a nested closure reading a written parameter",
@@ -180,12 +177,6 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "a closure assigned to a parameter",
       "var f = function (a) { a = function () { return 1; }; return a; }; f(1);",
       'assignment to "a" (dynamic) got closure()->dynamic',
-    ],
-    // JavaScript hoists the local; the closure captures only what is bound where it is created.
-    [
-      "a closure reading a local declared after it",
-      "function g() { var k = function () { return x; }; var x = 1; return k(); } g();",
-      'closure g__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
     ],
     // (#7354 F1) `+=` on a parameter, `+`, `String(f)` and `typeof` of a function value:
     // tests/issue-7354-f1-*.test.ts.

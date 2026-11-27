@@ -55,28 +55,56 @@ export function enclosingFunctionBody(node: ts.Node): ts.Node | undefined {
   return (ts.findAncestor(node.parent, ts.isFunctionLike) as ts.FunctionLikeDeclaration | undefined)?.body;
 }
 
+/** A binding of a function that a closure inside it may share: a `var`, a `let` statement's or a parameter. */
+export type CapturedBinding = ts.VariableDeclaration | ts.ParameterDeclaration;
+
 /**
- * (#7354 L0c) The `var` declarations of a function body that its function-local declarations read or write. from-ast
- * hoists them with the functions, as cells of the carrier, so the provenance counts them as the dynamic value. A
- * `let`/`const` is not hoisted: it keeps its TDZ, and a declaration that reads it before its binding refuses.
+ * (#7354 L0c) The bindings of the function whose body is `body` that a function nested in it (a declaration or a
+ * closure, at any depth) reads or writes. On the Prepared lane each lives in one cell the function and its closures
+ * share, made before any statement can capture it: a `var` or a parameter has one per activation, made at entry, so a
+ * closure created in a block or a loop body writes the function's binding; a `let` has one where it is bound, so a
+ * loop body's has one per iteration. A `const` (never written) and a loop head's `let` (whose per-iteration copies are
+ * not modelled) have none: a closure writing such a binding refuses. from-ast hoists each `var` as a cell of the
+ * carrier, so the provenance counts it as the dynamic value; a `let` is not hoisted, it keeps its TDZ.
  */
-export function localDeclarationCaptures(body: ts.Block, checker: ts.TypeChecker): ReadonlySet<ts.VariableDeclaration> {
-  const found = new Set<ts.VariableDeclaration>();
-  const visit = (node: ts.Node): void => {
-    const declaration = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node)?.valueDeclaration : undefined;
-    if (
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      ts.isVariableDeclarationList(declaration.parent) &&
-      isVarDeclarationList(declaration.parent) &&
-      enclosingFunctionBody(declaration) === body
-    )
-      found.add(declaration);
-    ts.forEachChild(node, visit);
+export function capturedBindings(body: ts.Block, checker: ts.TypeChecker): ReadonlySet<CapturedBinding> {
+  const found = new Set<CapturedBinding>();
+  const visit = (node: ts.Node, nested: boolean): void => {
+    if (nested && ts.isIdentifier(node)) {
+      const symbol =
+        ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+          ? checker.getShorthandAssignmentValueSymbol(node.parent)
+          : checker.getSymbolAtLocation(node);
+      for (const declaration of symbol?.declarations ?? [])
+        if (isCellBinding(declaration, body)) found.add(declaration as CapturedBinding);
+    }
+    ts.forEachChild(node, (child) => visit(child, nested || ts.isFunctionLike(node)));
   };
-  for (const statement of body.statements) if (isFunctionLocalDeclaration(statement)) visit(statement.body!);
+  visit(body, false);
   return found;
 }
+
+/** Whether `declaration` (a binding a closure captures) is one of `capturedBindings(body)`. */
+export function sharesCell(declaration: CapturedBinding, checker: ts.TypeChecker): boolean {
+  const body = enclosingFunctionBody(declaration);
+  return body !== undefined && ts.isBlock(body) && capturedBindings(body, checker).has(declaration);
+}
+
+function isCellBinding(declaration: ts.Declaration, body: ts.Block): boolean {
+  if (ts.isParameter(declaration)) return declaration.parent === body.parent;
+  if (!ts.isVariableDeclaration(declaration) || enclosingFunctionBody(declaration) !== body) return false;
+  const list = declaration.parent;
+  return (
+    isVarBinding(declaration) ||
+    (ts.isVariableDeclarationList(list) && ts.isVariableStatement(list.parent) && (list.flags & ts.NodeFlags.Let) !== 0)
+  );
+}
+
+/** A `var` declaration, which a function hoists. */
+export const isVarBinding = (declaration: ts.Node): declaration is ts.VariableDeclaration =>
+  ts.isVariableDeclaration(declaration) &&
+  ts.isVariableDeclarationList(declaration.parent) &&
+  isVarDeclarationList(declaration.parent);
 
 /**
  * The top-level function declarations of a single-source program that some identifier reads as a value, or that an

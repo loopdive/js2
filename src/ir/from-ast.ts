@@ -193,7 +193,9 @@ import { describeIrType } from "./describe-ir-type.js";
 import {
   enclosingFunctionBody,
   isFunctionLocalDeclaration,
-  localDeclarationCaptures,
+  capturedBindings,
+  isVarBinding,
+  sharesCell,
   type FunctionDeclarationValue,
 } from "./function-declaration-values.js";
 import * as annexB from "./annexb-block-function-lowering.js";
@@ -332,6 +334,7 @@ import {
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError, refuseUnselected } from "./outcomes.js";
+import type { IrUnsupportedCode } from "./outcomes.js";
 import {
   boxWrapper,
   emitToPrimitive,
@@ -357,7 +360,6 @@ import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "
 import {
   isInLoopOfOwnFunction,
   isModuleInitVarList,
-  isVarDeclarationList,
   moduleInitContainsNestedVar,
 } from "../shared/var-declaration-lists.js";
 import { emitLogicalSelect } from "./logical-select.js";
@@ -2420,25 +2422,27 @@ function lowerStatementList(statements: readonly ts.Statement[], cx: LowerCtx): 
 }
 
 /**
- * (#7354 L0c) The function declarations of `statements` with the all-dynamic contract, hoisted. Each name, and each
- * `var` of the function body a declaration reads or writes, is first bound to a cell of the carrier (`undefined`), so
- * the functions capture the cell and a sibling or the function itself is read at call time; then each cell gets its
- * function value, in source order, so a later declaration of the same name wins.
+ * (#7354 L0c) The function declarations of `statements` with the all-dynamic contract, hoisted. In a function body,
+ * each binding a nested function shares (`capturedBindings`) first gets the activation's one cell: a `var` and each
+ * declaration's name a cell of the carrier (`undefined`), so a closure reads a sibling or itself at call time; a
+ * parameter a cell of its value. Then each declaration's cell gets its function value, in source order (last wins).
  */
 function hoistFunctionDeclarations(statements: readonly ts.Statement[], cx: LowerCtx): ReadonlySet<ts.Statement> {
   const declarations = statements.filter(
     (s): s is ts.FunctionDeclaration =>
       isFunctionLocalDeclaration(s) && cx.resolver?.dynamicClosureSignature?.(s) !== undefined,
   );
-  const body = declarations[0]?.parent;
-  if (body === undefined) return new Set();
   if (declarations.some((d) => cx.scope.has(d.name!.text)))
     demoteToLegacy(
       "body-shape-rejected",
       `ir/from-ast: function declaration shares a parameter's name in ${cx.funcName}`,
     );
-  const captured = ts.isBlock(body) ? [...localDeclarationCaptures(body, cx.checker!)] : [];
-  const names = [...declarations.map((d) => d.name!.text), ...captured.map((d) => (d.name as ts.Identifier).text)];
+  const body = statements[0]?.parent;
+  const captured =
+    body && ts.isBlock(body) && ts.isFunctionLike(body.parent) ? capturedBindings(body, cx.checker!) : [];
+  const [parameters, vars] = [[...captured].filter(ts.isParameter), [...captured].filter(isVarBinding)];
+  for (const parameter of parameters) bindCapturedLocal((parameter.name as ts.Identifier).text, cx);
+  const names = [...declarations, ...vars].map((d) => (d.name as ts.Identifier).text);
   for (const name of new Set(names.filter((n) => !cx.scope.has(n)))) {
     const cell = cx.builder.emitRefCellNew(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined), irDynamic());
     cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: irDynamic() }, hoisted: body });
@@ -2452,6 +2456,45 @@ function hoistFunctionDeclarations(statements: readonly ts.Statement[], cx: Lowe
     cx.builder.emitRefCellSet((cx.scope.get(declaration.name!.text) as { readonly value: IrValueId }).value, value);
   }
   return new Set(declarations);
+}
+
+/** The type of a cell holding a value of `type`: a scalar, or (#7354 L0c) on the Prepared lane the dynamic value. */
+function capturedCellType(type: IrType, cx: LowerCtx): IrType | undefined {
+  const scalar = asVal(type);
+  if (scalar) return irVal(scalar);
+  return type.kind === "dynamic" && functionObjects.onPreparedDynamicLane(cx.resolver) ? irDynamic() : undefined;
+}
+
+/** `name`'s local moves into a cell of its type, which this scope's later reads and writes go through. */
+function bindCapturedLocal(name: string, cx: LowerCtx): void {
+  const live = cx.scope.get(name);
+  if (live?.kind !== "local" || live.type.kind === "boxed") return;
+  const inner = capturedCellType(live.type, cx);
+  if (!inner) return;
+  const cell = cx.builder.emitRefCellNew(live.value, inner);
+  cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner } });
+}
+
+/**
+ * The cell a closure's mutable capture of `name` passes. (#7354 L0c) On the Prepared lane it is the binding's own, made
+ * where the binding is (`capturedBindings`): a cell made here, in a block or a loop body, would not be the one the
+ * enclosing scope reads. Elsewhere the local moves into a cell here.
+ */
+function mutableCaptureCell(
+  name: string,
+  code: IrUnsupportedCode,
+  cx: LowerCtx,
+): Extract<ScopeBinding, { kind: "local" }> {
+  const live = cx.scope.get(name);
+  if (live?.kind === "local" && live.type.kind !== "boxed" && !functionObjects.onPreparedDynamicLane(cx.resolver)) {
+    if (!capturedCellType(live.type, cx))
+      demoteToLegacy(code, `ir/from-ast: mutable closure capture "${name}" must be a primitive (${cx.funcName})`);
+    bindCapturedLocal(name, cx);
+  }
+  const cell = cx.scope.get(name);
+  if (cell?.kind !== "local" || cell.type.kind !== "boxed")
+    demoteToLegacy(code, `ir/from-ast: closure mutable capture "${name}" has no cell in scope (${cx.funcName})`);
+  return cell;
 }
 
 /**
@@ -4313,6 +4356,10 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     if (cx.sourceMap) withNodeSourceSite(cx, d, () => lowerVariableDeclaration(d, isConst, cx));
     else lowerVariableDeclaration(d, isConst, cx);
   }
+  // (#7354 L0c) A `let` a closure shares gets its cell where it is bound: per iteration in a loop body.
+  if (stmt.declarationList.flags & ts.NodeFlags.Let && functionObjects.onPreparedDynamicLane(cx.resolver))
+    for (const d of stmt.declarationList.declarations)
+      if (sharesCell(d, cx.checker!)) bindCapturedLocal((d.name as ts.Identifier).text, cx);
 }
 
 // ---------------------------------------------------------------------------
@@ -4527,12 +4574,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   }
   const name = d.name.text;
   const hoisted = cx.scope.get(name);
-  if (
-    hoisted?.kind === "local" &&
-    hoisted.hoisted === enclosingFunctionBody(d) &&
-    ts.isVariableDeclarationList(d.parent) &&
-    isVarDeclarationList(d.parent)
-  ) {
+  if (hoisted?.kind === "local" && hoisted.hoisted === enclosingFunctionBody(d) && isVarBinding(d)) {
     if (d.initializer) lowerIdentifierAssignment(d.name, d.initializer, cx);
     return;
   }
@@ -8435,26 +8477,7 @@ function lowerNestedFuncCall(
   for (const cap of binding.captures) {
     const live = cx.scope.get(cap.name);
     if (cap.mutable) {
-      if (live?.kind === "local" && live.type.kind === "boxed") {
-        args.push(live.value);
-      } else if (live?.kind === "local") {
-        const innerVal = asVal(cap.type);
-        if (!innerVal) {
-          demoteToLegacy(
-            "call-resolution-unsupported",
-            `ir/from-ast: mutable nested capture "${cap.name}" must be a primitive (${cx.funcName})`,
-          );
-        }
-        const cell = cx.builder.emitRefCellNew(live.value, irVal(innerVal));
-        // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
-        cx.scope.set(cap.name, { kind: "local", value: cell, type: { kind: "boxed", inner: irVal(innerVal) } });
-        args.push(cell);
-      } else {
-        demoteToLegacy(
-          "call-resolution-unsupported",
-          `ir/from-ast: nested mutable capture "${cap.name}" not in scope (${cx.funcName})`,
-        );
-      }
+      args.push(mutableCaptureCell(cap.name, "call-resolution-unsupported", cx).value);
     } else {
       // Read-only capture — read the CURRENT value from outer scope. If
       // an earlier sibling's mutable capture upgraded the binding to a
@@ -16568,33 +16591,9 @@ function lowerClosureExpressionWithSignature(
       continue;
     }
     if (cap.mutable) {
-      // #1926 — boxed.inner is an IrType: a scalar, or (#7354 L0c) on the Prepared lane the dynamic value.
-      const inner = asVal(cap.type)
-        ? irVal(asVal(cap.type)!)
-        : cap.type.kind === "dynamic" && functionObjects.onPreparedDynamicLane(cx.resolver)
-          ? irDynamic()
-          : undefined;
-      if (!inner) {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: mutable closure capture "${cap.name}" must be a primitive (${cx.funcName})`,
-        );
-      }
-      const fieldType: IrType = { kind: "boxed", inner };
-      captureFieldTypes.push(fieldType);
-      const live = cx.scope.get(cap.name);
-      if (live?.kind === "local" && live.type.kind === "boxed") {
-        captureArgs.push(live.value);
-      } else if (live?.kind === "local") {
-        const cell = cx.builder.emitRefCellNew(live.value, inner);
-        cx.scope.set(cap.name, { kind: "local", value: cell, type: fieldType });
-        captureArgs.push(cell);
-      } else {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: closure mutable capture "${cap.name}" not in scope (${cx.funcName})`,
-        );
-      }
+      const cell = mutableCaptureCell(cap.name, "body-shape-rejected", cx);
+      captureFieldTypes.push(cell.type);
+      captureArgs.push(cell.value);
     } else {
       // Read-only — pass the current scalar value. If a sibling closure
       // already upgraded the binding to a refcell, deref now so the
