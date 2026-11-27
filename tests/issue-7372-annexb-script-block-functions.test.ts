@@ -6,14 +6,7 @@
 // then the block binding's current value. Every program is run in node too, with a wrong twin that must throw.
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
-import { compile, requiredPreparedEmission } from "../src/test262/test262-prepared-entry.js";
-import {
-  preparedScriptOptions,
-  preparedScriptRefusal,
-  runPreparedScript,
-  TEST262_SCRIPT,
-} from "./helpers/prepared-script-run.js";
+import { preparedScriptRefusal, runPreparedScript, TEST262_SCRIPT } from "./helpers/prepared-script-run.js";
 
 /** Node's verdict on the same sloppy script. */
 function nodeVerdict(source: string): "returned" | "threw" {
@@ -190,17 +183,19 @@ describe("#7372 2a-2 — Annex B block functions of a script", () => {
   });
 
   // Review RV7466 B3: a reference with no checker symbol inside a function that binds the name itself is no reference
-  // to the script's binding. Function-level Annex B is slice 2b: the function ends at its abort, never with the
-  // script's value (node: "undefined").
+  // to the script's binding. (#7554) The function's own Annex B var binding is read: node's "undefined", never the
+  // script's function.
   it("does not resolve a nested function's own block function to the script's", async () => {
-    const source =
+    const program =
       "{ function f() { return 1; } } function g() { if (false) { function f() { return 2; } } return typeof f; } var res = g();";
-    expect(runInNewContext(`${source} res`)).toBe("undefined");
-    const result = await compile(source, preparedScriptOptions("test.js", TEST262_SCRIPT));
-    expect(requiredPreparedEmission(result)).toBeDefined();
-    expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(
-      "unreachable",
-    );
+    for (const [check, verdict] of [
+      ['res !== "undefined"', "returned"],
+      ['res !== "function"', "threw"],
+    ] as const) {
+      const source = `${program} if (${check}) throw 1;`;
+      expect(nodeVerdict(source), source).toBe(verdict);
+      expect(await runPreparedScript(source, "test.js", TEST262_SCRIPT), source).toBe(verdict);
+    }
   });
 
   // Not modelled in 2a; each refuses by name instead of compiling to a wrong value.
