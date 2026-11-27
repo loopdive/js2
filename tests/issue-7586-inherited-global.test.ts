@@ -39,6 +39,7 @@ it("still evaluates typeof of a genuinely missing name", async () => {
 
 it.each([
   ["", true],
+  ["var o={};o.other=7;", true],
   ["Object.prototype.foo=1;", false],
   ["var p=Object.prototype;p['foo']=1;", false],
   ["Object.defineProperty(Object.prototype,'foo',{value:undefined});", false],
@@ -55,11 +56,14 @@ it.each([
   expect(unchangedUndeclaredGlobal(stmt.expression.expression, ast.checker, ast.sourceFiles)).toBe(expected);
 });
 
-it("keeps a possible prototype addition visible to the typeof lowering", async () => {
-  const source = "var out=typeof foo;function install(){Object.prototype.foo=1;}";
-  const result = await compile(source, runnerOptions());
-  expect(result.success).toBe(false);
-  expect(result.errors.map((error) => error.message)).toContainEqual(
-    expect.stringContaining('identifier "foo" is not in scope'),
-  );
-});
+it.each(["Object.prototype.foo=1;", "Object.prototype[key]=1;"])(
+  "keeps a possible prototype addition visible to typeof: %s",
+  async (write) => {
+    const source = "var out=typeof foo;function install(key){" + write + "}";
+    const result = await compile(source, runnerOptions());
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message)).toContainEqual(
+      expect.stringContaining('identifier "foo" is not in scope'),
+    );
+  },
+);
