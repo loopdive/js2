@@ -6,8 +6,8 @@
 // entry and assigned the block's function when the declaration is evaluated (B.3.3.1); an `if` arm's function is a
 // block of its own (B.3.4). A function body binds a `var` that code reaches outside its statement, or before it, at
 // entry. Strict code, a catch parameter shadowing the var binding and a block `let` of a hoisted name keep aborting.
-import { describe, it } from "vitest";
-import { abortsAtRunTime, agreesWithNode, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import { describe, expect, it } from "vitest";
+import { abortsAtRunTime, agreesWithNode, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
 
 const agrees = (body: string) => agreesWithNode(body, true, runnerOptions());
 
@@ -93,5 +93,30 @@ describe("#7354 L0c — vars reached outside their statement", () => {
       "function t(){ for (var i = 0; i < 2; i++) {} { let i = 'b'; } return i; }\nvar r = t();",
       runnerOptions(),
     );
+  });
+});
+
+// (#7554 review r1) A function the lowering never creates (it sits in a dead arm, after a `continue`, in a
+// non-matching case) leaves its var binding `undefined`; a cell whose only capturing closure is dead code has no
+// closure root, which the program refuses by name instead of throwing.
+describe("#7354 L0c — block functions in dead code", () => {
+  it("reads the var binding of a function the lowering never creates", async () => {
+    await agrees(
+      "function a(){ if (false) { function f(){} } return typeof f; }\n" +
+        "function b(){ if (false) { function f(){} return 1; } else { return typeof f; } }\n" +
+        "function c(){ for (var i = 0; i < 2; i++) { continue; function f(){} } return typeof f; }\n" +
+        "function d(){ switch (2) { case 1: function f(){} } return typeof f; }\n" +
+        "function e(){ if (true) function f(){ return 3; } return f(); }\n" +
+        "var out = a() + b() + c() + d() + e();",
+    );
+  });
+
+  it("refuses a cell whose capturing closure is dead code", async () => {
+    expect(
+      await refusal(
+        "function t(){ if (false) { function g(){ return x; } } var x = 1; return x; }\nvar r = t();",
+        runnerOptions(),
+      ),
+    ).toContain("a mutable capture cell needs a closure root, and the program creates no closure");
   });
 });
