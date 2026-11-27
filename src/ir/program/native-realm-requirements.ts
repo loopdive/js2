@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  GLOBAL_OBJECT_ID,
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
@@ -34,9 +35,10 @@ export interface NativeRealmDescription {
   readonly sourceAllocationOccurrences: readonly number[];
   readonly objectUses: NativeObjectAccessRequirements["uses"];
   /**
-   * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
+   * The values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
    * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
-   * since no other read can reach one; (#7354 G1, #7350 B3a) the families the program uses ({@link heldFamilies}).
+   * since no other read can reach one; (#7354 G1, #7350 B3a) the families the program uses ({@link heldFamilies});
+   * (#7609) the global object where the program reads it. All but the global object are function values.
    */
   readonly intrinsics: readonly string[];
   readonly numberUses: readonly {
@@ -153,8 +155,12 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
     base: ["%Error%", "%TypeError%", ERROR_TO_STRING_ID],
     implied: bindsCaughtValue,
   },
-  // The wrapper constructors: each one the IR reads, alone.
-  { members: NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`), contracts: new Set(), base: [] },
+  // The wrapper constructors and (#7609) the global object: each one the IR reads, alone.
+  {
+    members: [...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`), GLOBAL_OBJECT_ID],
+    contracts: new Set(),
+    base: [],
+  },
 ];
 /**
  * (#7354 G1, #7350 B3a) The family members the realm holds, derived only from what the program's IR emitted: for each

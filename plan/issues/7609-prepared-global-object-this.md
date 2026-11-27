@@ -177,3 +177,66 @@ Code quality:
 - `with (this)` and any other `with` over a non-literal target (51 of the rows).
 - Dynamic code (`Function("return this")()`, `eval`).
 - Slice C.
+
+## Slice A1 result (2026-11-27)
+
+`this` at script level is the realm's global object on the Prepared path, in sloppy and strict scripts alike, and
+the value is sealed.
+
+### Mechanism
+
+- **Realm** (`native-realm-catalog.ts`): one row, `%GlobalObject%` (an ordinary object linked to Object.prototype,
+  no property), appended to `NATIVE_VALUE_INTRINSICS`, so `js.object.intrinsic(selector)` names it. It brings
+  itself (`heldWith` is its own id): the realm holds it only where the IR reads it (`HELD_FAMILIES`, beside the
+  wrapper constructors). Two backend lines follow the plan's one row, because the realm held only function values
+  through that intrinsic: `native-realm.ts` keeps the global object out of the function entries (the realm holds it
+  as a family object, `familyObjects`), and the `js.object.intrinsic` body reads a held object from its global once
+  the realm is initialized (`source-object-bodies.ts` now takes per-selector instructions instead of getters).
+- **Kind** (`dynamic-value-kinds.ts`): a kind of its own, `global`, with a row in every per-kind table. `typeof`
+  "object", truthiness true, strict equality by identity; its kind test is identity with the realm's value
+  (`KIND_TEST` "global-object"), so the object kind (the complement) excludes it. `MEMBER_ACCESS_ARM` "sealed"
+  (`isSealed`): member read and write, the `Object` statics, `hasOwnProperty` / `propertyIsEnumerable`,
+  `isPrototypeOf`, `instanceof`, `[[Construct]]`'s prototype link, a for-in key snapshot (`unlessSealed` in the
+  legalization), and every conversion (ToString, ToNumber, `+`'s ToPrimitive: one test in `toPrimitive`) end at the
+  run-time abort. `Object.prototype.toString`'s tag is the host's (`OBJECT_TAG` undefined): the abort. The kind is
+  admitted only where the source has a script-level `this` (`ProgramObjects.globalObject`).
+- **Legalization**: `dyn.global_object` is `js.object.intrinsic(%GlobalObject%)`.
+- **Frontend**: new `src/ir/this-binding.ts` holds `bindEntryThis`, the `ThisKeyword` arm (`lowerThis`) and the one
+  predicate `isScriptThis` (a `this` outside every function and class), which both the resolver hook
+  `globalObjectThis` (native dynamic lane only) and the program scan (`source-plain-objects.ts`) use, so the
+  admission and the emission cannot disagree. Each script-level read is its own `dyn.global_object` (a chunked
+  module-init lowers later statements in another function). `from-ast.ts`: 17,514 → 17,491 lines.
+- **Not done as planned, and why**: `select.ts` is untouched: the Prepared path lowers unselected, and the ordinary
+  pipeline must keep its bytes (it still refuses script-level `this`). There was no duplicate emitter to fold:
+  `lowerAmbientIntrinsicValue` and the new arm both call the builder's one `emitDynGlobalObject`.
+
+### What each later slice still meets after A1 (both modes)
+
+- **A2**: a sloppy function value called without a receiver ends at the run-time abort (C2-D3, unchanged); a
+  direct call of a declaration that reads `this` refuses ("a direct call of F installs no receiver"), sloppy and
+  strict; a strict closure called without a receiver answers `undefined` (unchanged). `this` inside a function of a
+  program that creates no function value refuses (its abort body), as on main.
+- **B**: `this.x`, `this["x"]`, `this.x = v`, `g.x` through a held reference, also where `x` is a script `var`:
+  the run-time abort.
+- **C**: `for (k in this)`, `Object.defineProperty(this, …)`, `Object.getOwnPropertyDescriptor(this, …)`,
+  `Object.create(this)`, `this.hasOwnProperty(…)`, `p.isPrototypeOf(this)`, `this instanceof F`: the run-time abort.
+  `"x" in this`, `delete this.x`, `Object.keys(this)`, `Object.getPrototypeOf(this)`, `this == null`,
+  `this instanceof Object`, `new this` refuse at compile time, by the same names they refuse for any value.
+
+### Measured
+
+- Probes against node in a fresh realm (`.tmp`, not committed): 29 right, 25 aborted, 22 refused; wrong 0,
+  invalid 0, exceptions out of `compile()` 0. Twins: every escape route answers node's value on an ordinary object.
+- Unchanged routes (method, constructor, nested closure, strict without a receiver, sloppy without a receiver,
+  direct call, nested method call, declaration as a method): identical outcome base vs head on 8 programs.
+- Byte identity: ordinary pipeline 30 programs × gc/standalone identical; Prepared programs without script-level
+  `this` (6, the `assert.js` + `sta.js` prelude included) identical. `var g = this; var out = 'x';` alone is
+  23,262 B (the realm's bootstrap; on main it refused); `var g = this` versus `var g = {}` in the same program:
+  +18 B.
+- test262 sample (40 of the 355 ES5 files with a script-level `this`, every ninth): base pass 0 / fail 0 / ce 40 →
+  head pass 3 / fail 12 / ce 25. No pass lost. Next stops: fails: unbound sloppy `this` (A2) 4, a keyed use of the
+  global object (B / C) 4, `call` / `bind` 2, a `Function(…)` abort body 2; compile errors: `with` 12, a standard
+  global (`Array`, `Function`, `Object`, `eval`) 4, `delete` 2, `eval` 2, other 5 (a direct `Function(…)` call, a
+  direct call installing no receiver (A2), a typed module binding, a constructor name, a `+`).
+- Tests: `tests/issue-7609-a1-global-object.test.ts` (7 tests, 10 compiles) and `tests/issue-7609-a1-sealed.test.ts`
+  (9 tests, 10 compiles); `tests/issue-7354-c2-this.test.ts` loses its "`this` at top level refuses" row.

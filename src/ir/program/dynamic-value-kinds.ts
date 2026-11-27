@@ -18,7 +18,12 @@ import type { RealmFamily } from "./builtin-prototype-keys.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
- * `typeof null` and an object both answer "object"; (F1) a function value "function".
+ * `typeof null`, (#7609) the global object and an object answer "object"; (F1) a function value "function".
+ *
+ * (#7609) The global object is a kind of its own, and sealed: the script's bindings are not its properties on this
+ * path (they stay in their homes, the H2 invariant), so every operation that would read or write its properties, or
+ * convert it, is the run-time abort (`MEMBER_ACCESS_ARM` "sealed", `isSealed`), and only its identity, `typeof` and
+ * truthiness answer.
  */
 export const TYPEOF_NAME = {
   number: "number",
@@ -26,6 +31,7 @@ export const TYPEOF_NAME = {
   string: "string",
   undefined: "undefined",
   null: "object",
+  global: "object",
   function: "function",
   object: "object",
 } as const;
@@ -40,14 +46,16 @@ export const KINDS_OF_TYPEOF: ReadonlyMap<string, readonly CarrierKind[]> = new 
 
 /**
  * How the carrier tests for each kind: a runtime predicate ((F1) a function value's is a source closure's wrapper
- * root), the null test, or (an ordinary object, (#7354 G1) an error included) none of the other kinds' tests.
+ * root), the null test, (#7609) identity with the realm's global object, or (an ordinary object, (#7354 G1) an error
+ * included) none of the other kinds' tests.
  */
-export const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "complement">> = {
+export const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "global-object" | "complement">> = {
   number: "js.value.is_number",
   boolean: "js.value.is_boolean",
   string: "js.value.is_string",
   undefined: "js.extern.is_undefined",
   null: "ref.is_null",
+  global: "global-object",
   function: "js.value.is_function",
   object: "complement",
 };
@@ -57,8 +65,9 @@ export const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null"
  * formatter, "true"/"false", the kind's own name, or (O2b) an object's ((#7354 G1) an error's too) and (F2) a
  * function's OrdinaryToPrimitive (`ordinary-to-primitive.ts`), which calls an own conversion method; a
  * function's absent `toString` is Function.prototype.toString, its source text, which no closure carries (the
- * run-time abort). The last kind is reached untested because the chain is total over this table; an object stays
- * last, the complement of the others.
+ * run-time abort); (#7609) the global object's is sealed (`ordinary-to-primitive.ts` is never entered for it). The last
+ * kind is reached untested because the chain is total over this table; an object stays last, the complement of the
+ * others.
  */
 export const TO_STRING_ARM: Readonly<
   Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "to-primitive">
@@ -68,6 +77,7 @@ export const TO_STRING_ARM: Readonly<
   boolean: "boolean",
   undefined: "name",
   null: "name",
+  global: "to-primitive",
   function: "to-primitive",
   object: "to-primitive",
 };
@@ -84,6 +94,7 @@ export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric" | "to-p
   string: "concat",
   undefined: "numeric",
   null: "numeric",
+  global: "to-primitive",
   function: "to-primitive",
   object: "to-primitive",
 };
@@ -98,6 +109,7 @@ export const IS_OBJECT: Readonly<Record<CarrierKind, boolean>> = {
   string: false,
   undefined: false,
   null: false,
+  global: true,
   function: true,
   object: true,
 };
@@ -113,6 +125,7 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
   string: "unbox",
   undefined: "unbox",
   null: "unbox",
+  global: "to-primitive",
   function: "to-primitive",
   object: "to-primitive",
 };
@@ -120,14 +133,16 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
 /**
  * (#7354 M1, B-tag) `Object.prototype.toString`'s tag for each kind (§20.1.3.6): `undefined` and `null` are named
  * before ToObject (steps 1-2), a primitive answers its wrapper's builtinTag, and an ordinary object "Object" ((#7354 G1)
- * "Error" where it has [[ErrorData]], step 9), its `@@toStringTag` reachable only by naming `Symbol`.
+ * "Error" where it has [[ErrorData]], step 9), its `@@toStringTag` reachable only by naming `Symbol`. (#7609) The global
+ * object's is the host's (§19: node's has an own `@@toStringTag` "global"): none here, the run-time abort.
  */
-export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
+export const OBJECT_TAG: Readonly<Record<CarrierKind, string | undefined>> = {
   number: "Number",
   boolean: "Boolean",
   string: "String",
   undefined: "Undefined",
   null: "Null",
+  global: undefined,
   function: "Function",
   object: "Object",
 };
@@ -138,12 +153,15 @@ export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
  * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), which no Prepared program can
  * obtain to change (M1, C1); (F1b) a function value is the realm's [[Get]] / [[Set]] on its closure, whose own `length` and `name` are read only.
  */
-export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive" | "function">> = {
+export const MEMBER_ACCESS_ARM: Readonly<
+  Record<CarrierKind, "type-error" | "object" | "primitive" | "function" | "sealed">
+> = {
   number: "primitive",
   boolean: "primitive",
   string: "primitive",
   undefined: "type-error",
   null: "type-error",
+  global: "sealed",
   function: "function",
   object: "object",
 };
@@ -156,17 +174,22 @@ export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "obj
  */
 export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] === "object";
 
+/** (#7609) Whether a kind's values are sealed: any keyed operation on one, and its conversion, is the run-time abort. */
+export const isSealed = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] === "sealed";
+
 /**
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
  * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
  * way to `@@toPrimitive` and `@@toStringTag`, and (G1, #7350 B3a) the realm constructor families it names as values
- * (built-in function values; an Error constructor makes objects).
+ * (built-in function values; an Error constructor makes objects), and (#7609) whether script code reads `this`, the
+ * global object.
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
+  readonly globalObject: boolean;
   readonly realmFamilies: ReadonlySet<RealmFamily>;
 }
 
@@ -183,6 +206,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
   namesSymbol: false,
+  globalObject: false,
   realmFamilies: new Set<RealmFamily>(),
 });
 
@@ -197,15 +221,17 @@ export const holdsFamily = (program: LegalizationProgram, family: RealmFamily): 
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
- * an error, which is an ordinary object, and (F1) the function kind only where it creates function values or (G1) may
- * hold a built-in one (a realm constructor, an error's methods).
+ * an error, which is an ordinary object, (F1) the function kind only where it creates function values or (G1) may
+ * hold a built-in one (a realm constructor, an error's methods), and (#7609) the global object only where script code
+ * reads `this`.
  */
 export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
   const builtins = holdsFamily(program, "error") || holdsFamily(program, "wrapper");
   return KIND_ORDER.filter(
     (kind) =>
       (kind !== "object" || program.objects.present || holdsFamily(program, "error")) &&
-      (kind !== "function" || program.objects.functions || builtins),
+      (kind !== "function" || program.objects.functions || builtins) &&
+      (kind !== "global" || program.objects.globalObject),
   );
 }
 
@@ -231,6 +257,7 @@ export function carrierKindOf(
   const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
   if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
   if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
+  if (definition?.kind === "dyn.global_object") return "global";
   if (type?.kind === "dynamic") return type.tag === JS_TAG_IDS.Function ? "function" : "dynamic";
   if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";

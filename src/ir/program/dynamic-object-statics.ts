@@ -11,7 +11,7 @@ import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-ca
 import { nativeObjectStatic } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, isSealed, type CarrierKind } from "./dynamic-value-kinds.js";
 
 const HELPER_PREFIX = "__ir_object_static:";
 /** The front end's helper symbol for `Object.<name>`. */
@@ -41,15 +41,16 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   const throwing = (message: string, r: IrValueId) =>
     typeErrorThen({ ...b, carrier: CARRIER }, message, undefinedValue(r));
   /**
-   * A chain over the kinds `value` may hold: `object` answers a served object ((#7354 G1) an error is one), and
-   * `other` answers each remaining kind (a primitive, `undefined`, `null`).
+   * A chain over the kinds `value` may hold: `object` answers a served object ((#7354 G1) an error is one), (#7609)
+   * the sealed global object is the run-time abort, and `other` answers each remaining kind (a primitive,
+   * `undefined`, `null`).
    */
   const byKind = (value: IrValueId, object: Arm, other: (kind: CarrierKind, r: IrValueId) => IrInstr[], r: IrValueId) =>
     b.kindChain(
       instr,
       value,
       r,
-      (kind, s) => (served(kind) ? object(s) : other(kind, s)),
+      (kind, s) => (served(kind) ? object(s) : isSealed(kind) ? b.abort(instr, s) : other(kind, s)),
       b.kinds.kindsOf(value),
       CARRIER,
     );
@@ -114,7 +115,9 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
                 ? realmCall("js.object.create-null", [], object)
                 : undefined;
           if (create) return [create, ...defineAll(object, second, r, "none")];
-          return served(kind) ? b.abort(instr, r) : throwing("Object prototype may only be an Object or null", r);
+          return served(kind) || isSealed(kind)
+            ? b.abort(instr, r)
+            : throwing("Object prototype may only be an Object or null", r);
         },
         b.kinds.kindsOf(first),
         CARRIER,

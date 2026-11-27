@@ -268,11 +268,19 @@ const ROWS = {
     signature: { params: [I32], results: [EXTERNREF] },
     body: ({ kernel }, tx) =>
       buildSourceObjectIntrinsicDefinition({
-        getters: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) =>
-          kernel.entries.some((entry) => entry.id === id)
-            ? [{ selector, getter: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }]
-            : [],
-        ),
+        values: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) => {
+          // (#7609) A held object (the global object) is its global, read once the realm is initialized.
+          const object = kernel.objects.find((row) => row.id === id);
+          const value: Instr[] | undefined = object
+            ? [
+                { op: "call", funcIdx: kernel.functions.initialize.handle },
+                { op: "global.get", index: tx.physicalIndex(object.global) },
+              ]
+            : kernel.entries.some((entry) => entry.id === id)
+              ? [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }]
+              : undefined;
+          return value === undefined ? [] : [{ selector, value }];
+        }),
       }),
   },
   "js.object.has-own": {

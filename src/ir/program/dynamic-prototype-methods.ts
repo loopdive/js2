@@ -21,7 +21,7 @@ import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodI
 import { constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, carried } from "./dynamic-value-chains.js";
-import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, isOrdinaryObject, isSealed, type CarrierKind } from "./dynamic-value-kinds.js";
 import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
@@ -112,7 +112,9 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
       : kind === "function"
         ? (s: IrValueId) => functionChainAnswer(b, instr, b.errors, receiver, constant(false), s, BOOLEAN)
         : constant(false);
-  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => boxed(b, instr, walk(kind), r);
+  // (#7609) The sealed global object's chain is the host's: the run-time abort.
+  const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
+    isSealed(kind) ? b.abort(instr, r) : boxed(b, instr, walk(kind), r);
   return b.kindChain(instr, argument, result, arm, b.kinds.kindsOf(argument), CARRIER);
 }
 

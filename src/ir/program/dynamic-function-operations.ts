@@ -24,6 +24,7 @@ import {
   IS_OBJECT,
   holdsFamily,
   isOrdinaryObject,
+  isSealed,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
@@ -69,6 +70,12 @@ function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly Carri
 /** A TypeError with `message`, then the arm's unread `answer` into `result`. */
 const throwing = (b: Builders, message: string, answer: (result: IrValueId) => IrInstr) => (result: IrValueId) =>
   typeErrorThen({ ...b, carrier: CARRIER }, message, answer(result));
+
+/** (#7609) The run-time abort as a Boolean answer into `result`, which reads the abort's text so it is not dead. */
+function sealedAnswer(b: Builders, instr: IrInstr, result: IrValueId): IrInstr[] {
+  const aborted = b.fresh();
+  return [...b.abort(instr, aborted), b.intrinsic(instr, "js.value.to_boolean", [aborted], result)];
+}
 
 /** Get(C, "prototype") of the once-evaluated function value `callee` into `prototype` (its own data property). */
 function getPrototype(b: Builders, callee: IrValueId, prototype: IrValueId): IrInstr[] {
@@ -221,10 +228,13 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     const prototype = b.fresh();
     const objectValue = holds(b, instr, value, b.objects);
     const prototypeObject = holds(b, instr, prototype, b.objects);
+    // (#7609) The sealed global object's chain is the host's: the run-time abort.
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
-        : functionChainAnswer(b, instr, holdsFamily(b.program, "error"), prototype, (t) => [unread(t)], s, BOOLEAN);
+        : isSealed(kind)
+          ? sealedAnswer(b, instr, s)
+          : functionChainAnswer(b, instr, holdsFamily(b.program, "error"), prototype, (t) => [unread(t)], s, BOOLEAN);
     const ordinary = (s: IrValueId): IrInstr[] => [
       ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,

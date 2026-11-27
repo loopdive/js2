@@ -65,6 +65,7 @@ import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import { scriptBlockFunctions } from "./annexb-block-function-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
+import { isScriptThis } from "./this-binding.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -335,6 +336,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly closureCodeStrictness?: CodeStrictness;
     /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
     readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
+    /** (#7609) A `this` of script code reads the realm's global object (`isScriptThis`). */
+    readonly globalObjectThis?: (expr: ts.Expression) => boolean;
   };
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
@@ -429,6 +432,7 @@ export function programDynamicContracts(
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
           dynamicForInPlan: () => FOR_IN_PLAN,
+          globalObjectThis: isScriptThis,
         }
       : {},
     result: (declaration) =>

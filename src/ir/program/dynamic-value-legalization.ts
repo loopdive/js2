@@ -52,7 +52,8 @@ import {
   realmIntrinsicOfHelper,
   type RealmConstruction,
 } from "./dynamic-realm-calls.js";
-import type { RealmConstructor } from "./builtin-prototype-keys.js";
+import { GLOBAL_OBJECT_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
+import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -63,6 +64,7 @@ import {
   admittedKinds,
   carrierKindOf,
   holdsFamily,
+  isSealed,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -224,7 +226,9 @@ export function legalizeDynamicValues(
           (kind, result) => {
             if (kind === "object" && program.objects.namesSymbol)
               gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-            if (kind !== "object" || !errors) return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
+            const tag = OBJECT_TAG[kind];
+            if (tag === undefined) return [intrinsic(instr, "js.value.unsupported", [], result)];
+            if (kind !== "object" || !errors) return [text(`[object ${tag}]`, result)];
             // (#7354 G1) An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9).
             const isError = fresh();
             return [
@@ -255,6 +259,9 @@ export function legalizeDynamicValues(
         return dynamicMemberWrite(memberAccess, instr);
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
+      // (#7609) The realm's global object (`this` at script level).
+      case "dyn.global_object":
+        return builders.realmIntrinsic(GLOBAL_OBJECT_ID, instr.result!);
       case "dyn.arguments_length":
       case "dyn.publish_argc":
         return argumentsCount(functionOperations, instr);
@@ -283,6 +290,24 @@ export function legalizeDynamicValues(
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
+        // (#7609) A for-in's key snapshot reads its receiver's keys: the run-time abort on the sealed global object.
+        const forInSealed =
+          irOrdinaryObjectCallableDeclaration(instr.target)?.feature === "js.object.for-in-keys"
+            ? kinds.kindsOf(instr.args[0]!).filter(isSealed)
+            : [];
+        if (forInSealed.length !== 0) {
+          const holdsSealed = fresh();
+          return [
+            ...anyKind(instr, forInSealed, instr.args[0]!, holdsSealed),
+            builders.branch(
+              holdsSealed,
+              (r) => builders.abort(instr, r),
+              (r) => [{ ...instr, result: r }],
+              instr.result!,
+              CARRIER,
+            ),
+          ];
+        }
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const ctor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
         if (ctor !== undefined) return realmConstruction(instr, ctor, instr.args.slice(2));

@@ -224,15 +224,35 @@ const legacyProperty = (row: NativeRealmProperty): NativeRealmProperty => ({
 });
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
 /**
- * (#7354 G1) The function values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)`
- * numbers them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a)
- * the wrapper constructors. Positional: new rows are appended.
+ * (#7609) §9.3.1 [[GlobalObject]], the value of `this` at script level. The realm models only its identity: the
+ * Prepared path seals it (every keyed operation on it is the run-time abort), so the row lists no property. Its
+ * [[Prototype]] is implementation-defined (§19); the realm links it to Object.prototype. The row brings itself: the
+ * realm holds it where the program reads it.
+ */
+export const GLOBAL_OBJECT_ID = "%GlobalObject%";
+const globalObjectRow: NativeRealmIntrinsic = {
+  id: GLOBAL_OBJECT_ID,
+  heldWith: GLOBAL_OBJECT_ID,
+  aliases: [GLOBAL_OBJECT_ID],
+  prototype: objectPrototype,
+  extensible: true,
+  immutablePrototype: false,
+  constructible: false,
+  normativeOptional: false,
+  legacy: false,
+  properties: [],
+};
+/**
+ * (#7354 G1) The values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)` numbers
+ * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a) the
+ * wrapper constructors, (#7609) the global object. Positional: new rows are appended.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
   ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
   realmMethodId("Error.prototype", errorToString[0]),
   ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`),
+  GLOBAL_OBJECT_ID,
 ]);
 /**
  * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a constructor (length 1, own `prototype` read only; a NativeError's
@@ -568,6 +588,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ]),
     ...NATIVE_ERROR_CONSTRUCTORS.flatMap(errorRows),
     ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap(wrapperRows),
+    globalObjectRow,
   ];
   return rows.map((row) => ({
     ...row,

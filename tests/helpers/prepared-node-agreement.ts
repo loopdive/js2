@@ -81,14 +81,16 @@ export async function runPrepared(
 }
 
 /**
- * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns. The
- * realm's RuntimeError class is not this vitest context's, so the trap is matched by its class name.
+ * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns
+ * (`node`: (#7609) a script in a fresh realm, for a program that writes the global object). The realm's RuntimeError
+ * class is not this vitest context's, so the trap is matched by its class name.
  */
 export async function abortsAtRunTime(
   source: string,
   options: Test262CompileOptions = preparedOptions(),
+  node: (source: string) => unknown = (body) => new Function(body)(),
 ): Promise<void> {
-  expect(() => new Function(source)()).not.toThrow();
+  expect(() => node(source)).not.toThrow();
   await yieldToRpc();
   const result = await compile(source, options);
   expect(errors(result)).toEqual([]);
