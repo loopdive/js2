@@ -25,7 +25,6 @@ import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
-import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import { realmConstantRead } from "./realm-static-call.js";
 
 type Carries = (expression: ts.Expression) => boolean;
@@ -38,19 +37,20 @@ export interface SourceDynamicProvenance {
 }
 
 /**
- * The provenance of a program's `sourceFiles`. Without a `dynamicCarrier` on the lane no script `var` gets the
- * dynamic home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value;
+ * The provenance of a program, over its `startupSources` (see `irOwnedScriptVarHome`); `pristine` is the program's
+ * `pristineBuiltinGlobal`, over every source. Without a `dynamicCarrier` on the lane no script `var` gets the dynamic
+ * home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value;
  * `parameterIsDynamic` the parameter contract.
  */
 export function sourceDynamicProvenance(
   checker: ts.TypeChecker,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
+  pristine: (identifier: ts.Identifier) => boolean,
   dynamicCarrier: boolean,
   resultIsDynamic: (declaration: ts.FunctionDeclaration, carries: Carries) => boolean,
   parameterIsDynamic: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => boolean,
 ): SourceDynamicProvenance {
   const any = checker.getAnyType();
-  const pristine = pristineBuiltinGlobal(checker, sourceFiles);
   const homes = new Map<IrModuleBindingDeclaration, IrScriptVarHome | undefined>();
   const locals = new Map<ts.VariableDeclaration, boolean>();
   const results = new Map<ts.FunctionDeclaration, boolean>();
@@ -71,7 +71,7 @@ export function sourceDynamicProvenance(
       write.kind === "value" ? carries(write.expr, declaration) : write.kind !== "numeric",
     ) ??
       true);
-  const classify = irOwnedScriptVarHome(checker, sourceFiles, dynamicCarrier ? storesCarry : undefined);
+  const classify = irOwnedScriptVarHome(checker, startupSources, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
   // from-ast is the authority on a local: it types the local from the value it is created with (or its syntactic

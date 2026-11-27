@@ -605,6 +605,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
   /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
+  /**
+   * (#7363 A2) The module-init of the called script that holds this direct eval's literal text
+   * (`src/ir/eval-literal.ts`): `null` when the text runs nothing; undefined when the call has no such script.
+   */
+  literalEvalCalledInit?(call: ts.CallExpression): IrFuncRef | null | undefined;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -7792,6 +7797,16 @@ function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null 
   return null;
 }
 
+/**
+ * (#7363 A4) A literal direct eval runs its text, a called script of the program (`init`: its module-init, `null` when
+ * the text runs nothing). Admission refused the program unless every site discards its value and the global `eval` is
+ * the realm's %eval% (`refuseUnadmittedLiteralEvalSites`), so the site is just that call.
+ */
+function lowerLiteralEvalCall(init: IrFuncRef | null, cx: LowerCtx): null {
+  if (init !== null) cx.builder.emitCall(init, [], null);
+  return null;
+}
+
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7861,9 +7876,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // call; the backend emits the mandated Wasm `drop` for its externref result.
     return result;
   }
-  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier)) {
+  const literalEvalInit = cx.resolver?.literalEvalCalledInit?.(expr);
+  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(literalEvalInit, cx);
+  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier))
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
-  }
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
     expression: expr,
     statementPosition,

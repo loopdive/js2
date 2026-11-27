@@ -68,6 +68,8 @@ export interface BuildIrModuleInitPlanInput {
   readonly deferTopLevelInit: boolean;
   /** (#7354 F1b) The declarations read as values whose homes this script's bindings hold. */
   readonly functionValues?: readonly ts.FunctionDeclaration[];
+  /** (#7363) The source holds a literal eval's text: its call site runs it, not startup (`src/ir/eval-literal.ts`). */
+  readonly called?: boolean;
   /** (#7377) Which `var` lists declare script vars (`isModuleInitVarList`): the pipeline's own model. */
   readonly scriptVarModel: ScriptVarModel;
   /** (#7372 2a) The script's Annex B block functions, whose homes follow the function values' (`blockFunctionBindings`). */
@@ -144,15 +146,18 @@ function invocationPolicy(
   executable: boolean,
   target: IrModuleInitTarget,
   deferTopLevelInit: boolean,
+  called: boolean,
 ): IrModuleInitInvocationPolicy {
   const kind: IrModuleInitInvocationKind = !executable
     ? "none"
-    : target === "wasi"
-      ? "wasi-start-export"
-      : deferTopLevelInit
-        ? "deferred-export"
-        : "wasm-start";
-  return Object.freeze({ target, kind, exactlyOnce: true });
+    : called
+      ? "called"
+      : target === "wasi"
+        ? "wasi-start-export"
+        : deferTopLevelInit
+          ? "deferred-export"
+          : "wasm-start";
+  return Object.freeze({ target, kind, exactlyOnce: kind !== "called" });
 }
 
 function collectReassignedTopLevelFunctions(
@@ -506,7 +511,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     liveSeeds: Object.freeze(liveSeeds),
     evaluations: Object.freeze(evaluations),
     exports: Object.freeze(exports),
-    invocation: invocationPolicy(executable, input.target, input.deferTopLevelInit),
+    invocation: invocationPolicy(executable, input.target, input.deferTopLevelInit, input.called === true),
     gaps: Object.freeze(gaps),
   });
   verifyIrModuleInitPlan(plan, sourceFile);
@@ -608,9 +613,17 @@ export function verifyIrModuleInitPlan(plan: IrModuleInitPlan, sourceFile: ts.So
   if (plan.executable !== (plan.liveSeeds.length > 0 || plan.evaluations.length > 0)) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "executable flag disagrees with planned entries");
   }
-  if ((plan.invocation.kind === "none") !== !plan.executable || plan.invocation.exactlyOnce !== true) {
+  if (
+    (plan.invocation.kind === "none") !== !plan.executable ||
+    plan.invocation.exactlyOnce !== (plan.invocation.kind !== "called")
+  ) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "module-init invocation policy is inconsistent");
   }
+}
+
+/** Whether the program's startup adapter runs this source's init; a called init runs at its call site instead. */
+export function runsAtStartup(plan: IrModuleInitPlan): boolean {
+  return plan.executable && plan.invocation.kind !== "called";
 }
 
 function duplicates(values: readonly string[], label: string): void {

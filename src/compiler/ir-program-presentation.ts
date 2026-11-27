@@ -22,6 +22,7 @@ import type { IrUnitId, IrBindingId } from "../shared/contracts/ir-identity.js";
 import type { ValType, TypeDef, Instr, ExportSignature } from "../ir/types.js";
 import type { PhysicalSetupPlan, PhysicalSignatureType } from "../ir/program-physical-plan.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
+import { runsAtStartup } from "../ir/module-init-plan.js";
 import type { WasmModule } from "../ir/types.js";
 import type { IrType } from "../ir/core/types.js";
 import { runIrProgramDriver } from "./ir-program-driver.js";
@@ -719,7 +720,7 @@ function joinStartup(
   gap: GapRecorder,
 ): IrProgramPresentationStartup {
   const mod = emission.module;
-  const executable = program.startup.filter((row) => row.executable);
+  const executable = program.startup.filter(runsAtStartup);
   if (
     program.startup.length !== program.inventory.sources.length ||
     program.startup.some(

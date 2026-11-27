@@ -19,6 +19,7 @@ import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-loweri
 import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { demoteToLegacy } from "./outcomes.js";
+import { irUnitFuncRef } from "./core/callable-bindings.js";
 import type { AbortBodies } from "./abort-bodies.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -69,6 +70,8 @@ export interface SourceUnitLowering {
   readonly sourceMap: ((unit: TerminalUnit) => IrFunctionSourceMapContext) | undefined;
   /** (#7354 U) The `unlowerableBodies` policy, when switched on. */
   readonly abortBodies: AbortBodies | undefined;
+  /** (#7363) Each literal eval site's called source, which holds its text (`src/ir/eval-literal.ts`). */
+  readonly literalEvalCalls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
 }
 
 type LoweredSourceUnit = {
@@ -99,6 +102,7 @@ function lowerUnitOnce(
   abortBodies: AbortBodies | undefined,
 ): LoweredSourceUnit {
   const { input, identity, dynamicContracts } = lowering;
+  const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
     let symbol = input.checker.getSymbolAtLocation(node);
     const imported = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0;
@@ -121,7 +125,15 @@ function lowerUnitOnce(
     sourceClosureCallableParameter: (node) => lowering.closureCallableParameters.has(node),
     resolveModuleBinding: resolveBinding,
     scriptVarModel: () => "with-for-in-heads",
-    moduleInitFunctionValues: () => lowering.functionValues,
+    // (#7363) This script's: a called eval source makes none, so a call of it never remakes a function object.
+    moduleInitFunctionValues: () =>
+      lowering.functionValues.filter((value) => value.declaration.getSourceFile() === source),
+    literalEvalCalledInit: (call) => {
+      const called = lowering.literalEvalCalls.get(call);
+      if (!called) return undefined;
+      const unitId = identity.moduleInitUnitIdBySourceFile.get(called);
+      return unitId ? irUnitFuncRef({ unitId, name: identity.terminalByUnitId.get(unitId)!.displayName }) : null;
+    },
     annexBBlockFunctionHomes: (declaration) => lowering.blockFunctionHomes?.homesOf(declaration),
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
@@ -139,7 +151,6 @@ function lowerUnitOnce(
     ...dynamicContracts.resolver,
     ...(abortBodies ? { abortedBody: (fn) => abortBodies.has(fn) } : {}),
   };
-  const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const moduleInit = unit.kind === "module-init";
   const declaration = moduleInit
     ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
