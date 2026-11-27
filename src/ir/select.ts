@@ -240,7 +240,7 @@ import {
   sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
-import { collectBindingPatternNames } from "./analysis/ast-scope.js";
+import { argumentsObjectOwner, collectBindingPatternNames, ownArgumentsObjectUse } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -3018,39 +3018,17 @@ let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
 // resolve a callee's MISSING formals with the same verdict its own claim uses.
 let currentClaimTypeMap: TypeMap | undefined;
 
-/** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
-function functionBodyReferencesArguments(body: ts.Node): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isIdentifier(node) && node.text === "arguments") {
-      found = true;
-      return;
-    }
-    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node))) return;
-    ts.forEachChild(node, visit);
-  };
-  visit(body);
-  return found;
-}
-
 /**
- * (#7106 S1e) `arguments.length` read by the claimed top-level function's OWN
- * body (an arrow inside it inherits the binding and is admitted; a nested
- * `function` has its own `arguments` and is not), unshadowed, on a lane with
- * the argc-protocol wrapper. Every other `arguments` use stays rejected.
+ * (#7106 S1e) `arguments.length` read by the claimed top-level function's own arguments object (an arrow inside it
+ * inherits the object; a nested `function` has its own), when that is its only use of the object, on a lane with the
+ * argc-protocol wrapper. Every other `arguments` use stays rejected.
  */
-function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
-  if (currentArgumentsSubject === null) return false;
-  if (!ts.isIdentifier(expr.name) || expr.name.text !== "length") return false;
-  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "arguments") return false;
-  if (scope.has("arguments")) return false;
-  if (currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") !== true) return false;
-  for (let cur: ts.Node | undefined = expr.parent; cur; cur = cur.parent) {
-    if (cur === currentArgumentsSubject) return true;
-    if (ts.isFunctionDeclaration(cur) || ts.isFunctionExpression(cur) || ts.isMethodDeclaration(cur)) return false;
-  }
-  return false;
+function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression): boolean {
+  if (currentArgumentsSubject === null || !ts.isIdentifier(expr.expression)) return false;
+  if (expr.name.text !== "length" || expr.expression.text !== "arguments") return false;
+  if (argumentsObjectOwner(expr.expression) !== currentArgumentsSubject) return false;
+  if (ownArgumentsObjectUse(currentArgumentsSubject) !== "length") return false;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
 /** Resolve whether param `argIdx` of local function `calleeName` is dynamic
@@ -3090,7 +3068,7 @@ function underArityDirectCallIsBuildable(
   // A callee that can reach direct `eval` consumes `__argc` even without a
   // lexical `arguments` read (legacy's `reachesDirectEval`); keep it legacy.
   if (subtreeMentionsIdentifier(declaration.body, "eval")) return false;
-  if (!readsOwnArgumentsObject(declaration)) return true;
+  if (ownArgumentsObjectUse(declaration) === "none") return true;
   return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
@@ -3103,17 +3081,6 @@ function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   };
   visit(root);
   return found;
-}
-
-/**
- * (#7106 S1i, #7562) Does `fn` read its own arguments object (legacy's `needsImplicitArgumentsObject` for fixed
- * formals)? Its body names `arguments` and no formal shadows it. The one test for both halves of the count protocol:
- * such a function takes `__argc` at entry, and every direct call to it publishes the count first.
- */
-export function readsOwnArgumentsObject(fn: ts.FunctionLikeDeclaration): boolean {
-  if (!fn.body) return false;
-  if (fn.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
-  return functionBodyReferencesArguments(fn.body);
 }
 
 function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeMap | undefined): boolean {
@@ -13497,7 +13464,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPropertyAccessExpression(expr)) {
     if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
-    if (phase1ArgumentsLengthRead(expr, scope)) return true;
+    if (phase1ArgumentsLengthRead(expr)) return true;
     // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.
     if (ts.isIdentifier(expr.expression) && !scope.has(expr.expression.text) && ambientNamespaceConstantRead(expr)) {
       return true;

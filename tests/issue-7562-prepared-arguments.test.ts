@@ -43,6 +43,12 @@ describe("#7562 — arguments.length", () => {
         " return n + ',' + arguments.length; } var g = p, e = d, h = c;" +
         " var out = String(p(4)) + g(4, 5) + (d(4) + e(5, 6)) + h(1, 2);",
     ],
+    [
+      "`arguments` as a property name, an object-literal key and a label",
+      "function f(a) { return a.arguments; } function k(a) { var o = { arguments: 1 }; return o.arguments + a; }" +
+        " function l(a) { arguments: for (;;) { break arguments; } return a; } var g = f, h = k, m = l;" +
+        " var out = '' + g({ arguments: 7 }) + h(2) + m(3);",
+    ],
   ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
 
   it.each([
@@ -75,6 +81,36 @@ describe("#7562 — arguments.length", () => {
       "a function expression's `var arguments`",
       "var g = function (a) { var arguments; return arguments.length; }; g(1, 2);",
     ],
+    // A non-arrow function's own `arguments` hides every outer binding of that name.
+    [
+      "a function expression inside a function with a parameter `arguments`",
+      "function p(arguments) { var q = function (b) { return arguments.length; }; return '' + q(1); } var g = p; g(5, 6);",
+    ],
+    [
+      "a function expression inside a block with `let arguments`",
+      "function p(a) { if (a) { let arguments = 'abcde'; var q = function (b) { return arguments.length; };" +
+        " return '' + q(1); } return ''; } var g = p; g(1, 2);",
+    ],
+    [
+      "a nested function declaration, called as a method",
+      "function p(arguments) { function q(b) { return arguments.length; } var o = { m: q }; return '' + o.m(1); }" +
+        " var g = p; g(5, 6);",
+    ],
+    [
+      "three levels deep, constructed with `new`",
+      "function p(arguments) { var q = function () { var C = function (c) { this.n = arguments.length; };" +
+        " return new C(1, 2, 3).n; }; return '' + q(); } var g = p; g(5);",
+    ],
+    [
+      "an inner function writing the outer `arguments.length`",
+      "function p(arguments) { var q = function () { arguments.length = 7; return 1; }; q(); return arguments.length; }" +
+        " var g = p; g('abc');",
+    ],
+    ["an assignment to `arguments`", "function f(a) { arguments = 5; return arguments.length; } var g = f; g(1, 2);"],
+    [
+      "a read inside `with`",
+      "function f(o) { with (o) { return arguments.length; } } var g = f; g({ arguments: 'abc' });",
+    ],
   ])("%s ends at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
 
   it.each([
@@ -88,6 +124,7 @@ describe("#7562 — arguments.length", () => {
       "function f(a, b) { return arguments.length; } f(1, 2);",
     ],
     ["a getter's arguments", "var o = { get x() { return arguments.length; } }; o.x;"],
+    ["a destructured formal named `arguments`", "function p({ arguments }) { return arguments; } var g = p; g({});"],
   ])(
     "%s refuses",
     async (_label, source) => {

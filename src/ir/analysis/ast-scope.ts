@@ -299,3 +299,98 @@ function declaredFunctionNames(scope: ts.Node, names: Set<string>): void {
     else if (!isFunctionScopeBoundary(child)) declaredFunctionNames(child, names);
   });
 }
+
+/**
+ * (#7562) The function whose own arguments object the `arguments` identifier `reference` names, or `undefined` when
+ * a declaration binds the name first or none does (a global read). Every function but an arrow binds `arguments`
+ * itself (§10.2.11), so the walk out from the reference ends at the first such function unless a nearer scope
+ * declares the name: a block's lexical or function declaration, a loop head's, a catch binding, a parameter, an
+ * arrow's `var`. A function's own `var arguments` does not end it: that binding starts as the object.
+ */
+export function argumentsObjectOwner(reference: ts.Identifier): ts.SignatureDeclaration | undefined {
+  for (let scope = reference.parent; !ts.isSourceFile(scope); scope = scope.parent) {
+    const names = new Set<string>();
+    if (ts.isArrowFunction(scope)) collectFunctionOwnLocals(scope, names);
+    else if (isFunctionScopeBoundary(scope))
+      for (const parameter of (scope as ts.SignatureDeclaration).parameters) addBindingNames(parameter.name, names);
+    for (const declaration of lexicalDeclarations(scope)) addBlockScopedNames(declaration, names);
+    if (names.has("arguments")) return undefined;
+    if (isFunctionScopeBoundary(scope) && !ts.isArrowFunction(scope)) return scope as ts.SignatureDeclaration;
+  }
+  return undefined;
+}
+
+/** The names `declaration` binds in its own block: a lexical, class or function declaration's, not a `var`'s. */
+function addBlockScopedNames(declaration: ts.Node, names: Set<string>): void {
+  if (ts.isFunctionDeclaration(declaration) && declaration.name) names.add(declaration.name.text);
+  const list = ts.isVariableStatement(declaration) ? declaration.declarationList : declaration;
+  if (!ts.isVariableDeclarationList(list) || !isVarList(list)) addLexicalNames(declaration, names);
+}
+
+/** How a function uses its own arguments object: not at all, only by reading `arguments.length`, or otherwise. */
+export type ArgumentsObjectUse = "none" | "length" | "other";
+
+const argumentsObjectUses = new WeakMap<ts.SignatureDeclaration, ArgumentsObjectUse>();
+
+/**
+ * (#7562) How `fn` (its parameters and body, nested arrows included) uses its own arguments object. Anything but a
+ * read of `arguments.length` is "other": the object as a value, an index, a write, a `var arguments`, a name inside
+ * `with` (the object there may bind it).
+ */
+export function ownArgumentsObjectUse(fn: ts.SignatureDeclaration): ArgumentsObjectUse {
+  const cached = argumentsObjectUses.get(fn);
+  if (cached !== undefined) return cached;
+  let use: ArgumentsObjectUse = "none";
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === "arguments") {
+      if (namesBinding(node) && argumentsObjectOwner(node) === fn)
+        use = use !== "other" && readsLength(node) && !withinWith(node, fn) ? "length" : "other";
+    } else if (!isFunctionScopeBoundary(node) || ts.isArrowFunction(node)) forEachChild(node, visit);
+  };
+  forEachChild(fn, visit);
+  argumentsObjectUses.set(fn, use);
+  return use;
+}
+
+/** Whether `identifier` names a binding: a reference or a declared name, not a property name or a label. */
+function namesBinding(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (ts.isBindingElement(parent)) return parent.propertyName !== identifier;
+  if (ts.isShorthandPropertyAssignment(parent) || ts.isVariableDeclaration(parent)) return true;
+  const named = parent as { name?: ts.Node; label?: ts.Node; propertyName?: ts.Node };
+  return named.name !== identifier && named.label !== identifier && named.propertyName !== identifier;
+}
+
+/**
+ * Whether `reference` is the object of an `arguments.length` read: not written, deleted or incremented, and not in a
+ * literal or loop head that may be a destructuring or for-in target.
+ */
+function readsLength(reference: ts.Identifier): boolean {
+  let access: ts.Node = reference.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.name.text !== "length") return false;
+  while (ts.isParenthesizedExpression(access.parent)) access = access.parent;
+  const user = access.parent;
+  if (ts.isBinaryExpression(user))
+    return (
+      user.left !== access ||
+      user.operatorToken.kind < ts.SyntaxKind.FirstAssignment ||
+      user.operatorToken.kind > ts.SyntaxKind.LastAssignment
+    );
+  if (ts.isPrefixUnaryExpression(user))
+    return user.operator !== ts.SyntaxKind.PlusPlusToken && user.operator !== ts.SyntaxKind.MinusMinusToken;
+  return !(
+    ts.isPostfixUnaryExpression(user) ||
+    ts.isDeleteExpression(user) ||
+    ts.isArrayLiteralExpression(user) ||
+    ts.isObjectLiteralElementLike(user) ||
+    ts.isSpreadElement(user) ||
+    ts.isForInStatement(user) ||
+    ts.isForOfStatement(user)
+  );
+}
+
+function withinWith(node: ts.Node, fn: ts.Node): boolean {
+  for (let current = node.parent; current !== fn; current = current.parent)
+    if (ts.isWithStatement(current)) return true;
+  return false;
+}

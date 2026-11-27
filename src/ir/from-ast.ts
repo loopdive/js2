@@ -335,7 +335,8 @@ import {
   type WrapperAmbience,
   type WrapperConstruction,
 } from "./wrapper-construction.js";
-import { collectPatternBindingNames, resolvesToSourceBinding } from "./analysis/ast-scope.js";
+import { collectPatternBindingNames, ownArgumentsObjectUse, resolvesToSourceBinding } from "./analysis/ast-scope.js";
+import { argumentsLengthRead, refuseArgumentsObjectUse } from "./arguments-object.js";
 import {
   isPatternDeclaration,
   planElementReads,
@@ -358,7 +359,6 @@ import {
   mixedPrimitiveConditionalArms,
   type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
   effectiveIrParamTypeNode,
-  readsOwnArgumentsObject,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -1935,6 +1935,7 @@ export function lowerFunctionAstToIr(
     scope.set("this", { kind: "local", value: constructorInitSelf, type: selfType });
   }
   if (options.resolver?.abortedBody?.(fn)) return { main: abortBody(builder), lifted: [], liftedUnitProvenance: [] };
+  refuseArgumentsObjectUse(fn, options.unselected, name);
 
   builder.openBlock();
 
@@ -1987,7 +1988,7 @@ export function lowerFunctionAstToIr(
   const cx: LowerCtx = {
     ...sourceScope,
     builder,
-    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && readsOwnArgumentsObject(fn)
+    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && ownArgumentsObjectUse(fn) !== "none"
       ? { argumentsLength: {} }
       : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
@@ -2077,8 +2078,7 @@ export function lowerFunctionAstToIr(
     return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
-  // (#7106 S1e) `arguments.length` is read at ENTRY, before any nested call
-  // can clobber the call site's published count — exactly legacy's prologue.
+  // (#7106 S1e) The count is read at entry, before a nested call can replace it (legacy's prologue).
   if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
   // (#7106 S3c) OrdinaryCallBindThis binds `this` once, at entry.
   if (options.ambientThisStrict !== undefined && ts.isFunctionDeclaration(fn) && !options.moduleInitUnit) {
@@ -6281,24 +6281,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
   const builtinProtoMember = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
   if (builtinProtoMember !== null) return builtinProtoMember;
-  // (#7106 S1e) `arguments.length` — the entry-time count (selector-admitted
-  // only in the claimed function's own body, unshadowed).
-  if (
-    ts.isIdentifier(expr.name) &&
-    expr.name.text === "length" &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "arguments" &&
-    !cx.scope.has("arguments")
-  ) {
-    const entry = cx.argumentsLength?.value;
-    if (entry === undefined) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: arguments.length outside its function's entry prologue (${cx.funcName})`,
-      );
-    }
-    return entry;
-  }
+  const argumentsLength = argumentsLengthRead(expr, cx.argumentsLength?.value, cx.funcName); // (#7562)
+  if (argumentsLength !== undefined) return argumentsLength;
   const constant = constantMemberRead(expr, (name) => cx.scope.has(name), cx.resolver, functionObjectLoweringHost(cx));
   if (constant !== undefined) return cx.builder.emitConst({ kind: "f64", value: constant }, irVal({ kind: "f64" }));
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
@@ -8111,7 +8095,7 @@ function planDirectCallArgumentCount(
   ) {
     return null;
   }
-  return { publishArgc: readsOwnArgumentsObject(declaration) };
+  return { publishArgc: ownArgumentsObjectUse(declaration) !== "none" };
 }
 
 /**
@@ -16952,6 +16936,7 @@ function liftClosureBody(
     ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
   };
   if (cx.resolver?.abortedBody?.(expr)) return abortBody(builder, closureSubtype);
+  refuseArgumentsObjectUse(expr, cx.unselected, liftedName);
 
   builder.openBlock();
   if (functionMemberClosure) {

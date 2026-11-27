@@ -97,10 +97,8 @@ const repeatedNames = new WeakMap<ts.Node, ReadonlySet<string>>();
 
 /**
  * (#7354) Whether the `var` `declaration` shares its name with another binding of its function (or script): a
- * second `var` at any block depth, a parameter, a function, class, catch or lexical declaration, or (#7562) the
- * implicit `arguments` of a function that is not an arrow (§10.2.11 step 27 starts such a `var` as the arguments
- * object). Lowering binds a `var` in its own block, so a repeat would open a second, separate local where
- * JavaScript has one hoisted binding.
+ * second `var` at any block depth, a parameter, a function, class, catch or lexical declaration. Lowering binds a
+ * `var` in its own block, so a repeat would open a second, separate local where JavaScript has one hoisted binding.
  */
 export function isRepeatedVarBinding(declaration: ts.VariableDeclaration, name: string): boolean {
   if (!ts.isVariableDeclarationList(declaration.parent) || !isVarDeclarationList(declaration.parent)) return false;
@@ -110,11 +108,9 @@ export function isRepeatedVarBinding(declaration: ts.VariableDeclaration, name: 
   if (!names) {
     const body = isFunctionBoundary(owner) ? (owner as ts.FunctionLikeDeclaration).body! : owner;
     const parameters = new Map<string, number>();
-    if (isFunctionBoundary(owner)) {
-      if (!ts.isArrowFunction(owner)) parameters.set("arguments", 1);
+    if (isFunctionBoundary(owner))
       for (const parameter of (owner as ts.FunctionLikeDeclaration).parameters)
         addBindingNames(parameter.name, parameters);
-    }
     const { bindingCounts } = collectBindings(body, parameters.keys());
     names = new Set([...bindingCounts].flatMap(([name, count]) => (count > 1 ? [name] : [])));
     repeatedNames.set(owner, names);
