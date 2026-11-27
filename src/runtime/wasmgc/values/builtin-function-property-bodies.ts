@@ -8,6 +8,7 @@ import {
   type BuiltinFunctionDefinition,
 } from "./builtin-function-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionPropertyOperands extends BuiltinFunctionBodyOperands {
   readonly entryTypeIdx: number;
@@ -31,13 +32,48 @@ function bag(d: BuiltinFunctionPropertyOperands): Instr[] {
 function entryField(d: BuiltinFunctionPropertyOperands, local: number, fieldIdx: number): Instr[] {
   return [...nonnull(local), { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx }];
 }
+/** (#7350 B3a) Whether the realm holds an entry the catalog models only as an identity. */
+const holdsIdentityOnly = (d: BuiltinFunctionPropertyOperands): boolean =>
+  d.entries.some((entry) => entry.identityOnly);
+/**
+ * The own entry of `key` in the object's storage (a function's bag), or null. (#7350 B3a) A miss in an identity-only
+ * bag (`BUILTIN_IDENTITY_ONLY_FLAG`) is unknown, so it aborts: every own query (the lookup of [[Get]], [[HasProperty]]
+ * and [[Set]], HasOwnProperty, [[GetOwnProperty]], a define) passes here, and none may answer absent or create the
+ * property. The test is emitted only where the realm holds such an entry.
+ */
 export function buildBuiltinFunctionFindOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
-  return { locals: [], body: [...bag(d), get(1), call(d.findOrdinary)] };
+  if (!holdsIdentityOnly(d)) return { locals: [], body: [...bag(d), get(1), call(d.findOrdinary)] };
+  const entry = 2;
+  return {
+    locals: [{ name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } }],
+    body: [
+      ...bag(d),
+      get(1),
+      call(d.findOrdinary),
+      { op: "local.tee", index: entry },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: empty,
+        then: [
+          ...bag(d),
+          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+          n(BUILTIN_IDENTITY_ONLY_FLAG),
+          { op: "i32.and" },
+          { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
+        ],
+      },
+      get(entry),
+    ],
+  };
 }
 export function buildBuiltinFunctionHasOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
   return { locals: [], body: [get(0), get(1), call(d.findOwn), { op: "ref.is_null" }, { op: "i32.eqz" }] };
 }
-/** Returns the logical target, never its implementation bag. */
+/**
+ * Returns the logical target, never its implementation bag. (#7350 B3a) Where the realm holds an identity-only entry,
+ * the key is first looked up among the target's own properties, so a define of a key such an entry misses aborts.
+ */
 export function buildBuiltinFunctionDefine(
   d: BuiltinFunctionPropertyOperands,
   kind: "data" | "accessor" | "attributes",
@@ -46,6 +82,7 @@ export function buildBuiltinFunctionDefine(
   return {
     locals: [],
     body: [
+      ...(holdsIdentityOnly(d) ? [get(0), get(1), call(d.findOwn), { op: "drop" } as Instr] : []),
       get(0),
       call(d.bag),
       ...Array.from({ length: count - 1 }, (_, index) => get(index + 1)),

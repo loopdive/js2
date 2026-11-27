@@ -24,6 +24,8 @@ import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-scri
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
+import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
+import { realmConstantRead } from "./realm-static-call.js";
 
 type Carries = (expression: ts.Expression) => boolean;
 
@@ -47,6 +49,7 @@ export function sourceDynamicProvenance(
   parameterIsDynamic: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => boolean,
 ): SourceDynamicProvenance {
   const any = checker.getAnyType();
+  const pristine = pristineBuiltinGlobal(checker, sourceFiles);
   const homes = new Map<IrModuleBindingDeclaration, IrScriptVarHome | undefined>();
   const locals = new Map<ts.VariableDeclaration, boolean>();
   const results = new Map<ts.FunctionDeclaration, boolean>();
@@ -111,6 +114,8 @@ export function sourceDynamicProvenance(
     if (ts.isCallExpression(node)) return callCarries(node);
     if (ts.isConditionalExpression(node)) return carries(node.whenTrue, self) || carries(node.whenFalse, self);
     if (ts.isBinaryExpression(node)) return binaryCarries(node, self);
+    // (#7350 B3a) A constant a realm constructor holds (`Number.MAX_VALUE`) is folded to its number.
+    if (ts.isPropertyAccessExpression(node) && realmConstantRead(node, pristine) !== undefined) return false;
     switch (node.kind) {
       // Number, Boolean and (#7354 Str) string literals, and the prefix operators whose result is a number or a
       // Boolean whatever the operand (`-v`, `!v`, `++v`). Every other kind (members, calls of anything but a source

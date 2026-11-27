@@ -25,6 +25,7 @@ import type { FunctionValueGlobal } from "./function-declaration-values.js";
 import type { SourceClosureInvocationPlan } from "./source-closure-invocation.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
 import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
+import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import type { NativeAsyncSourceFamilies } from "./program-native-async-source.js";
@@ -194,7 +195,11 @@ function lowerUnitOnce(
     sourceRoots,
     [lowered.main, ...lowered.lifted],
     { declarationOf: (id) => identity.declarationByUnitId.get(id), aborted: (fn) => abortBodies?.has(fn) === true },
-    (call) => resolver.preparedIsNaNCall?.(call) === true,
+    (call) =>
+      [resolver.preparedIsNaNCall, resolver.preparedNumberCall, resolver.preparedBooleanCall].some(
+        (plan) => plan?.(call) === true,
+      ) ||
+      (ts.isIdentifier(call.expression) && resolver.isAmbientStringBinding?.(call.expression) === true),
   );
   return { lowered, functions };
 }
@@ -206,7 +211,12 @@ function prepareSourceBuiltinResolvers(
   carries: (expression: ts.Expression) => boolean,
 ) {
   return {
-    ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
+    ...prepareConversionResolvers(
+      input.checker,
+      input.sourceFiles,
+      roots,
+      pristineBuiltinGlobal(input.checker, input.sourceFiles),
+    ),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots, carries),
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
       ? {
