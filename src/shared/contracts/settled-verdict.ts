@@ -3,7 +3,7 @@
 // (#7354 Perf) The one mechanism by which a fail-closed currentness check of the Prepared path runs once instead of at
 // every use: a check that is a pure function of input which can no longer change keeps its verdict.
 //
-// A leaf of its own, as `dynamic-add-helper.ts` is: the IR's requirement checks and the WasmGC backend's reservation
+// A leaf of its own, as `dynamic-operator-helpers.ts` is: the IR's requirement checks and the WasmGC backend's reservation
 // checks both settle through it, and the backend may not import an IR module for that. The one IR fact it needs —
 // which objects are genuine frozen collections, and which are already known to be deeply frozen — are the caller's
 // (`preparedIrFrozenCollectionMembers`, `isDeeplyFrozenPreparedIrValue`, IR program data), bound once per side with

@@ -165,14 +165,14 @@ describe("#7354 R — the Prepared presentation's provider census", () => {
     expect(messages(result).join("\n")).toContain("js.number.box is unavailable under number-boundary policy");
   });
 
-  // (#7354 Str) String constants are selected now; the relational string compare is not.
-  it("still refuses a native family the presentation does not select (string compare)", async () => {
-    const result = await compile(
-      "function lt(a: string, b: string): boolean { return a < b; }\nexport function main(): number { return lt('a', 'b') ? 1 : 0; }",
-      options("standalone", "entry.ts"),
+  // (#7354 Str) String constants are selected now. (#7354 L0a) The presentation still selects no `js.string.compare`
+  // provider: a relational compare of typed strings takes the dynamic value's own code-unit compare.
+  it("compares typed strings without selecting the string-compare family", async () => {
+    const exports = await present(
+      "function lt(a: string, b: string): boolean { return a < b; }\nexport function main(): number { return (lt('a', 'b') ? 2 : 0) + (lt('b', 'a') ? 1 : 0); }",
+      "entry.ts",
     );
-    expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain("js.string.compare is unavailable");
+    expect((exports.main as () => number)()).toBe(2);
   });
 
   it("leaves a numeric-only program on the exact numeric contract (no detached finalization)", async () => {

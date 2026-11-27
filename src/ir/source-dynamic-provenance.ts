@@ -35,6 +35,8 @@ export interface SourceDynamicProvenance {
   readonly scriptVarHome: (declaration: IrModuleBindingDeclaration) => IrScriptVarHome | undefined;
   /** The value of `expression` may be the dynamic value. */
   readonly carries: Carries;
+  /** (#7354 L0b) The resolver's `localNeedsDynamicCarrier`: {@link rewrittenStringLocal} on the lane. */
+  readonly localNeedsDynamicCarrier: (declaration: ts.VariableDeclaration) => boolean;
 }
 
 /**
@@ -85,8 +87,12 @@ export function sourceDynamicProvenance(
       true,
       () =>
         syntacticAnnotation(declaration) === undefined &&
-        (declaration.initializer === undefined || carries(declaration.initializer, declaration)),
+        (declaration.initializer === undefined ||
+          carries(declaration.initializer, declaration) ||
+          localNeedsDynamicCarrier(declaration)),
     );
+  const localNeedsDynamicCarrier = (declaration: ts.VariableDeclaration): boolean =>
+    dynamicCarrier && rewrittenStringLocal(checker, declaration);
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
@@ -156,7 +162,24 @@ export function sourceDynamicProvenance(
         return false;
     }
   };
-  return { scriptVarHome, carries: (expression) => carries(expression) };
+  return { scriptVarHome, carries: (expression) => carries(expression), localNeedsDynamicCarrier };
+}
+
+/**
+ * (#7354 L0b) An unannotated function-level local created with a string and stored into again. The lane has no
+ * string slot (its string representation is the program's own type), so such a local lives in the carrier.
+ */
+function rewrittenStringLocal(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
+  const { name, initializer } = declaration;
+  return (
+    ts.isIdentifier(name) &&
+    initializer !== undefined &&
+    syntacticAnnotation(declaration) === undefined &&
+    !isTopLevelStatementDeclaration(declaration) &&
+    !isModuleInitVarList(declaration.parent) &&
+    (checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.StringLike) !== 0 &&
+    preparedBindingRewritten(checker, name)
+  );
 }
 
 /**

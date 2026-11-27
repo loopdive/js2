@@ -42,7 +42,15 @@ export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+/** (#7354 C2) The Boolean that `instanceof`, a comparison and the realm's tests answer (`TEST_RESULT` is unbranded). */
+export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+export const boolean = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
@@ -161,6 +169,18 @@ export function chainBuilders(
         : intrinsic(instr, test, [value], result),
     ];
   };
+  /**
+   * (#7354 C2) Whether the once-evaluated `value` is one of `of`, into a fresh value: the kind tests of those `value`
+   * may hold, or constant where it may hold all of them or none (`known`).
+   */
+  const holds = (instr: IrInstr, value: IrValueId, of: readonly CarrierKind[]) => {
+    const held = kinds.kindsOf(value);
+    const cond = fresh();
+    const tested = held.filter((kind) => of.includes(kind));
+    const known = tested.length === held.length ? true : tested.length === 0 ? false : undefined;
+    const instrs = known === undefined ? anyKind(instr, tested, value, cond) : [boolean(known, cond)];
+    return { instrs, cond, known };
+  };
   const text = (value: string, result: IrValueId): IrInstr => ({
     kind: "string.const",
     value,
@@ -255,6 +275,7 @@ export function chainBuilders(
     disjunction,
     anyKind,
     kindTest,
+    holds,
     text,
     branch,
     concat,
@@ -409,7 +430,18 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     );
     return { instrs, value: result };
   };
-  return { stringOf, toNumber, primitiveOf };
+  /**
+   * (#7354 L0a) The ToPrimitive of each once-evaluated operand in source order (`+`, the relational operators and
+   * loose equality convert the left operand first): the instructions, then the primitives they answer.
+   */
+  const primitivesOf = (instr: IrInstr, values: readonly IrValueId[]) => {
+    const converted = values.map((value) => primitiveOf(instr, value));
+    return {
+      instrs: converted.flatMap((operand) => operand.instrs),
+      values: converted.map((operand) => operand.value),
+    };
+  };
+  return { stringOf, toNumber, primitivesOf };
 }
 
 /**
@@ -421,7 +453,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
  */
 export function additionBuilder(builders: ChainBuilders, conversions: ReturnType<typeof conversionBuilders>) {
   const { kinds, intrinsic, fresh, kindTest, branch, disjunction } = builders;
-  const { stringOf, primitiveOf } = conversions;
+  const { stringOf, primitivesOf } = conversions;
   const concat = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
     const [left, right, text] = [fresh(), fresh(), fresh()];
     return [
@@ -441,9 +473,7 @@ export function additionBuilder(builders: ChainBuilders, conversions: ReturnType
     ];
   };
   return (instr: IrInstr, values: readonly IrValueId[], result: IrValueId): IrInstr[] => {
-    const converted = values.map((value) => primitiveOf(instr, value));
-    const prelude = converted.flatMap((operand) => operand.instrs);
-    const operands = converted.map((operand) => operand.value);
+    const { instrs: prelude, values: operands } = primitivesOf(instr, values);
     const roles = operands.map((value) => kinds.kindsOf(value).map((kind) => ADD_ROLE[kind]));
     if (roles.some((role) => role.every((r) => r === "concat"))) {
       // A concatenation is a known string to the next `+` of a chain (`"a" + v + "b"`). Legalization meets a value's
@@ -451,16 +481,16 @@ export function additionBuilder(builders: ChainBuilders, conversions: ReturnType
       kinds.learn(result, ["string"]);
       return [...prelude, ...concat(instr, operands, result)];
     }
-    // The front end makes a `+` dynamic only over an operand of unknown kind (`emitDynamicAdd` in from-ast), which
-    // may hold a string (an object's primitive may too), so at least one operand is tested here.
-    const { instrs, cond } = disjunction(
-      operands.flatMap((value) =>
-        kinds
-          .kindsOf(value)
-          .filter((kind) => ADD_ROLE[kind] === "concat")
-          .map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
-      ),
+    // Only a side that may hold a string is tested. (#7354 L0b) Since the Prepared lane boxes a known primitive (a
+    // `null`, a Boolean) into the `+`, neither side may: then the addition is the sum.
+    const tests = operands.flatMap((value) =>
+      kinds
+        .kindsOf(value)
+        .filter((kind) => ADD_ROLE[kind] === "concat")
+        .map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
     );
+    if (tests.length === 0) return [...prelude, ...sum(instr, operands, result)];
+    const { instrs, cond } = disjunction(tests);
     return [
       ...prelude,
       ...instrs,

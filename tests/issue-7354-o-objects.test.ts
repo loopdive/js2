@@ -61,16 +61,6 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
-/**
- * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
- * function becomes that function's abort body, and these cases are about the name of the refusal.
- */
-async function refusal(source: string): Promise<string> {
-  const result = await compile(source, options(), undefined, "refuse");
-  expect(result.success).toBe(false);
-  return messages(result).join("\n");
-}
-
 /** `check(answer)` is the program's own test of its result; node's answer is the first of `answers`. */
 const PROGRAMS: readonly { name: string; body: string; answers: readonly [string, string] }[] = [
   {
@@ -123,20 +113,17 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
     expect(await run(program(true))).toBe("threw");
   }, 120_000);
 
-  // Each refusal names the step that removes it (the slice plan in the #7354 issue file).
-  it("refuses what the later steps build, by name", async () => {
-    // O4 reads a script var's object (tests/issue-7354-o4-member-read.test.ts).
-    // O2: an object reaching a dynamic slot (here P's unannotated result).
-    expect(await refusal("function f(){ var o = { a: 1 }; return o; } f();")).toContain(
-      "concrete return needs a dynamic box in f",
-    );
-    // O3 writes members, a function-local object's too (tests/issue-7354-o3-member-write.test.ts).
-    // O4: a member read with no typed plan (here of a key the literal lacks) is a dynamic member read; (#7354 M1) it
-    // is legalized without a dynamic contract too and runs (tests/issue-7354-m-member-access.test.ts).
-    // A Boolean member read needs a Boolean unbox, which this presentation's policy does not offer.
-    expect(await refusal("function f(){ const o = { b: true }; return o.b ? 1 : 0; } f();")).toContain(
-      "semantic intrinsic js.boolean.unbox is unavailable",
-    );
+  // The refusals this file once listed are built now: O4 reads a script var's object
+  // (tests/issue-7354-o4-member-read.test.ts); O3 writes members (tests/issue-7354-o3-member-write.test.ts); a member
+  // read with no typed plan is a dynamic member read (#7354 M1, tests/issue-7354-m-member-access.test.ts); (#7354 L0a)
+  // a Boolean member read is the dynamic value (tests/issue-7354-l0a-relational.test.ts). O2: an object reaching a
+  // dynamic slot (P's unannotated result) refused `concrete return needs a dynamic box`; it is the dynamic value now.
+  it("returns a function-local object through an unannotated result", async () => {
+    const program = (wrong: boolean) =>
+      `function f(){ var o = { a: 1 }; return o; }\nvar r = f();\n` +
+      `if (r.a !== ${wrong ? 2 : 1} || typeof r !== "object" || f() === f()) throw 1;`;
+    expect(await run(program(false))).toBe("returned");
+    expect(await run(program(true))).toBe("threw");
   }, 120_000);
 });
 

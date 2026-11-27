@@ -216,7 +216,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   });
 
   it.each([
-    ["loose equality", "return id(1) == id(1) ? 1 : 0;", "dynamic operation dyn.eq (loose) has no Prepared intrinsic"],
+    // (#7354 L0a) Loose equality is expressed now (tests/issue-7354-l0a-loose-equality.test.ts).
     // (#7354 T) The null tag test and ToBoolean are expressed now (tests/issue-7354-t-truthiness-null.test.ts).
     // (#7354 Str2-c) Dynamic `+` is expressed now (tests/issue-7354-str2c-dynamic-add.test.ts).
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
@@ -230,7 +230,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     // (tests/issue-7354-ty-typeof-comparisons.test.ts, tests/issue-7354-str2-to-string.test.ts).
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
     ["`**` on the right", "return 2 ** id(3);", "'**' on a dynamic operand"],
-    ["a value-position prefix update", "let x: any = id(1); return ++x;", "value-position prefix update"],
+    // (#7354 L0b) A value-position update is expressed now (tests/issue-7354-l0b-expressions.test.ts).
     // (#7354 X) A thrown dynamic value is expressed now (tests/issue-7354-x-dynamic-throw.test.ts).
     // (#7354 O1, O3) A dynamic object field is read back as the dynamic value (the test below this table).
   ])("refuses %s by name", async (_label, body, expected) => {
@@ -364,6 +364,7 @@ describe("#7354 D1 — the native dynamic-value resources", () => {
     expect(selectNativeDynamicValues([probe("runtime")], true)).toEqual({
       strictEq: false,
       strictEqStrings: false,
+      stringCompare: false,
       toBoolean: false,
       undefinedValue: false,
       isUndefined: true,
