@@ -12,7 +12,7 @@ import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from 
 import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
-import { arrayLiteralOf, realmCall } from "./dynamic-realm-calls.js";
+import { isArrayLiteralCall, realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, F64, I32, STRING, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
@@ -57,7 +57,7 @@ export function knownKinds(
             ? carrierKindOf(i.value, types, definitions, i.toType.tag)
             : projected !== undefined
               ? carrierKindOf(projected, types, definitions)
-              : i.kind === "global.get" || arrayLiteralOf(i) !== undefined
+              : i.kind === "global.get" || isArrayLiteralCall(i)
                 ? carrierKindOf(i.result!, types, definitions)
                 : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, [kind]);

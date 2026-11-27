@@ -14,7 +14,7 @@ import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
-import { arrayLiteralOf } from "./dynamic-realm-calls.js";
+import { isArrayLiteralCall } from "./dynamic-realm-calls.js";
 import { ARRAY_ID, errorConstructorSelector, WRAPPER_IDS } from "./builtin-prototype-keys.js";
 
 /**
@@ -269,7 +269,7 @@ export function carrierKindOf(
   const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
   if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
   if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
-  if (arrayLiteralOf(definition) !== undefined) return "object";
+  if (isArrayLiteralCall(definition)) return "object";
   if (type?.kind === "dynamic") return type.tag === JS_TAG_IDS.Function ? "function" : "dynamic";
   if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";

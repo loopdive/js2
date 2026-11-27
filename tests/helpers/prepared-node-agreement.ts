@@ -88,7 +88,8 @@ export async function abortsAtRunTime(
   source: string,
   options: Test262CompileOptions = preparedOptions(),
 ): Promise<void> {
-  expect(() => new Function(source)()).not.toThrow();
+  // node's verdict in a fresh realm, so a program that writes a built-in leaves this context's untouched.
+  expect(() => runInNewContext(source, {})).not.toThrow();
   await yieldToRpc();
   const result = await compile(source, options);
   expect(errors(result)).toEqual([]);

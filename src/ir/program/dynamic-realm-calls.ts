@@ -35,29 +35,17 @@ export const realmIntrinsicHelper = (id: string): string => INTRINSIC_HELPER_PRE
 export const realmIntrinsicOfHelper = (symbol: string): string | undefined =>
   symbol.startsWith(INTRINSIC_HELPER_PREFIX) ? symbol.slice(INTRINSIC_HELPER_PREFIX.length) : undefined;
 
-const ARRAY_LITERAL_HELPER_PREFIX = "__ir_array_literal:";
-/** (#7354 A1) An array literal's shape: its length, and the index each present element (a call argument) stands at. */
-export interface ArrayLiteralShape {
-  readonly length: number;
-  readonly indices: readonly number[];
-}
 /**
- * (#7354 A1) The front end's helper symbol for an array literal of `shape`, whose arguments are its present elements'
- * values; the legalization writes it as the realm's array (`dynamic-realm-constructors.ts`), a dynamic value.
+ * (#7354 A1) The front end's helper symbol for an array literal: its operands are the literal's length (an f64, holes
+ * and a trailing elision counted), then each present element's index key (a string) and value, in source order. The
+ * legalization writes it as the realm's array (`arrayOf`), a dynamic value.
  */
-export const arrayLiteralHelper = (shape: ArrayLiteralShape): string =>
-  `${ARRAY_LITERAL_HELPER_PREFIX}${shape.length}:${shape.indices.join(",")}`;
-/** The literal shape `instr` builds, if it is the front end's helper call. */
-export const arrayLiteralOf = (instr: IrInstr | undefined): ArrayLiteralShape | undefined =>
-  instr?.kind === "call" && instr.target.binding.kind === "runtime"
-    ? arrayLiteralOfHelper(instr.target.binding.symbol)
-    : undefined;
-/** The literal shape a helper symbol builds, if it is one. */
-function arrayLiteralOfHelper(symbol: string): ArrayLiteralShape | undefined {
-  if (!symbol.startsWith(ARRAY_LITERAL_HELPER_PREFIX)) return undefined;
-  const [length, indices] = symbol.slice(ARRAY_LITERAL_HELPER_PREFIX.length).split(":") as [string, string];
-  return { length: Number(length), indices: indices === "" ? [] : indices.split(",").map(Number) };
-}
+export const ARRAY_LITERAL_HELPER = "__ir_array_literal";
+/** Whether `instr` is the front end's array literal helper call. */
+export const isArrayLiteralCall = (instr: IrInstr | undefined): boolean =>
+  instr?.kind === "call" &&
+  instr.target.binding.kind === "runtime" &&
+  instr.target.binding.symbol === ARRAY_LITERAL_HELPER;
 
 /** The builders a synthesized TypeError is written with. */
 export interface TypeErrorBuilders {

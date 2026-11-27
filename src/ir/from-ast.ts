@@ -993,8 +993,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   preparedOrdinaryPropertyRead?(
     expression: ts.PropertyAccessExpression,
   ): { readonly key: string; readonly resultType: IrType } | undefined;
-  /** (#7354 O1, A1) The literal is an ordinary object (an array) on the Prepared path. */
-  preparedOrdinaryObjectLiteral?(literal: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression): boolean;
+  /** (#7354 O1, A1) The literal is the realm's: an ordinary object, or an array, on the Prepared path. */
+  preparedRealmLiteral?(literal: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression): boolean;
   /**
    * #3787 checker identity for the global String constructor. JavaScript
    * inputs compiled without lib declarations may leave the identifier
@@ -4534,7 +4534,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   }
   let inferredEmptyArrayHint: IrType | undefined;
   const emptyLiteral = ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0;
-  if (annotated === undefined && emptyLiteral && !cx.resolver?.preparedOrdinaryObjectLiteral?.(d.initializer)) {
+  if (annotated === undefined && emptyLiteral && !cx.resolver?.preparedRealmLiteral?.(d.initializer)) {
     const inference = cx.emptyArrayInference.resultForLiteral(d.initializer);
     if (inference?.kind === "rejected") {
       demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
@@ -5611,7 +5611,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       countedPush?.capacity,
     );
   }
-  if (cx.resolver?.preparedOrdinaryObjectLiteral?.(expr) === true)
+  if (cx.resolver?.preparedRealmLiteral?.(expr) === true)
     return lowerPreparedArrayLiteral(expr, functionObjectLoweringHost(cx));
   // Elision stays out of scope. Spread is adopted (#4487) only for operands
   // whose element count is provable at compile time — see
@@ -6628,7 +6628,7 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
   if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
   // (#7354 O1) The Prepared backend has no closed object struct: a literal it owns is an ordinary object.
   if (
-    cx.resolver?.preparedOrdinaryObjectLiteral?.(expr) === true ||
+    cx.resolver?.preparedRealmLiteral?.(expr) === true ||
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
   ) {
     return lowerOrdinaryObjectLiteral(expr, cx);
@@ -7448,28 +7448,11 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
     }
   }
 
-  // #3053 U1 / #2949 S5.4 — indexed read `recv[key]` on a boxed-any (dynamic)
-  // receiver: route through the unified reader primitive
-  // `__dyn_member_get(recv, key)` (#3053 U0). A string-literal key boxes as a
-  // tag-5 string carrier; any other key is lowered concrete and boxed
-  // (`boxConcreteToDynamic` — a numeric index boxes tag-3, and the helper's own
-  // `__any_to_extern(key)` converts it to the decimal property key). `null` box
-  // (an ambiguous key kind) demotes cleanly to the throw below.
-  //
-  // MECHANISM ONLY (see the twin arm in `lowerPropertyAccess`): the selector's
-  // move-only scan rejects a dyn receiver in an element read until S5.P (U2),
-  // so this arm is unreached in a claimed function today — byte-inert.
+  // #3053 U1 / #2949 S5.4 — indexed read `recv[key]` on a dynamic receiver ((#7354 A1) a Prepared array among them):
+  // the unified reader (#3053 U0), a string-literal key as `.k`'s, any other key lowered concrete and boxed.
   if (recvType.kind === "dynamic") {
-    let key: IrValueId | null;
-    if (isStringLitKey) {
-      const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
-      key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
-    } else {
-      return dynamicIndexedRead(recv, arg, cx);
-    }
-    if (key !== null) {
-      return cx.builder.emitDynMemberGet(recv, key);
-    }
+    if (!isStringLitKey) return dynamicIndexedRead(recv, arg, cx);
+    return dynamicNamedPropertyRead(recv, (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text, cx);
   }
 
   // (#3565) DESIGNED slice-12 residual demote — an element READ on a
@@ -16080,7 +16063,7 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   }
   // (#7354 O2) An object literal the Prepared path builds as an ordinary object.
   const literal = peelParensExpr(operand);
-  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true)
+  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedRealmLiteral?.(literal) === true)
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
   return null;
 }

@@ -106,25 +106,15 @@ export function ordinaryToPrimitive(
     if (name !== "toString") return [...named, ...method(r)];
     // Only an absent `toString` has an answer of its own; an absent `valueOf` is skipped like any non-callable one.
     const held = b.fresh();
-    const absent =
-      kind === "object" ? objectAbsentToString(b, object, answer) : (s: IrValueId) => answer.text(undefined, s);
+    const absent = (s: IrValueId) => answer.text(kind === "object" ? "[object Object]" : undefined, s);
     return [...named, realmCall("js.object.has", [object, key], held), b.branch(held, method, absent, r, answer.type)];
   };
-  return step(0, result);
-}
-
-/**
- * An ordinary object's answer where it has no `toString`: Object.prototype's text, but (#7354 A1) an array's absent
- * `toString` is Array.prototype's (`join`), which the realm does not hold yet: the run-time abort.
- */
-function objectAbsentToString(b: ToPrimitiveBuilders, object: IrValueId, answer: ToPrimitiveAnswer) {
-  const text = (s: IrValueId) => answer.text("[object Object]", s);
-  const isArray = b.isArray;
-  if (!isArray) return text;
-  return (s: IrValueId): IrInstr[] => {
-    const array = b.fresh();
-    return [...isArray(object, array), b.branch(array, answer.unsupported, text, s, answer.type)];
-  };
+  // (#7354 A1) An array's `toString` is Array.prototype's (`join`, A1b), which the realm does not hold yet: whatever
+  // its chain holds (a program may write Object.prototype's `toString` / `valueOf`), an array aborts before any read.
+  const isArray = kind === "object" ? b.isArray : undefined;
+  if (!isArray) return step(0, result);
+  const array = b.fresh();
+  return [...isArray(object, array), b.branch(array, answer.unsupported, (r) => step(0, r), result, answer.type)];
 }
 
 /**

@@ -6,9 +6,17 @@
 // cannot classify (a string it does not hold, `"__proto__"`, an object key, a primitive receiver). Beside them, what does
 // answer agrees with node and a wrong answer throws.
 import { describe, expect, it } from "vitest";
-import { abortsAtRunTime, agreesWithNode, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import {
+  abortsAtRunTime,
+  agreesWithNode,
+  freshRealmOut,
+  refusal,
+  runnerOptions,
+} from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 300_000;
+const OP_TO_STRING = "Object.prototype.toString = function () { return 'z'; };";
+const OP_VALUE_OF = "Object.prototype.valueOf = function () { return 7; };";
 
 describe("#7354 A1 — array limits", () => {
   it("refuses a spread element by name", async () => {
@@ -27,6 +35,19 @@ describe("#7354 A1 — array limits", () => {
     ["a computed string key the realm does not hold", "var o = {}; var k = 'q'; var v = o[k];"],
     ["a computed write of __proto__", "var o = {}; var k = '__proto__'; o[k] = 1;"],
     ["an object key", "var a = [1]; var k = {}; var v = a[k];"],
+    // An array's ToPrimitive aborts before it reads `toString` / `valueOf`, whatever Object.prototype holds: node
+    // answers through Array.prototype's own `toString` ("1,2"), never Object.prototype's.
+    ["String() under a written Object.prototype.toString", `${OP_TO_STRING} var a = [1, 2]; var out = String(a);`],
+    [
+      "a function-local String() under a written Object.prototype.toString",
+      `${OP_TO_STRING} function f() { var a = [1, 2]; return String(a); } var out = f();`,
+    ],
+    ["concatenation under a written Object.prototype.toString", `${OP_TO_STRING} var a = [1, 2]; var out = a + "";`],
+    ["a computed key under a written Object.prototype.toString", `${OP_TO_STRING} var o = { z: 1 }; var v = o[[1]];`],
+    ["unary + under a written Object.prototype.valueOf", `${OP_VALUE_OF} var out = +[1];`],
+    ["Number() under a written Object.prototype.valueOf", `${OP_VALUE_OF} var a = [1]; var out = Number(a);`],
+    ["a relational under a written Object.prototype.valueOf", `${OP_VALUE_OF} var a = [1]; var out = a < 8 ? 1 : 2;`],
+    ["isNaN under a written Object.prototype.valueOf", `${OP_VALUE_OF} var a = [1]; var out = isNaN(a);`],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
 
   // A function-local array is the same dynamic value as a script-level one: for-of needs the iteration protocol, so
@@ -66,6 +87,19 @@ describe("#7354 A1 — array limits", () => {
       "function f() { var a = [1, 2]; a[5] = 7; return a.length + ':' + a[1]; } var out = f();",
     ],
   ])("answers %s of a function-local array", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
+
+  // node in a fresh realm: the program writes Object.prototype.
+  it(
+    "answers an object's ToPrimitive under a written Object.prototype.toString",
+    () =>
+      agreesWithNode(
+        `${OP_TO_STRING} var a = [1]; var o = {}; var out = String(o) + a.length;`,
+        true,
+        runnerOptions(),
+        freshRealmOut,
+      ),
+    SLOW,
+  );
 
   it.each([
     ["an object's ToPrimitive beside an array", "var a = [1]; var o = {}; var out = '' + o + a.length;"],

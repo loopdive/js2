@@ -41,8 +41,8 @@ import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.j
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
-import { arrayOf, dynamicRealmConstruction, realmConstructorOf } from "./dynamic-realm-constructors.js";
-import { arrayLiteralOf, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
+import { arrayLiteral, dynamicRealmConstruction, realmConstructorOf } from "./dynamic-realm-constructors.js";
+import { isArrayLiteralCall, realmIntrinsicOfHelper } from "./dynamic-realm-calls.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -250,8 +250,7 @@ export function legalizeDynamicValues(
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
-        const arrayLiteral = arrayLiteralOf(instr);
-        if (arrayLiteral !== undefined) return arrayOf(builders, arrayLiteral, instr.args, instr.result!);
+        if (isArrayLiteralCall(instr)) return arrayLiteral(builders, instr);
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const realmConstructor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
         if (realmConstructor !== undefined)

@@ -7549,3 +7549,24 @@ Also: `tests/issue-7354-t-truthiness-null.test.ts`'s wrapper ToPrimitive case (r
 - An object captured by a closure aborts ("box of a non-primitive value has no Prepared intrinsic"). A captured
   array now works.
 - `o[k]` for an absent non-numeric key on a plain object aborts.
+
+## Slice A1a review r2 (2026-11-27, branch `claude/7354-a1`, #7352)
+
+- **Wrong value fixed.** With `Object.prototype.toString` written, `String([1, 2])` answered `"z"` (node: `"1,2"`).
+  ToPrimitive looked up `toString` along the chain (`js.object.has`), and %Array.prototype% has no own one yet, so
+  Object.prototype's was called. OrdinaryToPrimitive now tests the array brand first and aborts before any read
+  (`answer.unsupported`), whatever the chain holds, until Array.prototype.toString exists (A1b). An array with its
+  own `toString` aborts too now (it answered before); no wrong value either way.
+- **ToPrimitive consumers re-checked** with `Object.prototype.toString` / `valueOf` written (32 programs vs node,
+  fresh realm): `String()`, concatenation and template (script and function-local), unary `+`, `Number()`,
+  `isNaN`, `-`, `<` (script, function-local, through a parameter), a computed key `o[[1]]`, `in`,
+  `Object.defineProperty(o, [1], …)`, `hasOwnProperty([1])`, `new Error([1, 2])`, `new String([1, 2])`: each
+  aborts, or refuses (`==` loose, the template's number provider, `in`'s `__extern_has`). A plain object under a
+  written `toString` still answers `"z"`.
+- **The literal's shape is operands, not symbol text.** `__ir_array_literal` is one fixed symbol; its operands are
+  the length (f64), then each present element's index key (a string) and value. `isArrayLiteralCall(instr)` replaces
+  the parser; `arrayOf(b, length, [key, value][], r)` serves the literal and `Array(…)`.
+- `preparedOrdinaryObjectLiteral` is renamed `preparedRealmLiteral` (it answers for arrays too). The element-read
+  arm's "MECHANISM ONLY … unreached" comment and its dead `key !== null` test are gone.
+- `abortsAtRunTime` (test helper) runs node in a fresh realm, so a program that writes a built-in leaves the test
+  context's untouched; its 19 users pass.
