@@ -196,6 +196,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
+  bigIntOperandOption,
   makeIrArrayElementFamilyClassifier,
   makeIrCheckerSelectionOptions,
   makeIrLocalClassExpressionResolver,
@@ -3117,6 +3118,7 @@ function planIrOverlay(
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
+            scriptVarModel: "statement-and-for-heads",
           },
           identityContext,
         );
@@ -3315,6 +3317,7 @@ function planIrOverlay(
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       ...makeIrCheckerSelectionOptions(ast.checker),
+      ...bigIntOperandOption(ast.checker, hostFreeEnvironment(ctx)), // (#7525)
       jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       classifyArrayElementFamily,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
@@ -5910,6 +5913,7 @@ export function generateModule(
         identityContext: irPlanningIdentityContext,
         target: ctx.wasi ? "wasi" : "standalone",
         deferTopLevelInit: ctx.deferTopLevelInit,
+        scriptVarModel: "statement-and-for-heads",
       });
       moduleInitPlanning = Object.freeze({
         plan,

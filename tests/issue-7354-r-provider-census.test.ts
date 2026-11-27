@@ -714,10 +714,12 @@ describe("#7354 Str — the census on a typed string program", () => {
     expect(messages(result).join("\n")).toContain(RUNTIME_DEMAND);
   });
 
+  // (#7564) An inline backend op (`Math.abs`) joins no support row, so it is no foreign native provider.
   it("refuses a selected native provider that is neither a string provider nor a runtime callable", async () => {
     const foreign = RUNTIME_PROVIDERS.find(
       (row) =>
         row.implementation.kind !== "runtime-callable" &&
+        !row.implementation.kind.startsWith("backend-") &&
         !row.feature.startsWith("js.string.") &&
         !row.dependencies.length &&
         !row.hostCapabilities.length,

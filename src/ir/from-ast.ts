@@ -71,6 +71,7 @@ import {
   booleanReadAsNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
+  isBigIntUnsafeDynamicOperator,
   isEqualityOperator,
   isNumberBinaryOperator,
   isNumberCompoundAssignOperator,
@@ -288,7 +289,7 @@ import {
   tryLowerVecPush,
 } from "./array-element-lowering.js";
 import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
-import { F64_UNDEFINED_BITS } from "./f64-undefined-marker.js";
+import { emitF64ToNumber, emitUndefinedStringOr, F64_UNDEFINED_BITS } from "./f64-undefined-marker.js";
 import {
   lowerStaticPredicateCall,
   staticPredicatePlan,
@@ -343,6 +344,7 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError, refuseUnselected } from "./outcomes.js";
 import type { IrUnsupportedCode } from "./outcomes.js";
+import { refuseBigIntDynamicOperand } from "./bigint-operand-refusal.js"; // (#7525)
 import {
   boxWrapper,
   emitToPrimitive,
@@ -371,6 +373,7 @@ import {
   isModuleInitVarList,
   isVarDeclarationList,
   moduleInitContainsNestedVar,
+  type ScriptVarModel,
 } from "../shared/var-declaration-lists.js";
 import { emitLogicalSelect } from "./logical-select.js";
 import { isRepeatedVarBinding } from "./function-local-var.js";
@@ -763,16 +766,24 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly argumentRep: "i32" | "f64";
   } | null;
   /**
-   * #2952 slice 5 — mode-selected runtime symbols for dynamic for-in.
-   * Both plans share the same externref/i32 ABI and preserve the #2964
-   * snapshot ordering plus per-visit liveness semantics.
+   * #2952 slice 5 — mode-selected callables for dynamic for-in: the key
+   * snapshot of a receiver, its length and element, and per-visit liveness.
+   * Every plan shares one externref/i32 ABI and preserves the #2964 snapshot
+   * ordering. The ordinary pipeline binds runtime symbols; (#7377) the
+   * Prepared producer binds the realm's `js.object.*` contracts.
    */
   dynamicForInPlan?(): {
-    readonly keys: string;
-    readonly len: string;
-    readonly get: string;
-    readonly has: string;
+    readonly keys: IrFuncRef;
+    readonly len: IrFuncRef;
+    readonly get: IrFuncRef;
+    readonly has: IrFuncRef;
   } | null;
+  /**
+   * (#7377) The script-var model of a module-init unit (`ScriptVarModel`): which `var` lists declare script vars
+   * the unit writes in place. Every resolver that lowers a module-init unit names its pipeline's model; without
+   * one the unit refuses by name (`moduleInitScriptVarModel`).
+   */
+  scriptVarModel?(): ScriptVarModel;
   resolveVec?(valType: ValType): IrVecLowering | null;
   /**
    * #1804 — register-or-recover the vec struct for an element ValType so
@@ -974,6 +985,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isNativeRegExpReceiver?(receiver: ts.Expression): boolean;
   /** (#7364) The selector's `nativeRegExpCompiles`, asked again where a static construction is built. */
   nativeRegExpCompiles?(pattern: string, flags: string): boolean;
+  /** (#7525) The selector's `isBigIntOperand`, asked again where a dynamic numeric operator is built. */
+  isBigIntOperand?(expr: ts.Expression): boolean;
   nativeRegExpMethodPlan?(
     receiver: ts.Expression,
     method: RegExpCarrierMethod,
@@ -2087,7 +2100,7 @@ export function lowerFunctionAstToIr(
     if (returnType !== null) {
       demoteToLegacy("module-init-legacy-coupling", `ir/from-ast: module-init unit must be void (${name})`);
     }
-    if (moduleInitContainsNestedVar(stmts)) {
+    if (moduleInitContainsNestedVar(stmts, moduleInitScriptVarModel(cx))) {
       demoteToLegacy(
         "module-init-legacy-coupling",
         `ir/from-ast: module-init unit contains a nested var declaration (${name})`,
@@ -4446,6 +4459,21 @@ function bindUninitializedModuleVar(d: ts.VariableDeclaration, name: string, cx:
   return true;
 }
 
+/**
+ * (#7377) The module-init unit's script-var model (`IrFromAstResolver.scriptVarModel`). It decides which `var` lists
+ * the unit writes in place, so a resolver without one refuses the unit rather than guess a pipeline's model.
+ */
+function moduleInitScriptVarModel(cx: LowerCtx): ScriptVarModel {
+  const model = cx.resolver?.scriptVarModel?.();
+  if (model === undefined)
+    throw new IrUnsupportedError(
+      "module-init-legacy-coupling",
+      "build",
+      `ir/from-ast: module-init resolver names no script-var model (${cx.funcName})`,
+    );
+  return model;
+}
+
 /** (#7106) A repeated top-level script `var` is the same `__mod_<name>` slot:
  * its initializer is a write, and a bare `var x;` repeat is a no-op. */
 function isRedeclaredModuleVar(d: ts.VariableDeclaration, name: string, cx: LowerCtx): boolean {
@@ -4470,7 +4498,7 @@ function lowerDeclarationPattern(d: PatternDeclaration, isConst: boolean, cx: Lo
   }
   const literalPlan = planLiteralPattern(pattern, d.initializer);
   // (#7106 S5) A module-init `var` pattern writes its leaves' module globals.
-  if (cx.moduleBindings && isModuleInitVarList(d.parent)) {
+  if (cx.moduleBindings && isModuleInitVarList(d.parent, moduleInitScriptVarModel(cx))) {
     if (!literalPlan) {
       // invariant (producer-promise): selection admits a `var` pattern over a fresh literal only.
       throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: module-init var pattern");
@@ -6034,7 +6062,7 @@ function lowerTypeOfValue(operand: ts.Expression, cx: LowerCtx): IrValueId {
       `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
     );
   }
-  return cx.builder.emitStringConst(tag);
+  return emitUndefinedStringOr(cx.builder, inner, () => cx.builder.emitStringConst(tag));
 }
 
 /** The `typeof` tag every value of an IR type has, or `null` when it varies (unions, boxed, references). */
@@ -7668,9 +7696,8 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent =
   // Extra arguments still run, in source order, though Number ignores them; getter conversion follows their effects.
   for (const argument of expr.arguments.slice(1)) lowerDiscardedExpression(argument, cx);
   const type = cx.builder.typeOf(first);
-  if (type.kind === "val" && type.val.kind === "f64") return first;
-  if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
-    return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
+  // A number (a branded f64's `undefined` marker reads as NaN) or a boolean: the unary ToNumber, which has both arms.
+  if (asVal(type)?.kind === "f64" || irTypeIsBoolean(type)) return emitUnaryToNumber(first, type, cx)!;
   if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
     demoteToLegacy("operand-coercion-unsupported", "Number argument requires an exact logical value carrier");
   const external = coerceIrValueToExternref(cx.builder, first);
@@ -10790,6 +10817,7 @@ function lowerDynamicMemberCompound(
 ): boolean {
   const member = dynamicNamedMember(lhs, recv, cx);
   if (member === undefined) return false;
+  refuseBigIntDynamicOperand(cx, lhs, ...(rhs === null ? [] : [rhs]));
   const old = cx.builder.emitDynMemberGet(member.target, member.key);
   const step = rhs === null ? dynamicIncrement(old, token, cx) : dynamicCompoundStep(token, old, lhs, rhs, cx);
   cx.builder.emitDynMemberSet(member.target, member.key, step.stored, member.sloppy);
@@ -11362,34 +11390,29 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
       `ir/from-ast: dynamic for-in runtime is unavailable in ${cx.funcName}`,
     );
   }
-  const init = stmt.initializer;
-  if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) {
-    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
-    throw new Error(`ir/from-ast: for-in init shape drift in ${cx.funcName}`);
-  }
-  const declaration = init.declarations[0]!;
-  if (!ts.isIdentifier(declaration.name) || declaration.initializer) {
-    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
-    throw new Error(`ir/from-ast: for-in head shape drift in ${cx.funcName}`);
-  }
+  // (#7377) Without a selector (the Prepared producer) a function's head would need the function's `var` hoisting.
+  if (cx.unselected && cx.moduleBindings === undefined)
+    throw new IrUnsupportedError(
+      "body-shape-rejected",
+      "build",
+      `ir/from-ast: for-in head in a function: function \`var\` hoisting is not modelled on the Prepared path (${cx.funcName})`,
+    );
+  const head = forInHead(stmt, cx);
 
-  const receiver = lowerExpr(stmt.expression, cx, irDynamic());
-  if (cx.builder.typeOf(receiver).kind !== "dynamic") {
-    // invariant (producer-promise): the carrier the producer promised was dropped — #4502.
-    throw new Error(`ir/from-ast: for-in receiver lost dynamic carrier in ${cx.funcName}`);
-  }
+  const receiver = forInReceiver(stmt.expression, cx);
 
   const externref = irVal({ kind: "externref" });
   const i32 = irVal({ kind: "i32" });
-  const keys = cx.builder.emitCall(irRuntimeFuncRef(plan.keys), [receiver], externref);
+  const keys = cx.builder.emitCall(plan.keys, [receiver], externref);
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (keys === null) throw new Error(`ir/from-ast: for-in keys helper returned void in ${cx.funcName}`);
-  const length = cx.builder.emitCall(irRuntimeFuncRef(plan.len), [keys], i32);
+  const length = cx.builder.emitCall(plan.len, [keys], i32);
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (length === null) throw new Error(`ir/from-ast: for-in length helper returned void in ${cx.funcName}`);
 
   const counterSlot = cx.builder.declareSlot("__forin_i", { kind: "i32" });
-  const keySlot = cx.builder.declareSlot(`__forin_${declaration.name.text}`, { kind: "externref" });
+  // The loop keeps the key in a slot of its own only where the head names no binding (`forInHead`).
+  const keySlot = head.target ? undefined : cx.builder.declareSlot(`__forin_${head.name.text}`, { kind: "externref" });
   cx.builder.emitSlotWrite(counterSlot, cx.builder.emitConst({ kind: "i32", value: 0 }, i32));
 
   let condValue: IrValueId | null = null;
@@ -11417,13 +11440,14 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   // is `extern.convert_any`), so the head reads as `dynamic` — the selector's
   // `forInHeadValueIsDynamicCarrier` admits exactly this lane.
   const headIsDynamicCarrier = !headIsHostString && cx.resolver?.dynamicCarrierIsExternref?.() === true;
-  bodyScope.set(declaration.name.text, {
-    kind: "slot",
-    slotIndex: keySlot,
-    type: externref,
-    ...(headIsHostString ? { asType: { kind: "string" } as IrType } : {}),
-    ...(headIsDynamicCarrier ? { asType: irDynamic() } : {}),
-  });
+  if (keySlot !== undefined)
+    bodyScope.set(head.name.text, {
+      kind: "slot",
+      slotIndex: keySlot,
+      type: externref,
+      ...(headIsHostString ? { asType: { kind: "string" } as IrType } : {}),
+      ...(headIsDynamicCarrier ? { asType: irDynamic() } : {}),
+    });
   const bodyCx: LowerCtx = {
     ...cx,
     scope: bodyScope,
@@ -11431,19 +11455,25 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
     breakTargetLabel: loopLabel,
     pendingLoopLabel: undefined,
   };
+  // (#7377) A binding takes the key as the dynamic value it is on the externref-carrier lane; anywhere else the
+  // store refuses the externref by name.
+  const keyType = head.target && headIsDynamicCarrier ? irDynamic() : externref;
   const body = cx.builder.collectBodyInstrs(() => {
-    const key = cx.builder.emitCall(
-      irRuntimeFuncRef(plan.get),
-      [keys, cx.builder.emitSlotRead(counterSlot)],
-      externref,
-    );
+    const key = cx.builder.emitCall(plan.get, [keys, cx.builder.emitSlotRead(counterSlot)], keyType);
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (key === null) throw new Error(`ir/from-ast: for-in key helper returned void in ${cx.funcName}`);
-    cx.builder.emitSlotWrite(keySlot, key);
-    const live = cx.builder.emitCall(irRuntimeFuncRef(plan.has), [receiver, key], i32);
+    // Two write positions, on purpose. The loop's own slot is written before `has`: nothing outside the loop reads
+    // it, so the order is unobservable, and moving it would change the ordinary pipeline's bytes. (#7377) A binding
+    // is written after `has`, in the live branch: a key deleted mid-loop must never reach it (node keeps the
+    // previous key). Do not unify them.
+    if (keySlot !== undefined) cx.builder.emitSlotWrite(keySlot, key);
+    const live = cx.builder.emitCall(plan.has, [receiver, key], IR_BOOL);
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (live === null) throw new Error(`ir/from-ast: for-in liveness helper returned void in ${cx.funcName}`);
-    const liveBody = cx.builder.collectBodyInstrs(() => lowerStmt(stmt.statement, bodyCx));
+    const liveBody = cx.builder.collectBodyInstrs(() => {
+      if (head.target) storeIdentifierWrite(head.name, head.target, { source: head.name, lower: () => key }, bodyCx);
+      lowerStmt(stmt.statement, bodyCx);
+    });
     cx.builder.emitIfStmt({ cond: live, then: liveBody, else: [] });
   });
 
@@ -11454,6 +11484,68 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   });
   cx.builder.emitForLoop({ cond, condValue, body, update, loopLabel });
   joinScopeStringEncodingFacts(cx.scope, [loopScope]);
+}
+
+/**
+ * The for-in receiver on the dynamic carrier. (#7377) Without a selector (the Prepared producer) it may have a
+ * concrete type, a typed script var's number for one: a boxed primitive reaches the key snapshot, which aborts.
+ */
+function forInReceiver(expression: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(expression, cx, irDynamic());
+  const type = cx.builder.typeOf(value);
+  const boxed = type.kind === "dynamic" ? value : boxConcreteToDynamic(value, type, expression, cx);
+  if (boxed !== null && cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
+  throw new IrUnsupportedError(
+    "operand-coercion-unsupported",
+    "build",
+    `ir/from-ast: for-in receiver of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
+  );
+}
+
+/**
+ * (#7377) A for-in head's name and the binding each key is written to: a `var` head's script var, an identifier
+ * head's script var, or none, where the loop keeps the key in a slot of its own. That slot is sound only behind the
+ * ordinary selector, which refuses a head already in scope (`forin-head-shadow`) and every module-init head
+ * (`forin-head-module-var`); without one (the Prepared producer) a `var` head with no script var refuses. Emits
+ * nothing.
+ */
+function forInHead(
+  stmt: ts.ForInStatement,
+  cx: LowerCtx,
+): { readonly name: ts.Identifier; readonly target: IdentifierWriteTarget | undefined } {
+  const init = stmt.initializer;
+  if (ts.isVariableDeclarationList(init)) {
+    const declaration = init.declarations[0];
+    if (init.declarations.length !== 1 || !ts.isIdentifier(declaration!.name) || declaration!.initializer) {
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
+      throw new Error(`ir/from-ast: for-in head shape drift in ${cx.funcName}`);
+    }
+    const name = declaration!.name;
+    if (bindUninitializedModuleVar(declaration!, name.text, cx))
+      return { name, target: identifierWriteTarget(name, name, cx) };
+    if (cx.unselected)
+      throw new IrUnsupportedError(
+        "body-shape-rejected",
+        "build",
+        `ir/from-ast: for-in head "${name.text}" declares no script var (${cx.funcName})`,
+      );
+    return { name, target: undefined };
+  }
+  if (!ts.isIdentifier(init))
+    throw new IrUnsupportedError(
+      "body-shape-rejected",
+      "build",
+      `ir/from-ast: for-in head is not an identifier (${cx.funcName})`,
+    );
+  refuseImmutableWrite(init, "for-in head write to", cx);
+  const target = identifierWriteTarget(init, init, cx) ?? refuseUndeclaredWrite(init, cx);
+  if (target.kind === "scope" && target.binding.kind !== "moduleGlobal")
+    throw new IrUnsupportedError(
+      "body-shape-rejected",
+      "build",
+      `ir/from-ast: for-in head "${init.text}" is not a script var (${cx.funcName})`,
+    );
+  return { name: init, target };
 }
 
 // ---------------------------------------------------------------------------
@@ -12012,7 +12104,8 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // 1. Init — emit inline before the for.loop instr. (#7106 lever L) A
   // `<module-init>` `var` head declares script `var`s, so it binds them in the
   // enclosing scope, as a `var` statement does; any other head binds in the loop's.
-  const scriptVarHead = cx.moduleBindings !== undefined && isModuleInitVarList(stmt.initializer);
+  const scriptVarHead =
+    cx.moduleBindings !== undefined && isModuleInitVarList(stmt.initializer, moduleInitScriptVarModel(cx));
   if (stmt.initializer && scriptVarHead) lowerForInitializer(stmt.initializer, { ...cx, pendingLoopLabel: undefined });
   const innerCx: LowerCtx = { ...cx, scope: new Map(cx.scope), pendingLoopLabel: undefined };
   if (stmt.initializer && !scriptVarHead) lowerForInitializer(stmt.initializer, innerCx);
@@ -13081,40 +13174,84 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
   }
   refuseImmutableWrite(id, "assignment to", cx);
+  const target = identifierWriteTarget(id, rhs, cx) ?? refuseUndeclaredWrite(id, cx);
+  return storeIdentifierWrite(id, target, { source: rhs, lower: (type) => lowerExpr(rhs, cx, type) }, cx);
+}
+
+/** (#7377) Where an identifier write stores: a binding in scope, or a module binding the resolver proved writable. */
+type IdentifierWriteTarget =
+  | { readonly kind: "scope"; readonly binding: ScopeBinding }
+  | { readonly kind: "module"; readonly binding: ModuleBindingGlobal };
+
+/**
+ * (#7377) The value an identifier write stores: `lower` produces it with the target's type as its hint, and `source`
+ * is the expression it is taken from (an assignment's right-hand side, or a for-in head, whose key is already on its
+ * carrier), which the storage boxing and string-encoding facts read.
+ */
+interface IdentifierWriteValue {
+  readonly source: ts.Expression;
+  readonly lower: (type: IrType) => IrValueId;
+}
+
+/**
+ * (#7377) The binding a write of `id` stores into, or `undefined` when `id` names none. (#2856 Capability C) A module
+ * binding outside the scope is written only where the resolver proves it writable for `writeValue`.
+ */
+function identifierWriteTarget(
+  id: ts.Identifier,
+  writeValue: ts.Expression,
+  cx: LowerCtx,
+): IdentifierWriteTarget | undefined {
   const binding = cx.scope.get(id.text);
-  if (!binding) {
-    const readable = cx.resolver?.resolveModuleBinding?.(id);
-    if (readable) {
-      requireMatchingModuleBindingOwner(readable, cx.ownerUnitId, cx.funcName);
-      const writable = cx.resolver?.resolveModuleBinding?.(id, rhs);
-      if (!writable) {
-        demoteToLegacy(
-          "property-write-unsupported",
-          `ir/from-ast: assignment to readonly or representation-incompatible module binding "${id.text}" in ${cx.funcName}`,
-        );
-      }
-      requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
-      const result = lowerExpr(rhs, cx, writable.type);
-      const newValue = boxForDynamicModuleStorage(result, writable.type, rhs, cx);
-      const newType = cx.builder.typeOf(newValue);
-      if (!moduleStorageCompatible(newType, writable.type)) {
-        demoteToLegacy(
-          "property-write-unsupported",
-          `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
-        );
-      }
-      lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
-      cx.builder.emitGlobalSet(writable.globalRef, newValue);
-      return result;
-    }
+  if (binding) return { kind: "scope", binding };
+  const readable = cx.resolver?.resolveModuleBinding?.(id);
+  if (!readable) return undefined;
+  requireMatchingModuleBindingOwner(readable, cx.ownerUnitId, cx.funcName);
+  const writable = cx.resolver?.resolveModuleBinding?.(id, writeValue);
+  if (!writable) {
     demoteToLegacy(
       "property-write-unsupported",
-      `ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`,
+      `ir/from-ast: assignment to readonly or representation-incompatible module binding "${id.text}" in ${cx.funcName}`,
     );
   }
+  requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
+  return { kind: "module", binding: writable };
+}
+
+function refuseUndeclaredWrite(id: ts.Identifier, cx: LowerCtx): never {
+  demoteToLegacy(
+    "property-write-unsupported",
+    `ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`,
+  );
+}
+
+/** (#7377) Store `value` into `target`, the binding `id` names; returns the value before any storage boxing. */
+function storeIdentifierWrite(
+  id: ts.Identifier,
+  target: IdentifierWriteTarget,
+  value: IdentifierWriteValue,
+  cx: LowerCtx,
+): IrValueId {
+  const rhs = value.source;
+  if (target.kind === "module") {
+    const writable = target.binding;
+    const result = value.lower(writable.type);
+    const newValue = boxForDynamicModuleStorage(result, writable.type, rhs, cx);
+    const newType = cx.builder.typeOf(newValue);
+    if (!moduleStorageCompatible(newType, writable.type)) {
+      demoteToLegacy(
+        "property-write-unsupported",
+        `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
+      );
+    }
+    lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
+    cx.builder.emitGlobalSet(writable.globalRef, newValue);
+    return result;
+  }
+  const binding = target.binding;
   // (#3142 Slice 2) Module-scope binding — write the legacy global.
   if (binding.kind === "moduleGlobal") {
-    const result = lowerExpr(rhs, cx, binding.type);
+    const result = value.lower(binding.type);
     const newValue = boxForDynamicModuleStorage(result, binding.type, rhs, cx);
     const newType = cx.builder.typeOf(newValue);
     if (!moduleStorageCompatible(newType, binding.type)) {
@@ -13128,7 +13265,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return result;
   }
   if (binding.kind === "local" && binding.type.kind === "boxed") {
-    const newValue = lowerExpr(rhs, cx, binding.type.inner);
+    const newValue = value.lower(binding.type.inner);
     // (#7354 L0c) A cell of the dynamic value (the Prepared lane's) stores the value in the carrier.
     const stored =
       binding.type.inner.kind === "dynamic"
@@ -13145,7 +13282,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return newValue;
   }
   if (binding.kind === "withField") {
-    const newValue = lowerExpr(rhs, cx, binding.type);
+    const newValue = value.lower(binding.type);
     if (!irTypeAssignable(cx.builder.typeOf(newValue), binding.type)) {
       demoteToLegacy(
         "property-write-unsupported",
@@ -13161,11 +13298,11 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   // (#3741) invariant W — an i32-promoted slot's RHS lowers DIRECTLY to an
   // exact i32; it is never an f64 that we then truncate.
   if (binding.i32Storage) {
-    const value = writePromotedI32Slot(binding.slotIndex, rhs, cx, id.text);
-    const type = asVal(cx.builder.typeOf(value));
+    const written = writePromotedI32Slot(binding.slotIndex, rhs, cx, id.text);
+    const type = asVal(cx.builder.typeOf(written));
     return type?.kind === "i32" && type.boolean === true
-      ? value
-      : cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
+      ? written
+      : cx.builder.emitUnary("f64.convert_i32_s", written, IR_F64);
   }
   // Slice 6 part 4 refactor (#1185): when the binding has an asType
   // widening, the IR type the body sees is `asType`, not the
@@ -13174,7 +13311,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   // underlying ValType, which `asType` agrees with at the Wasm
   // level (the asType invariant guarantees this).
   const logicalType = binding.asType ?? binding.type;
-  const result = lowerExpr(rhs, cx, logicalType);
+  const result = value.lower(logicalType);
   let newValue = result;
   let newType = cx.builder.typeOf(newValue);
   if (logicalType.kind === "dynamic" && newType.kind !== "dynamic") {
@@ -13297,6 +13434,7 @@ function lowerCompoundAssignment(
     store(result, proof.resultEncoding);
     return result;
   }
+  if (slotFamily === "dynamic") refuseBigIntDynamicOperand(cx, id, rhs);
   const binaryOp = numberCompoundBinaryOperator(compoundOp);
   // invariant (producer-promise): every caller passes a numeric compound operator (`isNumberCompoundAssignOperator`).
   if (binaryOp === undefined) throw new Error(`ir/from-ast: compound operator has no binary form in ${cx.funcName}`);
@@ -13400,6 +13538,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     );
   }
   if (slotFamily === "dynamic") {
+    refuseBigIntDynamicOperand(cx, id);
     const current =
       storage.kind === "moduleGlobal"
         ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
@@ -13492,16 +13631,12 @@ function convertMixedPrimitiveArm(
 
   // The representation matches the family, so the conversion exists.
   if (kind === "String") return lowerPrimitiveToString(cx.builder, value, family)!;
-  if (family === "number") return value;
-  if (family === "boolean") {
-    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-  }
   const number = emitUnaryToNumber(value, type, cx);
   if (number === null) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "build",
-      `ir/from-ast: #5092 Number ${arm} string arm lost its ToNumber route in ${cx.funcName}`,
+      `ir/from-ast: #5092 Number ${arm} ${family} arm lost its ToNumber route in ${cx.funcName}`,
     );
   }
   return number;
@@ -13978,9 +14113,11 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
 }
 
 /**
- * (#3168) ToNumber(operand) → f64 for a unary `+`/`-` operand that is not
- * statically a number. Handles the scope the #3153 census flagged (§7.1.4):
+ * (#3168) ToNumber(operand) → f64 for a unary `+`/`-` operand. Handles the
+ * scope the #3153 census flagged (§7.1.4):
  *
+ *   - **number (f64)** → the value itself, except that a branded f64's
+ *     `undefined` marker becomes a plain NaN (#7464, `emitF64ToNumber`).
  *   - **boolean (i32)** → `f64.convert_i32_s` (0/1 → 0.0/1.0; boolean is 0/1
  *     so signed/unsigned agree — matches legacy `expressions/unary.ts`).
  *   - **string** → box the string into the boxed-any carrier and reuse the
@@ -14000,6 +14137,7 @@ function emitUnaryToNumber(
   cx: LowerCtx,
   stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"],
 ): IrValueId | null {
+  if (asVal(randType)?.kind === "f64") return emitF64ToNumber(cx.builder, rand);
   if (asVal(randType)?.kind === "i32") {
     // boolean (the only i32-typed IR operand reaching a `+`/`-` — a native
     // `type i32 = number` operand is already numeric and takes the f64 path).
@@ -14062,6 +14200,15 @@ function emitUnaryToNumber(
   return null;
 }
 
+/** A unary `+`/`-` operand with no ToNumber route: an unsupported coercion when the checker proves the gap. */
+function throwUnaryNotNumber(expr: ts.PrefixUnaryExpression, operator: "+" | "-", cx: LowerCtx): never {
+  const detail = `ir/from-ast: unary '${operator}' expects number in ${cx.funcName}`;
+  if (checkerProvesUnaryCoercionGap(expr, cx)) {
+    throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
+  }
+  throw new Error(detail);
+}
+
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
@@ -14093,46 +14240,30 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       // `__unbox_number` host — D4) feeds the existing `f64.neg`. Byte-inert
       // until the S5.P scan admits dynamic-unary bodies.
       if (randType.kind === "dynamic") {
+        refuseBigIntDynamicOperand(cx, expr.operand);
         const n = cx.builder.emitDynToNumber(rand);
         return cx.builder.emitUnary("f64.neg", n, irVal({ kind: "f64" }));
       }
-      // (#3168) `-x` on a non-number operand is `-ToNumber(x)` (§13.5.5 →
+      // (#3168) `-x` is `-ToNumber(x)` (§13.5.5 →
       // §7.1.4). ToNumber the operand to f64, then `f64.neg` — sign-correct for
       // `-0` (`-"" === -0`), unlike `0 - x`. Mirrors legacy `expressions/unary.ts`.
       const negToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (negToNumber !== null) {
-        return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
-      }
-      if (asVal(randType)?.kind !== "f64") {
-        const detail = `ir/from-ast: unary '-' expects number in ${cx.funcName}`;
-        if (checkerProvesUnaryCoercionGap(expr, cx)) {
-          throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-        }
-        throw new Error(detail);
-      }
-      return cx.builder.emitUnary("f64.neg", rand, irVal({ kind: "f64" }));
+      if (negToNumber === null) throwUnaryNotNumber(expr, "-", cx);
+      return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
     }
     case ts.SyntaxKind.PlusToken: {
       const randType = typeOfValue(rand, cx);
       // #2949 S5.5 — unary `+` on a boxed-any carrier IS ToNumber (§13.5.4
       // Unary Plus is exactly `? ToNumber(value)`): a bare `dyn.to_number`.
       if (randType.kind === "dynamic") {
+        refuseBigIntDynamicOperand(cx, expr.operand);
         return cx.builder.emitDynToNumber(rand);
       }
-      // (#3168) `+x` IS `ToNumber(x)` (§13.5.4). A boolean / string operand
-      // ToNumbers to f64 (boolean → 0/1; string → §7.1.4.1 StringToNumber).
+      // (#3168) `+x` IS `ToNumber(x)` (§13.5.4): boolean → 0/1, string →
+      // §7.1.4.1 StringToNumber, a branded f64's `undefined` marker → NaN.
       const plusToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (plusToNumber !== null) {
-        return plusToNumber;
-      }
-      if (asVal(randType)?.kind !== "f64") {
-        const detail = `ir/from-ast: unary '+' expects number in ${cx.funcName}`;
-        if (checkerProvesUnaryCoercionGap(expr, cx)) {
-          throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-        }
-        throw new Error(detail);
-      }
-      return rand;
+      if (plusToNumber === null) throwUnaryNotNumber(expr, "+", cx);
+      return plusToNumber;
     }
     case ts.SyntaxKind.ExclamationToken: {
       const randType = typeOfValue(rand, cx);
@@ -14984,6 +15115,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     ((lt.kind === "dynamic" || rt.kind === "dynamic") && operandsAdmissible) ||
     comparisonTakesCarrier(op, lt, rt, host)
   ) {
+    if (isBigIntUnsafeDynamicOperator(op)) refuseBigIntDynamicOperand(cx, expr.left, expr.right);
     const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, cx);
     if (dynEq !== null) return dynEq;
     // `+` and the ToNumeric operators: the dynamic binary producer, shared with the compound assignments (#7354 O7).
@@ -16462,7 +16594,7 @@ function lowerClosureExpressionWithSignature(
     ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
   });
   if (functionObjects.isFunctionObject(cx.resolver, expr))
-    functionObjects.emitFunctionObjectInit(cx.builder, closure, expr);
+    functionObjects.emitFunctionObjectInit(cx.builder, closure, expr, cx.resolver);
   return closure;
 }
 

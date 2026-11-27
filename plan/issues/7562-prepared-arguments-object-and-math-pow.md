@@ -267,3 +267,12 @@ Met; four non-blocking findings, all done:
 2. Over-arity direct calls to readers: publish the extras (a vector operand to
    `js.closure.publish-argc`).
 3. A `var arguments` that keeps the arguments object (today: abort).
+
+## Follow-up 2026-11-27: `src/ir/arguments-object.ts` classified in the boundaries inventory
+
+PR 7533 added `src/ir/arguments-object.ts` without an entry in
+`scripts/compiler-boundaries.json`. The inventory gate compares with the first
+parent, so the PR's own queue run passed and every later merge group failed
+`quality-lane (ir)` with `unclassified-module: src/ir/arguments-object.ts`
+(first hit: run 46056104904). The entry sits beside its sibling
+`src/ir/identifier-read.ts`, with the same layer and destination.

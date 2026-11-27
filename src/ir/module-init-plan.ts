@@ -9,6 +9,7 @@ import { blockFunctionBindings, blockFunctionFirstOrdinal } from "./annexb-block
 import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import { moduleBindingDeclarations } from "./module-bindings.js";
 import { isModuleInitGlobalDeclaration, moduleBindingDeclarationOrder } from "./module-init-vars.js";
+import type { ScriptVarModel } from "../shared/var-declaration-lists.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 
 import type {
@@ -67,6 +68,8 @@ export interface BuildIrModuleInitPlanInput {
   readonly deferTopLevelInit: boolean;
   /** (#7354 F1b) The declarations read as values whose homes this script's bindings hold. */
   readonly functionValues?: readonly ts.FunctionDeclaration[];
+  /** (#7377) Which `var` lists declare script vars (`isModuleInitVarList`): the pipeline's own model. */
+  readonly scriptVarModel: ScriptVarModel;
   /** (#7372 2a) The script's Annex B block functions, whose homes follow the function values' (`blockFunctionBindings`). */
   readonly blockFunctions?: readonly AnnexBBlockFunction[];
 }
@@ -236,7 +239,7 @@ export function localExportSpecifiers(
 
 /** Build the semantic plan directly from source and structural R1 identities. */
 export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModuleInitPlan {
-  const { sourceFile, checker, identityContext } = input;
+  const { sourceFile, checker, identityContext, scriptVarModel } = input;
   const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
   if (!sourceId || identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
     throw new IrModuleInitPlanInvariantError(
@@ -254,8 +257,8 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
   const exported = new Set<string>();
   let declarationOrdinal = 0;
   let sourceOrdinal = 0;
-  const declarationOrder = moduleBindingDeclarationOrder(sourceFile);
-  const redeclared = redeclaredScriptVarOrdinals(checker, declarationOrder);
+  const declarationOrder = moduleBindingDeclarationOrder(sourceFile, scriptVarModel);
+  const redeclared = redeclaredScriptVarOrdinals(checker, scriptVarModel, declarationOrder);
 
   for (let statementOrdinal = 0; statementOrdinal < sourceFile.statements.length; statementOrdinal++) {
     const statement = sourceFile.statements[statementOrdinal]!;
@@ -456,13 +459,15 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     }
   }
 
-  bindings.push(...nestedVarBindings(sourceFile, sourceId, declarationOrder, declarationOrdinal, redeclared));
+  bindings.push(
+    ...nestedVarBindings(sourceFile, sourceId, scriptVarModel, declarationOrder, declarationOrdinal, redeclared),
+  );
   bindings.push(
     ...functionValueBindings(sourceFile, input.functionValues ?? [], declarationOrder.length, (ordinal) =>
       irModuleGlobalBindingId(sourceId, ordinal),
     ),
   );
-  const blockFunctionOrdinal = blockFunctionFirstOrdinal(sourceFile, input.functionValues ?? []);
+  const blockFunctionOrdinal = blockFunctionFirstOrdinal(sourceFile, input.functionValues ?? [], scriptVarModel);
   bindings.push(...blockFunctionBindings(sourceFile, sourceId, input.blockFunctions ?? [], blockFunctionOrdinal));
 
   const functions = sourceFile.statements.filter(ts.isFunctionDeclaration);
@@ -514,13 +519,14 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
  */
 function redeclaredScriptVarOrdinals(
   checker: ts.TypeChecker,
+  model: ScriptVarModel,
   declarationOrder: readonly ts.Node[],
 ): ReadonlyMap<ts.Node, number> {
   const ordinals = new Map(declarationOrder.map((declaration, ordinal) => [declaration, ordinal]));
   const redeclared = new Map<ts.Node, number>();
   for (const declaration of declarationOrder) {
     if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) continue;
-    const [first, ...later] = moduleBindingDeclarations(declaration.name, checker);
+    const [first, ...later] = moduleBindingDeclarations(declaration.name, checker, model);
     if (first === declaration) for (const other of later) redeclared.set(other, ordinals.get(first)!);
   }
   return redeclared;
@@ -535,13 +541,14 @@ function redeclaredScriptVarOrdinals(
 function nestedVarBindings(
   sourceFile: ts.SourceFile,
   sourceId: IrSourceId,
+  model: ScriptVarModel,
   declarationOrder: readonly ts.Node[],
   firstOrdinal: number,
   redeclared: ReadonlyMap<ts.Node, number>,
 ): IrModuleInitBindingIntent[] {
   return declarationOrder.slice(firstOrdinal).flatMap((declaration, index) => {
     const binding = declaration as ts.VariableDeclaration | ts.BindingElement;
-    if (redeclared.has(declaration) || !isModuleInitGlobalDeclaration(binding)) return [];
+    if (redeclared.has(declaration) || !isModuleInitGlobalDeclaration(binding, model)) return [];
     const declarationOrdinal = firstOrdinal + index;
     const name = binding.name as ts.Identifier;
     return [

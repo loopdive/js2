@@ -153,7 +153,8 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     [
       "a dynamic for-in head",
       "function f(v) { var r = 0; for (var k in v) { r++; } return r; }\nf(null);",
-      "dynamic for-in runtime is unavailable in f",
+      // (#7377) The runtime exists now; a function's head is refused by name (tests/issue-7354-o5-for-in.test.ts).
+      "for-in head in a function: function `var` hoisting is not modelled on the Prepared path (f)",
     ],
     // (#7354 F1b) A function-object property write is lowered now (tests/issue-7354-f1b-function-object-writes.test.ts).
     [

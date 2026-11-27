@@ -171,7 +171,7 @@ describe("#7354 Fa — function values on the Prepared path", () => {
     [
       "`arguments` aliasing a written parameter",
       "var f = function (a) { a = 2; return arguments[0]; }; f(1);",
-      'identifier "arguments" is not in scope',
+      "arguments object beyond arguments.length",
     ],
     [
       "a closure assigned to a parameter",

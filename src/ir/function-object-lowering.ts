@@ -107,6 +107,21 @@ export function lowerTopLevelFunctionValue(
   return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
 }
 
+/** (#7489) The program's strictness of `fn`'s code; without an answer the function refuses by name. */
+function functionCodeStrict(
+  fn: ts.FunctionLikeDeclaration,
+  resolver: Pick<IrFromAstResolver, "closureCodeStrictness"> | undefined,
+): boolean {
+  const strict = resolver?.closureCodeStrictness?.(fn).functionCodeStrict;
+  if (strict === undefined)
+    throw new IrUnsupportedError(
+      "type-resolution-unsupported",
+      "build",
+      "a function object's own caller needs its code's strictness",
+    );
+  return strict;
+}
+
 /**
  * (#7354 O2) Whether a source function has [[Construct]]: a function declaration or expression (MakeConstructor in
  * §10.2.9's callers); an arrow, a method, an accessor, a generator or an async function has none. `init-function`
@@ -129,11 +144,18 @@ function isConstructorFunction(fn: ts.FunctionLikeDeclaration): boolean {
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
  * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor
  * ({@link isFunctionObject} says which closures). A function whose name is a computed key the compiler cannot evaluate refuses by name.
+ *
+ * (#7489) A sloppy constructor function (a declaration or expression, neither a generator nor async: the functions
+ * §17.1 lets an implementation extend) owns V8's `caller`, read only and `null`; every other function's `caller` is
+ * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`); where
+ * it has no answer for such a function the function refuses by name, since a guess would answer a sloppy function's
+ * `caller` with the accessor's TypeError.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
+  resolver: Pick<IrFromAstResolver, "closureCodeStrictness"> | undefined,
 ): void {
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
@@ -147,13 +169,16 @@ export function emitFunctionObjectInit(
       "the name of a function under a computed key needs the key's value",
     );
   const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
+  const isConstructor = isConstructorFunction(fn);
+  const ownsCaller = isConstructor && !functionCodeStrict(fn, resolver);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
       builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature)),
       builder.emitCoerceToExternref(builder.emitStringConst(name)),
       builder.emitConst({ kind: "f64", value: expectedArgumentCountOfParams(fn.parameters) }, irVal({ kind: "f64" })),
-      builder.emitConst({ kind: "bool", value: isConstructorFunction(fn) }, irVal({ kind: "i32", boolean: true })),
+      builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
+      builder.emitConst({ kind: "bool", value: ownsCaller }, irVal({ kind: "i32", boolean: true })),
     ],
     null,
   );
