@@ -8086,10 +8086,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   const result = cx.builder.emitCall(direct.target, args, calleeSig.returnType);
   if (result === null) {
-    // (#2856 C4) `quicksort(arr, lo, p - 1);` — a void direct call in
-    // STATEMENT position is legal (the recursion driver shape). Expression
-    // position keeps throwing.
     if (statementPosition) return null;
+    if (calleeSig.returnsImplicitUndefined) return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
     unsupportedVoidCallExpression(
       `ir/from-ast: call to ${calleeName} returned void used as expression in ${cx.funcName}`,
     );
@@ -15024,6 +15022,7 @@ function dynamicLeaves(cx: LowerCtx): CarrierLeaves {
         // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
         // returns whatever the called value returns: the carrier.
         if (cx.scope.has(call.expression.text)) return expressionProducesDynamic(call.expression, cx);
+        if (cx.directCalls?.get(call)?.signature.returnsImplicitUndefined) return true;
         return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
