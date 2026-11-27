@@ -1,0 +1,181 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #7489 slice A — a function's `caller` on the Prepared path. The realm's Function.prototype holds the `caller` /
+// `arguments` accessors with %ThrowTypeError% as getter and setter (§10.2.4), and a sloppy plain function owns V8's
+// read-only `caller`, which is `null` here. Where V8 answers a sloppy caller this answers `null`: the value is
+// implementation-defined and §17.1 forbids only a strict function. (#7489 C.5) A sloppy function's `arguments` takes the
+// run-time abort; every other function's throws the accessor's TypeError.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { emitFunctionObjectInit } from "../src/ir/function-object-lowering.js";
+import { ts } from "../src/ts-api.js";
+import {
+  abortsAtRunTime,
+  agreesWithNode,
+  refusal,
+  runPrepared,
+  runnerOptions,
+} from "./helpers/prepared-node-agreement.js";
+
+afterEach(() => vi.restoreAllMocks());
+
+const SLOW = 300_000;
+const caught = (expression: string) =>
+  `(function () { try { ${expression}; return "none"; } catch (e) { return e instanceof TypeError ? "TE" : "other"; } })()`;
+
+describe("#7489 A — a function's caller agrees with node", () => {
+  it.each([
+    [
+      "a strict function's read and write throw TypeError, from sloppy code",
+      `function s() { "use strict"; }
+var out = ${caught("s.caller")} + ${caught("s.caller = 1")};`,
+    ],
+    [
+      "a strict function's read and write throw TypeError, from strict code",
+      `function s() { "use strict"; }
+var out = (function () { "use strict"; return ${caught("s.caller")} + ${caught("s.caller = 1")}; })();`,
+    ],
+    [
+      "a strict function owns no caller",
+      `function s() { "use strict"; }
+var out = String(s.hasOwnProperty("caller"));`,
+    ],
+    [
+      "the TypeError is catchable inside the strict function's own caller",
+      `function s() { "use strict"; return s.caller; }
+var out = ${caught("s()")};`,
+    ],
+  ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
+});
+
+// A sloppy function's `caller` is implementation-defined, and V8's answer has changed between node versions, so these
+// pin this model (node 22's: an own, read-only `null`) instead of the node that runs the test.
+const pinned = async (body: string, expected: string) => {
+  const asserting = (answer: string) => `${body}\nif (out !== ${JSON.stringify(answer)}) throw new Error(out);`;
+  expect(await runPrepared(asserting(expected), runnerOptions())).toBe("returned");
+  expect(await runPrepared(asserting(`${expected}!`), runnerOptions())).toBe("threw");
+};
+
+describe("#7489 A — the implementation-defined answer", () => {
+  it(
+    "a sloppy declaration's and expression's own caller is null when not running",
+    () =>
+      pinned(
+        `function g() {}
+var e = function () {};
+var out = String(g.caller) + String(e.caller) + String(g.hasOwnProperty("caller")) + String(e.hasOwnProperty("caller"));`,
+        "nullnulltruetrue",
+      ),
+    SLOW,
+  );
+
+  it(
+    "a sloppy write is ignored, a strict write throws (read only)",
+    () =>
+      pinned(
+        `function g() {}
+g.caller = 5;
+var out = String(g.caller) + (function () { "use strict"; return ${caught("g.caller = 1")}; })();`,
+        "nullTE",
+      ),
+    SLOW,
+  );
+
+  it(
+    "a sloppy caller reads null while it runs (node 22 answers the calling function)",
+    async () => {
+      const source = `function g() { return g.caller; }
+function h() { return g(); }
+if (h() !== null) throw new Error("caller");`;
+      expect(await runPrepared(source, runnerOptions())).toBe("returned");
+    },
+    SLOW,
+  );
+});
+
+describe("#7489 C.5 — a function's arguments: sloppy aborts, strict throws", () => {
+  // A sloppy plain function's own `arguments` is implementation-defined (V8: its live arguments object), so it takes the
+  // run-time abort; every other function's is Function.prototype's %ThrowTypeError% accessor, as in node.
+  it.each([
+    ["a sloppy declaration's read", "function f(){} var a = f.arguments;"],
+    ["a sloppy declaration's write", "function f(){} f.arguments = 1;"],
+    ["a sloppy expression's read", "var f = function(){}; var a = f.arguments;"],
+    ["a sloppy expression's write", "var f = function(){}; f.arguments = 1;"],
+    // A strict function the program gave an own `caller` reads as sloppy here: the conservative arm (the abort, which no
+    // `catch` sees, where node throws its TypeError), never a value.
+    [
+      "a strict function with a defined own caller's read",
+      `function s() { "use strict"; } Object.defineProperty(s, "caller", { value: 1 }); try { s.arguments; } catch (e) {}`,
+    ],
+  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source, runnerOptions()), SLOW);
+
+  it.each([
+    [
+      "a strict declaration's read and write throw TypeError, from sloppy code",
+      `function s() { "use strict"; }
+var out = ${caught("s.arguments")} + ${caught("s.arguments = 1")};`,
+    ],
+    [
+      "a strict expression's read and write throw TypeError, from strict code",
+      `var s = function () { "use strict"; };
+var out = (function () { "use strict"; return ${caught("s.arguments")} + ${caught("s.arguments = 1")}; })();`,
+    ],
+  ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
+});
+
+describe("#7489 A — refusals that stay", () => {
+  it.each([
+    ["a generator", "function* g() {} var c = g.caller;"],
+    ["an async function", "async function g() {} var c = g.caller;"],
+  ])(
+    "%s still refuses on this path (its own-caller operand is pinned below)",
+    async (_label, source) => {
+      expect(await refusal(source, runnerOptions())).not.toBe("");
+    },
+    SLOW,
+  );
+});
+
+describe("#7489 A — js.object.init-function's own-caller operand", () => {
+  // The generator / async programs above refuse before they reach this site, so the operand is pinned here directly.
+  const operands = (source: string, strict: boolean | undefined) => {
+    const file = ts.createSourceFile("t.js", source, ts.ScriptTarget.ES2020, true);
+    const fn = file.statements[0] as ts.FunctionDeclaration;
+    const consts = new Map<number, unknown>();
+    let next = 0;
+    let call: readonly number[] = [];
+    const id = () => next++;
+    const builder = {
+      typeOf: () => ({ kind: "closure", signature: { params: [], returnType: { kind: "dynamic" } } }),
+      emitCallablePack: id,
+      emitCoerceToExternref: id,
+      emitStringConst: id,
+      emitConst: (value: { value: unknown }) => {
+        const result = id();
+        consts.set(result, value.value);
+        return result;
+      },
+      emitCall: (_target: unknown, args: readonly number[]) => {
+        call = args;
+        return null;
+      },
+    };
+    const resolver = { closureCodeStrictness: () => (strict === undefined ? {} : { functionCodeStrict: strict }) };
+    emitFunctionObjectInit(builder as never, id() as never, fn, resolver);
+    return { isConstructor: consts.get(call[3]!), ownsCaller: consts.get(call[4]!) };
+  };
+
+  it.each([
+    ["a sloppy declaration", "function g() {}", false, true],
+    ["a strict declaration", "function g() {}", true, false],
+    ["a sloppy generator", "function* g() {}", false, false],
+    ["a sloppy async function", "async function g() {}", false, false],
+  ])("%s", (_label, source, strict, owns) => {
+    expect(operands(source, strict)).toEqual({ isConstructor: true, ownsCaller: owns });
+  });
+
+  it("refuses by name without the code's strictness", () => {
+    expect(() => operands("function g() {}", undefined)).toThrow(
+      "a function object's own caller needs its code's strictness",
+    );
+  });
+});

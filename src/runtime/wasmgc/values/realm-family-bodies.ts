@@ -13,12 +13,16 @@ import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 
-/** A family property: a string, or a realm entry or object by catalog id. */
+/**
+ * A family property: a string, or a realm entry or object by catalog id; (#7489) or an accessor whose halves are
+ * realm entries.
+ */
 export interface RealmFamilyProperty {
   readonly key: string;
   readonly value:
     | { readonly kind: "string"; readonly value: string }
-    | { readonly kind: "intrinsic"; readonly id: string };
+    | { readonly kind: "intrinsic"; readonly id: string }
+    | { readonly kind: "accessor"; readonly get: string; readonly set: string };
   readonly writable: boolean;
   readonly configurable: boolean;
 }
@@ -28,6 +32,8 @@ export interface RealmFamilyOperands {
   readonly objectPrototype: number;
   readonly createWithPrototype: FuncHandle;
   readonly defineDataBody: FuncHandle;
+  /** (#7489) The kernel's accessor define `(object, key, getter, setter, word) -> object`. */
+  readonly defineAccessorBody: FuncHandle;
   /** A realm string literal as an externref. */
   readonly text: (value: string) => Instr[];
   readonly entries: readonly {
@@ -69,6 +75,14 @@ const word = (property: Pick<RealmFamilyProperty, "writable" | "configurable">):
   flags.configurableSpecified |
   flags.hasValue;
 
+/** (#7489) A non-enumerable accessor property's whole descriptor word, both halves present. */
+const accessorWord = (property: Pick<RealmFamilyProperty, "configurable">): number =>
+  (property.configurable ? flags.configurable : 0) |
+  flags.enumerableSpecified |
+  flags.configurableSpecified |
+  flags.getterSpecified |
+  flags.setterSpecified;
+
 /** Each object, linked to the realm's Object.prototype or to an object created before it, into its global. */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
   return d.objects.flatMap((object): Instr[] => [
@@ -81,12 +95,19 @@ export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
 
 /** Define `property` on the storage `target` leaves. */
 function define(d: RealmFamilyOperands, target: readonly Instr[], property: RealmFamilyProperty): Instr[] {
+  const { value } = property;
+  const operands =
+    value.kind === "accessor"
+      ? [...intrinsic(d, value.get), ...intrinsic(d, value.set)]
+      : value.kind === "string"
+        ? d.text(value.value)
+        : intrinsic(d, value.id);
   return [
     ...target,
     ...d.text(property.key),
-    ...(property.value.kind === "string" ? d.text(property.value.value) : intrinsic(d, property.value.id)),
-    { op: "f64.const", value: word(property) },
-    { op: "call", funcIdx: d.defineDataBody },
+    ...operands,
+    { op: "f64.const", value: value.kind === "accessor" ? accessorWord(property) : word(property) },
+    { op: "call", funcIdx: value.kind === "accessor" ? d.defineAccessorBody : d.defineDataBody },
     { op: "drop" },
   ];
 }
