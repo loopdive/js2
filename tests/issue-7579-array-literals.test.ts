@@ -25,51 +25,39 @@ const inFunction = (body: string) => `function run() {\n${body}\nreturn out;\n}\
 const agrees = (body: string) => agreesWithNode(body + CALLS, true, runnerOptions(), freshRealmOut);
 const aborts = (body: string) => abortsAtRunTime(body + CALLS, runnerOptions(), (source) => freshRealmOut(source));
 
-/** Programs checked at module level and inside a function. */
+/** Programs checked at module level and inside a function (several checks per program: each compile costs seconds). */
 const BOTH: readonly (readonly [string, string])[] = [
   [
-    "empty, mixed and nested literals",
+    "empty, mixed and nested literals; holes, a trailing comma, a trailing elision",
     `var a = [], b = [1, "a", true, null], c = [[1, 2], []];
-var out = a.length + "|" + b.length + b[1] + b[2] + String(b[3]) + "|" + c.length + c[0][1] + c[1].length;`,
+var p = [1, , 3], q = [1, ], r = [, ], s = [, , ];
+var out = a.length + "|" + b.length + b[1] + b[2] + String(b[3]) + "|" + c.length + c[0][1] + c[1].length
+  + "|" + p.length + String(p[1]) + "|" + q.length + r.length + s.length + String(r[0]);`,
   ],
   [
-    "holes, a trailing comma, a trailing elision",
-    `var a = [1, , 3], b = [1, ], c = [, ], d = [, , ];
-var out = a.length + String(a[1]) + "|" + b.length + c.length + d.length + String(c[0]);`,
-  ],
-  [
-    "computed integer keys: read, write, grow",
+    "computed keys: read, write, grow, compound, update, odd numbers, === undefined",
     `var a = [10, 20, 30], i = 1; a[i] = a[i] + 1; a[i + 2] = 7;
-var out = a[i] + "|" + a.length + "|" + a[3] + String(a[5]);`,
-  ],
-  [
-    "computed compound assignment and update",
-    `var a = [1, 2], i = 0; a[i] += 5; a[i]++; ++a[1]; a.length += 1; var out = a[0] + "|" + a[1] + "|" + a.length;`,
-  ],
-  [
-    "negative, fractional, NaN and 2**32-1 keys are plain properties",
-    `var a = [1, 2]; a[-1] = "m"; a[1.5] = "f"; a[NaN] = "n"; a[4294967295] = "h"; a[4294967294] = "g";
-var out = a.length + a["-1"] + a["1.5"] + a["NaN"] + a["4294967295"] + a[-1] + a[1.5] + a[0 / 0];`,
+var b = [1, 2], j = 0; b[j] += 5; b[j]++; ++b[1]; b.length += 1;
+var c = [1, 2]; c[-1] = "m"; c[1.5] = "f"; c[NaN] = "n"; c[4294967295] = "h"; c[4294967294] = "g";
+var d = [null, undefined, , 4], h = 2, o = 9;
+var out = a[i] + "|" + a.length + "|" + a[3] + String(a[5]) + "|" + b[0] + b[1] + b.length
+  + "|" + c.length + c["-1"] + c["1.5"] + c["NaN"] + c["4294967295"] + c[-1] + c[1.5] + c[0 / 0]
+  + "|" + (d[j] === undefined ? "T" : "F") + (d[i] === undefined ? "T" : "F") + (d[h] !== undefined ? "T" : "F")
+  + (d[o] === undefined ? "T" : "F") + (d[3] === undefined ? "T" : "F") + (d[j] === null ? "T" : "F");`,
   ],
 ];
 
 const MODULE: readonly (readonly [string, string])[] = [
   [
-    "element order, and a throwing element leaves the binding",
+    "element order, a throwing element, a new array per evaluation, an array by isArray, tag, instanceof",
     `var log = { s: "" }; var f = function (x) { log.s = log.s + x; return x; };
 var a = [f("a"), f("b"), , f("c")], b = 1;
 try { b = [1, (function () { throw new TypeError("t"); })(), 3]; } catch (e) { log.s = log.s + e.name; }
-var out = log.s + a.length + a[3] + String(b);`,
-  ],
-  [
-    "each evaluation is a new array",
-    "var xs = []; for (var i = 0; i < 3; i++) xs[i] = [i];\nvar out = String(xs[0] === xs[1]) + xs[2][0] + xs.length;",
-  ],
-  [
-    "a literal is an array: isArray, tag, instanceof, constructor",
-    `var a = [1];
-var out = String(Array.isArray(a)) + Object.prototype.toString.call([]) + String([] instanceof Array)
-  + String(a.constructor === Array) + String([] === []);`,
+var xs = []; for (var i = 0; i < 3; i++) xs[i] = [i];
+var z = [1];
+var out = log.s + a.length + a[3] + String(b) + "|" + String(xs[0] === xs[1]) + xs[2][0] + xs.length + "|"
+  + String(Array.isArray(z)) + Object.prototype.toString.call([]) + String([] instanceof Array)
+  + String(z.constructor === Array) + String([] === []);`,
   ],
   [
     "a literal never calls a user-written Array",
@@ -80,54 +68,44 @@ var out = String(Array.isArray(a)) + Object.prototype.toString.call([]) + String
     `Object.defineProperty(Array.prototype, "0", { set: function (v) { throw 1; }, configurable: true });
 var a = [5]; var out = String(a[0]) + String(Object.getOwnPropertyDescriptor(a, "0").value);`,
   ],
-  ["a hole reads through Array.prototype", 'Array.prototype[0] = "p"; var out = String([ , ][0]) + String([ , 2][0]);'],
   [
-    'string keys: canonical numeric, "length", a held name',
-    `var a = [1, 2], k1 = "1", k3 = "length", c = "constructor"; a.foo = "f"; var f = "foo";
-var out = a[k1] + a[k3] + a[f] + a.length + String(a["0"]) + String(a[c] === Array);`,
+    "a hole reads through Array.prototype, constant and computed, and is not undefined",
+    `Array.prototype[2] = "p"; var a = [null, undefined, , 4], h = 2;
+var out = String([ , , ][2]) + a[h] + (a[h] === undefined ? "T" : "F") + (a[2] !== undefined ? "T" : "F");`,
   ],
   [
-    "boolean, null and undefined keys are their strings",
-    `var o = {}, t = true, n = null, u;
-o[t] = 1; o[n] = 2; o[u] = 3; var out = o["true"] + o["null"] + o["undefined"] + o[t] + o[n] + o[u] + "";`,
+    "a method read through an array is Array.prototype's (identity), and holes compare as undefined",
+    `var a = [1, 2], d = [ , 1], i = 0;
+var out = String([1].toString === Array.prototype.toString) + String(a.join === Array.prototype.join)
+  + String(a.toString !== Array.prototype.toString) + typeof a.join + String(a.push === Array.prototype.push)
+  + (d[i] === undefined ? "T" : "F") + (d[0] !== undefined ? "T" : "F");`,
   ],
   [
-    "computed keys on objects and functions",
-    `var o = { a: 1, b: 0 }, k = "a", j = "b", n = 1; o[j] = 2; o[n] = "one";
-var f = function () {}; f.x = 0; var x = "x"; f[x] = 3; o[k] += 2;
-var out = o[k] + o[j] + o["1"] + o[n] + String(o[2]) + f[x] + typeof f["na" + "me"];`,
+    "string, boolean, null and undefined keys; objects, functions; missing and canonical numeric keys",
+    `var a = [1, 2], k1 = "1", k3 = "length", c = "constructor"; a.foo = "f"; var fo = "foo";
+var o = {}, t = true, n = null, u; o[t] = 1; o[n] = 2; o[u] = 3;
+var p = { a: 1, b: 0 }, k = "a", j = "b", m = 1; p[j] = 2; p[m] = "one"; p[k] += 2;
+var f = function () {}; f.x = 0; var x = "x"; f[x] = 3;
+var q = [1], i = 7, s = "7";
+var r = [], v = 0.1 + 0.2, w = 1e21, nz = -0; r[v] = "p"; r[w] = "q"; r[nz] = "z";
+var names = ["a", "b"], sum = 0; for (var l = 0; l < names.length; l++) sum += p[names[l]];
+var failures = []; failures[failures.length] = "x";
+var out = a[k1] + a[k3] + a[fo] + a.length + String(a["0"]) + String(a[c] === Array) + "|"
+  + o["true"] + o["null"] + o["undefined"] + o[t] + o[n] + o[u] + "|"
+  + p[k] + p[j] + p["1"] + p[m] + String(p[2]) + f[x] + typeof f["na" + "me"] + "|"
+  + String(q[i]) + String(q[s]) + String(q[i + 1]) + "|"
+  + r["0.30000000000000004"] + r["1e+21"] + r[0] + r.length + r[0.30000000000000004] + "|" + sum + failures.length;`,
   ],
   [
-    "a missing canonical numeric key reads as undefined",
-    'var a = [1]; var i = 7, s = "7"; var out = String(a[i]) + String(a[s]) + String(a[i + 1]);',
-  ],
-  [
-    "a computed number key is the constant key's canonical string",
-    `var a = []; var i = 0.1 + 0.2, j = 1e21, m = -0;
-a[i] = "p"; a[j] = "q"; a[m] = "z"; var out = a["0.30000000000000004"] + a["1e+21"] + a[0] + a.length + a[0.30000000000000004];`,
-  ],
-  [
-    "a key through a parameter is the dynamic value, not a number",
+    "keys through parameters; a nullish receiver's TypeError; strict and sloppy writes to read-only indices",
     `function f(o, k) { return o[k]; } function g(o, k) { o[k] = 1; return o; }
-var out = String(f({ a: 1 }, "a")) + String(f([5, 6], 1)) + String(g({ a: 0 }, "a").a) + String(g([0, 0], 1)[1]);`,
-  ],
-  [
-    "names[i] and failures[failures.length] (propertyHelper.js)",
-    `var names = ["a", "b"], o = { a: 1, b: 2 }, s = 0;
-for (var i = 0; i < names.length; i++) s += o[names[i]];
-var failures = []; failures[failures.length] = "x"; var out = s + "|" + failures.length;`,
-  ],
-  [
-    "a nullish receiver with a computed key throws a TypeError",
-    `var out = "", n = null, k = "x", u;
-try { n[k]; } catch (e) { out += e.name; } try { u[k] = 1; } catch (e) { out += e.name; }`,
-  ],
-  [
-    "a strict write to a read-only index throws; a sloppy one past a frozen length is ignored",
-    `var a = [1]; Object.defineProperty(a, "0", { writable: false }); var i = 0, out = "";
+var out = String(f({ a: 1 }, "a")) + String(f([5, 6], 1)) + String(g({ a: 0 }, "a").a) + String(g([0, 0], 1)[1]);
+var n = null, k = "x", u;
+try { n[k]; } catch (e) { out += e.name; } try { u[k] = 1; } catch (e) { out += e.name; }
+var a = [1]; Object.defineProperty(a, "0", { writable: false }); var i = 0;
 var s = function () { "use strict"; try { a[i] = 2; } catch (e) { return e.name; } };
 var b = [1]; Object.defineProperty(b, "length", { writable: false }); var j = 3; b[j] = 2;
-out = s() + a[0] + b.length + String(b[3]);`,
+out += s() + a[0] + b.length + String(b[3]);`,
   ],
 ];
 

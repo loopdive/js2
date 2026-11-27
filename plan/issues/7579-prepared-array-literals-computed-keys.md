@@ -139,7 +139,7 @@ global from a closure refuses.
 
 **Proof** (local node 22, load 2–7 from the other agent):
 
-- Probes vs node in a fresh realm: 65 programs; 33 right (each with a failing wrong twin), 2 right without a twin
+- Probes vs node in a fresh realm: 70 programs; 38 right (each with a failing wrong twin), 2 right without a twin
   (out-of-scope rows that answer), 18 aborted, 12 refused, wrong 0, invalid 0, exceptions 0.
 - test262 (own runner, `assert.js` + `sta.js` + includes): the 91 ES5 `built-ins/Array` no-include files: pass 23 →
   23, fail 53 → 53, compile error 15 → 15 (these files hold no literal); `mw-00` (87 rows): pass 18 → 20 (`S15.4.5.2_A1_T1`,
@@ -154,10 +154,24 @@ global from a closure refuses.
   Number::toString (`String(i)` beside `Array(1, 2)`: 46,674 B).
 - Bytes: ordinary pipeline 30 programs × 2 targets identical; Prepared corpus 19 programs identical but the three
   preludes (they read `a[i]`).
-- `src/ir/from-ast.ts` 17,395 → 17,380. Gates at the merge base all pass (import-cycles, ir-layering unchanged; IR →
+- `src/ir/from-ast.ts` 17,395 → 17,385. Gates at the merge base all pass (import-cycles, ir-layering unchanged; IR →
   runtime edges unchanged); with `LOC_GATE_BASE=origin/main` the LOC and function budgets fail only on files this
   branch does not touch (`src/codegen/declarations*.ts`, `nested-declarations.ts`, `array-methods.ts`, `closures.ts`,
   `property-access.ts`, `eval-inline.ts`, `calls.ts`): main moving.
+
+**From the other lane (2026-11-27), acceptance cohort: the 11 ES5 files of `language/expressions/array/`** (no
+spread): base 0 pass / 11 compile errors (first stops: "array literal with elision not in #1804 scope" 6, "resolver
+cannot register vec for array literal" 4, "empty array escapes before its element type is closed" 1) → head 11 pass.
+
+- `a[i] === undefined` / `!==`: from-ast refused an unproven indexed read compared with `undefined` ("unproven indexed
+  read cannot be compared with undefined"); a read off a dynamic binding (`tryLowerUndefinedCompare`, one condition
+  more) is the carrier now and takes the existing tag test, so the actual value decides: `null`, an explicit
+  `undefined`, a hole, a hole inherited through `Array.prototype[i]`, an out-of-bounds index; the bounds proof stays
+  for unboxed vec reads. Probes at module level and in a function agree with node; test rows added. Ordinary pipeline
+  bytes unchanged.
+- Method identity through an instance (`[1].toString === Array.prototype.toString`, `a.join`, `a.push`) was already
+  right on this base: the constant read pins the member and [[Get]] finds it on the chain; calling it still aborts.
+  Test row added.
 
 **PR A findings folded**: refusal-text assertions in `tests/issue-7352-arrays.test.ts` (now "refuses" only); the
 `A1b` history comment in `ordinary-to-primitive.ts`; `dynamic-prototype-methods.ts` imports `BOOLEAN`, `CARRIER`

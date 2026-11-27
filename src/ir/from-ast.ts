@@ -15842,8 +15842,13 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // `undefined` through a numeric-vector read, only a proven in-bounds access
   // may participate in the never-undefined fold below. Unproven reads stay on
   // the direct SAFE path instead of folding `a[i] === undefined` to false.
-  // (#7292) A script-var vec's read is the carrier: the tag test below.
-  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx) && !isScriptVarVec(other.expression, cx)) {
+  // (#7292) A script-var vec's read is the carrier: the tag test below; (#7579) so is a dynamic receiver's.
+  if (
+    ts.isElementAccessExpression(other) &&
+    !isProvenInBoundsIr(other, cx) &&
+    !isScriptVarVec(other.expression, cx) &&
+    !(ts.isIdentifier(other.expression) && bindingHoldsDynamic(other.expression, cx))
+  ) {
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",
