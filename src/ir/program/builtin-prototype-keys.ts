@@ -14,6 +14,7 @@ import {
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
   NATIVE_WRAPPER_CONSTRUCTORS,
+  WRAPPER_DATA,
   modelledRow,
   realmMethodId,
   type NativeErrorConstructor,
@@ -164,6 +165,9 @@ export function nativeConstantStatic(name: string, key: string): number | undefi
 export const REALM_GLOBAL_NAMES: ReadonlySet<string> = new Set(
   NATIVE_REALM_CATALOG.intrinsics.flatMap(({ aliases }) => aliases.filter((alias) => /^[A-Za-z]+$/.test(alias))),
 );
+
+/** (#7561) The selectors of `js.object.wrapper-data`, for every IR reader. */
+export { WRAPPER_DATA };
 
 /** (#7561) The wrapper constructor of each primitive kind: the prototype its member access reads through. */
 export const WRAPPER_OF_PRIMITIVE = {

@@ -6,8 +6,7 @@
  * [[ErrorData]] (G1), else "Object"; its `@@toStringTag` is reachable only by naming `Symbol`, which refuses by name.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { WRAPPER_DATA } from "../../runtime/contracts/native-realm-catalog.js";
-import { WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
+import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
 import { gap } from "./dynamic-value-gap.js";

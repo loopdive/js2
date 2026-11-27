@@ -11,8 +11,7 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { WRAPPER_DATA } from "../../runtime/contracts/native-realm-catalog.js";
-import { ERROR_TO_STRING_ID, WRAPPER_OF_PRIMITIVE, isArrayIndexKey } from "./builtin-prototype-keys.js";
+import { ERROR_TO_STRING_ID, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
 import { CARRIER, carried } from "./dynamic-value-types.js";
