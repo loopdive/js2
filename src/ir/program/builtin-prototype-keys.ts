@@ -244,6 +244,14 @@ const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
 );
 
 /**
+ * (#7574) Object.prototype's keys the realm's root lacks even where the program holds the Object family (`__proto__`,
+ * the Annex B helpers): an own-property query of the root with one of them is unknown, never absent.
+ */
+export const OBJECT_PROTOTYPE_UNHELD_KEYS: ReadonlySet<string> = new Set(
+  [...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter((key) => !OBJECT_FAMILY_ROOT_KEYS.has(key)),
+);
+
+/**
  * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype: every key the
  * catalog gives them but `length` and `name`, which every function value owns from its creation.
  */

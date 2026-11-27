@@ -11,7 +11,7 @@ import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-ca
 import { nativeObjectStatic } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { unlessStringObject } from "./dynamic-builtin-methods.js";
+import { unlessUnheldOwnKey } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf } from "./dynamic-member-access.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
@@ -38,12 +38,13 @@ const served = (kind: CarrierKind): boolean =>
   MEMBER_ACCESS_ARM[kind] === "object" || MEMBER_ACCESS_ARM[kind] === "function";
 
 /**
- * ToPropertyKey of `value`, the program's ToString, into `text`; (#7561) where the program can hold a wrapper or
- * (#7352) an array prototype, a constant string key is that constant, so the realm's use names the one member it
+ * ToPropertyKey of `value`, the program's ToString, into `text`; (#7561) where the program can hold a wrapper,
+ * (#7352) an array prototype or (#7574) the root, a constant string key is that constant, so the realm's use names the one member it
  * reaches (`pinnedMembers`).
  */
 export function toPropertyKey(b: ObjectStaticBuilders, instr: IrInstr, value: IrValueId, text: IrValueId): IrInstr[] {
-  const pins = b.program.objects.wrappers.size > 0 || holdsFamily(b.program, "array");
+  const pins =
+    b.program.objects.wrappers.size > 0 || holdsFamily(b.program, "array") || holdsFamily(b.program, "object");
   const known = pins ? constantArgumentOf(b.definitions, value) : undefined;
   return known === undefined ? b.stringOf(instr, value, text) : [b.text(known, text)];
 }
@@ -73,9 +74,9 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
     return [...toPropertyKey(b, instr, value, text), carried(text, key), ...then(key)];
   };
   const nullish = (kind: CarrierKind) => MEMBER_ACCESS_ARM[kind] === "type-error";
-  /** (#7561) `then`, but the run-time abort for a String object and a key that may be an index (`unlessStringObject`). */
-  const unlessString = (object: IrValueId, key: IrValueId | undefined, then: Arm) =>
-    unlessStringObject(b, instr, b.program, object, key && constantArgumentOf(b.definitions, key), then);
+  /** (#7561) `then`, but the run-time abort for a key the realm lacks on `object` (`unlessUnheldOwnKey`). */
+  const unlessUnheld = (object: IrValueId, key: IrValueId | undefined, then: Arm) =>
+    unlessUnheldOwnKey(b, instr, b.program, object, key && constantArgumentOf(b.definitions, key), then);
   /**
    * ObjectDefineProperties(object, properties) after ToObject(properties), answering `object`. A number or a Boolean
    * becomes a wrapper without own properties; a string's own index properties need the String object the realm lacks.
@@ -85,7 +86,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   const defineAll = (object: IrValueId, properties: IrValueId, r: IrValueId, undefinedMap: "TypeError" | "none") =>
     byKind(
       properties,
-      unlessString(properties, undefined, (s) => [
+      unlessUnheld(properties, undefined, (s) => [
         realmCall("js.object.descriptors-define", [object, properties]),
         carried(object, s),
       ]),
@@ -105,20 +106,20 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
     case "defineProperty":
       return onObject((r) =>
         withKey(second, (key) =>
-          unlessString(first, second, (s) => [
+          unlessUnheld(first, second, (s) => [
             realmCall("js.object.descriptor-define", [first, key, third!]),
             carried(first, s),
           ])(r),
         ),
       );
     case "defineProperties":
-      return onObject(unlessString(first, undefined, (r) => defineAll(first, second, r, "TypeError")));
+      return onObject(unlessUnheld(first, undefined, (r) => defineAll(first, second, r, "TypeError")));
     case "getOwnPropertyDescriptor":
       return byKind(
         first,
         (r) =>
           withKey(second, (key) =>
-            unlessString(first, second, (s) => [realmCall("js.object.own-descriptor", [first, key], s)])(r),
+            unlessUnheld(first, second, (s) => [realmCall("js.object.own-descriptor", [first, key], s)])(r),
           ),
         (kind, r) =>
           nullish(kind)

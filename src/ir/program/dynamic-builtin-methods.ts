@@ -14,6 +14,7 @@ import type { IrType } from "../core/types.js";
 import {
   ERROR_TO_STRING_ID,
   OBJECT_PROTOTYPE_ID,
+  OBJECT_PROTOTYPE_UNHELD_KEYS,
   WRAPPER_DATA,
   WRAPPER_OF_PRIMITIVE,
   isArrayIndexKey,
@@ -211,11 +212,30 @@ export function dynamicObjectTag(
 }
 
 /**
- * (#7561) #7350 B3b-1's interim abort: a String object's index properties are virtual and the realm lacks them (B3c),
- * so an own-property query of `object` with a key that may be an array index (`key`, when it is a constant) is the
- * run-time abort where `object` is a String object; `then` otherwise, and wherever no String object can exist.
+ * An own-property query of `object` with `key` (when it is a constant) that the realm could answer "absent" for a
+ * property it lacks is the run-time abort; `then` otherwise: (#7574) where `object` is the root and `key` may be one
+ * the root lacks (`OBJECT_PROTOTYPE_UNHELD_KEYS`), and where `object` is a String object ({@link unlessStringObject}).
  */
-export function unlessStringObject(
+export function unlessUnheldOwnKey(
+  b: ChainBuilders,
+  instr: IrInstr,
+  program: LegalizationProgram,
+  object: IrValueId,
+  key: string | undefined,
+  then: Arm,
+): Arm {
+  const string = unlessStringObject(b, instr, program, object, key, then);
+  if (!holdsFamily(program, "object") || (key !== undefined && !OBJECT_PROTOTYPE_UNHELD_KEYS.has(key))) return string;
+  const root = () => identityTest(b, instr, OBJECT_PROTOTYPE_ID, object, (r) => b.abort(instr, r));
+  return builtinMethodChain(b, [root], string, CARRIER);
+}
+
+/**
+ * (#7561) #7350 B3b-1's interim abort: a String object's index properties are virtual and the realm lacks them (B3c),
+ * so an own-property query of `object` with a key that may be an array index is the run-time abort where `object` is a
+ * String object; `then` otherwise, and wherever no String object can exist.
+ */
+function unlessStringObject(
   b: ChainBuilders,
   instr: IrInstr,
   program: LegalizationProgram,

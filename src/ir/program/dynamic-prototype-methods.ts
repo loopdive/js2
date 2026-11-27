@@ -31,12 +31,11 @@ import {
   builtinMethodChain,
   conversionMethodTests,
   identityTest,
-  unlessStringObject,
+  unlessUnheldOwnKey,
 } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-chains.js";
-import { BOOLEAN } from "./dynamic-value-types.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import { toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
@@ -83,7 +82,7 @@ function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, 
         const own = (s: IrValueId) =>
           boxed(b, instr, (t) => b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), t), s);
         const known = argument === undefined ? "undefined" : constantArgumentOf(b.definitions, argument);
-        return unlessStringObject(b, instr, b.program, receiver, known, own)(r);
+        return unlessUnheldOwnKey(b, instr, b.program, receiver, known, own)(r);
       }
       default:
         return kind === "number" || kind === "boolean" ? boxed(b, instr, constant(false), r) : b.abort(instr, r);
