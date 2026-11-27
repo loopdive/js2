@@ -264,21 +264,22 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
 }
 
 /**
- * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the built-in function object `selector` names
- * (`NATIVE_VALUE_INTRINSICS`), through its entry's getter (which initializes the realm first). `getters` holds the
- * entries the realm has; the caller passes only selectors whose entry the realm holds (it holds what is named).
+ * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the realm value `selector` names
+ * (`NATIVE_VALUE_INTRINSICS`), a built-in function object through its entry's getter, (#7561) a prototype object
+ * through the realm's own read; each initializes the realm first. `values` holds what the realm has; the caller passes
+ * only selectors the realm holds (it holds what is named).
  */
 export function buildSourceObjectIntrinsicDefinition(d: {
-  readonly getters: readonly { readonly selector: number; readonly getter: FuncHandle }[];
+  readonly values: readonly { readonly selector: number; readonly value: readonly Instr[] }[];
 }): SourceObjectDefinition {
   return {
     locals: [],
     body: [
-      ...d.getters.flatMap(({ getter, selector }): Instr[] => [
+      ...d.values.flatMap(({ value, selector }): Instr[] => [
         { op: "local.get", index: 0 },
         { op: "i32.const", value: selector },
         { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "call", funcIdx: getter }, { op: "return" }] },
+        { op: "if", blockType: { kind: "empty" }, then: [...value, { op: "return" }] },
       ]),
       { op: "unreachable" },
     ],

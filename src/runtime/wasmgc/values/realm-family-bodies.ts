@@ -47,8 +47,12 @@ export interface RealmFamilyOperands {
     readonly id: string;
     readonly global: number;
     readonly prototype: string;
+    /** (#7561) A wrapper prototype's primitive data (`NativeRealmIntrinsic.primitiveData`). */
+    readonly primitiveData?: string | number | boolean;
     readonly properties: readonly RealmFamilyProperty[];
   }[];
+  /** (#7561) Where the realm holds a wrapper prototype: the wrapper `id` of `primitiveData` over `prototype`. */
+  readonly wrapperAllocation?: (id: string, primitiveData: string | number | boolean, prototype: Instr[]) => Instr[];
 }
 
 const global = (index: number): Instr => ({ op: "global.get", index });
@@ -75,14 +79,20 @@ const word = (property: Pick<RealmFamilyProperty, "writable" | "configurable">):
   flags.configurableSpecified |
   flags.hasValue;
 
-/** Each object, linked to the realm's Object.prototype or to an object created before it, into its global. */
+/**
+ * Each object, linked to the realm's Object.prototype or to an object created before it, into its global; (#7561) an
+ * object with primitive data is a wrapper.
+ */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
-  return d.objects.flatMap((object): Instr[] => [
-    ...(object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype)),
-    ...asObject(d),
-    { op: "call", funcIdx: d.createWithPrototype },
-    { op: "global.set", index: object.global },
-  ]);
+  return d.objects.flatMap((object): Instr[] => {
+    const prototype =
+      object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype);
+    const created =
+      object.primitiveData === undefined
+        ? [...prototype, ...asObject(d), { op: "call", funcIdx: d.createWithPrototype } as Instr]
+        : d.wrapperAllocation!(object.id, object.primitiveData, prototype);
+    return [...created, { op: "global.set", index: object.global }];
+  });
 }
 
 /** The externref of `property`'s value. */

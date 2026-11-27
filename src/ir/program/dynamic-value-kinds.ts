@@ -15,6 +15,7 @@ import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { RealmFamily } from "./builtin-prototype-keys.js";
+import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
@@ -160,14 +161,16 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
  * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
- * way to `@@toPrimitive` and `@@toStringTag`, and (G1, #7350 B3a) the realm constructor families it names as values
- * (built-in function values; an Error constructor makes objects).
+ * way to `@@toPrimitive` and `@@toStringTag`, (G1, #7350 B3a) the realm constructor families it names as values
+ * (built-in function values; an Error constructor makes objects), and (#7561) the wrapper kinds whose objects it can
+ * obtain (`new X(…)`, `X.prototype`): only such a program can hold a wrapper or change a wrapper prototype.
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
   readonly realmFamilies: ReadonlySet<RealmFamily>;
+  readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -184,6 +187,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   functions: false,
   namesSymbol: false,
   realmFamilies: new Set<RealmFamily>(),
+  wrappers: new Set<NativeWrapperConstructor>(),
 });
 
 /**
@@ -197,14 +201,17 @@ export const holdsFamily = (program: LegalizationProgram, family: RealmFamily): 
 
 /**
  * The kinds a value of a program may be: the object kind only where the program builds objects or (#7354 G1) may hold
- * an error, which is an ordinary object, and (F1) the function kind only where it creates function values or (G1) may
- * hold a built-in one (a realm constructor, an error's methods).
+ * an error or (#7561) a wrapper, which are ordinary objects, and (F1) the function kind only where it creates function
+ * values or (G1) may hold a built-in one (a realm constructor, an error's methods).
  */
 export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
   const builtins = holdsFamily(program, "error") || holdsFamily(program, "wrapper");
   return KIND_ORDER.filter(
     (kind) =>
-      (kind !== "object" || program.objects.present || holdsFamily(program, "error")) &&
+      (kind !== "object" ||
+        program.objects.present ||
+        holdsFamily(program, "error") ||
+        program.objects.wrappers.size > 0) &&
       (kind !== "function" || program.objects.functions || builtins),
   );
 }

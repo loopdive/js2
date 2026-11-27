@@ -76,6 +76,8 @@ import {
   type ErrorCreateOperands,
 } from "../../../runtime/wasmgc/values/realm-family-bodies.js";
 import { NATIVE_ERROR_CONSTRUCTORS } from "../../../runtime/contracts/native-realm-catalog.js";
+import { wrapperOfConstant } from "../../../runtime/wasmgc/values/primitive-wrapper-bodies.js";
+import { realmWrapperKinds, realmWrapperRepresentation, type NativeRealmWrappers } from "./native-realm-wrappers.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -90,6 +92,11 @@ export interface NativeBuiltinFunctionDependencies {
   readonly errorCreate?: FunctionReservation;
   /** (#7354 O2) The program's dispatchers a source getter / setter is called through (`nativeInvocationAccessorCalls`). */
   readonly accessorCalls?: { readonly get: FunctionReservation; readonly set: FunctionReservation };
+  /**
+   * (#7561) Where the realm holds a wrapper prototype: #3518's wrappers, subtypes of the ordinary object whose own
+   * properties the plain storage holds (a String object's `length`; its indices are the IR's interim abort).
+   */
+  readonly wrappers?: NativeRealmWrappers;
 }
 const functionRoles = [
   "initialize",
@@ -178,7 +185,7 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   const required = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
     required.some((key) => !Object.hasOwn(d, key)) ||
-    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls"].includes(key))
+    Object.keys(d).some((key) => ![...required, "errorCreate", "accessorCalls", "wrappers"].includes(key))
   )
     fail("unexpected dependency input");
   if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
@@ -194,11 +201,21 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   assertBuiltinFunctionDataRecord(dd.sameValueDependencies.valueDependencies);
   nativeClosureReservationInventory(tx, d.closures, d.closurePlan);
   const inventory = nativeObjectDescriptorReservationInventory(tx, d.descriptors, dd);
-  const ordinary = dd.storageDependencies.lookupDependencies.layouts.object.object;
+  const objects = dd.storageDependencies.lookupDependencies.layouts.object;
+  const ordinary = objects.object;
   // ref.test includes subtypes. Plain storage lookup cannot stand in for an
   // exotic carrier's own-property method (String's virtual indices, for example).
   // Parentless structs are implicitly final in the emitted Wasm representation.
-  if (ordinary.kind !== "struct" || (ordinary.superTypeIdx !== undefined && ordinary.final !== true))
+  // (#7561) An extensible carrier is admitted for the realm's wrappers alone, #3518's subtypes of it.
+  const wrapperSubtypes =
+    d.wrappers !== undefined &&
+    Object.values(d.wrappers.layouts.types).every(
+      (type) => type.object.kind === "struct" && type.object.superTypeIdx === objects.typeIndex,
+    );
+  if (
+    ordinary.kind !== "struct" ||
+    (ordinary.superTypeIdx !== undefined && ordinary.final !== true && !wrapperSubtypes)
+  )
     fail("extensible ordinary carrier requires heterogeneous prototype dispatch");
   if (
     dd.closures !== d.closures ||
@@ -457,7 +474,8 @@ function operands(
 ): BuiltinFunctionPrototypeOperands {
   const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests),
     dd = owner.dependencies.descriptorDependencies,
-    calls = owner.dependencies.accessorCalls;
+    calls = owner.dependencies.accessorCalls,
+    wrappers = owner.dependencies.wrappers;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
   const literal = (text: string, external = true): Instr[] => [
@@ -519,6 +537,16 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(wrappers && {
+      wrapperAllocation: (id, primitiveData, prototype) =>
+        wrapperOfConstant(
+          realmWrapperRepresentation(values, input.strings.layout.anyStrTypeIdx),
+          realmWrapperKinds(tx, wrappers).find(({ kind }) => id === `%${kind}.prototype%`)!,
+          primitiveData,
+          prototype,
+          (text) => literal(text),
+        ),
+    }),
     ...(calls && {
       accessorCalls: {
         source: [calls.get.handle, calls.set.handle],

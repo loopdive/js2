@@ -86,6 +86,11 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // requiring the enumerable attribute when `selector` is 1.
   "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
+  // (#7561) A new wrapper of the already converted primitive, for the wrapper constructor `selector` (its index in
+  // `NATIVE_WRAPPER_CONSTRUCTORS`); and what the realm answers of a wrapper (`WRAPPER_DATA`): an object's primitive
+  // data, or thisXValue where the method is a held wrapper prototype's `valueOf` / `toString`.
+  "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, SELECTOR], [EXTERNAL]),
 });
 
 /**

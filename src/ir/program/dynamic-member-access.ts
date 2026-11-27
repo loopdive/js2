@@ -4,6 +4,12 @@
  * kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]] or [[Set]] for an object
  * ((#7354 G1) an error included), and for a primitive what its pristine wrapper answers. A key a built-in prototype
  * holds (the realm's prototypes do not hold it yet) or a computed key refuses by name.
+ *
+ * (#7561) Where the program can obtain a wrapper prototype (`ProgramObjects.wrappers`) it can change it, so a
+ * primitive of that kind reads through the realm's prototype (§7.3.2 GetV: [[Get]] with the primitive as receiver),
+ * and a write meeting a key on it is the run-time abort (§10.1.9.2 step 2.b, a setter's call, is #7350 B3b-2). A
+ * String object's index keys are virtual and the realm lacks them (#7350 B3c): where one may exist, an array-index key
+ * on an object is the run-time abort.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
@@ -16,7 +22,9 @@ import {
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
+  WRAPPER_OF_PRIMITIVE,
 } from "./builtin-prototype-keys.js";
+import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
@@ -38,6 +46,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
   /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsFamily`). */
   readonly errors: boolean;
+  /** (#7561) The wrapper kinds whose prototype the program can obtain (`ProgramObjects.wrappers`). */
+  readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -81,6 +91,12 @@ interface Access {
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
+/** (#7561) The string a constant call argument holds: the carrier of a once-boxed constant. */
+export function constantArgumentOf(definitions: ReadonlyMap<IrValueId, IrInstr>, value: IrValueId): string | undefined {
+  const definition = definitions.get(value);
+  return definition?.kind === "coerce.to_externref" ? constantKeyOf(definitions, definition.value) : undefined;
+}
+
 /** The string a once-boxed constant `key` holds, if it is one. */
 export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key: IrValueId): string | undefined {
   const box = definitions.get(key);
@@ -99,6 +115,16 @@ function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): str
   const miss = ctor === undefined ? undefined : identityOnlyKeyRefusal(ctor, key);
   return miss === undefined ? key : gap(miss);
 }
+
+/** (#7561) The realm prototype a primitive of `kind` reads through, where the program can obtain it. */
+function heldPrototype(b: MemberAccessBuilders, kind: CarrierKind): string | undefined {
+  const wrapper = WRAPPER_OF_PRIMITIVE[kind as keyof typeof WRAPPER_OF_PRIMITIVE];
+  return wrapper !== undefined && b.wrappers.has(wrapper) ? `%${wrapper}.prototype%` : undefined;
+}
+
+/** (#7561) An array-index key on an object that may be a String object, whose index properties the realm lacks. */
+const stringObjectIndex = (b: MemberAccessBuilders, name: string): boolean =>
+  b.wrappers.has("String") && isArrayIndexKey(name);
 
 /** "a number", "an object". */
 const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
@@ -166,6 +192,10 @@ const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
 export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, result: IrValueId): IrInstr[] {
   const name = constantKey(b, instr);
+  // (#7561) A wrapper constructor's `prototype` is read only and non-configurable: the realm's prototype object.
+  const ctor = realmConstructorOf(instr.recv, b.definitions);
+  if (ctor?.family === "wrapper" && name === "prototype" && b.wrappers.has(ctor.name))
+    return b.realmIntrinsic(`%${ctor.name}.prototype%`, result);
   // (#7354 P1) A method the realm's Object.prototype holds: an object's or a function's read finds it through the
   // realm's [[Get]]; a primitive's wrapper prototype lacks it, and no program can change one (M1), so its read answers
   // Object.prototype's own. The value is a function object, so the function kind must be admitted.
@@ -174,6 +204,15 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     gap(`member read '${name}' in a program that creates no function value`);
   if (b.errors && V8_ERROR_KEYS.has(name))
     gap(`member read '${name}' (V8's own error property) where a value may be an error`);
+  // (#7354 C2) [[Get]] on the chain from `base`: a key Object.prototype holds is found by `js.object.has` only on the
+  // object's own or source-built chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's,
+  // which the realm lacks ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
+  const objectRead = (base: IrValueId, r: IrValueId, abort: Abort): IrInstr[] => {
+    const get = (s: IrValueId) => [realmCall("js.object.get", [base, instr.key, instr.recv], s)];
+    if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
+    const found = b.fresh();
+    return [realmCall("js.object.has", [base, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
+  };
   /** A primitive's read of a key its wrapper lacks: Object.prototype's method, or else absent. */
   const inherited = (r: IrValueId): IrInstr[] =>
     method !== undefined
@@ -194,21 +233,21 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       // A string's own `length` and indexed characters come with arrays (#7352).
       if (kind === "string" && (name === "length" || isArrayIndexKey(name)))
         return "its own length and index properties";
-      return reachable.has(name) ? `${WRAPPER[kind]}.prototype's properties` : undefined;
+      return reachable.has(name) && heldPrototype(b, kind) === undefined
+        ? `${WRAPPER[kind]}.prototype's properties`
+        : undefined;
     },
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
-    // (#7354 C2) A key Object.prototype holds: `js.object.has` finds it only on the object's own or source-built
-    // chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's, which the realm lacks
-    // ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
-    object: (r, abort) => {
-      const get = (s: IrValueId) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s)];
-      if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
-      const found = b.fresh();
-      return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
-    },
+    object: (r, abort) => (stringObjectIndex(b, name) ? abort(r) : objectRead(instr.recv, r, abort)),
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
-    primitive: (_kind, r) => inherited(r),
+    // (#7561) [[Get]] on the held prototype, with the primitive as receiver.
+    primitive: (kind, r) => {
+      const prototype = heldPrototype(b, kind);
+      if (prototype === undefined) return inherited(r);
+      const base = b.fresh();
+      return [...b.realmIntrinsic(prototype, base), ...objectRead(base, r, (s) => b.abort(instr, s))];
+    },
   };
   return memberAccess(b, instr, access, result);
 }
@@ -254,10 +293,22 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
-    object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
+    object: (r, abort, throwTypeError) =>
+      stringObjectIndex(b, name) ? abort(r) : putValue("object", r, throwTypeError),
     function: (r, throwTypeError) => putValue("function", r, throwTypeError),
-    primitive: (kind, r, throwTypeError) =>
-      instr.sloppy === true ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
+    primitive: (kind, r, throwTypeError) => {
+      const absent = (s: IrValueId) =>
+        instr.sloppy === true ? [unread(s)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, s);
+      const prototype = heldPrototype(b, kind);
+      if (prototype === undefined) return absent(r);
+      // (#7561) A key on the held prototype's chain may be a setter or read only (#7350 B3b-2): the run-time abort.
+      const [base, found] = [b.fresh(), b.fresh()];
+      return [
+        ...b.realmIntrinsic(prototype, base),
+        realmCall("js.object.has", [base, instr.key], found),
+        b.branch(found, (s) => b.abort(instr, s), absent, r, b.carrier),
+      ];
+    },
   };
   return memberAccess(b, instr, access, b.fresh());
 }

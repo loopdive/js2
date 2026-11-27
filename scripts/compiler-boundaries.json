@@ -16846,6 +16846,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -17326,6 +17331,21 @@
     },
     {
       "path": "src/ir/program/dynamic-value-chains.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-builtin-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-tag.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-types.ts",
       "state": "clean",
       "layer": "ir-program"
     },

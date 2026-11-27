@@ -1,7 +1,7 @@
 ---
 id: 7561
 title: "Prepared path: wrapper objects and reachable wrapper prototypes on main's realm model (W2's remainder)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-27
 updated: 2026-11-27
@@ -272,3 +272,33 @@ plan text only, no code yet).
 - Rows marked "reading" in the behaviour table.
 - The sizes are estimates from W2's diff (`+2,475 / −503` over 50 files for all of W2).
 - The computed-key miss on the W2 head (item 1, "Not taken from W2").
+
+## Decisions (owner, 2026-11-27)
+
+1. **Who builds B3b-1:** this lane, under #7561, to #7350's specification (B3bc "Target structure", PRV-B3's three
+   conditions). Nothing of the closed PR 7515 is merged; W2 code is carried file by file where item 1's table says so.
+2. **A primitive's read through the held prototype (deviation 1): yes**, for the kinds a program can obtain the
+   prototype of. The fact is the source's (`ProgramObjects.wrappers`: a pristine `new X(…)` or `X.prototype`), not
+   "names `X`": `assert.js` reads `String` as a value, so "names" would move every harness row onto the prototype
+   read, while a program that never creates a wrapper or reads `X.prototype` cannot change the prototype, so main's
+   static premise stays exact for it and its bytes do not change. A primitive's *write* on such a kind is the run-time
+   abort where the key is on the prototype's chain (B3b-2 takes step 2.b), else main's answer.
+3. **Constructor rows stay identity rows (deviation 2):** they gain `prototype` only, which is seeded where the
+   realm holds the prototype. A static of a wrapper constructor keeps refusing by name or trapping on a run-time key,
+   so `Number.isNaN = f` refuses (`Number` is not pristine) and `var N = Number; N.isNaN = f` aborts (the identity
+   mark): never the folded built-in.
+4. **String wrapper index keys: lost, accepted.** An array-index key on an object where a String object may exist
+   is the run-time abort (member read / write); an own-property query (`hasOwnProperty`, `getOwnPropertyDescriptor`,
+   `defineProperty`, `defineProperties` either side) of a non-empty String object with a key that may be an index
+   aborts. `length` is an ordinary own data property.
+5. **The escape rule is not in this slice.**
+
+Where the two plans differ, #7350 wins, with the owner's decisions 2 and 3 above as the stated exceptions:
+
+- #7350 B3b-1 refuses a primitive's member read of a held kind; decision 2 takes W2's read through the prototype.
+- #7350 B3b-1 retires `identityOnly` from the constructor rows; decision 3 keeps it.
+- Holding is #7350's per-member pin with the whole-family trigger (condition 2), not W2's `valueOf` / `toString`
+  only (which answered `false` for a computed key, PRV-B3bc B1).
+- `String.prototype` has its own `length` 0 (#7350 PRV-B3bc B2), as a catalog row property, not via StringCreate:
+  the realm's prototype objects are seeded from the catalog.
+

@@ -42,6 +42,12 @@ import {
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
 import { familyObjects, familyProperties } from "./native-realm-families.js";
 import {
+  fillNativeRealmWrappers,
+  heldWrapperKinds,
+  nativeRealmWrapperInventory,
+  reserveNativeRealmWrappers,
+} from "../resources/native-realm-wrappers.js";
+import {
   reserveNativeVectorTypes,
   requireNativeVectorTypeReservations,
   type NativeVectorTypeReservations,
@@ -298,8 +304,11 @@ function beginRealm(
   );
   const catalog = requirements.description.catalog,
     held = heldCatalogRows(requirements.description);
-  // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
-  const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
+  // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each
+  // ((#7561) a held prototype is an object of its family, `familyObjects`). A family member's call through the
+  // dispatcher is the run-time abort, whatever its catalog implementation (`NativeBuiltinFunctionBehavior`).
+  const functions = requirements.description.intrinsics.filter((id) => held.find((row) => row.id === id)?.callable);
+  const intrinsics = [...catalog.bootstrap, ...functions].map((id, index) => {
     const row = held.find((row) => row.id === id),
       call = row?.callable;
     const behavior =
@@ -311,7 +320,7 @@ function beginRealm(
     const supported =
       index < catalog.bootstrap.length
         ? behavior === "function-prototype" || behavior === "throw-type-error"
-        : call?.implementation === "native";
+        : call !== undefined && (behavior === "native" || call.implementation === "native");
     if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
     const entry = behavior as NativeBuiltinFunctionBehavior;
     return {
@@ -414,9 +423,14 @@ function reserveKernelResources(
   const bigintPlan = declareNativeBigIntResources(key + ":bigints"),
     bigints = reserveNativeBigIntResources(tx, key + ":bigints", bigintPlan);
   const symbols = reserveNativeSymbolCarrierResources(tx, key + ":symbols", strings);
-  const layoutRequirements = { key: key + ":objects" },
+  // (#7561) A wrapper is a subtype of the ordinary object: it is extensible only where the realm holds a wrapper kind.
+  const wrapperKinds = heldWrapperKinds(heldCatalogRows(pack.requirements.description));
+  const layoutRequirements = { key: key + ":objects", ...(wrapperKinds.length ? { extensible: true as const } : {}) },
     layoutPlan = declareNativeObjectLayouts(layoutRequirements);
   const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
+  const wrappers = wrapperKinds.length
+    ? reserveNativeRealmWrappers(tx, key, wrapperKinds, { objects: layouts, objectPlan: layoutPlan, strings, symbols })
+    : undefined;
   const lookupDependencies = { layouts, layoutPlan, strings, flatten, equality, symbols };
   const lookup = reserveNativeObjectLookupResources(
     tx,
@@ -478,13 +492,22 @@ function reserveKernelResources(
     exception,
     ...(pack.errorCreate ? { errorCreate: pack.errorCreate } : {}),
     ...(accessorCalls ? { accessorCalls } : {}),
+    ...(wrappers ? { wrappers } : {}),
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
   const sourceObjects = reserveNativeSourceObjectResources(
     tx,
     key,
     pack.requirements.description.objectUses.map((use) => use.feature),
-    { values: number.values, layouts, storage, descriptors, kernel, errors: pack.substrate.errors },
+    {
+      values: number.values,
+      layouts,
+      storage,
+      descriptors,
+      kernel,
+      errors: pack.substrate.errors,
+      ...(wrappers ? { wrappers } : {}),
+    },
   );
   return {
     equality,
@@ -495,6 +518,7 @@ function reserveKernelResources(
     symbols,
     layoutPlan,
     layouts,
+    wrappers,
     lookup,
     storage,
     sameValue,
@@ -562,6 +586,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies).functions,
     ...kernel.functions,
     ...nativeSourceObjectReservationInventory(tx, k.sourceObjects),
+    ...(k.wrappers ? nativeRealmWrapperInventory(tx, k.wrappers).functions : []),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,
@@ -573,6 +598,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
       : []),
     ...symbols.resources.flatMap((row) => (row.reservation.kind === "type" ? [row.reservation] : [])),
     ...nativeObjectLayoutReservationInventory(tx, k.layouts, k.layoutPlan),
+    ...(k.wrappers ? nativeRealmWrapperInventory(tx, k.wrappers).types : []),
     ...kernel.types,
   ];
   const globals: GlobalReservation[] = [
@@ -614,6 +640,7 @@ export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: N
     fillNativeSymbolCarrierResources(tx, k.symbols);
     fillNativeObjectLookupResources(tx, k.lookup);
     fillNativeObjectStorageResources(tx, k.storage);
+    if (k.wrappers) fillNativeRealmWrappers(tx, k.wrappers);
     fillNativeObjectSameValueResources(tx, k.sameValue);
     fillNativeObjectDescriptorResources(tx, k.descriptors, k.kernel.exception);
     fillNativeBuiltinFunctionResources(tx, k.kernel);
