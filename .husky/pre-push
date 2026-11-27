@@ -9,7 +9,7 @@
 #      change-scoped ratchets and issue integrity — the checks CI's `quality`
 #      lane would otherwise reject a full cycle later.
 #
-#   3. (#7557) what the pull request no longer runs: the size budgets, the
+#   3. (#7558) what the pull request no longer runs: the size budgets, the
 #      issue-id gates against main and open PRs, and the root test files the
 #      push adds or modifies, each alone. The merge queue is the only CI gate.
 #
@@ -329,7 +329,7 @@ if command -v node > /dev/null 2>&1 && [ -d plan/issues ]; then
   echo "Pre-push: issue integrity OK."
 fi
 
-# ---------- (6) what the PR no longer runs (#7557) -----------------------
+# ---------- (6) what the PR no longer runs (#7558) -----------------------
 #
 # The merge queue is the only authoritative gate; on a pull request almost
 # nothing runs (docs/ci-policy.md §3). These are the PR-time checks that moved

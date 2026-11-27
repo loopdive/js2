@@ -165,7 +165,7 @@ describe("#6799 .husky/pre-push wiring", () => {
     expect(formatSection).not.toMatch(/timeout|124/);
   });
 
-  it("(#7557) the changed-root-test bound fails the push, it never skips", () => {
+  it("(#7558) the changed-root-test bound fails the push, it never skips", () => {
     const roots = hook.slice(hook.indexOf("(6c)"));
     expect(roots).toContain("timeout 1200 pnpm run -s test:changed-root");
     const onTimeout = roots.slice(roots.indexOf("-eq 124"), roots.indexOf("\nfi", roots.indexOf("-eq 124")));

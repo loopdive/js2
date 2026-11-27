@@ -5,7 +5,7 @@ name: Optional direct Porffor / JS2 A/B
 # threshold. This workflow intentionally does not run in merge_group.
 on:
   workflow_dispatch:
-  # (#7557) Post-merge on push to main, not on PRs: the merge queue is the
+  # (#7558) Post-merge on push to main, not on PRs: the merge queue is the
   # only pre-merge gate.
   push:
     branches: [main]

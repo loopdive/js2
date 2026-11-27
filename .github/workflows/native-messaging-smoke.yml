@@ -13,7 +13,7 @@ name: native-messaging smoke (real wasmtime)
 # promoted to required later). CI does not otherwise install wasmtime, so this
 # job installs a pinned release fresh.
 
-# (#7557) Post-merge only: the merge queue is the only pre-merge gate.
+# (#7558) Post-merge only: the merge queue is the only pre-merge gate.
 on:
   push:
     branches: [main]

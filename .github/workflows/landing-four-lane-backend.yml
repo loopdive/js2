@@ -5,7 +5,7 @@ name: Landing four-lane backend evidence
 # applies a performance threshold or runs in merge_group.
 on:
   workflow_dispatch:
-  # (#7557) Post-merge on push to main, not on PRs: the merge queue is the
+  # (#7558) Post-merge on push to main, not on PRs: the merge queue is the
   # only pre-merge gate.
   push:
     branches: [main]

@@ -1,5 +1,5 @@
 ---
-id: 7557
+id: 7558
 title: "Merge queue is the only authoritative gate: almost nothing runs on pull_request, pre-push runs the changed root tests"
 status: done
 completed: 2026-11-27
@@ -17,7 +17,7 @@ horizon: m
 related: [7551, 7556, 2786, 2519]
 ---
 
-# #7557 — merge queue is the only authoritative gate
+# #7558 — merge queue is the only authoritative gate
 
 ## Problem
 

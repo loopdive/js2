@@ -15,7 +15,7 @@
 // is skipped when a need may not have run, and any job that can run while one
 // of its transitive ancestors may be skipped must carry a status function.
 //
-// #7557 reuses the same model for the six REQUIRED contexts across every
+// #7558 reuses the same model for the six REQUIRED contexts across every
 // workflow that produces one: on a pull request each must still publish a
 // check run (only cla-check and the cheap gate really run), and in the merge
 // queue none of them may be skipped.
@@ -308,7 +308,7 @@ function productions(
   return out;
 }
 
-describe("#7557 required contexts: slim pull request, full merge queue", () => {
+describe("#7558 required contexts: slim pull request, full merge queue", () => {
   it("parses the six contexts and their producers (guards the model from passing vacuously)", () => {
     for (const context of Object.keys(PRODUCERS))
       expect(productions("merge_group", context).length, context).toBeGreaterThan(0);

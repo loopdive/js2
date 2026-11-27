@@ -27,7 +27,7 @@ name: Cross-backend parity (advisory)
 
 on:
   # Advisory compile-and-diff harness — only meaningful when compiler/test/build
-  # source changes. (#7557) Post-merge detector on push to main only: the merge
+  # source changes. (#7558) Post-merge detector on push to main only: the merge
   # queue is the only pre-merge gate, and a non-required check could not block
   # a merge from there either.
   push:

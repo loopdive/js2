@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 jobs:
-  # (#7557) The merge queue is the only authoritative gate: on `pull_request`
+  # (#7558) The merge queue is the only authoritative gate: on `pull_request`
   # this workflow runs NOTHING. `changes` and `quality` are its two root jobs
   # and carry the same one condition, `github.event_name != 'pull_request'`;
   # every other job needs `changes`, so it is skipped by the `needs` cascade.
@@ -25,7 +25,7 @@ jobs:
   # skipped required check (`quality`, `equivalence-gate`) satisfies the
   # ruleset — the PR stays mergeable and the queue runs the full gate on the
   # merged tree. The quick PR feedback is `cheap gate (main-ancestor + lint)` in
-  # test262-sharded.yml plus the pre-push hook. Rollback: revert #7557.
+  # test262-sharded.yml plus the pre-push hook. Rollback: revert #7558.
   #
   # `changes` decides whether the heavy compile-and-run suites run: they skip
   # only for an npm-compat artifact-only change (validated below); every other
@@ -577,7 +577,7 @@ jobs:
         # Mass edits (>20 files, e.g. a repo-wide reformat) run the first 20
         # and list the rest as not run (#6783 — they used to skip outright);
         # `issue-tests-gate` runs every root file once its baseline is seeded.
-        # (#7557) Runs in the merge queue, not on the PR: the pre-push hook runs
+        # (#7558) Runs in the merge queue, not on the PR: the pre-push hook runs
         # the same selector locally, and this is the gate for pushes without
         # it (forks). HEAD^1 is the queue commit's first parent, so the diff is
         # exactly the queued change-set (depth 2, see the checkout).
