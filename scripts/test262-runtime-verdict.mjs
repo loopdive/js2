@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Runtime-phase verdict rules of every test262 lane (the worker, the fixture lane,
-// the local runner) that depend only on the thrown value, so they can be tested
-// without a compiler bundle (#7354 U0, X).
+// the local runner, the exec worker) that depend only on the thrown value, so they can be tested
+// without a compiler bundle (#7354 U0, X; #7459).
 //
 // A Wasm trap is never a JavaScript throw. Its message carries the frame names
 // (`unreachable [in Test262Error() ← assert]`), so a name match on the rendered
@@ -18,7 +18,7 @@ import { isWasmTrap } from "./lib/wasm-exn-render.mjs";
  * never the label written for a value that could not be read (it has no kind): a pass needs the thrown value
  * positively known to be of that type.
  */
-function originalHarnessExceptionMatches(err, thrown, expectedErrorType) {
+function thrownKindMatches(err, thrown, expectedErrorType) {
   if (!expectedErrorType) return true;
   // #7447 keeps the published trap rule on the non-Prepared lanes until it is measured: a trap matches by the
   // frame names in its reader text.
@@ -27,12 +27,12 @@ function originalHarnessExceptionMatches(err, thrown, expectedErrorType) {
 }
 
 /**
- * Does a throw out of a runtime-negative test count as the expected throw? Without the original harness any throw
- * does.
+ * Does a throw out of a runtime-negative test count as the expected throw? (#7459) Every lane asks this one rule,
+ * whether or not it runs the original harness: there is no any-throw escape.
  */
-export function runtimeNegativeThrowAccepted(err, thrown, { expectedErrorType, originalHarness, prepared }) {
+export function runtimeNegativeThrowAccepted(err, thrown, { expectedErrorType, prepared }) {
   if (prepared && isWasmTrap(err)) return false;
-  return !originalHarness || originalHarnessExceptionMatches(err, thrown, expectedErrorType);
+  return thrownKindMatches(err, thrown, expectedErrorType);
 }
 
 /**

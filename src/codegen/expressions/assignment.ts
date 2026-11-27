@@ -23,7 +23,7 @@ import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
-import { HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
+import { emitIsUndefF64, HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
@@ -65,6 +65,7 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
+import { emitExternrefDefaultCheck } from "../statements/destructuring.js";
 import { tryEmitSpecOrderedArrayAssignDrive, tryEmitSpecOrderedObjectAssign } from "../dstr-assign-iterator-drive.js"; // (#6651 G1/V7)
 import { isProvablyNonIterableStructSource } from "../dstr-non-iterable-guard.js"; // (#6651 G4)
 import { resolveComputedKeyExpression } from "../literals.js";
@@ -2136,6 +2137,76 @@ function compileArrayDestructuringAssignment(
     }
   };
 
+  // An Initializer fires when the source element is ABSENT, i.e. reads as `undefined` (§13.15.5.5): for a backing
+  // vec an index OUT OF BOUNDS, otherwise a slot holding `undefined` (#2845, #7473). The element is read only when in
+  // bounds, so a non-null `ref` element never traps on an OOB `ref.as_non_null`. Leaves the element in `value` and
+  // the verdict in `absent`.
+  const emitElementPresenceProbe = (i: number, elemType: ValType) => {
+    const valueType: ValType = elemType.kind === "i8" || elemType.kind === "i16" ? { kind: "i32" } : elemType;
+    const value = allocLocal(fctx, `__dflt_${fctx.locals.length}`, valueType);
+    const absent = allocLocal(fctx, `__dflt_absent_${fctx.locals.length}`, { kind: "i32" });
+    const readInBounds = (): Instr[] => {
+      const saved = fctx.body;
+      fctx.body = [];
+      emitElementGet(i);
+      // An in-bounds `any[]` slot may hold the `$Hole` sentinel for a literal
+      // elision (`[1, , 3]`); per Get it reads as `undefined`, so map it.
+      if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
+      emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
+      fctx.body.push({ op: "local.set", index: value });
+      emitElementIsUndefined(ctx, fctx, elemType, value);
+      fctx.body.push({ op: "local.set", index: absent });
+      const instrs = fctx.body;
+      fctx.body = saved;
+      return instrs;
+    };
+    const markAbsent: Instr[] = [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: absent },
+    ];
+    if (isVecStruct) {
+      // inBounds = i < length  (emitted as `length > i`)
+      fctx.body.push({ op: "local.get", index: tmpLocal });
+      fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
+      fctx.body.push({ op: "i32.const", value: i });
+      fctx.body.push({ op: "i32.gt_s" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: readInBounds(), else: markAbsent });
+    } else if (i < typeDef.fields.length) {
+      fctx.body.push(...readInBounds());
+    } else {
+      fctx.body.push(...markAbsent); // a tuple shorter than the pattern
+    }
+    return { value, absent, valueType };
+  };
+
+  // `absent ? write(<default>) : write(element)`, for the targets written from a local: a member expression or a
+  // nested pattern. Each branch writes its value at its own type, so a default whose struct differs from the
+  // element's (`[[x = 5] = []] = []` pairs an empty-tuple element with a one-field tuple default) never goes through
+  // a struct coercion, which would drop its fields.
+  const emitElementOrDefault = (
+    i: number,
+    elemType: ValType,
+    defaultExpr: ts.Expression,
+    write: (local: number, type: ValType) => void,
+  ) => {
+    const { value, absent, valueType } = emitElementPresenceProbe(i, elemType);
+    fctx.body.push({ op: "local.get", index: absent });
+    attachDetachedAssignmentBodies(
+      fctx,
+      (body) => ({
+        then: body(() => {
+          const initType = compileExpression(ctx, fctx, defaultExpr);
+          if (!initType) return;
+          const initLocal = allocLocal(fctx, `__dflt_init_${fctx.locals.length}`, initType);
+          fctx.body.push({ op: "local.set", index: initLocal });
+          write(initLocal, initType);
+        }),
+        else: body(() => write(value, valueType)),
+      }),
+      (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+    );
+  };
+
   for (let i = 0; i < target.elements.length; i++) {
     const element = target.elements[i]!;
 
@@ -2325,83 +2396,9 @@ function compileArrayDestructuringAssignment(
           localIdx !== undefined
             ? identifierLocalValueType(fctx, localIdx)
             : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
-
-        // Per ECMA-262 §13.15.5.5 (AssignmentElement /
-        // IteratorDestructuringAssignmentEvaluation) the default Initializer
-        // fires when the source element is ABSENT — i.e. the array/iterator
-        // yields `undefined`. For a backing vec that means the index is OUT OF
-        // BOUNDS (`i >= length`); for an `any`-typed (externref) element it ALSO
-        // means an in-bounds slot holding the JS `undefined` sentinel (or an
-        // array hole). The previous lowering (a) DROPPED the default entirely
-        // for numeric (f64/i32) elements and (b) missed the OOB case for
-        // externref elements (OOB read produced `ref.null` = JS `null`, which is
-        // NOT `undefined`), so `[a = d] = []` left `a` at a garbage sentinel and
-        // never evaluated `d`. (#2845)
-        //
-        // Strategy: only READ the element when in bounds (so a non-null `ref`
-        // element never traps on an OOB `ref.as_non_null`), recording the value
-        // in `tmpElem` and an `absent` i32 flag; then fire the default iff
-        // absent, else assign the read value.
-        const elemValType: ValType = elemType.kind === "i8" || elemType.kind === "i16" ? { kind: "i32" } : elemType;
-        const tmpElem = allocLocal(fctx, `__dflt_${fctx.locals.length}`, elemValType);
-        const absentLocal = allocLocal(fctx, `__dflt_absent_${fctx.locals.length}`, { kind: "i32" });
-
-        // Build the IN-BOUNDS path: read element → tmpElem, set absent from the
-        // value's undefined-ness (externref/ref) or 0 (numeric).
-        const buildInBoundsInit = (): Instr[] => {
-          const saved = fctx.body;
-          fctx.body = [];
-          emitElementGet(i); // safe: guarded by the in-bounds check below
-          // An in-bounds `any[]` slot may hold the `$Hole` sentinel for a literal
-          // elision (`[1, , 3]`); per Get it reads as `undefined`, so map it.
-          if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
-          emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
-          fctx.body.push({ op: "local.set", index: tmpElem });
-          if (elemType.kind === "externref") {
-            const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-            flushLateImportShifts(ctx, fctx);
-            fctx.body.push({ op: "local.get", index: tmpElem });
-            if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx });
-            else fctx.body.push({ op: "ref.is_null" });
-            fctx.body.push({ op: "local.set", index: absentLocal });
-          } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-            fctx.body.push({ op: "local.get", index: tmpElem });
-            fctx.body.push({ op: "ref.is_null" });
-            fctx.body.push({ op: "local.set", index: absentLocal });
-          } else {
-            fctx.body.push({ op: "i32.const", value: 0 });
-            fctx.body.push({ op: "local.set", index: absentLocal });
-          }
-          const instrs = fctx.body;
-          fctx.body = saved;
-          return instrs;
-        };
-
-        if (isVecStruct) {
-          // inBounds = i < length  (emitted as `length > i`)
-          fctx.body.push({ op: "local.get", index: tmpLocal });
-          fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
-          fctx.body.push({ op: "i32.const", value: i });
-          fctx.body.push({ op: "i32.gt_s" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: buildInBoundsInit(),
-            else: [
-              { op: "i32.const", value: 1 },
-              { op: "local.set", index: absentLocal },
-            ],
-          });
-        } else if (i < typeDef.fields.length) {
-          // Tuple field present (compile-time known).
-          fctx.body.push(...buildInBoundsInit());
-        } else {
-          // Tuple shorter than the pattern → element absent.
-          fctx.body.push({ op: "i32.const", value: 1 });
-          fctx.body.push({ op: "local.set", index: absentLocal });
-        }
-
-        fctx.body.push({ op: "local.get", index: absentLocal });
+        const { value, absent, valueType } = emitElementPresenceProbe(i, elemType);
+        // The default is compiled with the TARGET's type, so it is written as itself, not as the element's carrier.
+        fctx.body.push({ op: "local.get", index: absent });
         attachDetachedAssignmentBodies(
           fctx,
           (body) => ({
@@ -2412,100 +2409,27 @@ function compileArrayDestructuringAssignment(
               }
             }),
             else: body(() => {
-              fctx.body.push({ op: "local.get", index: tmpElem });
-              emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, elemValType, localIdx, moduleGlobalIdx);
+              fctx.body.push({ op: "local.get", index: value });
+              emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, valueType, localIdx, moduleGlobalIdx);
             }),
           }),
           (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
         );
       } else if (ts.isPropertyAccessExpression(assignTarget) || ts.isElementAccessExpression(assignTarget)) {
-        // (#2869) Member-expression target WITH a default: `[x.y = d] = vals`.
-        // Mirror the identifier-default machinery above (read element →
-        // value-or-default into a temp), then route the resolved value through
-        // emitAssignToTarget → the #2664 member-set dispatcher. Previously the
-        // whole `else if (Binary EqualsToken)` branch handled ONLY identifier
-        // targets, so a member target with a default was SILENTLY DROPPED (the
-        // `*-put-*-prop-ref-init` cluster). The same OOB-default limitation the
-        // identifier path has applies here (a separate pre-existing issue).
-        const elemValType: ValType = elemType.kind === "i8" || elemType.kind === "i16" ? { kind: "i32" } : elemType;
-        const tmpElem = allocLocal(fctx, `__mdflt_${fctx.locals.length}`, elemValType);
-        const absentLocal = allocLocal(fctx, `__mdflt_absent_${fctx.locals.length}`, { kind: "i32" });
-        const tmpResolved = allocLocal(fctx, `__mdflt_res_${fctx.locals.length}`, elemValType);
-
-        const buildInBoundsInit = (): Instr[] => {
-          const saved = fctx.body;
-          fctx.body = [];
-          emitElementGet(i);
-          if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
-          emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
-          fctx.body.push({ op: "local.set", index: tmpElem });
-          if (elemType.kind === "externref") {
-            const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-            flushLateImportShifts(ctx, fctx);
-            fctx.body.push({ op: "local.get", index: tmpElem });
-            if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx });
-            else fctx.body.push({ op: "ref.is_null" });
-            fctx.body.push({ op: "local.set", index: absentLocal });
-          } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-            fctx.body.push({ op: "local.get", index: tmpElem });
-            fctx.body.push({ op: "ref.is_null" });
-            fctx.body.push({ op: "local.set", index: absentLocal });
-          } else {
-            fctx.body.push({ op: "i32.const", value: 0 });
-            fctx.body.push({ op: "local.set", index: absentLocal });
-          }
-          const instrs = fctx.body;
-          fctx.body = saved;
-          return instrs;
-        };
-
-        if (isVecStruct) {
-          fctx.body.push({ op: "local.get", index: tmpLocal });
-          fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
-          fctx.body.push({ op: "i32.const", value: i });
-          fctx.body.push({ op: "i32.gt_s" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: buildInBoundsInit(),
-            else: [
-              { op: "i32.const", value: 1 },
-              { op: "local.set", index: absentLocal },
-            ],
-          });
-        } else if (i < typeDef.fields.length) {
-          fctx.body.push(...buildInBoundsInit());
-        } else {
-          fctx.body.push({ op: "i32.const", value: 1 });
-          fctx.body.push({ op: "local.set", index: absentLocal });
-        }
-
-        const thenInit: Instr[] = (() => {
-          const saved = fctx.body;
-          fctx.body = [];
-          compileExpression(ctx, fctx, defaultExpr, elemValType);
-          fctx.body.push({ op: "local.set", index: tmpResolved });
-          const instrs = fctx.body;
-          fctx.body = saved;
-          return instrs;
-        })();
-        const elseAssign: Instr[] = (() => {
-          const saved = fctx.body;
-          fctx.body = [];
-          fctx.body.push({ op: "local.get", index: tmpElem });
-          fctx.body.push({ op: "local.set", index: tmpResolved });
-          const instrs = fctx.body;
-          fctx.body = saved;
-          return instrs;
-        })();
-        fctx.body.push({ op: "local.get", index: absentLocal });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: thenInit,
-          else: elseAssign,
-        });
-        emitAssignToTarget(ctx, fctx, assignTarget, tmpResolved, elemValType);
+        // (#2869) `[x.y = d] = vals` — through the member-set dispatcher.
+        emitElementOrDefault(i, elemType, defaultExpr, (local, type) =>
+          emitAssignToTarget(ctx, fctx, assignTarget, local, type),
+        );
+      } else if (ts.isObjectLiteralExpression(assignTarget)) {
+        // (#7473) `[{ x } = d] = vals`.
+        emitElementOrDefault(i, elemType, defaultExpr, (local, type) =>
+          emitObjectDestructureFromLocal(ctx, fctx, assignTarget, local, type),
+        );
+      } else if (ts.isArrayLiteralExpression(assignTarget)) {
+        // (#7473) `[[x] = d] = vals`.
+        emitElementOrDefault(i, elemType, defaultExpr, (local, type) =>
+          emitArrayDestructureFromLocal(ctx, fctx, assignTarget, local, type),
+        );
       }
     }
     // else: unsupported element target — skip
@@ -3352,6 +3276,26 @@ export function emitObjectDestructureFromLocal(
   ctx.liveBodies.delete(odflInstrs);
 }
 
+/**
+ * Push 1 iff the array element held in `local` is `undefined`, the condition for an AssignmentElement's
+ * Initializer (§13.15.5.5). An f64 slot carries `undefined` as the `UNDEF_F64_BITS` marker — a tuple literal pads a
+ * missing or `undefined` element with it (#7473); an i32 slot has no marker, so its default never fires.
+ */
+function emitElementIsUndefined(ctx: CodegenContext, fctx: FunctionContext, elemType: ValType, local: number): void {
+  if (elemType.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: local });
+    emitExternrefDefaultCheck(ctx, fctx, local);
+  } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "ref.is_null" });
+  } else if (elemType.kind === "f64") {
+    fctx.body.push({ op: "local.get", index: local });
+    emitIsUndefF64(fctx.body);
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+}
+
 /** Destructure an array from a local variable (used for nested patterns) */
 function emitArrayDestructureFromLocal(
   ctx: CodegenContext,
@@ -3543,18 +3487,9 @@ function emitArrayDestructureFromLocal(
           ? identifierLocalValueType(fctx, localIdx)
           : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
       const tmpElem = allocLocal(fctx, `__arr_nested_d_${fctx.locals.length}`, elemType);
-      const undefIdx =
-        elemType.kind === "externref"
-          ? ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }])
-          : undefined;
-      if (undefIdx !== undefined) flushLateImportShifts(ctx, fctx);
       emitElemGet(i);
       fctx.body.push({ op: "local.set", index: tmpElem });
-      fctx.body.push({ op: "local.get", index: tmpElem });
-      if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx });
-      else if (elemType.kind === "externref" || elemType.kind === "ref" || elemType.kind === "ref_null")
-        fctx.body.push({ op: "ref.is_null" });
-      else fctx.body.push({ op: "i32.const", value: 0 });
+      emitElementIsUndefined(ctx, fctx, elemType, tmpElem);
       attachDetachedAssignmentBodies(
         fctx,
         (body) => ({

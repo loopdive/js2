@@ -622,7 +622,7 @@ import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
-import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
+import { zeroArgCallInstrs, zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
 import {
   buildIsUndefinedExternBody,
   canonicalUndefinedExternInstrs,
@@ -8296,10 +8296,10 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       } else {
         testAndCall.push(...entry.extraParams.flatMap(padMissingArg));
       }
-      testAndCall.push({ op: "call", funcIdx: entry.funcIdx });
+      const call: Instr = { op: "call", funcIdx: entry.funcIdx };
+      testAndCall.push(...(classMember ? [call] : zeroArgCallInstrs(ctx, `${entry.structName}_${methodSuffix}`, call)));
 
       appendResultBoxing(testAndCall, entry.resultType);
-      // externref: no conversion needed
 
       // (#6773 S1) Iterator dispatchers take the nominal guard too: same-layout classes are one
       // runtime type, so `__call_next` on one ran the other's `next` (then failed its brand check).

@@ -69,7 +69,10 @@ describe("issue #1151 Gap B — binding-pattern param null guard", () => {
       export function callShape(): number {
         var p: any = f([null]);
         // A Promise object is truthy; a thrown trap would propagate.
-        return p && typeof p.then === "function" ? 1 : 0;
+        var isPromise = p && typeof p.then === "function" ? 1 : 0;
+        // Observe the rejection: an unhandled one fails the vitest run as an unhandled error.
+        if (isPromise) p.then(undefined, function () {});
+        return isPromise;
       }
       export function callShapeValid(): number {
         var p: any = f([[42]]);

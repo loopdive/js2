@@ -92,6 +92,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // data, or thisXValue where the method is a held wrapper prototype's `valueOf` / `toString`.
   "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
   "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, SELECTOR], [EXTERNAL]),
+  // (#7354 O2) IsConstructor (§7.2.4) of a function object: false for one `init-function` made without [[Construct]]
+  // (an accessor).
+  "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
   // (#7352) ArrayCreate(length) (§10.4.2.2) on %Array.prototype%; a `length` that is no array length is a RangeError.
   "js.object.create-array": declaration("js.object.create-array", [FLAGS], [EXTERNAL]),
 });

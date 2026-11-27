@@ -547,12 +547,7 @@ function operands(
           (text) => literal(text),
         ),
     }),
-    ...(calls && {
-      accessorCalls: {
-        source: [calls.get.handle, calls.set.handle],
-        builtin: [pack.functions.method0.handle, pack.functions.method1.handle],
-      },
-    }),
+    ...(calls && { accessorCalls: [calls.get.handle, calls.set.handle] as const }),
   };
 }
 /**
