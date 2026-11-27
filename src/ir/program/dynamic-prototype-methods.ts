@@ -12,8 +12,9 @@
  *
  * Only the method-call shape `o.m(v)` is such a call: its receiver is the receiver of the [[Get]] that read the callee,
  * so it is never `undefined` or `null` (that [[Get]] threw). A detached call (`var h = o.m; h(v)`) has another
- * receiver and takes the dispatcher. (#7352) `Array.isArray` reads no `this` and no key, so any call whose callee is
- * it, in whatever shape (`var f = Array.isArray; f(v)`), is IsArray.
+ * receiver and takes the dispatcher. (#7352) `Array.isArray` reads no `this` and no key, so a call whose callee is it
+ * is IsArray in either shape: `X.isArray(v)`, or detached (`var f = Array.isArray; f(v)`). A method read under another
+ * name (`o.m = Array.isArray; o.m(v)`) takes the dispatcher, whose built-in arm aborts.
  *
  * Where the program creates no source function no dispatcher exists, and a call that is none of these built-ins is the
  * run-time abort (a built-in the dispatcher could only abort for).
@@ -147,7 +148,7 @@ export function dynamicPrototypeMethodCall(
     ...(name === undefined
       ? []
       : conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2)),
-    ...(holdsFamily(b.program, "array")
+    ...(holdsFamily(b.program, "array") && (name === undefined || name === "isArray")
       ? [() => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))]
       : []),
   ];
