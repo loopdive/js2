@@ -220,9 +220,10 @@ function isDerivativeAggregateStep(name) {
 }
 // (#7551) Steps that only FORWARD another job's verdict into a required check:
 // `merge shard reports` repeats the result of `merge complete IR standalone
-// measurement`. They never carry a verdict of their own, so they are never
-// judged — the forwarded job's failed step decides infra vs verdict.
-const FORWARDING_STEPS = [/^IR current-edition gate \(#7551\)$/];
+// measurement`, and (#7563) `quality` repeats the result of its
+// `quality-lane` matrix. They never carry a verdict of their own, so they are
+// never judged — the forwarded job's failed step decides infra vs verdict.
+const FORWARDING_STEPS = [/^IR current-edition gate \(#7551\)$/, /^Every quality lane succeeded$/];
 function isForwardingStep(name) {
   return typeof name === "string" && FORWARDING_STEPS.some((re) => re.test(name.trim()));
 }
@@ -892,6 +893,26 @@ function selfCheck() {
         shouldPark: false,
       },
       `#7551: "${step}" is infra (no verdict), even though the gate forwards it`,
+    );
+  for (const [laneStep, park] of [
+    ["Lint, format, and typecheck (parallel)", true],
+    ["Setup Node with pnpm store cache", false],
+  ])
+    eq(
+      classifyRun([
+        {
+          name: "quality-lane (lint)",
+          conclusion: "failure",
+          steps: [{ name: laneStep, conclusion: "failure" }],
+        },
+        {
+          name: "quality",
+          conclusion: "failure",
+          steps: [{ name: "Every quality lane succeeded", conclusion: "failure" }],
+        },
+      ]).shouldPark,
+      park,
+      `#7563: quality forwards its lanes — a failed "${laneStep}" ${park ? "parks" : "does not park"}`,
     );
   eq(
     renderFailureLines([

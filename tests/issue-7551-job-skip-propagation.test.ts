@@ -19,7 +19,12 @@
 // workflow that produces one: on a pull request each must still publish a
 // check run (only cla-check and the cheap gate really run), and in the merge
 // queue none of them may be skipped.
-import { readFileSync } from "node:fs";
+//
+// #7563 splits `quality` into parallel lanes behind one aggregating `quality`
+// job; the last block proves that job cannot be green unless every lane was.
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -382,5 +387,93 @@ describe("#7558 required contexts: slim pull request, full merge queue", () => {
         ? jobs.map((j) => (j.name === "quality" ? { ...j, condition: "github.event_name == 'pull_request'" } : j))
         : jobs;
     expect(productions("merge_group", "quality", prOnly).map((p) => p.state)).toEqual(["skipped"]);
+  });
+});
+
+/** The raw text of one job block. */
+function jobText(text: string, name: string): string {
+  const start = text.indexOf(`\n  ${name}:\n`);
+  if (start < 0) throw new Error(`no job ${name}`);
+  const rest = text.slice(start + 1);
+  const next = /\n {2}[a-z0-9-]+:\n/.exec(rest);
+  return next ? rest.slice(0, next.index) : rest;
+}
+
+/** The dedented `run: |` script of the step called `step` inside `block`. */
+function stepScript(block: string, step: string): string {
+  const lines = block.slice(block.indexOf(`- name: ${step}\n`)).split("\n");
+  const start = lines.findIndex((l) => /^ {8}run: \|$/.test(l));
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() !== "" && !/^ {10}/.test(line)) break;
+    body.push(line.slice(10));
+  }
+  return body.join("\n");
+}
+
+describe("#7563 quality: parallel lanes behind one required context", () => {
+  const ci = read("ci.yml");
+  const jobs = parseJobs(ci);
+  const quality = jobs.find((j) => j.name === "quality")!;
+  const parts = jobs.filter((j) => j.name.startsWith("quality-")).map((j) => j.name);
+  const lanesJob = jobText(ci, "quality-lane");
+  const lanes = [...lanesJob.matchAll(/^ {10}- (?:\{ )?lane: ([a-z-]+)/gm)].map((m) => m[1]!);
+  const verdict = stepScript(jobText(ci, "quality"), "Every quality lane succeeded");
+  const judge = (result: string) =>
+    spawnSync("bash", ["-c", verdict], { env: { ...process.env, LANES: result }, encoding: "utf8" }).status;
+
+  it("the required context is the job `quality`, aggregating every quality-* job under always()", () => {
+    expect(quality.display).toBe("quality");
+    expect(parts).toEqual(["quality-lane"]);
+    expect(quality.needs).toEqual(parts);
+    expect(quality.condition).toBe("always() && github.event_name != 'pull_request'");
+    expect(jobText(ci, "quality")).toContain("LANES: ${{ needs.quality-lane.result }}");
+  });
+
+  it("merge_group: quality is green only when the lanes succeeded", () => {
+    expect(judge("success")).toBe(0);
+    for (const result of ["failure", "cancelled", "skipped", ""]) expect(judge(result), result).toBe(1);
+  });
+
+  it("merge_group: quality still runs after its lanes failed; pull_request: both are skipped", () => {
+    expect(runStates(jobs, "merge_group", new Set(["quality-lane"])).get("quality")).toBe("run");
+    const pr = runStates(jobs, "pull_request");
+    expect([pr.get("quality-lane"), pr.get("quality")]).toEqual(["skipped", "skipped"]);
+  });
+
+  it("the model has teeth: quality without always() is skipped when a lane fails", () => {
+    const broken = jobs.map((j) =>
+      j.name === "quality" ? { ...j, condition: "github.event_name != 'pull_request'" } : j,
+    );
+    expect(runStates(broken, "merge_group", new Set(["quality-lane"])).get("quality")).toBe("skipped");
+  });
+
+  it("every gate step names a lane that exists, and every lane runs a gate", () => {
+    expect(new Set(lanes)).toEqual(new Set(["lint", "ir", "guards", "ratchets", "root-tests"]));
+    // A step gated on a misspelt lane would never run anywhere, silently.
+    for (const [, lane] of lanesJob.matchAll(/matrix\.lane [!=]= '([a-z-]+)'/g)) expect(lanes).toContain(lane);
+    for (const lane of lanes) expect(lanesJob, lane).toContain(`matrix.lane == '${lane}'`);
+    // Every step after the shared setup belongs to exactly one lane.
+    const steps = lanesJob.split(/\n(?= {6}- )/).slice(1);
+    const install = steps.findIndex((s) => s.includes("run: pnpm install --frozen-lockfile"));
+    expect(install).toBeGreaterThan(0);
+    for (const step of steps.slice(install + 1))
+      expect(step.match(/matrix\.lane == '/g), step.split("\n")[0]).toHaveLength(1);
+  });
+
+  it("the root-test shards partition the selection", () => {
+    const program = /awk -v shard="\$SHARD" '([^']+)'/.exec(lanesJob)![1]!;
+    const shards = [...lanesJob.matchAll(/lane: root-tests, shard: (\d+\/\d+)/g)].map((m) => m[1]!);
+    expect(shards).toEqual(["1/3", "2/3", "3/3"]);
+    const list = join(mkdtempSync(join(tmpdir(), "issue-7563-")), "selection.txt");
+    const files = Array.from({ length: 10 }, (_, i) => `tests/f${i}.test.ts`);
+    writeFileSync(list, `${files.join("\n")}\n`);
+    const picked = shards.map((shard) =>
+      spawnSync("awk", ["-v", `shard=${shard}`, program, list], { encoding: "utf8" })
+        .stdout.split("\n")
+        .filter(Boolean),
+    );
+    expect(picked.flat().sort()).toEqual([...files].sort());
+    expect(picked.map((p) => p.length)).toEqual([4, 3, 3]);
   });
 });
