@@ -1145,7 +1145,7 @@ function compileExpressionInner(
   }
 
   if (ts.isIdentifier(expr)) {
-    return compileIdentifier(ctx, fctx, expr);
+    return compileIdentifier(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isBinaryExpression(expr)) {
