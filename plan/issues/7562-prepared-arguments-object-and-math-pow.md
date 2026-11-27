@@ -137,6 +137,12 @@ g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
   legacy `__ir_arguments_length` users) byte-identical before/after.
 - Prepared, programs not naming `arguments`: byte-identical, compile time
   unchanged.
+- Ordinary pipeline against the merge base, final: FOUR programs differ in
+  bytes on gc/standalone/wasi — a formal named `arguments`, `a.arguments`,
+  `{arguments: 1}` and a LABEL named `arguments`. Each only drops a dead
+  `__ir_arguments_length` entry read (none reads an arguments object); the
+  results are equal before, after and in node. Every other program measured is
+  byte-identical.
 - propertyHelper rows (47 in the 419-row lists): on main all stop before
   `arguments.length` — 43 at `identifier "Array" is not in scope`, 4 at
   `direct call to "Function"`. With `Array`/`Function` stubbed in the harness,
@@ -217,6 +223,41 @@ g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
   fails, on `src/codegen/native-strings.ts` (2208 > 2205), a file this branch
   does not touch: main shrank it after the merge.
 - Test file: 27 rows, exit 0.
+
+### Review r3 (2026-11-27)
+
+Met; four non-blocking findings, all done:
+
+- One scope walk: `bindingScope(identifier, argumentsObject)`
+  (`src/ir/analysis/ast-scope.ts`) serves both `resolvesToSourceBinding` and
+  `argumentsObjectOwner`; `scopeNames(scope, argumentsObject)` is the one
+  per-scope name set. With `argumentsObject` the walk ends at the first
+  non-arrow function, whose set then leaves out its `var`s and own name. A
+  block no longer counts `var`s (they belong to the function, file or class
+  static block, which now collects its own). Deleted: the second walk inside
+  `argumentsObjectOwner` and `addBlockScopedNames`.
+- Closed with it: `function f(a, b) { { function arguments() {} } return
+  arguments.length }` (sloppy; node gives 0 after the block ran). The old walk
+  did not count the block function and called the read the count (3); now the
+  name is bound and `f` has no arguments-object use. Today the program refuses
+  (a block-nested function declaration); in strict code it is a SyntaxError
+  and refuses as such.
+- `readsLength` no longer depends on the parent: a `.length` access is a read
+  unless it is a write target (`isWriteTarget`: assignment, update, `delete`,
+  for-in/of head, through parentheses and through a literal that such a
+  target destructures). `{n: arguments.length}` now agrees with node;
+  `[arguments.length]` is classified a read but still refuses for an
+  unrelated reason (array literals in that position are outside the Prepared
+  array scope). Destructuring writes stay `other`.
+- `ArgumentsObjectUse` unexported; the stale "MOTION ONLY" header corrected.
+- Measured: test file 37 rows, exit 0 (new: one agreement row, nine lexical
+  rows; five of those fail on the r2 walk). `tests/issue-7363-prepared-eval-refusal.test.ts`
+  (the other user, `resolvesToSourceBinding`): 90 of 91; the one failure
+  (`a block function, for its file`, expects the plan-gap message, gets
+  `Annex B block function 'eval' shadows a built-in global`) fails identically
+  with the r2 file, so it comes from main, not this change. Prepared bytes
+  identical to r2 on 6 shadowing programs without `arguments`; ordinary
+  pipeline identical to r2 on 8 programs × gc/standalone.
 
 ### Next (follow-up issues)
 

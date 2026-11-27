@@ -5,6 +5,8 @@
 // accepted program runs twice against node: its answer returns, a wrong one throws. A use the path does not build
 // ends at the run-time abort or refuses, never at a wrong value.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ownArgumentsObjectUse } from "../src/ir/analysis/ast-scope.js";
+import { ts } from "../src/ts-api.js";
 import { abortsAtRunTime, agreesWithNode, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -48,6 +50,11 @@ describe("#7562 — arguments.length", () => {
       "function f(a) { return a.arguments; } function k(a) { var o = { arguments: 1 }; return o.arguments + a; }" +
         " function l(a) { arguments: for (;;) { break arguments; } return a; } var g = f, h = k, m = l;" +
         " var out = '' + g({ arguments: 7 }) + h(2) + m(3);",
+    ],
+    [
+      "count reads inside an object literal, a call argument, an addition, a negation and `typeof`",
+      "function f(a) { return { n: arguments.length }.n + ',' + String(arguments.length) + ',' + (arguments.length + 1)" +
+        " + ',' + -arguments.length + ',' + typeof arguments.length; } var g = f; var out = g(1, 2);",
     ],
   ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
 
@@ -132,4 +139,33 @@ describe("#7562 — arguments.length", () => {
     },
     SLOW,
   );
+
+  /** `f`'s use of its own arguments object; the question is lexical, as the path asks it of the source. */
+  const useOfF = (source: string): string => {
+    const file = ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    return ownArgumentsObjectUse(file.statements.find(ts.isFunctionDeclaration)!);
+  };
+
+  it.each([
+    ["an array literal", "function f() { return [arguments.length]; }", "length"],
+    ["an object literal", "function f() { return { n: arguments.length }; }", "length"],
+    ["an array literal on an assignment's right", "function f() { var x; x = [arguments.length]; }", "length"],
+    ["an array destructuring target", "function f() { [arguments.length] = [5]; }", "other"],
+    ["an object destructuring target", "function f() { ({ n: arguments.length } = { n: 5 }); }", "other"],
+    ["a spread destructuring target", "function f() { [...arguments.length] = [5]; }", "other"],
+    ["a for-of destructuring head", "function f() { for ([arguments.length] of [[5]]); }", "other"],
+    // Annex B.3.3: once the block has run, the sloppy block function replaces the binding (node: `f(1, 2)` is 0).
+    [
+      "a function with a block function named `arguments`",
+      "function f() { { function arguments() {} } return arguments.length; }",
+      "none",
+    ],
+    [
+      "a function with a nested block function named `arguments`",
+      "function f(a) { if (a) { function arguments() {} } return arguments.length; }",
+      "none",
+    ],
+  ])("`arguments.length` in %s", (_label, source, use) => {
+    expect(useOfF(source)).toBe(use);
+  });
 });
