@@ -240,6 +240,33 @@ in the P1 notes): the dispatcher's built-in arm stops being the run-time abort.
   with wrong twins, 3 aborts.
 - The 411-row sample was not re-run in this session (its row lists were not found in this worktree).
 
+### Review r1 (fixed on head after f240b11786)
+
+- **`new` of a held built-in method ran its [[Call]].** `dynamicConstruct` now asks `js.object.is-non-constructor`
+  (SameValue against the held built-ins whose catalog row is not constructible) once at the construct entry: a
+  method, Function.prototype or its `call` / `apply` throws IsConstructor's TypeError. A built-in constructor through
+  a value still reaches the built-in caller, which has no rung for one: the run-time abort.
+- **Function.prototype's own properties had two answers.** The kernel seeds Function.prototype's held methods in its
+  bag, so a held `call` is own to every query. A key the catalog gives an object but the realm does not seed
+  (Object.prototype's `toString`, an unheld `call`, Array.prototype's `push`) was a silent `false` / `undefined`
+  (also on the base). Now `hasOwnProperty`, `propertyIsEnumerable` and `getOwnPropertyDescriptor` ask
+  `js.object.is-partial` on a miss and abort where the object is one the realm holds without all its catalog
+  properties (`ownMiss`, `dynamic-object-statics.ts`). The realm's `has-own` stays the bag's answer: the object tag
+  asks it whether the program wrote `Object.prototype.toString`. Cost: any miss on such an object aborts, also a key
+  the catalog does not give it (`Function.prototype.hasOwnProperty('qq')`).
+- **Tests.** P1's detached-call rows assert node (the method's TypeError); its constructor row asserts the TypeError.
+  F1's and F1b's Function.prototype refusal rows read `toString`, since `call` is the realm's.
+- **Non-blocking.** The invocation requirements check operand counts and results against the one `SIGNATURES` table;
+  `METHOD_NAMES` is gone (the caller's rungs come from the spelled names); the `%Function.prototype%` special case is
+  the entry's `aliases`; the built-in caller's argument reads are one optional pair (no `argumentCount!`);
+  `js.object.intrinsic` and `is-partial` share one map of the realm's objects. Kept: one `!` on the caller's method
+  lookup, which the requirements guarantee.
+- **Measured.** 20 probes agree with node with failing wrong twins (`new` of every kind of held built-in and of user
+  functions; own queries on Function.prototype / Object.prototype / Array.prototype for seeded and written keys), 9
+  abort, 2 refuse (`new Array.isArray(…)`, `new Function.prototype()`: direct names), 0 wrong. Ordinary pipeline
+  32/32 identical with `claude/7354-a1`. Prelude + `assert.sameValue(1, 1);`: 107,786 B (A1a 103,374 B; f240b11786
+  107,463 B).
+
 ### Next session
 
 1. `bind`: BoundFunctionCreate as a closure-root subtype holding target, `this` and a realm array of arguments, its
