@@ -70,6 +70,8 @@ import {
   binaryOperandsAdmissible,
   numericReaderOperandsBoxed,
   booleanReadAsNumber,
+  compoundRhsReadsToNumber,
+  laneReadsToNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isBigIntUnsafeDynamicOperator,
@@ -685,7 +687,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | RegExpBuildCapability | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
+    capability:
+      | "number-to-string"
+      | "native-dynamic-to-number"
+      | RegExpBuildCapability
+      | IrAmbientGlobalFunctionCapability
+      | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -10871,6 +10878,14 @@ function lowerDynamicMemberCompound(
   return true;
 }
 
+/** (#7375) An admitted compound RHS as the f64 its ToNumber reads. */
+function admittedCompoundRhsToF64(value: IrValueId, rhs: ts.Expression, cx: LowerCtx): IrValueId {
+  const numeric = numericReaderOperandToF64(value, rhs, cx);
+  // invariant (producer-promise): `compoundWriteAdmissible` admits only RHS families ToNumber reads — #7144.
+  if (numeric === null) throw new Error(`ir/from-ast: admitted compound RHS has no f64 (${cx.funcName})`);
+  return numeric;
+}
+
 /**
  * (#7354 O7) A dynamic compound's step after its read of `old` (a dynamic slot's or a member's): the RHS on the
  * carrier, admitted for the dynamic family, then the dynamic binary producer. `result` is the operator's value, and
@@ -10885,11 +10900,16 @@ function dynamicCompoundStep(
 ): { readonly result: IrValueId; readonly stored: IrValueId } {
   const rhsValue = lowerExpr(rhs, cx, irDynamic());
   const rhsType = cx.builder.typeOf(rhsValue);
-  if (!compoundWriteAdmissible(token, "dynamic", irOperandFamily(rhsType, rhs))) {
+  const rhsFamily = irOperandFamily(rhsType, rhs);
+  if (
+    !compoundWriteAdmissible(token, "dynamic", rhsFamily, laneReadsToNumber(cx.resolver?.supportsBackendCapability))
+  ) {
     const detail = `${ts.tokenToString(token)} of ${describeIrType(rhsType)} has no carrier (${cx.funcName})`;
     demoteToLegacy("compound-assign-unsupported", `ir/from-ast: dynamic compound ${detail}`);
   }
-  const result = lowerDynamicBinaryValues(compoundStepOperator(token), old, rhsValue, left, rhs, cx);
+  // (#7375) An admitted boolean or string RHS enters the step as its ToNumber, an f64 the step reads.
+  const operand = compoundRhsReadsToNumber(token, rhsFamily) ? admittedCompoundRhsToF64(rhsValue, rhs, cx) : rhsValue;
+  const result = lowerDynamicBinaryValues(compoundStepOperator(token), old, operand, left, rhs, cx);
   // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
   if (result === null) throw new Error(`ir/from-ast: admitted dynamic compound has no lowering (${cx.funcName})`);
   return { result, stored: dynamicBinaryOnCarrier(result, cx) };
@@ -13457,6 +13477,7 @@ function lowerCompoundAssignment(
   // (#7144) Which slot / value families each operator writes is
   // `compoundWriteAdmissible`; the arms below are its producers.
   const slotFamily = irOperandFamily(logicalType, id);
+  const toNumber = laneReadsToNumber(cx.resolver?.supportsBackendCapability);
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "string") {
     const lhs =
       storage.kind === "moduleGlobal"
@@ -13503,7 +13524,7 @@ function lowerCompoundAssignment(
       typedValueEvidence(id, storage.type, storage.stringEncoding, cx, logicalType),
       typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx), cx),
     );
-    if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs)) || !proof) {
+    if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs), toNumber) || !proof) {
       throw new IrUnsupportedError(
         "string-evidence-unsupported",
         "build",
@@ -13534,7 +13555,7 @@ function lowerCompoundAssignment(
     else cx.builder.emitSlotWrite(storage.slotIndex, stored);
     return result;
   }
-  if (slotFamily === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
+  if (slotFamily === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number", toNumber)) {
     demoteToLegacy(
       "compound-assign-unsupported",
       `ir/from-ast: compound assign ${ts.tokenToString(compoundOp)} to "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
@@ -13551,7 +13572,7 @@ function lowerCompoundAssignment(
         : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
   const rhsValue = lowerExpr(rhs, cx, logicalType);
   const rhsType = cx.builder.typeOf(rhsValue);
-  if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
+  if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs), toNumber)) {
     // (#3565) DESIGNED demote: an RHS with no numeric carrier (e.g. an
     // externref value yielded by a generator in `s += v`) is a typed refusal,
     // not a producer contradiction, so legacy compiles it.
@@ -13561,8 +13582,8 @@ function lowerCompoundAssignment(
       `ir/from-ast: compound assign RHS has no numeric carrier (got ${describeIrType(rhsType)}) in ${cx.funcName}`,
     );
   }
-  // An f64 slot and an admitted (number or `void`) RHS are both f64 already.
-  const result = emitNumberBinary(binaryOp, lhs, rhsValue, id, rhs, cx);
+  // An f64 slot is f64 already; (#7375) an admitted boolean or string RHS is read with ToNumber.
+  const result = emitNumberBinary(binaryOp, lhs, admittedCompoundRhsToF64(rhsValue, rhs, cx), id, rhs, cx);
   if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
   else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
   else cx.builder.emitRefCellSet(storage.value, result);
@@ -15390,14 +15411,17 @@ function boxNumericReaderOperands(
     irOperandFamily(cx.builder.typeOf(operands[1]), expr.right),
   ] as const;
   if (!numericReaderOperandsBoxed(expr.operatorToken.kind, families[0], families[1])) return operands;
-  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId => {
-    if (family !== "boolean" && family !== "string") return value;
-    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
-    // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
-    if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
-    return boxed;
-  };
+  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId =>
+    family === "boolean" || family === "string" ? boxReaderOperand(value, family, source, cx) : value;
   return [box(operands[0], families[0], expr.left), box(operands[1], families[1], expr.right)];
+}
+
+/** Box a boolean / string operand into the dynamic carrier, for a numeric reader's ToNumber. */
+function boxReaderOperand(value: IrValueId, family: OperandFamily, source: ts.Expression, cx: LowerCtx): IrValueId {
+  const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
+  // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
+  if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
+  return boxed;
 }
 
 /**
@@ -15415,10 +15439,23 @@ function booleansReadAsNumbers(
   const leftFamily = irOperandFamily(typeOfValue(lhs, cx), expr.left);
   const rightFamily = irOperandFamily(typeOfValue(rhs, cx), expr.right);
   if (!booleanReadAsNumber(op, leftFamily, rightFamily)) return [lhs, rhs];
-  // Signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop.
   const toNumber = (value: IrValueId, family: OperandFamily): IrValueId =>
-    family === "boolean" ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64) : value;
+    family === "boolean" ? booleanToNumber(value, cx) : value;
   return [toNumber(lhs, leftFamily), toNumber(rhs, rightFamily)];
+}
+
+/** ToNumber of a boolean: signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop. */
+function booleanToNumber(value: IrValueId, cx: LowerCtx): IrValueId {
+  return cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
+}
+
+/** (#7375) ToNumber of a compound assignment's right-hand side, by the binary form's steps (above, `boxNumericReaderOperands`). */
+function numericReaderOperandToF64(value: IrValueId, source: ts.Expression, cx: LowerCtx): IrValueId | null {
+  const type = cx.builder.typeOf(value);
+  const family = irOperandFamily(type, source);
+  if (family === "boolean") return booleanToNumber(value, cx);
+  if (family !== "string") return relOperandToF64(value, type, cx);
+  return cx.builder.emitDynToNumber(boxReaderOperand(value, family, source, cx));
 }
 
 /**

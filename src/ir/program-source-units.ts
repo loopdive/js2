@@ -3,6 +3,11 @@
 // The body producer of `prepareIrProgramSources`: one terminal unit (a function declaration or a script's module-init)
 // lowered from its AST and legalized, against the program-wide plans the producer prepared before any body.
 
+import {
+  supportsIrBackendTargetCapability,
+  type IrBackendTargetCapability,
+  type IrBackendTargetProfile,
+} from "./backend/legality.js";
 import { ts } from "../ts-api.js";
 import type { BlockFunctionHomes } from "./annexb-block-function-values.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
@@ -224,6 +229,16 @@ function lowerUnitOnce(
   return { lowered, functions };
 }
 
+const PREPARED_LANE: IrBackendTargetProfile = Object.freeze({
+  backend: "wasmgc",
+  target: "standalone",
+  allowHostImports: false,
+});
+const PREPARED_LANE_CAPABILITIES: ReadonlySet<IrBackendTargetCapability> = new Set([
+  "number-to-string",
+  "native-dynamic-to-number",
+]);
+
 /** Combine source-owned call/read plans; no physical provider is selected here. */
 function prepareSourceBuiltinResolvers(
   input: SourceUnitLowering["input"],
@@ -241,9 +256,11 @@ function prepareSourceBuiltinResolvers(
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
       ? {
           ...prepareObjectCreateResolver(input.checker, input.sourceFiles, roots),
-          // (#7354 T) The one lane capability this path binds: the native number formatter (Str2-c), so a `+` of a
-          // string and a number converts the number like a template does. Every other capability stays unanswered.
-          supportsBackendCapability: (capability: string) => capability === "number-to-string",
+          // The lane capabilities this path binds, through the backend legality rule; every other one stays
+          // unanswered. (#7354 T) The native number formatter (Str2-c): a `+` of a string and a number converts the
+          // number like a template does. (#7375) ToNumber of a boxed boolean / string compound right-hand side.
+          supportsBackendCapability: (capability: IrBackendTargetCapability) =>
+            PREPARED_LANE_CAPABILITIES.has(capability) && supportsIrBackendTargetCapability(PREPARED_LANE, capability),
           ...bigIntOperandOption(input.checker, true), // (#7525) refuse it by name
         }
       : {}),
