@@ -4,6 +4,7 @@ import { analyzeMultiSource } from "../../src/checker/index.js";
 import { captureTypedIrProgramInput, prepareIrProgramSources } from "../../src/ir/program-source.js";
 import type { TypedIrProgramOptions } from "../../src/ir/program-input.js";
 import type { IrProgramPreparationResult, PreparedIrProgram } from "../../src/ir/program.js";
+import { preparedCodeStrictness } from "../../src/compiler/prepared-code-strictness.js";
 
 export const typedOptions: TypedIrProgramOptions = Object.freeze({
   policy: Object.freeze({ target: "standalone", backend: "wasmgc" }),
@@ -36,6 +37,8 @@ export function sourceInput(files: Record<string, string> = scalarFiles, reverse
     checker: ast.checker,
     policy: typedOptions.policy,
     deferTopLevelInit: false,
+    // (#7489) The compiler's strictness, as `compiler.ts` passes it: a function object's own `caller` reads it.
+    codeStrictness: preparedCodeStrictness(undefined),
   };
 }
 
