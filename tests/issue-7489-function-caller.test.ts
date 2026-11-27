@@ -148,12 +148,12 @@ describe("#7489 A — js.object.init-function's own-caller operand", () => {
   };
 
   it.each([
-    ["a sloppy declaration", "function g() {}", false, true],
-    ["a strict declaration", "function g() {}", true, false],
-    ["a sloppy generator", "function* g() {}", false, false],
-    ["a sloppy async function", "async function g() {}", false, false],
-  ])("%s", (_label, source, strict, owns) => {
-    expect(operands(source, strict)).toEqual({ isConstructor: true, ownsCaller: owns });
+    ["a sloppy declaration", "function g() {}", false, true, true],
+    ["a strict declaration", "function g() {}", true, true, false],
+    ["a sloppy generator", "function* g() {}", false, false, false],
+    ["a sloppy async function", "async function g() {}", false, false, false],
+  ])("%s", (_label, source, strict, isConstructor, owns) => {
+    expect(operands(source, strict)).toEqual({ isConstructor, ownsCaller: owns });
   });
 
   it("refuses by name without the code's strictness", () => {
