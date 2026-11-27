@@ -24,8 +24,8 @@
  * answers false for it. That matches the standalone behaviour before this
  * change, which threw for every operand of this shape.
  *
- * `emitMaybeBigIntLooseEquality` (#7373) is the `==` / `!=` counterpart, for any operand type that may hold a
- * BigInt.
+ * `emitMaybeBigIntComparison` (#7373, #7403) is the equality and relational counterpart, for any operand type
+ * that may hold a BigInt.
  */
 import { ts } from "../ts-api.js";
 import { typeMayBeBigInt } from "../checker/type-mapper.js";
@@ -37,6 +37,7 @@ import { emitThrowTypeError } from "./js-errors.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { addUnionImports } from "./index.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { wideBigIntComparisons, wideBigIntConstantOf } from "./bigint-wide.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const BIGINT_I64: ValType = { kind: "i64", bigint: true };
@@ -94,72 +95,178 @@ export function emitStandaloneAnyBigIntBinary(
   return result.kind === "i64" ? BIGINT_I64 : result;
 }
 
+/** The i64 (BigInt), i32 (an ordering against 0) and f64 (ToNumber) form of each comparison, and `==`'s answer for null. */
+interface ComparisonOps {
+  readonly i64: "i64.eq" | "i64.ne" | "i64.lt_s" | "i64.le_s" | "i64.gt_s" | "i64.ge_s";
+  readonly i32: "i32.eq" | "i32.ne" | "i32.lt_s" | "i32.le_s" | "i32.gt_s" | "i32.ge_s";
+  readonly f64: "f64.eq" | "f64.ne" | "f64.lt" | "f64.le" | "f64.gt" | "f64.ge";
+  readonly onNull?: 0 | 1;
+}
+
+const COMPARISONS = new Map<ts.SyntaxKind, ComparisonOps>([
+  [ts.SyntaxKind.EqualsEqualsToken, { i64: "i64.eq", i32: "i32.eq", f64: "f64.eq", onNull: 0 }],
+  [ts.SyntaxKind.ExclamationEqualsToken, { i64: "i64.ne", i32: "i32.ne", f64: "f64.ne", onNull: 1 }],
+  [ts.SyntaxKind.LessThanToken, { i64: "i64.lt_s", i32: "i32.lt_s", f64: "f64.lt" }],
+  [ts.SyntaxKind.LessThanEqualsToken, { i64: "i64.le_s", i32: "i32.le_s", f64: "f64.le" }],
+  [ts.SyntaxKind.GreaterThanToken, { i64: "i64.gt_s", i32: "i32.gt_s", f64: "f64.gt" }],
+  [ts.SyntaxKind.GreaterThanEqualsToken, { i64: "i64.ge_s", i32: "i32.ge_s", f64: "f64.ge" }],
+]);
+
 /**
- * (#7373) `==` / `!=` when exactly one side is statically BigInt and the other may hold a BigInt at run time
- * (`typeMayBeBigInt(otherTsType)`). A BigInt there is compared as a BigInt (§7.2.15 step 1). `null` (a null
- * externref) is loosely equal only to `null` / `undefined` (steps 2–3), so it answers `false` before ToNumber would
- * turn it into 0. Anything else, `undefined` included (ToNumber gives NaN), keeps the static mixed arm's ToNumber
- * comparison. Returns `undefined` having emitted nothing for any other operator or operand, or when a helper is
- * unavailable.
+ * The statically-BigInt operand: its Number value, and the comparison's answer against a BigInt held by the other.
+ * `againstBigInt` is built only once the ToNumber coercion's late imports have settled, since it bakes helper indices.
  */
-export function emitMaybeBigIntLooseEquality(
+interface BigIntSide {
+  readonly asNumber: Instr[];
+  readonly againstBigInt: () => Instr[];
+}
+
+/** The operands once evaluated: the other one in `anyLocal`, the BigInt one in `bigLocal` unless it is a constant. */
+interface CompiledComparison {
+  readonly anyLocal: number;
+  readonly bigLocal?: number;
+  readonly side: BigIntSide;
+}
+
+/** What both `BigIntSide` builders share. */
+interface ComparisonFrame {
+  readonly ctx: CodegenContext;
+  readonly fctx: FunctionContext;
+  readonly expr: ts.BinaryExpression;
+  readonly bigintOnLeft: boolean;
+  readonly ops: ComparisonOps;
+  readonly wide: NonNullable<ReturnType<typeof wideBigIntComparisons>>;
+}
+
+/**
+ * (#7373, #7403) `==`, `!=`, `<`, `<=`, `>`, `>=` when exactly one side is statically BigInt and the other may hold a
+ * BigInt at run time (`typeMayBeBigInt(otherTsType)`). A BigInt there is compared as a BigInt (§7.2.15 step 1,
+ * §7.2.13 step 3), exactly past 64 bits: the static side runs on the i64 lane, where a `$BigIntWide` on the other
+ * side orders by its sign, unless it is a constant outside the i64 range, which is compared with the carrier
+ * ordering. For `==` / `!=`, `null` is loosely equal only to `null` / `undefined` (§7.2.15 steps 2–3), so it answers
+ * before ToNumber would turn it into 0. Anything else keeps the static mixed arm's ToNumber comparison. Returns
+ * `undefined` having emitted nothing for any other operator or operand, or when a helper is unavailable.
+ */
+export function emitMaybeBigIntComparison(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   bigintOnLeft: boolean,
   otherTsType: ts.Type,
 ): ValType | null | undefined {
-  const op = expr.operatorToken.kind;
-  const negate = op === ts.SyntaxKind.ExclamationEqualsToken;
-  if ((!negate && op !== ts.SyntaxKind.EqualsEqualsToken) || !typeMayBeBigInt(otherTsType)) return undefined;
+  const ops = COMPARISONS.get(expr.operatorToken.kind);
+  if (ops === undefined || !typeMayBeBigInt(otherTsType)) return undefined;
   addUnionImports(ctx);
-  if (!ctx.funcMap.has("__typeof_bigint") || !ctx.funcMap.has("__to_bigint")) return undefined;
+  const wide = wideBigIntComparisons(ctx);
+  if (wide === undefined || !ctx.funcMap.has("__typeof_bigint") || !ctx.funcMap.has("__to_bigint")) return undefined;
 
-  const operands = compileOperandLocals(ctx, fctx, expr, bigintOnLeft);
-  if (operands === null) return null;
-  const { anyLocal, bigLocal } = operands;
+  const frame: ComparisonFrame = { ctx, fctx, expr, bigintOnLeft, ops, wide };
+  const wideConstant = wideBigIntConstantOf(ctx, fctx, bigintOnLeft ? expr.left : expr.right);
+  const compiled = wideConstant === undefined ? compileI64Side(frame) : compileWideConstantSide(frame, wideConstant);
+  if (compiled === null) return null;
+  const { anyLocal, bigLocal, side } = compiled;
 
   const saved = pushBody(fctx);
-  fctx.body.push(
-    { op: "local.get", index: bigLocal },
-    { op: "f64.convert_i64_s" },
-    { op: "local.get", index: anyLocal },
-  );
+  fctx.body.push({ op: "local.get", index: anyLocal });
   coerceType(ctx, fctx, EXTERNREF, { kind: "f64" }, "number");
-  fctx.body.push({ op: "f64.eq" });
-  const asNumbers = fctx.body;
+  const otherAsNumber = fctx.body;
   popBody(fctx, saved);
-
-  // The ToNumber coercion can register late imports; read the helper indices once those shifts are settled.
+  const asNumbers: Instr[] = [...inSourceOrder(frame, side.asNumber, otherAsNumber), { op: ops.f64 }];
+  const notBigInt: Instr[] =
+    ops.onNull === undefined
+      ? asNumbers
+      : [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: ops.onNull }],
+            else: asNumbers,
+          },
+        ];
   flushLateImportShifts(ctx, fctx);
   fctx.body.push(
     { op: "local.get", index: anyLocal },
     { op: "call", funcIdx: ctx.funcMap.get("__typeof_bigint")! },
+    { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: side.againstBigInt(), else: notBigInt },
+  );
+  if (bigLocal !== undefined) releaseTempLocal(fctx, bigLocal);
+  releaseTempLocal(fctx, anyLocal);
+  return { kind: "i32" };
+}
+
+function inSourceOrder(frame: ComparisonFrame, big: Instr[], other: Instr[]): Instr[] {
+  return frame.bigintOnLeft ? [...big, ...other] : [...other, ...big];
+}
+
+/** `ordering` is the other operand against the BigInt one (-1, 0, 1); the BigInt side stands in as 0. */
+function againstZero(frame: ComparisonFrame, ordering: Instr[]): Instr[] {
+  return [...inSourceOrder(frame, [{ op: "i32.const", value: 0 }], ordering), { op: frame.ops.i32 }];
+}
+
+/** The BigInt side on the i64 lane; a `$BigIntWide` on the other side orders by its sign. */
+function compileI64Side(frame: ComparisonFrame): CompiledComparison | null {
+  const { ctx, fctx, expr, bigintOnLeft, ops, wide } = frame;
+  const operands = compileOperandLocals(ctx, fctx, expr, bigintOnLeft);
+  if (operands === null) return null;
+  const { anyLocal, bigLocal } = operands;
+  const againstBigInt = (): Instr[] => [
+    ...wide.isWide(anyLocal),
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: bigLocal },
-        { op: "local.get", index: anyLocal },
-        { op: "call", funcIdx: ctx.funcMap.get("__to_bigint")! },
-        { op: "i64.eq" },
-      ],
+      then: againstZero(frame, wide.sign(anyLocal)),
       else: [
-        { op: "local.get", index: anyLocal },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: 0 }],
-          else: asNumbers,
-        },
+        ...inSourceOrder(
+          frame,
+          [{ op: "local.get", index: bigLocal }],
+          [
+            { op: "local.get", index: anyLocal },
+            { op: "call", funcIdx: ctx.funcMap.get("__to_bigint")! },
+          ],
+        ),
+        { op: ops.i64 },
       ],
     },
-  );
-  if (negate) fctx.body.push({ op: "i32.eqz" });
-  releaseTempLocal(fctx, bigLocal);
-  releaseTempLocal(fctx, anyLocal);
-  return { kind: "i32" };
+  ];
+  return {
+    anyLocal,
+    bigLocal,
+    side: { asNumber: [{ op: "local.get", index: bigLocal }, { op: "f64.convert_i64_s" }], againstBigInt },
+  };
+}
+
+/** A BigInt constant outside the i64 range: compared with the carrier ordering. It has no effects, so only the other operand is evaluated. */
+function compileWideConstantSide(frame: ComparisonFrame, value: bigint): CompiledComparison | null {
+  const { ctx, fctx, expr, bigintOnLeft, wide } = frame;
+  const anyLocal = allocTempLocal(fctx, EXTERNREF);
+  if (!compileInto(ctx, fctx, bigintOnLeft ? expr.right : expr.left, EXTERNREF, anyLocal)) {
+    releaseTempLocal(fctx, anyLocal);
+    return null;
+  }
+  return {
+    anyLocal,
+    side: {
+      asNumber: [{ op: "f64.const", value: Number(value) }],
+      againstBigInt: () => againstZero(frame, wide.compare(anyLocal, value)),
+    },
+  };
+}
+
+/** Compile `side` as `want` into `local`; false when it did not compile. */
+function compileInto(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  side: ts.Expression,
+  want: ValType,
+  local: number,
+): boolean {
+  const got = compileExpression(ctx, fctx, side, want);
+  if (got === null) return false;
+  if (got.kind !== want.kind) coerceType(ctx, fctx, got, want);
+  fctx.body.push({ op: "local.set", index: local });
+  return true;
 }
 
 /** Evaluate both operands in source order into an i64 local (the BigInt side) and an externref local (the other). */
@@ -171,14 +278,8 @@ function compileOperandLocals(
 ): { anyLocal: number; bigLocal: number } | null {
   const anyLocal = allocTempLocal(fctx, EXTERNREF);
   const bigLocal = allocTempLocal(fctx, BIGINT_I64);
-  const compileSide = (side: ts.Expression, isBigint: boolean): boolean => {
-    const want = isBigint ? BIGINT_I64 : EXTERNREF;
-    const got = compileExpression(ctx, fctx, side, want);
-    if (got === null) return false;
-    if (got.kind !== want.kind) coerceType(ctx, fctx, got, want);
-    fctx.body.push({ op: "local.set", index: isBigint ? bigLocal : anyLocal });
-    return true;
-  };
+  const compileSide = (side: ts.Expression, isBigint: boolean): boolean =>
+    compileInto(ctx, fctx, side, isBigint ? BIGINT_I64 : EXTERNREF, isBigint ? bigLocal : anyLocal);
   if (compileSide(expr.left, bigintOnLeft) && compileSide(expr.right, !bigintOnLeft)) return { anyLocal, bigLocal };
   releaseTempLocal(fctx, bigLocal);
   releaseTempLocal(fctx, anyLocal);
