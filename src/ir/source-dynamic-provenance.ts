@@ -21,9 +21,12 @@ import { ts } from "../ts-api.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-script-var.js";
+import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
+import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
+import { realmConstantRead } from "./realm-static-call.js";
 
 type Carries = (expression: ts.Expression) => boolean;
 
@@ -47,6 +50,7 @@ export function sourceDynamicProvenance(
   parameterIsDynamic: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => boolean,
 ): SourceDynamicProvenance {
   const any = checker.getAnyType();
+  const pristine = pristineBuiltinGlobal(checker, sourceFiles);
   const homes = new Map<IrModuleBindingDeclaration, IrScriptVarHome | undefined>();
   const locals = new Map<ts.VariableDeclaration, boolean>();
   const results = new Map<ts.FunctionDeclaration, boolean>();
@@ -59,10 +63,14 @@ export function sourceDynamicProvenance(
   };
   // Every store after the declaration. Fail-closed: without a write list (`with`, direct `eval`) anything may be
   // stored, and only a ToNumeric update (`++`, `-=`) is known to store a number.
+  // (#7372 2a-3) An Annex B block function of the name stores a function object.
   const storesCarry = (declaration: ts.VariableDeclaration): boolean =>
-    scriptVarWrites(checker, declaration)?.some((write) =>
+    (ts.isIdentifier(declaration.name) &&
+      annexBWritesScriptBinding(declaration.getSourceFile(), declaration.name.text)) ||
+    (scriptVarWrites(checker, declaration)?.some((write) =>
       write.kind === "value" ? carries(write.expr, declaration) : write.kind !== "numeric",
-    ) ?? true;
+    ) ??
+      true);
   const classify = irOwnedScriptVarHome(checker, sourceFiles, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
@@ -111,6 +119,8 @@ export function sourceDynamicProvenance(
     if (ts.isCallExpression(node)) return callCarries(node);
     if (ts.isConditionalExpression(node)) return carries(node.whenTrue, self) || carries(node.whenFalse, self);
     if (ts.isBinaryExpression(node)) return binaryCarries(node, self);
+    // (#7350 B3a) A constant a realm constructor holds (`Number.MAX_VALUE`) is folded to its number.
+    if (ts.isPropertyAccessExpression(node) && realmConstantRead(node, pristine) !== undefined) return false;
     switch (node.kind) {
       // Number, Boolean and (#7354 Str) string literals, and the prefix operators whose result is a number or a
       // Boolean whatever the operand (`-v`, `!v`, `++v`). Every other kind (members, calls of anything but a source

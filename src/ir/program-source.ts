@@ -47,7 +47,8 @@ import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import { preparedIrProgramOwner } from "./program.js";
+import { locatedFailure } from "./program/owner.js";
+import { preparedSelectRefusal } from "./prepared-select-refusals.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -55,6 +56,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { prepareSourceDirectCalls } from "./program-source-direct-calls.js";
 import { functionDeclarationValues, type FunctionValueGlobal } from "./function-declaration-values.js";
+import { scriptBlockFunctionHomes } from "./annexb-block-function-values.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
@@ -1545,6 +1547,8 @@ export function prepareIrProgramSources(
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
+  const refused = preparedSelectRefusal(inventory, identity);
+  if (refused) return refused;
   const sourceMapCatalog =
     sourceMapRequest === undefined
       ? undefined
@@ -1598,6 +1602,7 @@ export function prepareIrProgramSources(
           deferTopLevelInit: input.deferTopLevelInit,
           functionValues: dynamicContracts.functionDeclarationValues,
           scriptVarModel: "with-for-in-heads",
+          blockFunctions: dynamicContracts.blockFunctions,
         }),
       );
     }
@@ -1654,6 +1659,16 @@ export function prepareIrProgramSources(
       globalById.set(value.home.globalRef.binding.bindingId, value.global);
       globalByDeclaration.set(value.declaration, value.global);
     }
+    diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFiles[0]!);
+    const blockFunctionHomes = scriptBlockFunctionHomes(
+      input.checker,
+      sourceFiles,
+      identity,
+      dynamicContracts,
+      globalByDeclaration,
+    );
+    for (const global of blockFunctionHomes?.globals ?? [])
+      globalById.set(global.binding.globalRef.binding.bindingId, global);
     const globals = [...globalById.values()];
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
@@ -1683,6 +1698,7 @@ export function prepareIrProgramSources(
       closureInvocations,
       closureCallableParameters,
       functionValues,
+      blockFunctionHomes,
       directCalls,
       nativeFamily,
       nativeStringValues,
@@ -1735,15 +1751,12 @@ export function prepareIrProgramSources(
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
     return prepared;
   } catch (error) {
-    const owner = diagnostic.active
-      ? preparedIrProgramOwner({ inventory, derivedUnits }, diagnostic.active)
-      : undefined;
-    if (!owner)
+    const failure = classifyIrFailure(error, "build");
+    if (!diagnostic.active)
       throw new PreparedIrProgramInvariantError(
         "invalid-prepared-data",
-        `source preparation failed without an original owner: ${String(error)}`,
+        `source preparation failed without an original owner: ${failure.detail}`,
       );
-    const { cause: _cause, ...failureDiagnostic } = classifyIrFailure(error, "build");
-    return { ...failureDiagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile };
+    return locatedFailure({ inventory, derivedUnits }, diagnostic.active, failure);
   }
 }

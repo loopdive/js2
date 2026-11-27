@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #1819: logical assignment (??= ||= &&=) on a module-level / captured global
 // read the global's type from `ctx.mod.globals[absIdx]` using the *absolute*
@@ -19,10 +20,7 @@ import { compile } from "../src/index.js";
 async function run(source: string): Promise<unknown> {
   const r = await compile(source, { fileName: "t.ts" });
   expect(r.success, `Compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(true);
-  const { instance } = await WebAssembly.instantiate(
-    r.binary,
-    (r as unknown as { importObject: WebAssembly.Imports }).importObject,
-  );
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as Record<string, () => unknown>).test();
 }
 

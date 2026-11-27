@@ -33,7 +33,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -50,11 +50,7 @@ async function compileAndInstantiate(source: string): Promise<InstantiateResult>
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => `L${e.line}:${e.column} ${e.message}`).join(" | ")}`);
   }
-  const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, {
-    env: built.env,
-    string_constants: built.string_constants,
-  });
+  const instance = await instantiateWithRuntime(r, ENV_STUB);
   return { exports: instance.exports as Record<string, unknown> };
 }
 

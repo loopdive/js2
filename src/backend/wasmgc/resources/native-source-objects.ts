@@ -32,7 +32,10 @@ import {
   type SourceObjectCreateOperands,
   type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
-import { buildSourceFunctionInitDefinition } from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
+import {
+  buildSourceFunctionInitDefinition,
+  buildSourceFunctionIsConstructorDefinition,
+} from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
 import { buildForInKeysDefinition } from "../../../runtime/wasmgc/values/own-key-walk-bodies.js";
 import { argumentVectorElement, argumentVectorLength } from "../../../runtime/wasmgc/values/argument-vector-bodies.js";
 import { buildToBooleanBody, buildToBooleanLocals } from "../../../runtime/wasmgc/values/primitive-layouts.js";
@@ -224,6 +227,10 @@ const ROWS = {
         constructorKey: key("constructor"),
       });
     },
+  },
+  "js.object.is-constructor": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: ({ kernel }, tx) => buildSourceFunctionIsConstructorDefinition(nativeBuiltinFunctionOperands(tx, kernel)),
   },
   "js.object.inherits": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },

@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileRun(
   source: string,
@@ -29,6 +30,10 @@ async function compileRun(
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );
+  if (opts.standalone === false) {
+    const instance = await instantiateWithRuntime(result);
+    return { exports: instance.exports as Record<string, Function>, errors: result.errors };
+  }
   const imports = result.importObject ?? buildImports(result.imports, {}, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   (imports as { __setExports?: (e: object) => void }).__setExports?.(instance.exports as object);

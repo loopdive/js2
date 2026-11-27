@@ -8,20 +8,29 @@
  *
  * The receiver must be the unchanged global `Object` (`builtin-global-binding.ts`: lib-declared only, never assigned);
  * `Object` is no value on this path (a read refuses), so no program can replace `Object.defineProperty` itself.
+ * (#7350 B3a) Beside it, a constant a realm constructor holds (`Number.MAX_VALUE`) and the conversion calls of the
+ * wrapper constructors' source-bound plans (`Number(v)`, `Boolean(v)`).
  */
 import { ts } from "../ts-api.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { irDynamic, type IrValueId } from "./nodes.js";
+import { asVal, irDynamic, irVal, type IrValueId } from "./nodes.js";
 import {
   createsFunctionObjects,
   dynamicStoreOperand,
   type FunctionObjectLoweringHost,
 } from "./function-object-lowering.js";
 import { IrUnsupportedError } from "./outcomes.js";
+import type { IrFromAstResolver } from "./from-ast.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
-import { errorConstructorId, nativeObjectStatic } from "./program/builtin-prototype-keys.js";
+import {
+  identityOnlyKeyRefusal,
+  nativeConstantStatic,
+  nativeObjectStatic,
+  realmConstructorId,
+  WRAPPER_CONVERSIONS,
+} from "./program/builtin-prototype-keys.js";
 
 /**
  * The catalog's native `Object` static `call` names, with its `length`, when the receiver is the unchanged global
@@ -35,6 +44,71 @@ export function nativeObjectStaticCall(
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
   if (callee.expression.text !== "Object" || callee.questionDotToken || call.questionDotToken) return undefined;
   return isPristineGlobal(callee.expression) ? nativeObjectStatic(callee.name.text) : undefined;
+}
+
+/**
+ * (#7350 B3a) `X.<key>` with `X` the unchanged global of a realm constructor and `key` one of its constant value
+ * properties (`nativeConstantStatic`: `Number.MAX_VALUE`, …): that number. The fold reads nothing, so the realm holds
+ * nothing for it.
+ */
+export function realmConstantRead(
+  access: ts.PropertyAccessExpression,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): number | undefined {
+  const receiver = access.expression;
+  return ts.isIdentifier(receiver) && isPristineGlobal(receiver)
+    ? nativeConstantStatic(receiver.text, access.name.text)
+    : undefined;
+}
+
+/**
+ * `Number.<CONST>` / `Math.<CONST>` as a constant: (#7106 module-init lever A) off the unshadowed ambient namespace,
+ * legacy's own (`ambientNamespaceConstant`); (#7350 B3a) else, on the lane where the realm holds the program's objects,
+ * one a realm constructor holds ({@link realmConstantRead}).
+ */
+export function constantMemberRead(
+  access: ts.PropertyAccessExpression,
+  inScope: (name: string) => boolean,
+  resolver: Pick<IrFromAstResolver, "isAmbientBinding" | "ambientNamespaceConstant"> | undefined,
+  host: FunctionObjectLoweringHost,
+): number | undefined {
+  const receiver = access.expression;
+  if (ts.isIdentifier(receiver) && !inScope(receiver.text) && resolver?.isAmbientBinding?.(receiver) === true)
+    return resolver.ambientNamespaceConstant?.(access);
+  return createsFunctionObjects(host) ? realmConstantRead(access, host.isPristineGlobal) : undefined;
+}
+
+/**
+ * (#7350 B3a) A source-bound conversion call on that lane (`prepare-number-conversion.ts`): `Number(v)`'s or (#7354 T)
+ * `isNaN(v)`'s ToNumber, or `Boolean(v)`'s ToBoolean, of the first argument; every extra one is evaluated and dropped,
+ * in source order, before the conversion. A number or a Boolean converts inline, any other operand as a carrier
+ * through the legalization (the lane binds no `js.number.from-value`). Without an argument: `absent`, by default the
+ * wrapper's own (`WRAPPER_CONVERSIONS`; `isNaN()` converts `undefined`, NaN).
+ */
+export function lowerRealmConversionCall(
+  call: ts.CallExpression,
+  host: FunctionObjectLoweringHost,
+  wrapper: "Number" | "Boolean",
+  absent: number | boolean = WRAPPER_CONVERSIONS[wrapper].absent,
+): IrValueId {
+  const [operand, ...extras] = call.arguments;
+  const b = host.builder;
+  const { to } = WRAPPER_CONVERSIONS[wrapper];
+  if (operand === undefined)
+    return typeof absent === "number"
+      ? b.emitConst({ kind: "f64", value: absent }, irVal({ kind: "f64" }))
+      : b.emitConst({ kind: "bool", value: absent }, irVal({ kind: "i32", boolean: true }));
+  const value = host.lowerExpression(operand);
+  extras.forEach((extra) => host.lowerExpression(extra));
+  const scalar = asVal(b.typeOf(value));
+  if (scalar?.kind === "f64" && to === "number") return value;
+  if (scalar?.kind === "i32" && scalar.boolean === true)
+    return to === "boolean" ? value : b.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+  const carried = dynamicStoreOperand(value, operand, host, "conversion operand");
+  if (to === "number") return b.emitDynToNumber(carried);
+  // ToBoolean is `!!v`: `dyn.truthy` answers an i32, which each negation makes a JS Boolean.
+  const not = (v: IrValueId) => b.emitUnary("i32.eqz", v, irVal({ kind: "i32", boolean: true }));
+  return not(not(b.emitDynTruthy(carried)));
 }
 
 /**
@@ -67,7 +141,7 @@ export function realmBuiltinOperand(
     (ts.isCallExpression(call) || ts.isNewExpression(call)) &&
     call.arguments?.includes(operand) === true &&
     ts.isIdentifier(call.expression) &&
-    errorConstructorId(call.expression.text) !== undefined &&
+    realmConstructorId(call.expression.text)?.family === "error" &&
     isPristineGlobal(call.expression)
   )
     return true;
@@ -77,18 +151,57 @@ export function realmBuiltinOperand(
   return name !== undefined && index >= 0 && depth <= (DESCRIPTOR_DEPTH[name][index] ?? 0);
 }
 
+/**
+ * The own keys of its first argument `Object.<name>` names as constants in `keys`, its second: a string literal key,
+ * the names of a literal descriptor map; `create`'s first argument is a prototype, whose own keys it names none of.
+ */
+function constantOwnKeys(name: NativeObjectStatic, keys: ts.Expression): readonly string[] {
+  switch (name) {
+    case "create":
+      return [];
+    case "defineProperties":
+      return ts.isObjectLiteralExpression(keys)
+        ? keys.properties.flatMap(({ name }) =>
+            name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) ? [name.text] : [],
+          )
+        : [];
+    default:
+      return ts.isStringLiteralLike(keys) ? [keys.text] : [];
+  }
+}
+
+/**
+ * (#7350 B3a) The refusal of `Object.<name>(X, …)` where `X` is the pristine global of a realm constructor whose
+ * identity row lacks a key the call names as a constant (`identityOnlyKeyRefusal`); a key known only at run time
+ * reaches the kernel, which aborts.
+ */
+function identityOnlyTargetRefusal(
+  call: ts.CallExpression,
+  name: NativeObjectStatic,
+  host: FunctionObjectLoweringHost,
+): string | undefined {
+  const [target, keys] = call.arguments;
+  const ctor =
+    target !== undefined && ts.isIdentifier(target) && host.isPristineGlobal(target)
+      ? realmConstructorId(target.text)
+      : undefined;
+  if (ctor === undefined || keys === undefined) return undefined;
+  return constantOwnKeys(name, keys)
+    .map((key) => identityOnlyKeyRefusal(ctor, key))
+    .find((refusal) => refusal !== undefined);
+}
+
 /** The lowered call, or `null` when `call` is not such a static here. */
 export function tryLowerRealmStaticCall(call: ts.CallExpression, host: FunctionObjectLoweringHost): IrValueId | null {
   if (!createsFunctionObjects(host)) return null;
   const native = nativeObjectStaticCall(call, host.isPristineGlobal);
   if (!native) return null;
   const { name, length } = native;
-  if (call.arguments.some(ts.isSpreadElement))
-    throw new IrUnsupportedError(
-      "call-resolution-unsupported",
-      "build",
-      `ir/from-ast: Object.${name} with a spread argument (${host.funcName})`,
-    );
+  const refused = call.arguments.some(ts.isSpreadElement)
+    ? `Object.${name} with a spread argument`
+    : identityOnlyTargetRefusal(call, name, host);
+  if (refused !== undefined)
+    throw new IrUnsupportedError("call-resolution-unsupported", "build", `ir/from-ast: ${refused} (${host.funcName})`);
   const values = call.arguments.map((argument) =>
     dynamicStoreOperand(host.lowerExpression(argument), argument, host, "Object static argument"),
   );

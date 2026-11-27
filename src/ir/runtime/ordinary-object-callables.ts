@@ -86,6 +86,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // requiring the enumerable attribute when `selector` is 1.
   "js.object.intrinsic": declaration("js.object.intrinsic", [I32], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, I32], [BOOLEAN]),
+  // (#7354 O2) IsConstructor (§7.2.4) of a function object: false for one `init-function` made without [[Construct]]
+  // (an accessor).
+  "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
   // (#7377) EnumerateObjectProperties (§14.7.5.9) as a snapshot: a list of the string keys a for-in visits, empty
   // for `undefined` / `null`; the list's length, and its key at an index.
   "js.object.for-in-keys": declaration("js.object.for-in-keys", [EXTERNAL], [EXTERNAL]),

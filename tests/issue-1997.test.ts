@@ -13,14 +13,12 @@
 // (§23.1.3.18 step 7.c/d) → ",,".
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runStr(src: string): Promise<unknown> {
   const result = await compile(src, { fileName: "test.ts" });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-  const importObject: any = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
-  importObject.__setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as { test(): unknown }).test();
 }
 

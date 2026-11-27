@@ -254,7 +254,11 @@ function program(text, marker) {
     .map((line) => line.replace(/^          /, ""))
     .join("\n");
 }
+const currentEdition = fs.readFileSync(join(workflowRoot, "scripts/test262-current-edition.json"), "utf8");
 async function selectMeasurement(event, day, inputs = {}) {
+  return (await planMeasurement(event, day, inputs)).selected;
+}
+async function planMeasurement(event, day, inputs = {}) {
   let output = "";
   let selected;
   const snippet = program(workflow, "IR_MEASUREMENT_PLAN").replace(
@@ -262,7 +266,7 @@ async function selectMeasurement(event, day, inputs = {}) {
     "const { appendFileSync } = fs;",
   );
   const context = {
-    process: { env: { EVENT_NAME: event, ...inputs } },
+    process: { env: { EVENT_NAME: event, CURRENT_EDITION: currentEdition, ...inputs } },
     fs: {
       appendFileSync: (_, value) => {
         output += value;
@@ -280,18 +284,101 @@ async function selectMeasurement(event, day, inputs = {}) {
     },
   };
   await vm.runInNewContext(`(async () => {${snippet}\n})()`, context);
-  assert.equal(output, `run=${selected.run}\n`);
-  return selected;
+  const outputs = Object.fromEntries(
+    output
+      .trim()
+      .split("\n")
+      .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+  );
+  assert.equal(outputs.run, String(selected.run));
+  return { selected, outputs };
 }
-test("every merge to main and every daily run has exactly the full IR standalone cell and never Host", async () => {
-  const measured = { run: true, cells: [{ compilerPath: "ir", target: "standalone", chunks: 102 }], promotion: false };
-  for (let day = 0; day < 7; day++) assert.deepEqual(await selectMeasurement("schedule", day), measured);
-  assert.deepEqual(await selectMeasurement("push", 3, { ACTOR: "a-developer" }), measured);
+test("every scheduled (weekly) run has exactly the full IR standalone cell and never Host", async () => {
+  const full = {
+    run: true,
+    cells: [{ compilerPath: "ir", target: "standalone", scope: "full", edition: "", chunks: 102 }],
+    promotion: false,
+  };
+  for (let day = 0; day < 7; day++) assert.deepEqual(await selectMeasurement("schedule", day), full);
+  const { outputs } = await planMeasurement("schedule", 1);
+  assert.equal(outputs.artifact, "test262-ir-standalone-measurement");
+  assert.deepEqual(
+    JSON.parse(outputs.matrix),
+    Array.from({ length: 102 }, (_, i) => i + 1),
+  );
+  // The weekly full run is throttled so the merge queue keeps runners.
+  assert.equal(outputs.max_parallel, "40");
 });
-test("a bot push and the other events select no IR measurement", async () => {
+test("every merge to main measures only the configured current edition, under its own artifact name", async () => {
+  const { edition, chunks } = JSON.parse(currentEdition);
+  const { selected, outputs } = await planMeasurement("push", 3, { ACTOR: "a-developer" });
+  assert.deepEqual(selected.cells, [{ compilerPath: "ir", target: "standalone", scope: "edition", edition, chunks }]);
+  assert.equal(outputs.scope, "edition");
+  assert.equal(outputs.edition, edition);
+  assert.equal(outputs.chunks, String(chunks));
+  assert.deepEqual(
+    JSON.parse(outputs.matrix),
+    Array.from({ length: chunks }, (_, i) => i + 1),
+  );
+  // The site lists artifacts by the full name; an edition run must never carry it.
+  assert.equal(outputs.artifact, "test262-ir-standalone-edition-measurement");
+  assert.match(pagesWorkflow, /artifacts\?name=test262-ir-standalone-measurement&/);
+  // The edition run is on the merge queue's critical path: never throttled below its chunk count.
+  assert.ok(Number(outputs.max_parallel) >= chunks, `max_parallel ${outputs.max_parallel} < ${chunks} chunks`);
+});
+test("a merge with an unusable current-edition config fails the plan instead of measuring the wrong scope", async () => {
+  for (const config of [{ edition: "ES5" }, { edition: "ES5", chunks: 0 }, { chunks: 8 }])
+    await assert.rejects(planMeasurement("push", 3, { ACTOR: "a-developer", CURRENT_EDITION: JSON.stringify(config) }));
+});
+test("a bot push, a pull request and a test262-irrelevant queue group select no IR measurement", async () => {
   const none = { run: false, cells: [], promotion: false };
   assert.deepEqual(await selectMeasurement("push", 1, { ACTOR: "github-actions[bot]" }), none);
-  for (const event of ["merge_group", "pull_request"]) assert.deepEqual(await selectMeasurement(event, 1), none);
+  assert.deepEqual(await selectMeasurement("pull_request", 1), none);
+  assert.deepEqual(await selectMeasurement("merge_group", 1, { RUN_SHARDS: "false" }), none);
+});
+test("the merge queue measures the current edition; the push after it reuses that measurement", async () => {
+  const { edition, chunks } = JSON.parse(currentEdition);
+  const edition_cell = [{ compilerPath: "ir", target: "standalone", scope: "edition", edition, chunks }];
+  // run_shards true, or unknown because `changes` failed: measure (fail-safe).
+  for (const RUN_SHARDS of ["true", ""]) {
+    const { selected, outputs } = await planMeasurement("merge_group", 1, { RUN_SHARDS });
+    assert.deepEqual(selected.cells, edition_cell);
+    assert.equal(outputs.artifact, "test262-ir-standalone-edition-measurement");
+  }
+  // The queue already measured this exact commit: the push runs nothing.
+  assert.equal(
+    (await selectMeasurement("push", 1, { ACTOR: "github-merge-queue[bot]", QUEUE_MEASURED: "true" })).run,
+    false,
+  );
+  // A direct push, or a probe miss, measures.
+  assert.deepEqual(
+    (await selectMeasurement("push", 1, { ACTOR: "a-developer", QUEUE_MEASURED: "false" })).cells,
+    edition_cell,
+  );
+  // The probe looks for exactly the artifact name the plan assigns to edition runs.
+  const plan = workflow.slice(
+    workflow.indexOf("  compiler-path-measurement-plan:"),
+    workflow.indexOf("  test262-ir-measurement-shard:"),
+  );
+  assert.match(plan, /ART_NAME: test262-ir-standalone-edition-measurement\n/);
+  assert.match(plan, /QUEUE_MEASURED: \$\{\{ steps\.probe\.outputs\.measured \}\}/);
+});
+test("one full_run dispatch runs what the weekly schedule runs (#7551)", async () => {
+  const dispatch = { COMPILER_PATH: "ir", MEASUREMENT_TARGET: "standalone" };
+  // The IR half: the same full cell the schedule selects.
+  assert.deepEqual(
+    await selectMeasurement("workflow_dispatch", 1, { ...dispatch, FULL_RUN: "true", MEASUREMENT: "false" }),
+    await selectMeasurement("schedule", 1),
+  );
+  // The legacy half: test262-shard and promotion run on any dispatch without
+  // compiler_path_measurement, which full_run must not be combined with.
+  const legacy = workflow.slice(workflow.indexOf("\n  test262-shard:\n"), workflow.indexOf("\n  test262-shard-mg:\n"));
+  assert.match(legacy, /github\.event_name == 'workflow_dispatch' && !inputs\.compiler_path_measurement/);
+  await assert.rejects(
+    selectMeasurement("workflow_dispatch", 1, { ...dispatch, FULL_RUN: "true", MEASUREMENT: "true" }),
+    /full_run already includes/,
+  );
+  assert.match(workflow, /\n {6}full_run:\n {8}description:/);
 });
 test("manual measurement is immediate, explicit and standalone only", async () => {
   assert.equal(
@@ -446,7 +533,75 @@ test("IR merge classifies editions with the regular lane's generators, outside t
   assert.match(step, /--output ir-editions-raw\/test262-editions\.json[\s\\]+--host-free --no-feature-examples/);
   assert.match(step, /scripts\/append-run-history\.mjs --runs-dir ir-editions-raw\/runs/);
   assert.match(step, /--standalone-editions ir-editions-raw\/test262-editions\.json/);
-  assert.match(merge, /name: test262-ir-standalone-measurement\n\s+path: ir-measurement\n/);
+  assert.match(step, /if: env\.SCOPE == 'full'/);
+  assert.match(
+    merge,
+    /name: \$\{\{ needs\.compiler-path-measurement-plan\.outputs\.artifact \}\}\n\s+path: ir-measurement\n/,
+  );
+});
+test("IR merge keeps the site-facing reports to the full scope and gates the edition scope per test", () => {
+  const merge = workflow.slice(workflow.indexOf("  merge-ir-measurement:"), workflow.indexOf("\n  test262-shard:"));
+  const step = (name) => {
+    const start = merge.indexOf(`      - name: ${name}`);
+    assert.ok(start >= 0, `missing step ${name}`);
+    const next = merge.indexOf("\n      - ", start + 1);
+    return merge.slice(start, next < 0 ? undefined : next);
+  };
+  for (const name of [
+    "Build requested IR report including compiler failures",
+    "Classify the IR results by ES edition",
+    "Record separate status and run history",
+  ])
+    assert.match(step(name), /if: env\.SCOPE == 'full'/);
+  const fetch = step("Download the nearest earlier IR measurement (#7551)");
+  assert.match(fetch, /fetch-baseline \\\s+--from "\$FROM" --meta ir-measurement\/scope\.json --dest ir-baseline/);
+  // The queue diffs against the commit its group was built on; a push against its parent.
+  assert.match(
+    fetch,
+    /FROM: \$\{\{ github\.event_name == 'merge_group' && github\.event\.merge_group\.base_sha \|\| 'HEAD\^' \}\}/,
+  );
+  const report = step("Report the edition against that baseline (#7551)");
+  assert.match(report, /--baseline-dir ir-baseline/);
+  assert.match(report, /GITHUB_STEP_SUMMARY/);
+  // The failure comes after the upload, so a regressed commit still becomes the next baseline.
+  const upload = merge.indexOf("      - uses: actions/upload-artifact@v6");
+  const fail = merge.indexOf("      - name: Fail on an edition regression (#7551)");
+  assert.ok(upload > 0 && fail > upload);
+  // Only exit 3 WITH a written report is a regression; any other non-zero exit
+  // is a crash, failed under an "[infra]" step so auto-park does not park it.
+  assert.match(
+    step("Fail on an edition regression (#7551)"),
+    /steps\.edition_report\.outputs\.verdict == 'regression'/,
+  );
+  assert.match(
+    report,
+    /if \[ "\$code" = 3 \] && \[ -s ir-measurement\/edition-report\.json \]; then verdict=regression/,
+  );
+  assert.match(
+    step("Edition report did not complete (#7551) [infra]"),
+    /steps\.edition_report\.outputs\.verdict == 'crashed'/,
+  );
+  // A narrowed discovery cannot shrink an edition run unnoticed.
+  assert.match(
+    step("Validate every planned shard before reporting any verdict"),
+    /--expected-paths-file "\$RUNNER_TEMP\/edition-paths\.txt"/,
+  );
+});
+test("IR shards take their partition from the plan and filter to the edition only in edition scope", () => {
+  const shard = workflow.slice(
+    workflow.indexOf("  test262-ir-measurement-shard:"),
+    workflow.indexOf("  merge-ir-measurement:"),
+  );
+  assert.match(shard, /chunk: \$\{\{ fromJSON\(needs\.compiler-path-measurement-plan\.outputs\.matrix\) \}\}/);
+  assert.match(shard, /TEST262_CHUNK_TOTAL: \$\{\{ needs\.compiler-path-measurement-plan\.outputs\.chunks \}\}/);
+  assert.match(
+    shard,
+    /max-parallel: \$\{\{ fromJSON\(needs\.compiler-path-measurement-plan\.outputs\.max_parallel\) \}\}/,
+  );
+  const select = shard.slice(shard.indexOf("      - name: Select the current edition's tests"));
+  assert.match(select, /if: needs\.compiler-path-measurement-plan\.outputs\.scope == 'edition'/);
+  assert.match(select, /TEST262_PATH_FILTER_FILE=/);
+  assert.ok(shard.indexOf("Select the current edition's tests") < shard.indexOf("      - name: Run shard"));
 });
 function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}) {
   const fixture = memoryFiles();
@@ -498,7 +653,10 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
     return "";
   };
   const snippet = program(pagesWorkflow, "IR_MEASUREMENT_FETCH")
-    .replace("import { execFileSync } from 'node:child_process';", "const { execFileSync } = commands;")
+    .replace(
+      "import { ghWithRetry } from './scripts/lib/gh-api-retry.mjs';",
+      "const ghWithRetry = (args) => commands.execFileSync('gh', args);",
+    )
     .replace(
       "import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';",
       "const { readFileSync, writeFileSync, mkdirSync, rmSync } = fs;",
@@ -643,7 +801,8 @@ test("IR merge validates each shard manifest as its own --manifest", () => {
   const merge = workflow.slice(workflow.indexOf("  merge-ir-measurement:"));
   const validate = merge.slice(0, merge.indexOf("      - name: Build requested IR report"));
   assert.match(validate, /for manifest in ir-shards\/\*\.complete\.json; do\s+manifests\+=\(--manifest "\$manifest"\)/);
-  assert.match(validate, /"\$\{manifests\[@\]\}" --expected-shards 102/);
+  assert.match(validate, /"\$\{manifests\[@\]\}" --expected-shards "\$EXPECTED_SHARDS"/);
+  assert.match(validate, /EXPECTED_SHARDS: \$\{\{ needs\.compiler-path-measurement-plan\.outputs\.chunks \}\}/);
   assert.doesNotMatch(validate, /completion\.json'?, JSON\.stringify\(files\.map/);
 });
 

@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(src: string, standalone = false): Promise<unknown> {
-  const r = await compile(src, { fileName: "test.ts", standalone });
+  // The boolean `standalone` option was replaced by `target: "standalone"`.
+  const r = await compile(src, { fileName: "test.ts", ...(standalone ? { target: "standalone" as const } : {}) });
   if (!r.success) throw new Error("compile failed: " + (r.errors?.[0]?.message ?? "?"));
   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
   return (instance.exports.test as () => unknown)();

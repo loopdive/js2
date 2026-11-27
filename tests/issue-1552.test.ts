@@ -14,7 +14,7 @@
 // throws for free.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runReturning(src: string): Promise<unknown> {
   const wrapped = `export function run(): any { ${src} }`;
@@ -22,13 +22,7 @@ async function runReturning(src: string): Promise<unknown> {
   if (!r.success) {
     throw new Error("compile failed: " + JSON.stringify(r.errors.slice(0, 3).map((e) => e.message)));
   }
-  const imports = buildImports(r.imports ?? [], undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  // Wire up exports for __sget_* / callback fallbacks — required when the
-  // catch destructuring helper reads struct externref fields via the
-  // __extern_get → __sget_* fallback path.
-  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports as { run: () => unknown }).run();
 }
 

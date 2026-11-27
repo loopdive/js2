@@ -170,7 +170,9 @@ import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-run
 import {
   ensureIrNativeCountedStringRepeatProvider,
   ensureIrNativeStringRepeatProvider,
+  ensureNativeStringPadProvider,
   hasExactIrNativeCountedStringRepeatProviderAbi,
+  isNativeStringPadKernel,
 } from "../codegen/ir-native-string-repeat.js";
 import {
   ensureIrHostStringRepeatProvider,
@@ -7890,6 +7892,8 @@ function resolveAndObserveCallableProvider(
         "prepared string.repeat provider has a malformed physical ABI",
       );
     }
+  } else if (ref.binding.kind === "intrinsic" && isNativeStringPadKernel(symbol)) {
+    index = ensureNativeStringPadProvider(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_AT_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);

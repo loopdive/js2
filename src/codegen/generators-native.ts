@@ -60,7 +60,7 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wav
 import { addUnionImports, ensureI32Condition, resolveWasmType } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "../shared/body-references-own-this.js";
-import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { isSimpleParameterList, isStrictFunction } from "../shared/is-strict-function.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { collectParamScopeEvalVarNames, readPossiblyBoxedLocal } from "./direct-eval-environment.js";
 import { ensureExnTag } from "./registry/imports.js";

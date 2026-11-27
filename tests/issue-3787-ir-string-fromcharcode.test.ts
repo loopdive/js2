@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 const HOST_SOURCE = `
 export function empty(): string {
@@ -39,7 +40,7 @@ describe("#3787 IR ambient String.fromCharCode", () => {
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as {
       empty: () => string;
       single: (code: number) => string;
@@ -101,7 +102,7 @@ describe("#3787 IR ambient String.fromCharCode", () => {
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irCompiledFuncs, JSON.stringify(result.irOutcomes, null, 2)).toContain("codePointToString");
 
-    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
+    const instance = await instantiateWithRuntime(result);
     const codePoint = (instance.exports as { codePoint: (value: number) => string }).codePoint;
     expect(codePoint(0x41)).toBe("A");
     expect(codePoint(0x1f600)).toBe("😀");
