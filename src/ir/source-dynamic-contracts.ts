@@ -318,6 +318,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
      */
     readonly closuresBindReceivers?: () => boolean;
+    /** (#7354 O7) A dynamic value's named member takes a compound write (from-ast `lowerDynamicMemberCompound`). */
+    readonly dynamicCompoundMemberWrites?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
   };
@@ -409,6 +411,7 @@ export function programDynamicContracts(
           staticFunctionValue: (declaration) =>
             !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
+          dynamicCompoundMemberWrites: () => true,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
