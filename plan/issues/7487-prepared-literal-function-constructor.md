@@ -1,10 +1,11 @@
 ---
 id: 7487
 title: "Prepared path: `Function(...)` / `new Function(...)` with all-literal arguments, on the literal dynamic-code source seam"
-status: ready
+status: done
 sprint: current
 created: 2026-11-26
-updated: 2026-11-26
+updated: 2026-11-27
+completed: 2026-11-27
 priority: medium
 horizon: m
 feasibility: medium
@@ -305,3 +306,60 @@ Code quality:
 - No new entry in `present()` beyond the kind.
 - No `loc-budget-allow` / `func-budget-allow` grants.
 - An adversarial review with fresh context, given the diff and this plan, finds no duplication of slice A's eval arm.
+
+## Result (2026-11-27)
+
+Implemented on `claude/7487-function-literal`, stacked on #7363 A1–A4 (PR #7502, head `7886d976`), with main merged.
+Pins: `tests/issue-7487-prepared-literal-function.test.ts` and `tests/issue-7487-function-source-text.test.ts`.
+
+### What landed
+
+- **One relation, two kinds.** `src/ir/eval-literal.ts` became `src/ir/literal-dynamic-code.ts`: one relation
+  `{site, kind: "eval" | "function", source}`, one receipt and one admission point,
+  `literalDynamicCodeSiteRefusal(receipt, contracts)`, called once in `prepareIrProgramSources`. Both kinds use the
+  existing code `literal-eval-site-unsupported`, so eval's codes and labels are byte-identical.
+- **The text rules are in the frontend.** `staticEarlyError`, `hasScriptOnlyEarlyError` and `bindsOrEvaluates`
+  moved out of the IR module into `src/frontend/eval/`. The pass-through wrapper `foldedEvalEarlyError` is deleted.
+- **Both arms only emit.** `lowerLiteralDynamicCodeSite` (`src/ir/literal-dynamic-code-lowering.ts`) dispatches both
+  arms. The Function arm makes a fresh "anonymous" function object through F1b's shared
+  `emitFunctionDeclarationObject`, which `emitFunctionDeclarationValues` now uses too.
+- **Shared checks.** The separate-goal check is `fitsFunctionSourceText` (#7441), and HTML-like comments use S2's
+  `hasHtmlLikeComment`, for both kinds. Sloppy duplicate parameters no longer leak TS2300 warnings.
+
+### Yield (measured)
+
+The real arm passes **27 of the 197** step-past files with the real harness, equal to the step-past bound (27), and
+27 with the stand-in harness (bound 32). The 89 `fnGlobalObject.js` files refuse by item 8's name ("the global
+Function is not pristine") until #7350 B2b and #7354 C2 give a sloppy direct call the global object.
+
+### Acceptance, row by row
+
+Measured with the `"refuse"` policy and `skipSemanticDiagnostics` (the test262 lane).
+
+| row | result |
+| --- | --- |
+| call, `new`, `a,a`, fresh object per evaluation, `.name === "anonymous"` | node's answer |
+| `typeof anonymous` outside and inside the body, a user `var anonymous`, two sites | node's answer |
+| a sloppy body in a strict program, and a strict body in a sloppy program | node's answer |
+| `var C = Function("this.a = 1"); new C().a` | node's answer |
+| a reassigned global (`Function = f`, `globalThis.Function = f`, `delete Function`); `Function("return this")` with a second site | refuses: `Function literal: the global Function is not pristine (#7487)` |
+| `Function("return this")` beside an eval site | refuses: `eval literal: the global eval is not pristine (#7363 A4)` |
+| the reserved prefix beside a site | refuses: `identifier uses the reserved dynamic-function prefix` |
+| a computed argument; a top-level `var Function` | keep today's refusal (no site) |
+
+### Amended rows: deferred, with their owners
+
+The rows below cannot meet the plan's answer yet. Each keeps a named refusal and none answers wrongly.
+
+| row | plan | today | waits on |
+| --- | --- | --- | --- |
+| the separate-goal rejects (`a) { if (1 //`, `/*`…, injections); strict octal; strict `eval` parameter | throws SyntaxError | no source; today's refusal `direct call to "Function" has no exact AST-site plan` | slice A's static-SyntaxError site arm (#7363, not built) |
+| `use strict` + non-simple params, `l: l:`, strict `with`, HTML-like comment | named refusal | the same generic refusal: the compile's gates drop the text, exactly as for eval (the named walk was deleted in review as dead) | the same arm; one label for both kinds |
+| a body write to a caller global | the caller sees it | no source (RV7432 B2(b): a text that writes is no site) | #7363's write analyses over virtual sources |
+| `Function("a", "b = 1", "...c", "").length === 1` | 1 | refuses: `rest/default/optional param not in Phase 1 IR scope` | IR default/rest parameters |
+| `new (Function("this.a = 1"))()` | `a === 1` | refuses: `only direct constructor names supported in slice 4` | C2's direct-construct path |
+| `toString()` | the assembled text | refuses: `needs Function.prototype's properties`, or traps through a `var` like every F1b value | #7350 (Function.prototype) |
+| sloppy `this` (the 89 files) | the global object | refuses by item 8's name | #7350 B2b + #7354 C2 |
+
+The follow-up to move `function-source-text.ts` to a neutral leaf (lead, 2026-11-26) is still open.
+
