@@ -243,13 +243,17 @@ jobs:
           # Both gates have to agree — a measurement allowed through upstream
           # and then refused here would deadlock just the same.
           PR_JSON="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number,statusCheckRollup 2>/dev/null || echo "unreadable")"
+            --state open --json number,statusCheckRollup,labels 2>/dev/null || echo "unreadable")"
           if [ "$PR_JSON" = "unreadable" ]; then
             PR_NUMBER="unreadable"
           else
             PR_NUMBER="$(printf '%s' "$PR_JSON" | jq -r '.[0].number // empty')"
+            # (#7558) "Cannot land" = a FAILURE check OR a `hold` label. A PR
+            # runs almost no checks any more, so a promotion that fails only in
+            # the merge queue is auto-parked with `hold` while every PR check
+            # stays green. Keep this line identical to its twin in npm-compat-refresh.yml.
             PR_FAILING="$(printf '%s' "$PR_JSON" | jq -r \
-              '[.[0].statusCheckRollup[]? | select((.conclusion // "") == "FAILURE")] | length')"
+              '([.[0].statusCheckRollup[]? | select((.conclusion // "") == "FAILURE")] | length) + ([.[0].labels[]? | select(.name == "hold")] | length)')"
           fi
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
@@ -267,7 +271,7 @@ jobs:
               ;;
             *)
               if [ "${PR_FAILING:-0}" -gt 0 ]; then
-                echo "::warning title=npm-compat-refresh::promotion PR #${PR_NUMBER} has ${PR_FAILING} failing check(s) and cannot land as-is; publishing over its branch so the fresh artifact can heal it."
+                echo "::warning title=npm-compat-refresh::promotion PR #${PR_NUMBER} has ${PR_FAILING} failing check(s) or a hold label and cannot land as-is; publishing over its branch so the fresh artifact can heal it."
                 echo "skip=0" >> "$GITHUB_OUTPUT"
               else
                 echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open; leaving its branch untouched so it can land. This measurement is uploaded as an artifact; the run after #${PR_NUMBER} merges publishes a fresher one."
