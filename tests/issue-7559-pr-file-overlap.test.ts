@@ -46,6 +46,18 @@ function fakeGitHub(pulls: object[], files: Record<number, object[]>) {
   return { ghJson, calls };
 }
 
+// Inside a git hook (the pre-push runs this file) git exports GIT_DIR and
+// friends. A child `git init` that inherits them re-initialises the CALLER's
+// repository instead of the scratch one, so every git child gets them removed.
+const GIT_FREE_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+
+/** An empty git repo in the test's temp dir, with no remotes and no main. */
+function scratchRepo() {
+  const repo = path.join(dir, "repo");
+  execFileSync("git", ["init", "-q", repo], { env: GIT_FREE_ENV });
+  return repo;
+}
+
 let dir: string;
 let cacheFile: string;
 beforeEach(() => {
@@ -278,11 +290,11 @@ describe("#7559 pr-file-overlap CLI", () => {
   });
 
   it("--branch ends in NOT CHECKED, not a crash, when main cannot be resolved", () => {
-    const repo = path.join(dir, "repo");
-    execFileSync("git", ["init", "-q", repo]);
+    const repo = scratchRepo();
     const run = spawnSync(process.execPath, [path.resolve("scripts/pr-file-overlap.mjs"), "--branch"], {
       cwd: repo,
       encoding: "utf8",
+      env: GIT_FREE_ENV,
     });
     expect(run.status).toBe(0);
     expect(run.stdout.trim().split("\n").at(-1)).toMatch(/^pr-file-overlap: NOT CHECKED — cannot read this checkout/);
@@ -297,16 +309,15 @@ describe("#7559 pr-file-overlap CLI", () => {
 describe("#7559 pre-dispatch-gate", () => {
   it("never exits 1 (STOP) when the open-PR lookup cannot run", () => {
     // An empty git repo (so the cache lands in it) and a `gh` that returns HTML.
-    const repo = path.join(dir, "repo");
+    const repo = scratchRepo();
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
     fs.writeFileSync(path.join(bin, "gh"), '#!/bin/sh\necho "<html>proxy</html>"\n', { mode: 0o755 });
-    execFileSync("git", ["init", "-q", repo]);
     const gate = path.resolve("scripts/pre-dispatch-gate.mjs");
     const run = spawnSync(process.execPath, [gate, "1", "--paths", "src/a.ts"], {
       cwd: repo,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      env: { ...GIT_FREE_ENV, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
       timeout: 150_000,
     });
     expect(run.stdout).toContain("FILE OVERLAP NOT CHECKED");
