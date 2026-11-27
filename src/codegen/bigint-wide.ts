@@ -49,26 +49,32 @@
  * Runtime arithmetic on the i64 lane is unchanged (it still wraps), because an
  * i64 slot cannot hold the wider result.
  */
-import { buildBigIntLimbsType, buildWideBigIntType } from "../runtime/wasmgc/values/bigint-carrier-layouts.js";
-import { buildBigIntCarrierEqualityDefinition } from "../runtime/wasmgc/values/bigint-carrier-body.js";
+import {
+  buildBigIntLimbsType,
+  buildWideBigIntType,
+  WIDE_FIELD_MAG,
+  WIDE_FIELD_SIGN,
+  WIDE_FIELD_VALUE,
+} from "../runtime/wasmgc/values/bigint-carrier-layouts.js";
+import {
+  buildBigIntCarrierCompareDefinition,
+  buildBigIntCarrierEqualityDefinition,
+} from "../runtime/wasmgc/values/bigint-carrier-body.js";
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isGlobalBuiltinIdentifier } from "./expressions/calls.js";
+import { isGlobalBuiltinIdentifier } from "./expressions/global-builtin-identifier.js";
 import { compileExpression } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitNativeBigIntFormat } from "./bigint-format-native.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { addUnionImports } from "./registry/imports.js";
 
 const I64_MIN = -(1n << 63n);
 const I64_MAX = (1n << 63n) - 1n;
 /** Compile-time folding refuses to build anything larger than this. */
 const MAX_FOLD_BITS = 1 << 16;
-
-const WIDE_FIELD_VALUE = 0;
-const WIDE_FIELD_SIGN = 1;
-const WIDE_FIELD_MAG = 2;
 
 /**
  * Register `$BigIntLimbs` and `$BigIntWide` right after `$BigInt`. Called from
@@ -347,8 +353,11 @@ function tryFoldBigIntConstant(
     fctx.body.push({ op: "i64.const", value });
     return { kind: "i64", bigint: true };
   }
-  const types = wideTypes(ctx);
   const wantsRef = expectedType?.kind === "externref" || expectedType?.kind === "anyref";
+  // (#7403) The carrier types are minted with the union helpers. Without this the module's first wide constant,
+  // compiled before anything else registered them, was wrapped to i64 and then boxed as a narrow `$BigInt`.
+  if (wantsRef) addUnionImports(ctx);
+  const types = wideTypes(ctx);
   if (types === undefined || !wantsRef) {
     // No reference slot to hold it: the i64 this expression always produced.
     fctx.body.push({ op: "i64.const", value: BigInt.asIntN(64, value) });
@@ -830,25 +839,78 @@ function ensureBigIntCarrierFormatter(ctx: CodegenContext): number | undefined {
 }
 
 /**
- * `__bigint_carrier_eq(anyref, anyref) -> i32` — BigInt::equal (§6.1.6.2.13)
- * for two values already known to be bigint carriers. Canonical form makes a
- * wide value never equal to an i64 one, and two wide values equal exactly when
- * sign and magnitude limbs agree.
+ * A `(anyref, anyref) -> i32` helper over two values already known to be bigint carriers, built once per module by
+ * `build`; undefined when the module has no wide form.
  */
-export function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {
-  const existing = ctx.funcMap.get("__bigint_carrier_eq");
+function ensureCarrierPairHelper(
+  ctx: CodegenContext,
+  name: string,
+  build: typeof buildBigIntCarrierEqualityDefinition,
+): number | undefined {
+  const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   const types = wideTypes(ctx);
   if (types === undefined) return undefined;
-  const { locals, body } = buildBigIntCarrierEqualityDefinition(types);
-  return pushHelper(
-    ctx,
-    "__bigint_carrier_eq",
-    [{ kind: "anyref" }, { kind: "anyref" }],
-    [{ kind: "i32" }],
-    locals,
-    body,
-  );
+  const { locals, body } = build(types);
+  return pushHelper(ctx, name, [{ kind: "anyref" }, { kind: "anyref" }], [{ kind: "i32" }], locals, body);
+}
+
+/**
+ * `__bigint_carrier_eq(anyref, anyref) -> i32` — BigInt::equal (§6.1.6.2.13). Canonical form makes a wide value never
+ * equal to an i64 one, and two wide values equal exactly when sign and magnitude limbs agree.
+ */
+export function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {
+  return ensureCarrierPairHelper(ctx, "__bigint_carrier_eq", buildBigIntCarrierEqualityDefinition);
+}
+
+/**
+ * (#7403) The pieces a comparison against a BigInt in an externref local needs, or undefined when the module has no
+ * wide form. `isWide(local)` and `sign(local)` (valid only when wide: ±1) read a `$BigIntWide`; a wide value lies
+ * outside the i64 range, so against any i64 BigInt it orders as its sign does against 0. `compare(local, value)`
+ * leaves the BigInt::lessThan ordering (-1, 0, 1) of that carrier against the exact constant `value`.
+ */
+export function wideBigIntComparisons(ctx: CodegenContext):
+  | {
+      isWide: (local: number) => Instr[];
+      sign: (local: number) => Instr[];
+      compare: (local: number, value: bigint) => Instr[];
+    }
+  | undefined {
+  const types = wideTypes(ctx);
+  if (types === undefined) return undefined;
+  const asAny = (local: number): Instr[] => [{ op: "local.get", index: local }, { op: "any.convert_extern" }];
+  return {
+    isWide: (local) => [...asAny(local), { op: "ref.test", typeIdx: types.wide }],
+    sign: (local) => [
+      ...asAny(local),
+      { op: "ref.cast", typeIdx: types.wide },
+      { op: "struct.get", typeIdx: types.wide, fieldIdx: WIDE_FIELD_SIGN },
+    ],
+    compare: (local, value) => [
+      ...asAny(local),
+      ...carrierInstrs(types, value),
+      { op: "any.convert_extern" },
+      // `__bigint_carrier_compare` — BigInt::lessThan as an ordering; `types` exists, so the helper does.
+      {
+        op: "call",
+        funcIdx: ensureCarrierPairHelper(ctx, "__bigint_carrier_compare", buildBigIntCarrierCompareDefinition)!,
+      },
+    ],
+  };
+}
+
+/** (#7403) The exact value of a bigint constant expression that lies outside the i64 range, else undefined. */
+export function wideBigIntConstantOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+): bigint | undefined {
+  if (!isFoldCandidate(expr)) return undefined;
+  const value = evalBigIntConstant(expr, {
+    overflow: false,
+    isGlobal: (id) => isGlobalBuiltinIdentifier(ctx, fctx, id),
+  });
+  return value === undefined || (value >= I64_MIN && value <= I64_MAX) ? undefined : value;
 }
 
 /**

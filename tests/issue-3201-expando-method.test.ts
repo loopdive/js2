@@ -27,7 +27,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 describe("#3201 — expando methods on native receivers (JS-host lane)", () => {
   it("Sputnik classifier idiom on a splice result: [object Array]", async () => {
@@ -37,7 +37,7 @@ describe("#3201 — expando methods on native receivers (JS-host lane)", () => {
       arr.getClass = Object.prototype.toString;
       export function test(): string { return String(arr.getClass()); }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("[object Array]");
   });
 
@@ -47,7 +47,7 @@ describe("#3201 — expando methods on native receivers (JS-host lane)", () => {
       x.getClass = Object.prototype.toString;
       export function test(): string { return String(x.getClass()); }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("[object Array]");
   });
 
@@ -57,7 +57,7 @@ describe("#3201 — expando methods on native receivers (JS-host lane)", () => {
       x.f = function (): string { return "hi"; };
       export function test(): string { return String(x.f()); }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("hi");
   });
 
@@ -67,7 +67,7 @@ describe("#3201 — expando methods on native receivers (JS-host lane)", () => {
       o.getClass = Object.prototype.toString;
       export function test(): string { return String(o.getClass()); }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("[object Object]");
   });
 
@@ -79,7 +79,7 @@ describe("#3201 — expando methods on native receivers (JS-host lane)", () => {
       x.tag = function (): string { return "t"; };
       export function test(): string { return x.join("-") + "|" + String(x.indexOf(1)) + "|" + String(x.tag()); }
     `;
-    const exports = await compileAndInstantiate(src);
+    const exports = await compileToWasm(src);
     expect(String((exports.test as () => unknown)())).toBe("3-1|1|t");
   });
 });

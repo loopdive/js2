@@ -73,7 +73,7 @@ import { ts } from "./ts-api.js";
 
 import { compileSourceSync } from "./compiler.js";
 import { runWithTs5Pinned } from "./ts-api.js";
-import { buildImports, buildStringConstants, jsString } from "./runtime.js";
+import { buildImports, buildStringConstants, jsString, moduleExceptionToHost } from "./runtime.js";
 import { type DynamicCodePolicy, markDynamicCodeBuildFailure } from "./runtime/dynamic-code-policy.js";
 
 /**
@@ -659,24 +659,17 @@ function unboundNamesError(stringPool: readonly string[] | undefined, source: ts
 
 /**
  * Call a child module's export. A user throw inside the child crosses the JS
- * API boundary as a `WebAssembly.Exception` carrying the child's private tag;
- * re-expose its externref payload so the parent module observes the original
- * JS value (a `TypeError` stays a `TypeError`), not the transport envelope.
+ * API boundary as a `WebAssembly.Exception` carrying the child's private tag,
+ * and a native error inside it is a Wasm-owned struct. Translate both at the
+ * same export boundary every compiled module uses, so the caller observes the
+ * original JS value (a `TypeError` stays a `TypeError`), not the envelope or
+ * an opaque struct (#7491).
  */
 function callChildExport(fn: Function, thisArg: unknown, args: unknown[], childExports: WebAssembly.Exports): unknown {
   try {
     return Reflect.apply(fn, thisArg, args);
   } catch (error) {
-    const WasmException = (WebAssembly as unknown as { Exception?: Function }).Exception;
-    const tag = (childExports as Record<string, unknown>).__exn_tag ?? (childExports as Record<string, unknown>).__tag;
-    if (typeof WasmException !== "function" || !(error instanceof WasmException) || tag === undefined) throw error;
-    let payload: unknown;
-    try {
-      payload = (error as { getArg(tag: unknown, index: number): unknown }).getArg(tag, 0);
-    } catch {
-      throw error;
-    }
-    throw payload;
+    throw moduleExceptionToHost(error, childExports as Record<string, Function>);
   }
 }
 

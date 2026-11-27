@@ -20,6 +20,7 @@ import {
   type FunctionObjectLoweringHost,
 } from "./function-object-lowering.js";
 import { IrUnsupportedError } from "./outcomes.js";
+import { IR_MATH_METHOD_TABLE } from "./select.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
@@ -100,15 +101,26 @@ export function lowerRealmConversionCall(
       : b.emitConst({ kind: "bool", value: absent }, irVal({ kind: "i32", boolean: true }));
   const value = host.lowerExpression(operand);
   extras.forEach((extra) => host.lowerExpression(extra));
+  if (to === "number") return realmToNumber(value, operand, host);
   const scalar = asVal(b.typeOf(value));
-  if (scalar?.kind === "f64" && to === "number") return value;
-  if (scalar?.kind === "i32" && scalar.boolean === true)
-    return to === "boolean" ? value : b.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+  if (scalar?.kind === "i32" && scalar.boolean === true) return value;
   const carried = dynamicStoreOperand(value, operand, host, "conversion operand");
-  if (to === "number") return b.emitDynToNumber(carried);
   // ToBoolean is `!!v`: `dyn.truthy` answers an i32, which each negation makes a JS Boolean.
   const not = (v: IrValueId) => b.emitUnary("i32.eqz", v, irVal({ kind: "i32", boolean: true }));
   return not(not(b.emitDynTruthy(carried)));
+}
+
+/**
+ * ToNumber of `value`, the evaluated `operand`, on the realm's lane: a number as it is, a Boolean inline, any other
+ * operand as a carrier through the legalization.
+ */
+export function realmToNumber(value: IrValueId, operand: ts.Expression, host: FunctionObjectLoweringHost): IrValueId {
+  const b = host.builder;
+  const scalar = asVal(b.typeOf(value));
+  if (scalar?.kind === "f64") return value;
+  if (scalar?.kind === "i32" && scalar.boolean === true)
+    return b.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+  return b.emitDynToNumber(dynamicStoreOperand(value, operand, host, "conversion operand"));
 }
 
 /**
@@ -122,12 +134,25 @@ const DESCRIPTOR_DEPTH: Readonly<Record<NativeObjectStatic, readonly number[]>> 
   getOwnPropertyDescriptor: [0, 0],
 };
 
+/** (#7564) `Math.<method>(…)` off the unchanged global `Math`, whose intrinsic converts each argument (ToNumber). */
+function pristineMathCall(call: ts.CallExpression, isPristineGlobal: (identifier: ts.Identifier) => boolean) {
+  const callee = call.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Math" &&
+    isPristineGlobal(callee.expression) &&
+    Object.hasOwn(IR_MATH_METHOD_TABLE, callee.name.text)
+  );
+}
+
 /**
  * (#7354 O1) The flow rule's exemption: an argument of a native `Object` static, or a descriptor field (name or value)
  * of a literal descriptor or descriptor map passed as one, is taken as a carrier whatever the lib's signature types it
  * (`PropertyDescriptor`'s `enumerable: boolean` does not bind a test262 `enumerable: 1`); (#7354 G1) so is an argument
  * of a call or `new` of an Error constructor the realm holds, or a field of a literal passed as one (the lib's
- * `message?: string` does not bind a message object, which ToString reads through the program).
+ * `message?: string` does not bind a message object, which ToString reads through the program); (#7564) so is an
+ * argument of a pristine `Math` method call, which converts it.
  */
 export function realmBuiltinOperand(
   node: ts.Expression,
@@ -148,6 +173,7 @@ export function realmBuiltinOperand(
   if (!ts.isCallExpression(call)) return false;
   const name = nativeObjectStaticCall(call, isPristineGlobal)?.name;
   const index = call.arguments.indexOf(operand);
+  if (index >= 0 && pristineMathCall(call, isPristineGlobal)) return true;
   return name !== undefined && index >= 0 && depth <= (DESCRIPTOR_DEPTH[name][index] ?? 0);
 }
 
