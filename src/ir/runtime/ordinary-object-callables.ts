@@ -17,7 +17,7 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-const SELECTOR: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 function declaration(
   feature: OrdinaryObjectRuntimeFeature,
@@ -66,7 +66,7 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
   // (#7354 G1) A new error of the Error constructor `selector` (its index in `NATIVE_ERROR_CONSTRUCTORS`), with the
   // already converted `message`, or none for null; and Error.prototype.toString of an object (§20.5.3.4).
-  "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, I32], [EXTERNAL]),
   "js.object.error-to-string": declaration("js.object.error-to-string", [EXTERNAL], [EXTERNAL]),
   // (#7354 F1b) A source function object's own properties, once, right after its closure is created: `length`,
   // `name` (a native string) and, for a constructor (the Boolean), `prototype` (`source-function-object-bodies.ts`).
@@ -84,13 +84,18 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7354 P1, G1) The built-in function object the realm holds for `selector` (its index in
   // `NATIVE_VALUE_INTRINSICS`), and HasOwnProperty of a canonical key on an ordinary or function object, also
   // requiring the enumerable attribute when `selector` is 1.
-  "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
-  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
+  "js.object.intrinsic": declaration("js.object.intrinsic", [I32], [EXTERNAL]),
+  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, I32], [BOOLEAN]),
   // (#7354 O2) IsConstructor (§7.2.4) of a function object: false for one `init-function` made without [[Construct]]
   // (an accessor).
   "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
   // (#7471) OrdinaryDelete (§10.1.10.1) of a canonical key on an ordinary or function object.
   "js.object.delete": declaration("js.object.delete", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7377) EnumerateObjectProperties (§14.7.5.9) as a snapshot: a list of the string keys a for-in visits, empty
+  // for `undefined` / `null`; the list's length, and its key at an index.
+  "js.object.for-in-keys": declaration("js.object.for-in-keys", [EXTERNAL], [EXTERNAL]),
+  "js.object.key-list-length": declaration("js.object.key-list-length", [EXTERNAL], [I32]),
+  "js.object.key-list-get": declaration("js.object.key-list-get", [EXTERNAL, I32], [EXTERNAL]),
 });
 
 /**

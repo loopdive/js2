@@ -30,6 +30,7 @@
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
 import type { IrFunction } from "./core/nodes.js";
+import { irIntrinsicFuncRef } from "./core/callable-bindings.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { ownRefusal } from "./abort-bodies.js";
 import type { IrUnitId } from "./identity.js";
@@ -73,6 +74,16 @@ type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target" | "stringCo
 type DynamicLane = "host-async" | "native" | undefined;
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+/**
+ * (#7377) The realm's for-in contracts: the key snapshot (EnumerateObjectProperties), its list, and HasProperty for
+ * per-visit liveness.
+ */
+const FOR_IN_PLAN = Object.freeze({
+  keys: irIntrinsicFuncRef("js.object.for-in-keys"),
+  len: irIntrinsicFuncRef("js.object.key-list-length"),
+  get: irIntrinsicFuncRef("js.object.key-list-get"),
+  has: irIntrinsicFuncRef("js.object.has"),
+});
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
 export function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
@@ -330,6 +341,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicDeleteSymbol?: (site: ts.DeleteExpression) => string;
     /** (#7471) A function-local object reaches a delete as the raw externref, which is the carrier's value. */
     readonly dynamicDeleteBoxesExternref?: () => boolean;
+    /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
+    readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
   };
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
@@ -425,6 +438,7 @@ export function programDynamicContracts(
           closureCodeStrictness: codeStrictness,
           dynamicDeleteSymbol: (site) => irDynamicDeleteHelperName(input.codeStrictness?.(site) !== false),
           dynamicDeleteBoxesExternref: () => true,
+          dynamicForInPlan: () => FOR_IN_PLAN,
         }
       : {},
     result: (declaration) =>

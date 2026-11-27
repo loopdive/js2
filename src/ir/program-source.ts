@@ -1504,12 +1504,12 @@ function prepareSourceGlobals(
   diagnostic: SourceDiagnosticOwner,
 ): void {
   for (const source of sourceFiles) {
-    for (const bound of source.statements.flatMap(moduleInitBindings)) {
+    for (const bound of source.statements.flatMap((statement) => moduleInitBindings(statement, "with-for-in-heads"))) {
       const declaration = "unmapped" in bound ? bound.unmapped : bound.declaration;
       diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
       if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name))
         unsupported("whole-program binding pattern requires the existing destructuring producer");
-      if (!isModuleInitGlobalDeclaration(declaration)) continue; // (#7372) a nested `var` is a global in a script
+      if (!isModuleInitGlobalDeclaration(declaration, "with-for-in-heads")) continue; // (#7372) a nested `var` is a global in a script
       const inspected = moduleResolver.inspectDirectBinding(declaration.name);
       if (inspected.kind !== "supported")
         unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
@@ -1587,6 +1587,7 @@ export function prepareIrProgramSources(
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
         oracle: input.oracle,
         scriptVarHome: dynamicContracts.scriptVarHome,
+        scriptVarModel: "with-for-in-heads",
       },
       identity,
     );
@@ -1600,6 +1601,7 @@ export function prepareIrProgramSources(
           target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
           deferTopLevelInit: input.deferTopLevelInit,
           functionValues: dynamicContracts.functionDeclarationValues,
+          scriptVarModel: "with-for-in-heads",
           blockFunctions: dynamicContracts.blockFunctions,
         }),
       );
