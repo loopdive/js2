@@ -18,6 +18,8 @@
  *   `crash`.
  * - A compiled file is run: instantiate, then `__module_init`. Returning is
  *   `pass`, throwing `fail`. Async tests are compiled but not run (`compiled`).
+ * - Every row of a compiled file lists the refusals of all its abort bodies (#7354 U, `requiredPreparedAbortBodies`:
+ *   `aborts`), so a file's other blockers are visible before they trap.
  * - Negative tests are skipped: a compile failure is their expected outcome,
  *   so they say nothing about the path.
  * - `--tree <dir>` measures another checkout, as in census.mts.
@@ -169,13 +171,14 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
   if (!tools.entry.requiredPreparedEmission(result) || !result.success) {
     return { file, status: "compile_error", ...flags, ...gapRow(tools, result, assembly) };
   }
-  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags };
+  const details = (tools.entry.requiredPreparedAbortBodies?.(result) ?? []).map((row) => row.detail);
+  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags, aborts: details };
   try {
     const { instance } = tools.runtime.instantiatePreparedArtifact(result);
     (instance.exports.__module_init as (() => void) | undefined)?.();
-    return { file, status: "pass", ...flags };
+    return { file, status: "pass", ...flags, aborts: details };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, error) };
+    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, error), aborts: details };
   }
 }
 
