@@ -53,20 +53,54 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { compileExpression } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
-import { f64MayHoldUndefined } from "./value-tags.js";
+import { undefinedCapableSlotType } from "./value-tags.js";
+
+type FieldDeclaration = ts.PropertyDeclaration | ts.ParameterDeclaration;
+
+/**
+ * (#7464) The slot type of a field or static declared by `declaration`: an f64 that can hold `undefined` — an optional
+ * field (`n?: number`, whatever `strictNullChecks` says) or one whose type admits it (`n: number | undefined`) — is
+ * branded `undefSentinel` ({@link undefinedCapableSlotType}).
+ */
+export function fieldSlotType(
+  ctx: CodegenContext,
+  declaration: FieldDeclaration | undefined,
+  fieldType: ValType,
+): ValType {
+  if (declaration === undefined) return fieldType;
+  return undefinedCapableSlotType(ctx, declaration.name, fieldType, declaration.questionToken !== undefined);
+}
 
 /**
  * (#7366) Does a never-initialised field's f64 slot start as the `undefined` sentinel (`FieldDef.undefinedDefault`)?
- * True for an optional field (`n?: number`, whatever `strictNullChecks` says) and for one whose type admits
- * `undefined` (`n: number | undefined`).
+ * True when its slot can hold `undefined` ({@link fieldSlotType}).
  */
 export function fieldStartsUndefined(
   ctx: CodegenContext,
-  declaration: ts.PropertyDeclaration | ts.ParameterDeclaration | undefined,
+  declaration: FieldDeclaration | undefined,
   fieldType: ValType,
 ): boolean {
-  if (declaration === undefined || declaration.initializer !== undefined || fieldType.kind !== "f64") return false;
-  return declaration.questionToken !== undefined || f64MayHoldUndefined(ctx, declaration.name, fieldType);
+  return slotStartsUndefined(declaration, fieldSlotType(ctx, declaration, fieldType));
+}
+
+function slotStartsUndefined(declaration: FieldDeclaration | undefined, slotType: ValType): boolean {
+  return declaration?.initializer === undefined && slotType.kind === "f64" && slotType.undefSentinel === true;
+}
+
+/** The mutable instance field `name` that `declaration` declares with Wasm type `fieldType`. */
+export function declaredField(
+  ctx: CodegenContext,
+  name: string,
+  declaration: FieldDeclaration | undefined,
+  fieldType: ValType,
+): FieldDef {
+  const type = fieldSlotType(ctx, declaration, fieldType);
+  return {
+    name,
+    type,
+    mutable: true,
+    ...(slotStartsUndefined(declaration, type) ? { undefinedDefault: true as const } : {}),
+  };
 }
 
 /** The struct slot behind a declared-but-never-initialised class field. */

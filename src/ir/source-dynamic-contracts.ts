@@ -372,6 +372,8 @@ export interface RefusalOwners {
   readonly declarationOf: (unit: IrUnitId) => ts.Node | undefined;
   /** The function's body is the abort: its statements were never lowered, so no rule reads them. */
   readonly aborted: (fn: ts.FunctionLikeDeclaration) => boolean;
+  /** (#7486) The program-wide id of a run-time abort site in `fn` with `reason`, where the build records them. */
+  readonly abortSite: (fn: IrFunction, reason: string) => number | undefined;
 }
 
 /**
@@ -667,7 +669,9 @@ function legalizeSourceDynamicValues(
     }
   };
   const legalized = retargeted.map((fn) =>
-    owned(fn, () => legalizeDynamicValues(fn, allocations, { objects, catches })),
+    owned(fn, () =>
+      legalizeDynamicValues(fn, allocations, { objects, catches }, (reason) => owners.abortSite(fn, reason)),
+    ),
   );
   if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))

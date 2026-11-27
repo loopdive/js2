@@ -284,33 +284,16 @@ export function installCompiledClosureToStringArm(ctx: CodegenContext): void {
  *
  * Leaves exactly one **externref** on the stack — the same shape
  * `number_toString` leaves — so each caller's tail
- * (`emitStringBuiltinNumberResult`, a host `concat`) is untouched.
+ * (`emitStringBuiltinNumberResult`, a native-string bridge) is untouched.
  *
  * Unbranded operands emit the plain call, byte-for-byte as before.
  *
- * **JS-HOST LANE ONLY, deliberately.** In `standalone` / `native-strings-host`
- * the brand-aware arm is skipped and the plain call is emitted, so codegen in
- * those lanes is byte-identical to the parent *by construction*. Two reasons,
- * and the second is the load-bearing one:
- *
- *  1. Those lanes do not have the defect. Their ToString goes through
- *     `$__any_to_string` rather than the narrowed f64, and the standalone probe
- *     answers all seven cases (127) on the parent *and* with this change —
- *     measured both ways, so there is nothing here to fix.
- *  2. They have OTHER branded-f64 producers that the js-host lane does not —
- *     `for-of` over a numeric vec yields `{kind:"f64", undefSentinel:true}`
- *     (statements/loops.ts), as do native generator IteratorResult reads. A
- *     first cut of this change routed `compileNativeConcatOperand` and the
- *     native template span through the helper as well; that change is NOT
- *     covered by any measurement available here (the 17-suite dogfood A/B is
- *     entirely js-host, `target: "gc"`), and the standalone host-free
- *     pass-count floor (#2097) went red in the merge group while it was in.
- *     Attribution was ambiguous — a lot of standalone-touching source had
- *     landed since the high-water mark without the shard matrix running — and
- *     restricting the helper is what makes the question answerable: with this
- *     gate the standalone binary cannot differ from the parent's, so a repeat
- *     breach is provably not this change. Extending the fix to those lanes
- *     wants its own issue, with a standalone measurement behind it.
+ * (#7464) Every lane, and every ToString site: `String(v)`, the `+` operand
+ * and the template span. (It was gated on the JS-host coercion mode, which
+ * `coercionMode` no longer reports, so the arm never ran.) Every branded-f64
+ * producer — a slot typed `number | undefined`, `for-of` over a numeric vec, a
+ * native generator's IteratorResult read — carries the sentinel exactly when
+ * its value is `undefined`.
  *
  * `HOLE_F64_BITS` is deliberately NOT tested here: every value-producing read
  * of a slot that may hold it already maps HOLE → UNDEF at the read boundary
@@ -328,7 +311,7 @@ export function emitNumberToStringSentinelAware(
   valType: ValType | null,
   toStrIdx: number,
 ): void {
-  if (!valType || valType.kind !== "f64" || valType.undefSentinel !== true || coercionMode(ctx) !== "js-host") {
+  if (!valType || valType.kind !== "f64" || valType.undefSentinel !== true) {
     fctx.body.push({ op: "call", funcIdx: toStrIdx });
     return;
   }
@@ -581,10 +564,10 @@ export function compileAndEmitToString(
  *   externref            → __unbox_number (js-host) | coerceType(f64,"number") (standalone)
  *   ref/ref_null         → coerceType(f64,"number")  (object @@toPrimitive("number")/valueOf)
  *   i32 (number/bool)    → f64.convert_i32_s
- *   f64                  → no-op
+ *   f64                  → no-op, except a branded f64 (`undefSentinel`)
  *
  * Returns the ValType left on the stack (`{kind:"f64"}` for every coercing arm;
- * the original `valType` for the already-f64 no-op).
+ * the original `valType` for an unbranded f64).
  *
  * NOTE — what stays in the caller (NOT folded here, because each is a *source*
  * special-case that must run BEFORE the operand is on the stack as a plain
@@ -635,7 +618,17 @@ export function emitToNumber(ctx: CodegenContext, fctx: FunctionContext, valType
     return { kind: "f64" };
   }
 
-  // Already f64 — no-op.
+  // (#7464) A branded f64's sentinel is ToNumber(undefined), a plain NaN: map it, so the result carries no brand for
+  // a later reader (`String`, `typeof`) to take for `undefined`. An unbranded f64 is already a number.
+  if (valType.kind === "f64" && valType.undefSentinel === true) {
+    const value = allocTempLocal(fctx, { kind: "f64" });
+    fctx.body.push({ op: "local.set", index: value }, { op: "f64.const", value: Number.NaN });
+    fctx.body.push({ op: "local.get", index: value }, { op: "local.get", index: value });
+    emitIsUndefF64(fctx.body);
+    fctx.body.push({ op: "select" });
+    releaseTempLocal(fctx, value);
+    return { kind: "f64" };
+  }
   return valType;
 }
 

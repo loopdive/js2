@@ -24,7 +24,7 @@ import {
 } from "../ir/literal-dynamic-code.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
-import { AbortBodies, type AbortBodyRow } from "../ir/abort-bodies.js";
+import { AbortBodies, type AbortBodyRow, type AbortSiteRow } from "../ir/abort-bodies.js";
 
 type DeadBindingElision = typeof elideDeadBindings;
 type UnlowerableBodies = "abort" | "refuse";
@@ -291,6 +291,7 @@ interface ResultRecord {
   readonly adapterManifest?: JavaScriptAdapterManifestV1;
   readonly hostImportInventory?: NonNullable<CompileResult["hostImportInventory"]>;
   readonly abortBodies?: readonly AbortBodyRow[];
+  readonly abortSites?: readonly AbortSiteRow[];
 }
 const results = new WeakMap<CompileResult, ResultRecord>();
 function current(result: CompileResult): ResultRecord | undefined {
@@ -337,6 +338,13 @@ export function requiredPreparedFailure(result: CompileResult): RequiredPrepared
  */
 export function requiredPreparedAbortBodies(result: CompileResult): readonly AbortBodyRow[] | undefined {
   return current(result)?.abortBodies;
+}
+/**
+ * (#7486) The run-time abort sites of a compiled program, by id. A trap that left an id in the exported global
+ * `__js_value_unsupported_site` is that site's abort.
+ */
+export function requiredPreparedAbortSites(result: CompileResult): readonly AbortSiteRow[] | undefined {
+  return current(result)?.abortSites;
 }
 /** Only the shared compiler's real syntax/early branch can supply this observation. */
 export function requiredPreparedFrontendFailure(result: CompileResult): RequiredPreparedFrontendFailure | undefined {
@@ -651,7 +659,12 @@ function presentAnalyzed(
     hostImportInventory: freezePreparedIrValue(result.hostImportInventory) as NonNullable<
       CompileResult["hostImportInventory"]
     >,
-    ...(abortBodies ? { abortBodies: freezePreparedIrValue(abortBodies.rows()) as readonly AbortBodyRow[] } : {}),
+    ...(abortBodies
+      ? {
+          abortBodies: freezePreparedIrValue(abortBodies.rows()) as readonly AbortBodyRow[],
+          abortSites: freezePreparedIrValue(abortBodies.sites()) as readonly AbortSiteRow[],
+        }
+      : {}),
   });
   return result;
 }
