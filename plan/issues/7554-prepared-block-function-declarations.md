@@ -168,3 +168,25 @@ block; a block `let`/`const` of a hoisted name (redeclaration); `for (var k in �
   - The 20 root test files the branch modifies, each alone: all exit 0 (annex-b now 13 tests).
   - Gates exit 0; with `LOC_GATE_BASE` = origin/main 2e75c932fd only the inherited `src/runtime.ts` +1 (not touched by
     this branch). `from-ast.ts` 16992 → 17007 (≤ 17160).
+
+## Review r3: lost write through a closure created in a nested block (2026-11-27)
+
+- **Wrong value, fixed.** A closure or block function created in a block or loop body wrote a cell of that scope
+  only: `function t(){ var s = 1; { var f = function(){ s = s * 2; }; f(); } return String(s); }` answered `"1"`
+  (node `"2"`); the same for a captured parameter (`{ function g(){ p = p * 2; } g(); }`), a loop body's `let`
+  written by a block function, and a function-level `let` written from two blocks. Cause: the closure moved its
+  mutable capture into a new cell bound in the scope it was lowered in (the block's copy), and `hoistedBodyNames`
+  hoisted a `var` only when a function *declaration* read it or code reached it outside its statement.
+- **Rule** (merged from L0c r3, in this branch's `function-hoisting.ts`): a binding a nested function reads or writes
+  has one cell, made where it is bound — a `var` is a hoisted name (`cell`) whenever any function inside the body
+  names it (`readByFunction`, which replaces `readByDeclaration`), a parameter moves into a cell at entry and a
+  `let` statement's binding where it is bound (`sharesCell`, one walk cached per body with the names). On the lane a
+  closure only passes that cell (`mutableCaptureCell`) and refuses without one (a loop head's `let`, a slot
+  parameter). A shorthand property `{ x }` counts as a reference of `x`.
+- **Probes** (vs node, wrong twins fail): the block and loop forms, `while`/`do`/`if`/`try`/`switch`, two levels deep,
+  `+=`/`++`/`--`, read-and-write, a captured parameter, a `var` declared in the loop body (`"3"`), recursion, a body
+  `let` per iteration, Annex B functions called after their block / in a loop / in an `if` arm / in a `case`: right;
+  before the fix the block-function-writes-`let`, block-function-writes-parameter, block-closure-writes-parameter and
+  function-`let`-from-two-blocks programs were WRONG. Aborts: a closure kept past its loop (`assignment … got
+  closure`), a loop head's `let`, `for-in`. Wrong: 0. Test: "writes the enclosing binding from a closure or function
+  created in a block" (`issue-7354-l0c-annex-b`).

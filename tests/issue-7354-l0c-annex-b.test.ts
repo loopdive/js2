@@ -111,6 +111,18 @@ describe("#7354 L0c — block functions in dead code", () => {
     );
   });
 
+  // A closure or block function created in a block writes the function's binding: one cell per activation for a `var`
+  // or parameter, one per iteration for a loop body's `let`.
+  it("writes the enclosing binding from a closure or function created in a block", async () => {
+    await agrees(
+      "function a(){ var s = 1; { var f = function(){ s = s * 2; }; f(); } return s; }\n" +
+        "function b(p){ { function g(){ p = p * 2; } g(); g(); } { var f = function(){ p += 1; }; f(); } return p; }\n" +
+        "function c(){ var r = ''; for (var i = 0; i < 2; i++) { let x = i; { function g(){ x = x + 10; } g(); } r += x; } return r; }\n" +
+        "function d(){ let s = 1; { var f = function(){ s = s * 2; }; f(); } { var g = function(){ s += 1; }; g(); } return s; }\n" +
+        "var out = a() + ',' + b(3) + ',' + c() + ',' + d();",
+    );
+  });
+
   it("refuses a cell whose capturing closure is dead code", async () => {
     expect(
       await refusal(
