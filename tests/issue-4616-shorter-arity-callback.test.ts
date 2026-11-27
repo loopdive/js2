@@ -9,14 +9,14 @@
 import { describe, expect, it } from "vitest";
 
 import { compileMulti } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function compileAndRunMulti(files: Record<string, string>, entryFile: string) {
   const result = await compileMulti(files, entryFile);
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );
-  const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
-  (result.importObject as { __setExports?: (e: WebAssembly.Exports) => void }).__setExports?.(instance.exports);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, Function>;
 }
 

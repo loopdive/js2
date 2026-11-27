@@ -17,7 +17,11 @@ import type { ts } from "../ts-api.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { IrFunctionBuilder } from "./builder.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
-import { emitFunctionDeclarationValues, type FunctionDeclarationValue } from "./function-declaration-values.js";
+import {
+  emitFunctionDeclarationValues,
+  type FunctionDeclarationValue,
+  type FunctionValueHost,
+} from "./function-declaration-values.js";
 import {
   allocateLiftedFunctionArtifact,
   recordLiftedUnitProvenance,
@@ -41,9 +45,9 @@ export interface ModuleInitChunkHost {
   readonly allocRegistry?: AllocSiteRegistry;
   /**
    * Reserves each chunk's Wasm name in the module being built (absent: the name as planned); (#7354 F1b) the
-   * function declarations the script reads as values.
+   * function declarations the script reads as values; (#7489) their code strictness.
    */
-  readonly resolver?: {
+  readonly resolver?: NonNullable<FunctionValueHost["resolver"]> & {
     moduleInitChunkName?(preferred: string): string;
     moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
   };

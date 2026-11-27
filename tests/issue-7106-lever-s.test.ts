@@ -24,6 +24,7 @@ function resolvesScriptVar(source: string, name: string): boolean {
     allowHostExterns: false,
     allowBuiltinMapExtern: false,
     scriptVarHome: () => "dynamic",
+    scriptVarModel: "statement-and-for-heads",
   });
   const declaration = file.statements
     .filter(ts.isVariableStatement)

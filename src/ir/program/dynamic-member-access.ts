@@ -16,9 +16,9 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import {
   BUILTIN_REACHABLE_KEYS,
-  FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
   identityOnlyKeyRefusal,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
+  functionOwnKeyGap,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
@@ -239,7 +239,10 @@ function constantRead(b: MemberAccessBuilders, instr: MemberGet, name: string, r
       if (kind === "object")
         return OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name) ? "Object.prototype's accessor" : undefined;
       if (kind === "function")
-        return BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined;
+        return (
+          functionOwnKeyGap(name) ??
+          (BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined)
+        );
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       // A string's own `length` and indexed characters come with arrays (#7352).
@@ -299,14 +302,12 @@ function constantWrite(b: MemberAccessBuilders, instr: MemberSet, name: string):
     resultType: b.carrier,
     // (#7354 F1, D4) Every key Object.prototype holds but its accessor is a writable data property, so OrdinarySet
     // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only an accessor's setter
-    // would run code the realm lacks: Object.prototype's, and (#7354 G1) a function's Function.prototype `caller` /
-    // `arguments`, whose setter throws (a write that silently landed would answer wrong).
+    // would run code the realm lacks: Object.prototype's. (#7489) A function's `caller` is the realm's: a sloppy
+    // function's own read-only one, else Function.prototype's %ThrowTypeError% setter; its `arguments` refuses.
     missing: (kind) => {
       if (MEMBER_ACCESS_ARM[kind] === "type-error") return undefined;
       if (OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)) return "Object.prototype's accessor";
-      return kind === "function" && FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(name)
-        ? "Function.prototype's accessor"
-        : undefined;
+      return kind === "function" ? functionOwnKeyGap(name) : undefined;
     },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,

@@ -17,7 +17,7 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-const SELECTOR: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 function declaration(
   feature: OrdinaryObjectRuntimeFeature,
@@ -64,14 +64,14 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7354 G1, #7352) Whether an object carries the realm brand `selector` (`REALM_BRAND`): [[ErrorData]]
   // (`Object.prototype.toString`'s "Error" tag) or an Array exotic object (IsArray, the "Array" tag).
-  "js.object.has-brand": declaration("js.object.has-brand", [EXTERNAL, SELECTOR], [BOOLEAN]),
+  "js.object.has-brand": declaration("js.object.has-brand", [EXTERNAL, I32], [BOOLEAN]),
   // (#7354 G1) A new error of the Error constructor `selector` (its index in `NATIVE_ERROR_CONSTRUCTORS`), with the
   // already converted `message`, or none for null; and Error.prototype.toString of an object (§20.5.3.4).
-  "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.create-error": declaration("js.object.create-error", [EXTERNAL, I32], [EXTERNAL]),
   "js.object.error-to-string": declaration("js.object.error-to-string", [EXTERNAL], [EXTERNAL]),
   // (#7354 F1b) A source function object's own properties, once, right after its closure is created: `length`,
   // `name` (a native string) and, for a constructor (the Boolean), `prototype` (`source-function-object-bodies.ts`).
-  "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN], []),
+  "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN, BOOLEAN], []),
   // (#7354 C2) Whether the second value is on the first's [[Prototype]] chain (OrdinaryHasInstance's walk).
   "js.object.inherits": declaration("js.object.inherits", [EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7354 O1) The realm's half of the `Object` statics, after the caller's kind tests and ToPropertyKey: an object
@@ -85,16 +85,21 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7354 P1, G1) The built-in function object the realm holds for `selector` (its index in
   // `NATIVE_VALUE_INTRINSICS`), and HasOwnProperty of a canonical key on an ordinary or function object, also
   // requiring the enumerable attribute when `selector` is 1.
-  "js.object.intrinsic": declaration("js.object.intrinsic", [SELECTOR], [EXTERNAL]),
-  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
+  "js.object.intrinsic": declaration("js.object.intrinsic", [I32], [EXTERNAL]),
+  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, I32], [BOOLEAN]),
   // (#7561) A new wrapper of the already converted primitive, for the wrapper constructor `selector` (its index in
   // `NATIVE_WRAPPER_CONSTRUCTORS`); and what the realm answers of a wrapper (`WRAPPER_DATA`): an object's primitive
   // data, or thisXValue where the method is a held wrapper prototype's `valueOf` / `toString`.
-  "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, SELECTOR], [EXTERNAL]),
-  "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, SELECTOR], [EXTERNAL]),
+  "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, I32], [EXTERNAL]),
+  "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, I32], [EXTERNAL]),
   // (#7354 O2) IsConstructor (§7.2.4) of a function object: false for one `init-function` made without [[Construct]]
   // (an accessor).
   "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
+  // (#7377) EnumerateObjectProperties (§14.7.5.9) as a snapshot: a list of the string keys a for-in visits, empty
+  // for `undefined` / `null`; the list's length, and its key at an index.
+  "js.object.for-in-keys": declaration("js.object.for-in-keys", [EXTERNAL], [EXTERNAL]),
+  "js.object.key-list-length": declaration("js.object.key-list-length", [EXTERNAL], [I32]),
+  "js.object.key-list-get": declaration("js.object.key-list-get", [EXTERNAL, I32], [EXTERNAL]),
   // (#7352) ArrayCreate(length) (§10.4.2.2) on %Array.prototype%; a `length` that is no array length is a RangeError.
   "js.object.create-array": declaration("js.object.create-array", [FLAGS], [EXTERNAL]),
 });

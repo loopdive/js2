@@ -56,6 +56,7 @@ import {
 } from "./ir-fnctor-parameter-planning.js";
 import {
   legacyParamSlotIsExternref,
+  legacyExternrefSlotProbes,
   legacyRefinedParamSlot,
   makeIrDynamicCarrierDivergenceProbe,
   resolveFnctorInstanceType,
@@ -195,6 +196,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
+  bigIntOperandOption,
   makeIrArrayElementFamilyClassifier,
   makeIrCheckerSelectionOptions,
   makeIrLocalClassExpressionResolver,
@@ -2943,8 +2945,10 @@ function resolveIrOverrideParamType(
   // withdraws the complete caller cluster if legacy kept the param dynamic.
   // Nonnumeric mapped kinds cannot lower polymorphic equality soundly before
   // that guard (the #3471 string failure), so those retain the direct dynamic
-  // ABI in the IR view.
-  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64")) return projected.type;
+  // ABI in the IR view. (#7448) A JSDoc slot legacy registered as externref
+  // is no guess: it keeps that ABI, as the selector's `resolveParamType` does.
+  const legacyAbi = parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate);
+  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64" && !legacyAbi)) return projected.type;
   return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
 }
 
@@ -3114,6 +3118,7 @@ function planIrOverlay(
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
+            scriptVarModel: "statement-and-for-heads",
           },
           identityContext,
         );
@@ -3312,6 +3317,7 @@ function planIrOverlay(
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       ...makeIrCheckerSelectionOptions(ast.checker),
+      ...bigIntOperandOption(ast.checker, hostFreeEnvironment(ctx)), // (#7525)
       jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       classifyArrayElementFamily,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
@@ -3332,7 +3338,7 @@ function planIrOverlay(
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
-      jsDocParamLowersAsExternref: (parameter) => legacyParamSlotIsExternref(ctx, parameter),
+      ...legacyExternrefSlotProbes(ctx),
       resultWidensToDynamic: (fn) => functionReturnsWidenedValue(ctx, fn),
       resolveFnctorAdmission,
       ...(fnctorArgumentProjections.length > 0
@@ -5907,6 +5913,7 @@ export function generateModule(
         identityContext: irPlanningIdentityContext,
         target: ctx.wasi ? "wasi" : "standalone",
         deferTopLevelInit: ctx.deferTopLevelInit,
+        scriptVarModel: "statement-and-for-heads",
       });
       moduleInitPlanning = Object.freeze({
         plan,

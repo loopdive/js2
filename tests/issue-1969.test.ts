@@ -5,18 +5,14 @@
 // Array (or a WasmGC vec — the compiled form of one) is ALWAYS spread.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(src: string): Promise<unknown> {
   const result = await compile(src, { skipSemanticDiagnostics: true });
   if (!result.success) {
     throw new Error(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n"));
   }
-  const importObj = buildImports(result.imports, undefined, result.stringPool) as Record<string, unknown>;
-  const { instance } = await WebAssembly.instantiate(result.binary, importObj as never);
-  if (typeof importObj.setExports === "function") {
-    (importObj.setExports as (e: unknown) => void)(instance.exports);
-  }
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as { test(): unknown }).test();
 }
 

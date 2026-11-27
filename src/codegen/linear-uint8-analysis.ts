@@ -603,6 +603,10 @@ function isAllowedUse(
 ): boolean {
   const p = id.parent;
 
+  // (#7435) `b?.length` / `b?.[i]`: the optional-chain lowering reads `b` as a value, which a `(ptr, len)` binding
+  // does not have.
+  if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.questionDotToken) return false;
+
   // b[i]  /  b[i] = v   (element access — the buffer is the object, not index)
   if (ts.isElementAccessExpression(p) && p.expression === id) return true;
   // (b)[i] grouped — TS folds parens; handle defensively below via parent walk.

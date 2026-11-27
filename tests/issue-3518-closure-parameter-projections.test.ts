@@ -11,6 +11,7 @@ import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { requireProgram } from "./helpers/typed-program-fixtures.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { planNativeSourceClosureRequirements } from "../src/ir/program/native-source-closure-requirements.js";
+import { preparedCodeStrictness } from "../src/compiler/prepared-code-strictness.js";
 
 const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "closure-parameter-projections.ts" });
 const unitId = createIrUnitId({ sourceId, lexicalOwnerId: null, kind: "top-level-function", ordinal: 0 });
@@ -116,6 +117,8 @@ describe("source parameter facts across physical preparation", () => {
         sourceFiles: source.sourceFiles,
         entrySource: source.entryFile,
         checker: source.checker,
+        // (#7489) The compiler's strictness, as `compiler.ts` passes it: a function object's own `caller` reads it.
+        codeStrictness: preparedCodeStrictness(undefined),
         deferTopLevelInit: false,
         policy: {
           target: "standalone",

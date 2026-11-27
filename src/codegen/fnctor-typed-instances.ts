@@ -174,6 +174,19 @@ export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.Pa
 }
 
 /**
+ * The selector's questions about legacy's registered signature: is this JSDoc
+ * parameter slot (#7106 item 1), or this declaration's result (#7448), plain
+ * externref?
+ */
+export function legacyExternrefSlotProbes(ctx: CodegenContext) {
+  return {
+    jsDocParamLowersAsExternref: (parameter: ts.ParameterDeclaration) => legacyParamSlotIsExternref(ctx, parameter),
+    legacyResultIsExternref: (fn: ts.FunctionDeclaration) =>
+      fn.name !== undefined && legacySignatureSlot(ctx, fn.name.text, "return")?.kind === "externref",
+  };
+}
+
+/**
  * (#7277) Legacy's refined slot for an implicit-any `parameter` when it is
  * one the IR can name: `f64` (every call site passes a number) or the
  * non-null native string `ref $AnyString` (every call site passes a string).

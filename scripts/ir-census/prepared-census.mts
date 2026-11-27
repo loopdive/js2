@@ -18,6 +18,8 @@
  *   `crash`.
  * - A compiled file is run: instantiate, then `__module_init`. Returning is
  *   `pass`, throwing `fail`. Async tests are compiled but not run (`compiled`).
+ * - Every row of a compiled file lists the refusals of all its abort bodies (#7354 U, `requiredPreparedAbortBodies`:
+ *   `aborts`), so a file's other blockers are visible before they trap.
  * - Negative tests are skipped: a compile failure is their expected outcome,
  *   so they say nothing about the path.
  * - `--tree <dir>` measures another checkout, as in census.mts.
@@ -27,6 +29,7 @@ import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { isWasmTrap, wasmErrorSite } from "../lib/wasm-exn-render.mjs";
 import { childLoop, errorText, runPool } from "./pool.mts";
 import { assembleStandIn } from "./stand-in-harness.mjs";
 
@@ -168,14 +171,30 @@ async function measureFile(tools: Toolchain, file: string, standIn: boolean): Pr
   if (!tools.entry.requiredPreparedEmission(result) || !result.success) {
     return { file, status: "compile_error", ...flags, ...gapRow(tools, result, assembly) };
   }
-  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags };
+  const details = (tools.entry.requiredPreparedAbortBodies?.(result) ?? []).map((row) => row.detail);
+  if (meta.flags?.includes("async")) return { file, status: "compiled", ...flags, aborts: details };
   try {
     const { instance } = tools.runtime.instantiatePreparedArtifact(result);
     (instance.exports.__module_init as (() => void) | undefined)?.();
-    return { file, status: "pass", ...flags };
+    return { file, status: "pass", ...flags, aborts: details };
   } catch (error) {
-    return { file, status: "fail", ...flags, detail: errorText(error) };
+    return { file, status: "fail", ...flags, detail: errorText(error), ...trapOf(tools, result, error), aborts: details };
   }
+}
+
+/**
+ * Where a run-time trap fired: the innermost Wasm frame's function name and, when that function got an abort
+ * body (#7354 U), the refusal the abort stands for. Only a Wasm trap counts; a host error (a stack-overflow
+ * `RangeError`) is not attributed to the frame it happened in.
+ */
+function trapOf(tools: Toolchain, result: Awaited<ReturnType<Entry["compile"]>>, error: unknown) {
+  if (!isWasmTrap(error)) return {};
+  const { frames, aborted } = wasmErrorSite(error, tools.entry.requiredPreparedAbortBodies?.(result) ?? []);
+  if (frames.length === 0) return {};
+  return {
+    trapFrame: frames[0],
+    ...(aborted ? { abort: { code: aborted.code, detail: aborted.detail.slice(0, DETAIL_CAP) } } : {}),
+  };
 }
 
 const argv = process.argv.slice(2);

@@ -45,7 +45,13 @@ import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import {
+  allocLocal,
+  allocTempLocal,
+  getLocalType,
+  releaseTempLocal,
+  withPreEvaluatedExpression,
+} from "./context/locals.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { recordStandaloneDynamicPrototypeRead } from "./standalone-class-prototype-read.js"; // (#6457)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
@@ -2401,17 +2407,7 @@ export function compileOptionalPropertyAccess(
   // the compiler's representation of `undefined`/`null`, which always
   // short-circuits the chain: drop the receiver and emit the default result.
   if (objType.kind !== "ref" && objType.kind !== "ref_null" && objType.kind !== "externref") {
-    fctx.body.push({ op: "drop" });
-    if (resultType.kind === "f64") {
-      fctx.body.push({ op: "f64.const", value: 0 });
-    } else if (resultType.kind === "i32") {
-      fctx.body.push({ op: "i32.const", value: 0 });
-    } else {
-      // (#2051) externref result (incl. the nullable-primitive widening above)
-      // → host `undefined`, so `=== undefined` / `typeof` / `+` read it as
-      // undefined rather than a bare null.
-      emitUndefined(ctx, fctx);
-    }
+    fctx.body.push({ op: "drop" }, ...optionalShortCircuitInstrs(ctx, fctx, resultType));
     return resultType;
   }
 
@@ -2430,36 +2426,50 @@ export function compileOptionalPropertyAccess(
     }
   }
 
-  const savedBody = fctx.body;
-  fctx.savedBodies.push(savedBody);
+  const thenInstrs = optionalShortCircuitInstrs(ctx, fctx, resultType);
+  const savedBody = pushBody(fctx);
+  const elseResultType = compileHeldOptionalMemberRead(ctx, fctx, expr, objType, tmp);
+  if (!valTypesMatch(elseResultType, resultType)) coerceType(ctx, fctx, elseResultType, resultType);
+  const elseInstrs = fctx.body;
+  popBody(fctx, savedBody);
+  fctx.body.push({ op: "if", blockType: { kind: "val", type: resultType }, then: thenInstrs, else: elseInstrs });
+  return resultType;
+}
 
-  // then branch (null path): push the appropriate null/zero default
-  let thenInstrs: Instr[];
-  if (resultType.kind === "f64") {
-    thenInstrs = [{ op: "f64.const", value: 0 }];
-  } else if (resultType.kind === "i32") {
-    thenInstrs = [{ op: "i32.const", value: 0 }];
-  } else {
-    // (#2051) externref result (incl. the nullable-primitive widening above) →
-    // host `undefined`. Build via a body-swap because `emitUndefined` pushes to
-    // `fctx.body` and may flush late imports; do not hand-roll the instr array.
-    const savedForThen = fctx.body;
-    fctx.body = [];
-    emitUndefined(ctx, fctx);
-    thenInstrs = fctx.body;
-    fctx.body = savedForThen;
-  }
+/**
+ * (#2051) What a short-circuited `?.` read yields: 0 in a bare f64 / i32 slot, else the lane's `undefined`, so
+ * `=== undefined` / `typeof` / `+` read it as undefined rather than a bare null.
+ */
+function optionalShortCircuitInstrs(ctx: CodegenContext, fctx: FunctionContext, type: ValType): Instr[] {
+  if (type.kind === "f64") return [{ op: "f64.const", value: 0 }];
+  if (type.kind === "i32") return [{ op: "i32.const", value: 0 }];
+  const saved = pushBody(fctx);
+  emitUndefined(ctx, fctx);
+  const undef = fctx.body;
+  popBody(fctx, saved);
+  return undef;
+}
 
-  // else branch (non-null path): get the property from the temp
-  fctx.body = [];
-  fctx.body.push({ op: "local.get", index: tmp });
-  // Compile the property access part without the receiver. After the
-  // `ref.is_null` short-circuit the receiver is known non-null, so resolve
-  // the property against the non-nullable part of the union — the bare
-  // `C | null` union symbol is anonymous and would fail struct resolution,
-  // leaving the receiver ref stranded on the stack (#1603).
+/**
+ * The non-null arm of `recv?.prop`, read off `tmp`, which holds the receiver. Past the nullish test the property
+ * resolves against the non-nullable part of the union: the bare `C | null` union symbol is anonymous and would fail
+ * struct resolution, leaving the receiver ref stranded on the stack (#1603).
+ */
+function compileHeldOptionalMemberRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ValType,
+  tmp: number,
+): ValType {
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
+  // (#7435) A buffer's or view's `byteLength` & co. come from its backing vec, which no member read below finds.
+  const bufferAttr = withPreEvaluatedExpression(fctx, expr.expression, tmp, () =>
+    tryBufferViewAttributeReads(ctx, fctx, expr, propName, tsObjType),
+  );
+  if (bufferAttr !== PA_FALLTHROUGH) return bufferAttr;
+  fctx.body.push({ op: "local.get", index: tmp });
   let elseResultType: ValType | null = null;
   // (#7401) An extern class with no host getter import (native `Map`/`Set` `.size`, RegExp, Error, …) → the dynamic
   // member read below, not the receiver.
@@ -2586,21 +2596,7 @@ export function compileOptionalPropertyAccess(
     }
     elseResultType = { kind: "externref" };
   }
-  // Coerce else branch result to match the block result type
-  if (!valTypesMatch(elseResultType, resultType)) {
-    coerceType(ctx, fctx, elseResultType, resultType);
-  }
-  const elseInstrs = fctx.body;
-
-  popBody(fctx, savedBody);
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: resultType },
-    then: thenInstrs,
-    else: elseInstrs,
-  });
-
-  return resultType;
+  return elseResultType;
 }
 
 /** Helper: extern-class property get with the receiver on the stack; false (nothing emitted) without a getter import. */
