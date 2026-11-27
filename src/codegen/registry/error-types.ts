@@ -66,6 +66,7 @@ import { ERROR_PROP_GET } from "../error-props.js";
 import { registerEmitWasiErrorConstructor } from "./error-constructor-delegates.js";
 import { buildErrorSubclassProtoChainArm, intrinsicErrorMessageDefaultArm } from "../error-subclass-proto-chain.js";
 import { isCollectionCarrierClass } from "../classes/standalone-collection-carrier.js"; // (#6754)
+import { userErrorCtorNames, WASI_ERROR_NAMES, type WasiErrorName } from "./error-names.js";
 
 // (#2962) `getOrRegisterErrorStructType` moved to registry/types.ts so
 // native-strings.ts can import it without an import cycle (this module imports
@@ -74,36 +75,8 @@ import { isCollectionCarrierClass } from "../classes/standalone-collection-carri
 // identifiers) keep their import path.
 export { getOrRegisterErrorStructType } from "./types.js";
 
-/**
- * The 8 built-in JS Error constructors that Phase 1 supports as Wasm-native
- * struct construction in WASI mode. Order matches the order in which test262
- * tests typically reference them.
- */
-export const WASI_ERROR_NAMES = [
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "URIError",
-  "EvalError",
-  "ReferenceError",
-  "AggregateError",
-] as const;
-
-export type WasiErrorName = (typeof WASI_ERROR_NAMES)[number];
-
-/**
- * (#3614) User-declared constructors that this compiler lowers to an
- * `$Error_struct` (rather than to a plain fnctor instance), and whose
- * `.constructor` back-pointer must therefore be answered by the
- * `$Error_struct` reader in `fillExternGetErrorProps`.
- *
- * Today this is exactly `Test262Error` — `emitStandaloneTest262Error` (#2902)
- * is the only non-builtin `__new_<Name>` an `$Error_struct` is minted for. It
- * is a list rather than a literal so a future `$Error_struct`-lowered user
- * constructor only has to be added here.
- */
-const USER_ERROR_CTOR_IDENTITY_NAMES = ["Test262Error"] as const;
+// (#7453) The names live in the leaf `error-names.ts`; re-exported for the existing importers.
+export { WASI_ERROR_NAMES, type WasiErrorName };
 
 /** Returns true if `name` is one of the 8 Error constructors handled by Phase 1. */
 export function isWasiErrorName(name: string): name is WasiErrorName {
@@ -503,19 +476,6 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
 }
 
 /**
- * Does `fillExternGetErrorProps` build the `constructor` arm for user error
- * constructor `name`? When this module mints `$Error_struct` instances for it
- * — and (#6723 D4) always in a wasm-consumed standalone PROVIDER, which must
- * also answer for instances its CONSUMER minted: the linked consumer lowers
- * `new Test262Error(…)` to its own `$Error_struct` (a canonical type, so this
- * arm sees it), and the provider's function value is the constructor both
- * modules name.
- */
-function userErrorCtorArmApplies(ctx: CodegenContext, name: string): boolean {
-  return ctx.funcMap.has(`__new_${name}`) || ctx.exportsConsumedByWasm === true;
-}
-
-/**
  * (#3130) Finalize-time fill: teach `__extern_get` — the universal dynamic
  * property reader every `any`-receiver read terminally routes through
  * (`__dyn_get`, the `__get_member_<name>` dispatcher fallbacks, typed reads
@@ -669,8 +629,7 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
   // `Expected a Test262Error, but a "undefined" was thrown.` self-test
   // signature. See src/codegen/error-substrate.ts for the measured evidence.
   const userCtorArms: Instr[] = [];
-  for (const name of USER_ERROR_CTOR_IDENTITY_NAMES) {
-    if (!userErrorCtorArmApplies(ctx, name)) continue;
+  for (const name of userErrorCtorNames(ctx)) {
     const closureGlobalIdx = userErrorCtorCarrierGlobal(ctx, name);
     if (closureGlobalIdx === undefined) continue;
     userCtorArms.push(

@@ -19,6 +19,7 @@ import {
   isModuleInitVarList,
   isTopLevelStatementDeclaration,
   moduleInitVarLists,
+  type ScriptVarModel,
 } from "../shared/var-declaration-lists.js";
 import { ts } from "../ts-api.js";
 import { bindingDeclarationList, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
@@ -26,8 +27,9 @@ import { bindingDeclarationList, patternLeaves, type BindingLeaf } from "./bindi
 /** The modelled `var` lists ({@link moduleInitVarLists}) of every module-init statement. */
 export function collectIrSafeModuleVarDeclarationLists(
   statements: readonly ts.Statement[],
+  model: ScriptVarModel,
 ): ReadonlySet<ts.VariableDeclarationList> {
-  return new Set(statements.flatMap(moduleInitVarLists));
+  return new Set(statements.flatMap((statement) => moduleInitVarLists(statement, model)));
 }
 
 /** A name a module-init statement binds to a module global, or a pattern with no one-to-one global. */
@@ -41,10 +43,10 @@ export type ModuleInitBinding =
  * leaf of a modelled `var` list. A lexical top-level pattern has no one-to-one
  * global.
  */
-export function moduleInitBindings(statement: ts.Statement): ModuleInitBinding[] {
-  const lists = ts.isVariableStatement(statement) ? [statement.declarationList] : moduleInitVarLists(statement);
+export function moduleInitBindings(statement: ts.Statement, model: ScriptVarModel): ModuleInitBinding[] {
+  const lists = ts.isVariableStatement(statement) ? [statement.declarationList] : moduleInitVarLists(statement, model);
   return lists.flatMap((list) => {
-    const leavesBind = isModuleInitVarList(list);
+    const leavesBind = isModuleInitVarList(list, model);
     return list.declarations.flatMap((declaration): ModuleInitBinding[] => {
       if (ts.isIdentifier(declaration.name)) return [{ name: declaration.name, declaration }];
       if (!leavesBind) return [{ unmapped: declaration }];
@@ -63,46 +65,58 @@ export function moduleBindingLexicalFlags(declaration: ts.VariableDeclaration | 
     : ts.NodeFlags.None;
 }
 
-interface ModuleInitVarBindings {
-  /** Every pattern leaf and every `for` head name, in source order. */
-  readonly declarations: readonly (ts.VariableDeclaration | BindingLeaf)[];
-  readonly leafNames: ReadonlySet<string>;
-}
+type VarBinding = ts.VariableDeclaration | BindingLeaf;
 
-const varBindingsBySource = new WeakMap<ts.SourceFile, ModuleInitVarBindings>();
+const varBindingsBySource = new WeakMap<ts.SourceFile, Map<ScriptVarModel, readonly VarBinding[]>>();
 
 /**
- * The bindings of `sourceFile`'s module-init statements ({@link moduleInitBindings})
- * that are not a top-level statement's own declaration: the leaves of a modelled
- * `var` list and the names of a modelled `for` head.
+ * The bindings of `sourceFile`'s module-init statements under `model` ({@link moduleInitBindings}) that are not a
+ * top-level statement's own declaration, in source order: the leaves of a modelled `var` list and the names of a
+ * modelled `for` head.
  */
-function moduleInitVarBindings(sourceFile: ts.SourceFile): ModuleInitVarBindings {
-  let cached = varBindingsBySource.get(sourceFile);
-  if (!cached) {
-    const declarations = sourceFile.statements
-      .flatMap(moduleInitBindings)
+function moduleInitVarBindings(sourceFile: ts.SourceFile, model: ScriptVarModel): readonly VarBinding[] {
+  let byModel = varBindingsBySource.get(sourceFile);
+  if (!byModel) varBindingsBySource.set(sourceFile, (byModel = new Map()));
+  let declarations = byModel.get(model);
+  if (!declarations) {
+    declarations = sourceFile.statements
+      .flatMap((statement) => moduleInitBindings(statement, model))
       .flatMap((binding) =>
         "name" in binding && !isTopLevelStatementDeclaration(binding.declaration) ? [binding.declaration] : [],
       );
-    const leaves = declarations.filter((declaration) => ts.isBindingElement(declaration));
-    cached = { declarations, leafNames: new Set(leaves.map((leaf) => leaf.name.text)) };
-    varBindingsBySource.set(sourceFile, cached);
+    byModel.set(model, declarations);
   }
-  return cached;
+  return declarations;
 }
 
 /**
- * The module binding declarations of `sourceFile` in ordinal order: every
- * top-level statement declaration (a pattern keeps its ordinal without a
- * binding, as `module-init-plan.ts` numbers them), then every other module-init
- * binding ({@link moduleInitVarBindings}). Appending them moves no statement
- * declaration's binding id.
+ * The module binding declarations of `sourceFile` under `model` in ordinal order: every top-level statement
+ * declaration (a pattern keeps its ordinal without a binding, as `module-init-plan.ts` numbers them), then every
+ * other module-init binding ({@link moduleInitVarBindings}). Appending them moves no statement declaration's
+ * binding id.
  */
-export function moduleBindingDeclarationOrder(sourceFile: ts.SourceFile): readonly ts.Node[] {
+export function moduleBindingDeclarationOrder(sourceFile: ts.SourceFile, model: ScriptVarModel): readonly ts.Node[] {
   const declarations = sourceFile.statements.flatMap((statement): readonly ts.Node[] =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  return [...declarations, ...moduleInitVarBindings(sourceFile).declarations];
+  return [...declarations, ...moduleInitVarBindings(sourceFile, model)];
+}
+
+const leafNamesBySource = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * The names of `sourceFile`'s module-init pattern leaves. They are the same under both script-var models: the
+ * for-in head `"with-for-in-heads"` adds declares one identifier, never a pattern.
+ */
+function moduleInitLeafNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  let names = leafNamesBySource.get(sourceFile);
+  if (!names) {
+    const leaves = moduleInitVarBindings(sourceFile, "statement-and-for-heads").filter((binding) =>
+      ts.isBindingElement(binding),
+    );
+    leafNamesBySource.set(sourceFile, (names = new Set(leaves.map((leaf) => leaf.name.text))));
+  }
+  return names;
 }
 
 /**
@@ -126,7 +140,7 @@ export function carrierLeafReads(
   node: ts.Node,
   resolve: (identifier: ts.Identifier) => ModuleBindingRepresentation | undefined,
 ): ts.Identifier[] {
-  const { leafNames } = moduleInitVarBindings(node.getSourceFile());
+  const leafNames = moduleInitLeafNames(node.getSourceFile());
   const reads: ts.Identifier[] = [];
   const visit = (child: ts.Node): void => {
     if (!ts.isIdentifier(child)) child.forEachChild(visit);
@@ -138,10 +152,15 @@ export function carrierLeafReads(
 
 /**
  * Whether `declaration` binds a module-init global: a top-level `VariableStatement`'s own name, in a script or an
- * ES module, or (#7106 S5, L, L2) in a script a leaf, a `for` head's or a nested `var`'s name of a modelled list.
- * The resolver, the startup plan and the Prepared producer all ask this one rule.
+ * ES module, or (#7106 S5, L, L2) in a script a leaf, a `for` head's or a nested `var`'s name of a list `model`
+ * models. The resolver, the startup plan and the Prepared producer all ask this one rule.
  */
-export function isModuleInitGlobalDeclaration(declaration: ts.VariableDeclaration | ts.BindingElement): boolean {
+export function isModuleInitGlobalDeclaration(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  model: ScriptVarModel,
+): boolean {
   if (isTopLevelStatementDeclaration(declaration)) return true;
-  return !ts.isExternalModule(declaration.getSourceFile()) && isModuleInitVarList(bindingDeclarationList(declaration));
+  return (
+    !ts.isExternalModule(declaration.getSourceFile()) && isModuleInitVarList(bindingDeclarationList(declaration), model)
+  );
 }

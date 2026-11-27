@@ -5,7 +5,7 @@
  */
 import type { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { parseEvalSource, type ParsedEvalScript } from "../../frontend/eval/script.js";
 import type { FoldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
 

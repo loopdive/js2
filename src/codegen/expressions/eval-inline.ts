@@ -35,7 +35,7 @@ import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { compileAndEmitToString } from "../coercion-engine.js";
 import { emitThrowJsError } from "./helpers.js";
 import { reportError } from "../context/errors.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import { addFoldedEvalBindingNames, foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
@@ -56,6 +56,7 @@ import {
 } from "../direct-eval-environment.js";
 import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 import { emitRefusedDynamicFunction, isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
+import { fitsFunctionSourceText, functionSourceText } from "../../interp/function-source-text.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -1476,16 +1477,15 @@ function synthesizeStaticNewFunction(
     consts.push(s);
   }
 
-  // §20.2.1.1.1: the LAST argument is the body; the rest form the parameter list
-  // (comma-joined so `("a","b,c","…")` flattens to params a, b, c). No args →
-  // `function anonymous() {}` (empty body, empty params).
+  // §20.2.1.1.1: the LAST argument is the body; the rest form the parameter list, comma-joined so
+  // `("a","b,c","…")` flattens to params a, b, c. No args → an empty body and parameter list.
   const body = consts.length > 0 ? consts[consts.length - 1]! : "";
   const paramSrc = consts.slice(0, -1).join(",");
 
   // A unique synthesized name; `mod.functions.length` is monotonic within a
   // compile, so two `new Function` sites never collide.
   const fnName = `__new_function_${ctx.mod.functions.length}`;
-  const synthSrc = `function ${fnName}(${paramSrc}) {\n${body}\n}`;
+  const synthSrc = functionSourceText(fnName, paramSrc, body);
 
   const sf = ts.createSourceFile(
     EVAL_SOURCE_FILENAME,
@@ -1494,15 +1494,14 @@ function synthesizeStaticNewFunction(
     /* setParentNodes */ true,
     ts.ScriptKind.JS,
   );
+  // Malformed params/body, or text that parses only with the two run together (§20.2.1.1.1 parses them as separate
+  // goals), is a SyntaxError in JS: decline to the existing path rather than force a compile error (#2928).
   const parseDiag = (sf as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
-  if (parseDiag && parseDiag.length > 0) {
-    // Malformed params/body — real JS throws SyntaxError. Fall through to the
-    // existing path rather than force a compile error (the dynamic path / stub
-    // preserves current behaviour; strict SyntaxError semantics are #2928).
+  const fnDecl = sf.statements[0];
+  if (parseDiag?.length || !fnDecl || !ts.isFunctionDeclaration(fnDecl) || !fnDecl.body) return undefined;
+  const block = fnDecl.body;
+  if (!fitsFunctionSourceText(synthSrc, fnName, paramSrc, sf.statements.length, block.getStart(sf), block.end))
     return undefined;
-  }
-  if (sf.statements.length !== 1 || !ts.isFunctionDeclaration(sf.statements[0]!)) return undefined;
-  const fnDecl = sf.statements[0] as ts.FunctionDeclaration;
   recordStaticFunctionSelfName(ctx, fnName, args);
 
   // (#2923 park-fix parity) A `"use strict"` directive prologue in the
@@ -1578,7 +1577,7 @@ function containsThisKeyword(root: ts.Node): boolean {
 /**
  * (#2924) Resolve whether an identifier named `Function` refers to the global
  * `Function` intrinsic (declared only in `.d.ts`) rather than a local shadow.
- * Mirrors `isGlobalEvalIdentifier` (eval-tiering.ts / calls.ts).
+ * Mirrors `isGlobalEvalIdentifier` (eval-tiering.ts / global-builtin-identifier.ts).
  */
 export function isGlobalFunctionIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): boolean {
   if (ident.text !== "Function") return false;

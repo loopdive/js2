@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // #1659 — Equivalence-suite regression gate.
 //
-// Runs (a shard of) tests/equivalence/ under vitest with a single fork
-// (low peak RAM — the historic OOM came from file-parallelism, not the
-// workload), collects the set of failing tests, and compares it against a
-// committed known-failures baseline (scripts/equivalence-baseline.json).
+// Runs (a shard of) tests/equivalence/ under vitest, collects the set of
+// failing tests, and compares it against a committed known-failures baseline
+// (scripts/equivalence-baseline.json). (#7565) Files run in parallel forks,
+// sized by vitest.config.ts (VITEST_MAX_FORKS, else cores − 1 capped by free
+// RAM); the shard's slowest files are printed so a file that alone outlasts a
+// shard is named in the log.
 //
 // Exit non-zero when a test that is NOT in the baseline fails (a genuine
 // regression) — the existing failure backlog does not block every PR. Tests
@@ -251,8 +253,33 @@ export function bankBaseline(summary, previous, { floors = true } = {}) {
   return { baseline, refusals };
 }
 
+/**
+ * (#7565) A file slower than this is most of a shard's ~3-minute budget on its
+ * own, so no fork count can bring the shard under it. Wall time under forks.
+ */
+const SLOW_FILE_SECONDS = 150;
+
+/** Per-file wall time from a vitest JSON report, slowest first. */
+export function fileDurations(report, toRel = relPath) {
+  return (report.testResults || [])
+    .filter((file) => Number.isFinite(file.startTime) && Number.isFinite(file.endTime))
+    .map((file) => ({ file: toRel(file.name), seconds: (file.endTime - file.startTime) / 1000 }))
+    .sort((a, b) => b.seconds - a.seconds);
+}
+
+function reportSlowestFiles(report) {
+  const durations = fileDurations(report);
+  console.log("equivalence-gate: slowest files:");
+  for (const { file, seconds } of durations.slice(0, 5)) console.log(`    ${seconds.toFixed(1)} s  ${file}`);
+  for (const { file, seconds } of durations.filter((d) => d.seconds > SLOW_FILE_SECONDS)) {
+    console.log(
+      `::warning file=${file}::${file} took ${seconds.toFixed(0)} s, over ${SLOW_FILE_SECONDS} s — one file this slow sets its shard's time; split it (#7565)`,
+    );
+  }
+}
+
 /** Every `*.test.ts` under tests/equivalence/, as repo-relative paths. */
-function listEquivalenceFiles() {
+export function listEquivalenceFiles() {
   if (!existsSync(EQUIVALENCE_DIR)) return null;
   const out = [];
   const walk = (dir, rel) => {
@@ -273,7 +300,7 @@ function loadBaseline() {
 
 /** Run vitest on the equivalence suite (optionally a shard) and summarise the report. */
 function runVitest(shard) {
-  // Equivalence shards can peak around 1 GB; regular vitest runs keep the
+  // An equivalence fork can peak around 1 GB; regular vitest runs keep the
   // repository default fork heap unless they opt in through this env var.
   const forkHeapMb = process.env.EQUIVALENCE_FORK_HEAP_MB || "1024";
   const outFile = join(mkdtempSync(join(tmpdir(), "equiv-")), "report.json");
@@ -282,8 +309,6 @@ function runVitest(shard) {
     "run",
     "tests/equivalence/",
     "--pool=forks",
-    "--poolOptions.forks.singleFork=true",
-    "--no-file-parallelism",
     "--reporter=json",
     `--outputFile=${outFile}`,
   ];
@@ -305,7 +330,9 @@ function runVitest(shard) {
     console.error("equivalence-gate: vitest produced no JSON report; signal=", res.signal);
     process.exit(2);
   }
-  const summary = summarizeReport(JSON.parse(readFileSync(outFile, "utf8")), shard ? `shard ${shard}` : "vitest");
+  const report = JSON.parse(readFileSync(outFile, "utf8"));
+  reportSlowestFiles(report);
+  const summary = summarizeReport(report, shard ? `shard ${shard}` : "vitest");
   if (shard) summary.shards.push(shard);
   return summary;
 }

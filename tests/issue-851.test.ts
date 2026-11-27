@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { readFileSync } from "fs";
+import { resolve } from "path";
 import { parseMeta, wrapTest } from "./test262-runner.ts";
 import { buildImports } from "../src/runtime.ts";
 
 /** Run a test262 for-of iterator-close test, return 1 for pass. */
 async function runCloseTest(filename: string): Promise<number | string> {
-  const src = readFileSync("/workspace/test262/test/language/statements/for-of/" + filename, "utf-8");
+  const src = readFileSync(resolve(__dirname, "../test262/test/language/statements/for-of", filename), "utf-8");
   const meta = parseMeta(src);
   const { source: w } = wrapTest(src, meta);
   const r = await compile(w, { fileName: "test.ts" });

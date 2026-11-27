@@ -9,15 +9,14 @@
 // Symbol.toStringTag (§20.1.3.6 step 15) is a deferred phase-2.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function runHost(source: string): Promise<Record<string, (...a: number[]) => unknown>> {
   const result = await compile(source);
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+  const instance = await instantiateWithRuntime(result);
   return instance.exports as unknown as Record<string, (...a: number[]) => unknown>;
 }
 

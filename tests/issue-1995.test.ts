@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 // #1995 — `arr.flat()` with no argument flattened depth 0 instead of the spec
 //   default of 1: the omitted depth was emitted as `ref.null.extern`, arriving
@@ -15,7 +15,7 @@ import { compileAndInstantiate } from "../src/runtime.js";
 //   deeply unwrapping nested vec refs (and flatMap callback results) into real
 //   JS arrays before the native flatten runs.
 async function runStr(src: string): Promise<string> {
-  const exports = (await compileAndInstantiate(src)) as { f: () => string };
+  const exports = (await compileToWasm(src)) as { f: () => string };
   return exports.f();
 }
 

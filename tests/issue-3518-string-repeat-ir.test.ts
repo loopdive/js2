@@ -9,9 +9,9 @@ import {
   ensureIrNativeCountedStringRepeatProvider,
   ensureIrNativeStringRepeatProvider,
   hasExactIrNativeCountedStringRepeatProviderAbi,
-  IR_NATIVE_STRING_REPEAT_MAX_RESULT_CODE_UNITS,
   IR_NATIVE_STRING_REPEAT_PROVIDER_FN,
   IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE,
+  NATIVE_STRING_LENGTH_RANGE_ERROR_MESSAGE,
 } from "../src/codegen/ir-native-string-repeat.js";
 import { addRuntime } from "../src/codegen-linear/runtime.js";
 import {
@@ -39,6 +39,7 @@ import {
   IR_COUNTED_STRING_REPEAT_I32_MAX,
   IR_STRING_REPEAT_COUNTED_NATIVE_FN,
   IR_STRING_REPEAT_FN,
+  NATIVE_STRING_MAX_LENGTH,
   repeatString,
 } from "../src/ir/string-runtime.js";
 import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js";
@@ -564,12 +565,10 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     expect(repeat("", Number.MAX_SAFE_INTEGER)).toBe("");
   });
 
-  // KNOWN DEFECT #7442: node throws RangeError ("Invalid string length"). The module builds a 2^31-1 code-unit string
-  // without throwing, and the exports adapter then traps materializing it. This pins the current wrong behaviour so
-  // the fix flips it deliberately: change the expectation to RangeError then.
-  it("documents #7442: a result longer than the string limit traps instead of throwing RangeError", async () => {
+  // #7442: a result past the native string length limit throws RangeError ("Invalid string length"), as node does.
+  it("throws RangeError for a result longer than the string limit (#7442)", async () => {
     const repeat = await compiledJsRepeat();
-    expect(() => repeat("a", Number.MAX_SAFE_INTEGER)).toThrow(WebAssembly.RuntimeError);
+    expect(() => repeat("a", Number.MAX_SAFE_INTEGER)).toThrow(RangeError);
   });
 
   it("executes a native f64 adapter whose validation precedes empty and kernel paths", async () => {
@@ -597,10 +596,7 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     expect(conditionals[2]!.then.at(-1)?.op).toBe("return");
     expect(conditionals[3]!.then.at(-1)?.op).toBe("throw");
     expect(provider!.body.at(-1)).toEqual({ op: "call", funcIdx: kernel });
-    expect(provider!.body).toContainEqual({
-      op: "f64.const",
-      value: IR_NATIVE_STRING_REPEAT_MAX_RESULT_CODE_UNITS,
-    });
+    expect(provider!.body).toContainEqual({ op: "f64.const", value: NATIVE_STRING_MAX_LENGTH });
     expect(provider!.body.some((instruction) => instruction.op === "i32.trunc_sat_f64_s")).toBe(false);
     expect(provider!.body).toContainEqual({ op: "i32.trunc_f64_s" });
 
@@ -616,7 +612,7 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     }
     // After NaN normalization, the empty branch returns before the f64 result
     // bound; the final guard protects only non-empty i32 rope construction.
-    expect(IR_NATIVE_STRING_REPEAT_MAX_RESULT_CODE_UNITS).toBe(0x40000000);
+    expect(NATIVE_STRING_MAX_LENGTH).toBe(0x40000000);
 
     addNativeRepeatProbe(ctx, index, "repeat_nonempty", ["a".charCodeAt(0)]);
     addNativeRepeatProbe(ctx, index, "repeat_empty", []);
@@ -658,6 +654,7 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     });
     expect(ctx.mod.functions.some((fn) => fn.name === IR_NATIVE_STRING_REPEAT_PROVIDER_FN)).toBe(false);
     expect(ctx.mod.stringPool).toContain(IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE);
+    expect(ctx.mod.stringPool).toContain(NATIVE_STRING_LENGTH_RANGE_ERROR_MESSAGE);
 
     const signature = funcSignatureOf(ctx, index)!;
     signature.params[1] = { kind: "f64" };

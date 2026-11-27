@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../../ts-api.js";
-import { isUseStrictDirectiveExpression } from "../../frontend/use-strict-directive.js";
+import { ts } from "../ts-api.js";
+import { isUseStrictDirectiveExpression } from "./use-strict-directive.js";
 
 /** True when the prologue of `body` opens with a `"use strict"` directive. */
 function hasUseStrictPrologue(statements: readonly ts.Statement[]): boolean {

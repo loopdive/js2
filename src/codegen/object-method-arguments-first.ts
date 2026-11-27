@@ -19,7 +19,7 @@ import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
-import { isSimpleParameterList } from "./helpers/is-strict-function.js";
+import { isSimpleParameterList } from "../shared/is-strict-function.js";
 import { emitArgumentsObject } from "./shared.js";
 import { cacheParamDefaultArgc, paramDefaultNeedsArgc } from "./statements/nested-declarations.js";
 

@@ -7,7 +7,7 @@
  */
 import ts from "typescript";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
-import { errorConstructorId } from "./program/builtin-prototype-keys.js";
+import { realmConstructorId } from "./program/builtin-prototype-keys.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { FunctionValueLoweringPlans } from "./function-object-lowering.js";
@@ -86,14 +86,15 @@ export function classifyIdentifierRead<Binding>(
 
 /**
  * (#7354 G1) The catalog id of the built-in function object `expr` reads, on the lane where closures are function
- * objects: an Error constructor named by the unchanged global (`builtin-global-binding.ts`). Its value is the realm's
- * (`js.object.intrinsic`), so a read of a shadowed or written name never reaches here.
+ * objects: a realm constructor (an Error constructor, (#7350 B3a) `String`, `Number`, `Boolean`) named by the
+ * unchanged global (`builtin-global-binding.ts`). Its value is the realm's (`js.object.intrinsic`), so a read of a
+ * shadowed or written name never reaches here.
  */
 export function realmIntrinsicRead(
   expr: ts.Identifier,
   resolver: Pick<IrFromAstResolver, "createsFunctionObjects" | "isPristineBuiltinGlobal"> | undefined,
 ): string | undefined {
-  const id = errorConstructorId(expr.text);
+  const id = realmConstructorId(expr.text)?.id;
   return id !== undefined &&
     resolver?.createsFunctionObjects?.() === true &&
     resolver.isPristineBuiltinGlobal?.(expr) === true

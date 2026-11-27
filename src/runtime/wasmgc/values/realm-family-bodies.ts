@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 G1) The kernel's part of an intrinsic family the realm holds (the Error family): its ordinary objects (the
- * prototypes), created when the realm initializes; the catalog's own properties of its members and objects; and the
- * creation of an error, which the realm's own TypeError and a program's `new X(m)` share.
+ * (#7354 G1) The kernel's part of an intrinsic family the realm holds (the Error family, (#7350 B3a) the wrapper
+ * constructors): its ordinary objects (the prototypes), created when the realm initializes; the catalog's own
+ * properties of its members and objects, and the identity mark of a member the catalog models only as an identity; and
+ * the creation of an error, which the realm's own TypeError and a program's `new X(m)` share.
  *
  * An error is an ordinary object of the realm: [[Prototype]] its constructor's prototype, an own non-enumerable
  * `message` when one was given (§20.5.1.1 step 3), and the [[ErrorData]] bit of the object's flags, which only
@@ -12,13 +13,19 @@ import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructio
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
+import { BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
-/** A family property: a string, or a realm entry or object by catalog id. */
+/**
+ * A family property: a string, (#7350 B3a) a number, or a realm entry or object by catalog id; (#7489) or an accessor
+ * whose halves are realm entries.
+ */
 export interface RealmFamilyProperty {
   readonly key: string;
   readonly value:
     | { readonly kind: "string"; readonly value: string }
-    | { readonly kind: "intrinsic"; readonly id: string };
+    | { readonly kind: "number"; readonly value: number }
+    | { readonly kind: "intrinsic"; readonly id: string }
+    | { readonly kind: "accessor"; readonly get: string; readonly set: string };
   readonly writable: boolean;
   readonly configurable: boolean;
 }
@@ -28,6 +35,9 @@ export interface RealmFamilyOperands {
   readonly objectPrototype: number;
   readonly createWithPrototype: FuncHandle;
   readonly defineDataBody: FuncHandle;
+  /** (#7489) The kernel's accessor define `(object, key, getter, setter, word) -> object`. */
+  readonly defineAccessorBody: FuncHandle;
+  readonly boxNumber: FuncHandle;
   /** A realm string literal as an externref. */
   readonly text: (value: string) => Instr[];
   readonly entries: readonly {
@@ -35,6 +45,8 @@ export interface RealmFamilyOperands {
     readonly typeIdx: number;
     readonly singleton: number;
     readonly properties: readonly RealmFamilyProperty[];
+    /** (#7350 B3a) The catalog models only the entry's identity (`NativeRealmIntrinsic.identityOnly`). */
+    readonly identityOnly?: true;
   }[];
   /** The family's ordinary objects, each after the one it links to (`object-prototype`: the realm's). */
   readonly objects: readonly {
@@ -69,6 +81,14 @@ const word = (property: Pick<RealmFamilyProperty, "writable" | "configurable">):
   flags.configurableSpecified |
   flags.hasValue;
 
+/** (#7489) A non-enumerable accessor property's whole descriptor word, both halves present. */
+const accessorWord = (property: Pick<RealmFamilyProperty, "configurable">): number =>
+  (property.configurable ? flags.configurable : 0) |
+  flags.enumerableSpecified |
+  flags.configurableSpecified |
+  flags.getterSpecified |
+  flags.setterSpecified;
+
 /** Each object, linked to the realm's Object.prototype or to an object created before it, into its global. */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
   return d.objects.flatMap((object): Instr[] => [
@@ -79,19 +99,40 @@ export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
   ]);
 }
 
+/** The externref of `property`'s value; (#7489) an accessor's getter's, then its setter's. */
+function value(d: RealmFamilyOperands, property: RealmFamilyProperty): Instr[] {
+  switch (property.value.kind) {
+    case "string":
+      return d.text(property.value.value);
+    case "number":
+      return [
+        { op: "f64.const", value: property.value.value },
+        { op: "call", funcIdx: d.boxNumber },
+      ];
+    case "intrinsic":
+      return intrinsic(d, property.value.id);
+    case "accessor":
+      return [...intrinsic(d, property.value.get), ...intrinsic(d, property.value.set)];
+  }
+}
+
 /** Define `property` on the storage `target` leaves. */
 function define(d: RealmFamilyOperands, target: readonly Instr[], property: RealmFamilyProperty): Instr[] {
+  const accessor = property.value.kind === "accessor";
   return [
     ...target,
     ...d.text(property.key),
-    ...(property.value.kind === "string" ? d.text(property.value.value) : intrinsic(d, property.value.id)),
-    { op: "f64.const", value: word(property) },
-    { op: "call", funcIdx: d.defineDataBody },
+    ...value(d, property),
+    { op: "f64.const", value: accessor ? accessorWord(property) : word(property) },
+    { op: "call", funcIdx: accessor ? d.defineAccessorBody : d.defineDataBody },
     { op: "drop" },
   ];
 }
 
-/** The members' own properties (on their bags), then the objects'. */
+/**
+ * The members' own properties (on their bags), then the objects'; last, (#7350 B3a) the identity mark on the bag of
+ * each identity-only member, once nothing more is defined on it.
+ */
 export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
   const bag = (entry: RealmFamilyOperands["entries"][number]): Instr[] => [
     global(entry.singleton),
@@ -103,6 +144,21 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
     ...d.objects.flatMap((object) =>
       object.properties.flatMap((property) => define(d, [global(object.global)], property)),
     ),
+    ...d.entries.flatMap((entry) =>
+      entry.identityOnly ? markIdentityOnly(d, () => [...bag(entry), ...asObject(d)]) : [],
+    ),
+  ];
+}
+
+/** `flags |= BUILTIN_IDENTITY_ONLY_FLAG` on the object `object` leaves. */
+function markIdentityOnly(d: Pick<RealmFamilyOperands, "objectTypeIdx">, object: () => Instr[]): Instr[] {
+  return [
+    ...object(),
+    ...object(),
+    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: BUILTIN_IDENTITY_ONLY_FLAG },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
   ];
 }
 

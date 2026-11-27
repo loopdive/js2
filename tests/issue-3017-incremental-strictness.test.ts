@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { ts } from "../src/ts-api.js";
-import { isStrictContext, isStrictFunction } from "../src/codegen/helpers/is-strict-function.js";
+import { isStrictContext, isStrictFunction } from "../src/shared/is-strict-function.js";
 
 describe("#3017 strictness follows incremental source context", () => {
   for (const inferModuleStrict of [false, true]) {

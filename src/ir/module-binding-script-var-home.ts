@@ -67,7 +67,7 @@ export function irOwnedScriptVarHome(
     // (#7372 1b) A repeated `var` is one binding: the home is its first declarator's (the resolver's canonical one),
     // each later one a write. A JS property declaration on the binding (`o.p = v`, `Object.defineProperty(o, …)`)
     // declares no binding; the call itself is refused by name where from-ast meets it (#7364).
-    const declarators = moduleBindingDeclarations(declaration.name, checker);
+    const declarators = moduleBindingDeclarations(declaration.name, checker, "with-for-in-heads");
     const declarations = checker.getSymbolAtLocation(declaration.name)?.declarations ?? [];
     const own = (other: ts.Declaration) =>
       !other.getSourceFile().isDeclarationFile && !isJsPropertyDeclarationTarget(other);

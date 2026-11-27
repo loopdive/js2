@@ -4,6 +4,7 @@
 // lowered from its AST and legalized, against the program-wide plans the producer prepared before any body.
 
 import { ts } from "../ts-api.js";
+import type { BlockFunctionHomes } from "./annexb-block-function-values.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { checkerAny, checkerScalar, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import type { TypeOracle } from "../checker/oracle.js";
@@ -26,6 +27,7 @@ import type { FunctionValueGlobal } from "./function-declaration-values.js";
 import type { SourceClosureInvocationPlan } from "./source-closure-invocation.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
 import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
+import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import type { NativeAsyncSourceFamilies } from "./program-native-async-source.js";
@@ -56,6 +58,7 @@ export interface SourceUnitLowering {
   readonly closureInvocations: ReadonlyMap<ts.CallExpression, SourceClosureInvocationPlan>;
   readonly closureCallableParameters: ReadonlySet<ts.Node | undefined>;
   readonly functionValues: ReturnType<NonNullable<IrFromAstResolver["moduleInitFunctionValues"]>>;
+  readonly blockFunctionHomes: BlockFunctionHomes | undefined;
   readonly directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly nativeFamily: NativeAsyncSourceFamilies | undefined;
   readonly nativeStringValues: boolean;
@@ -102,11 +105,12 @@ function lowerUnitOnce(
   const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
     let symbol = input.checker.getSymbolAtLocation(node);
-    if (!symbol) return undefined;
-    const imported = (symbol.flags & ts.SymbolFlags.Alias) !== 0;
-    if (imported) symbol = input.checker.getAliasedSymbol(symbol);
-    const declaration = symbol.valueDeclaration;
-    const global = declaration ? lowering.globalByDeclaration.get(declaration) : undefined;
+    const imported = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0;
+    if (imported) symbol = input.checker.getAliasedSymbol(symbol!);
+    const declaration = symbol?.valueDeclaration;
+    const global =
+      lowering.blockFunctionHomes?.resolve(node, symbol) ??
+      (declaration ? lowering.globalByDeclaration.get(declaration) : undefined);
     if (!global) return undefined;
     if (writeValue && (imported || !global.identity.mutable))
       demoteToLegacy("type-resolution-unsupported", `write to immutable module binding ${node.text}`);
@@ -120,6 +124,7 @@ function lowerUnitOnce(
     sourceClosureInvocation: (expression) => lowering.closureInvocations.get(expression),
     sourceClosureCallableParameter: (node) => lowering.closureCallableParameters.has(node),
     resolveModuleBinding: resolveBinding,
+    scriptVarModel: () => "with-for-in-heads",
     // (#7363) This script's: a called eval source makes none, so a call of it never remakes a function object.
     moduleInitFunctionValues: () =>
       lowering.functionValues.filter((value) => value.declaration.getSourceFile() === source),
@@ -129,6 +134,7 @@ function lowerUnitOnce(
       const unitId = identity.moduleInitUnitIdBySourceFile.get(called);
       return unitId ? irUnitFuncRef({ unitId, name: identity.terminalByUnitId.get(unitId)!.displayName }) : null;
     },
+    annexBBlockFunctionHomes: (declaration) => lowering.blockFunctionHomes?.homesOf(declaration),
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
       const resultType =
@@ -205,7 +211,11 @@ function lowerUnitOnce(
     sourceRoots,
     [lowered.main, ...lowered.lifted],
     { declarationOf: (id) => identity.declarationByUnitId.get(id), aborted: (fn) => abortBodies?.has(fn) === true },
-    (call) => resolver.preparedIsNaNCall?.(call) === true,
+    (call) =>
+      [resolver.preparedIsNaNCall, resolver.preparedNumberCall, resolver.preparedBooleanCall].some(
+        (plan) => plan?.(call) === true,
+      ) ||
+      (ts.isIdentifier(call.expression) && resolver.isAmbientStringBinding?.(call.expression) === true),
   );
   return { lowered, functions };
 }
@@ -217,7 +227,12 @@ function prepareSourceBuiltinResolvers(
   carries: (expression: ts.Expression) => boolean,
 ) {
   return {
-    ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
+    ...prepareConversionResolvers(
+      input.checker,
+      input.sourceFiles,
+      roots,
+      pristineBuiltinGlobal(input.checker, input.sourceFiles),
+    ),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots, carries),
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
       ? {

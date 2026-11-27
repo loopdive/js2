@@ -4,7 +4,7 @@
  * Pure syntax over a foreign SourceFile; the legacy fold, the runtime-eval provider and the IR read it.
  */
 import { ts } from "../typescript.js";
-import { isUseStrictDirectiveExpression } from "../use-strict-directive.js";
+import { isUseStrictDirectiveExpression } from "../../shared/use-strict-directive.js";
 import type { FoldedEvalDeclarationNames } from "./declaration-names.js";
 import { evalCallerCapabilities, foldedEvalEarlyError } from "./early-errors.js";
 
@@ -39,7 +39,7 @@ export function evalBodyHasUseStrictDirective(stmts: ts.NodeArray<ts.Statement>)
     if (!ts.isExpressionStatement(s)) break;
     // Only a plain StringLiteral counts as a directive (a template does not).
     if (!ts.isStringLiteral(s.expression)) break;
-    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    // §11.2.2 matches the RAW token — see src/shared/use-strict-directive.ts.
     if (isUseStrictDirectiveExpression(s.expression)) return true;
     // Some other directive (e.g. "use asm") → keep scanning the prologue.
   }

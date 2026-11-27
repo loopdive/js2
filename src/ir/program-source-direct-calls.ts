@@ -16,6 +16,7 @@ import { irUnitFuncRef } from "./callable-bindings.js";
 import type { IrType } from "./core/types.js";
 import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
+import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import type { buildIrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
@@ -44,7 +45,18 @@ export function prepareSourceDirectCalls(
   diagnostic: { active: IrUnitId | undefined },
 ): ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan> {
   const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
+  // (#7354 H2, #7372 2a-3) A call of a rewritten declaration reads its binding: no direct call.
+  const rewritten = (unitId: IrUnitId): boolean => {
+    const declaration = identity.declarationByUnitId.get(unitId);
+    return (
+      declaration !== undefined &&
+      ts.isFunctionDeclaration(declaration) &&
+      declaration.name !== undefined &&
+      preparedBindingRewritten(checker, declaration.name)
+    );
+  };
   for (const use of uses) {
+    if (rewritten(use.targetUnitId)) continue;
     diagnostic.active = use.ownerUnitId;
     const signature = signatures.get(use.targetUnitId);
     const target = identity.terminalByUnitId.get(use.targetUnitId);
@@ -61,7 +73,7 @@ export function prepareSourceDirectCalls(
     const target =
       callableResolver.resolveImportedFunctionTarget(call.expression) ??
       callableResolver.resolveTopLevelFunctionValueTarget(call.expression);
-    if (!target) return;
+    if (!target || rewritten(target.targetUnitId)) return;
     const signature = signatures.get(target.targetUnitId);
     if (!signature) unsupported(`startup call ${target.targetUnitId} has no complete declared contract`);
     directCalls.set(call, {

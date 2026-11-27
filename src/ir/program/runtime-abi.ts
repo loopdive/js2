@@ -4,7 +4,7 @@ import { irCallableBindingKey } from "../core/callable-bindings.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
 import { preparedIrDataMismatch } from "./data.js";
-import { preparedIrProgramOwner } from "./owner.js";
+import { locatedFailure } from "./owner.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
@@ -39,14 +39,11 @@ export function prepareIrProgramRuntimeCallables(
       collectVectorCallableDemands([fn]);
     } catch (error) {
       if (!(error instanceof IrNativeAsyncCallableError) && !(error instanceof IrVectorCallableError)) throw error;
-      const owner = preparedIrProgramOwner(input, fn.unitId);
-      if (!owner) throw new PreparedIrProgramInvariantError("invalid-prepared-data", error.message);
-      return Object.freeze({
+      return locatedFailure(input, fn.unitId, {
         kind: "invariant",
         code: "verifier-failure",
         stage: "verify",
         detail: error.message,
-        ...owner,
       });
     }
     let failure: PreparedIrProgramFailure | undefined;
@@ -73,18 +70,11 @@ export function prepareIrProgramRuntimeCallables(
           }
           // Other intrinsic families retain their existing independent admission paths.
           if (ref.binding.kind === "intrinsic") return;
-          const owner = preparedIrProgramOwner(input, fn.unitId);
-          if (!owner)
-            throw new PreparedIrProgramInvariantError(
-              "invalid-prepared-data",
-              `runtime demand in ${fn.unitId} has no exact original owner`,
-            );
-          failure = Object.freeze({
+          failure = locatedFailure(input, fn.unitId, {
             kind: "invariant",
             code: "unknown-function-ref",
             stage: "resolve",
             detail: `runtime callable ${key} has no canonical declaration`,
-            ...owner,
           });
         });
     if (failure) return failure;

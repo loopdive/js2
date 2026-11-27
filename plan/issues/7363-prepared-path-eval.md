@@ -36,6 +36,9 @@ related: [7354, 7106, 7345, 3630]
 # 2026-11-27 (RV7502 finding 2): program-source.ts +7, the one admission point that refuses a site at select before
 # any unit lowers (`literalEvalSiteRefusal` in eval-literal.ts, under its ceiling). from-ast -16: the gate leaves
 # `lowerLiteralEvalCall`; lowerCall stays at 306.
+# 2026-11-27 (merged onto main 2af9fc6e): program-source.ts +29 over main. +3 of it is new in the merge: each script's
+# module-init plan takes only its own Annex B block functions (#7372), as it does its function values, so a called
+# eval source holds none. lowerCall is 305 there, +1 over main.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts

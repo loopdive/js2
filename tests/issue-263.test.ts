@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * Helper: compile TS source, instantiate, and call the exported function.
@@ -17,8 +17,7 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   if (codegenErrors.length > 0) {
     throw new Error(`Codegen errors:\n${codegenErrors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as any)[fn](...args);
 }
 

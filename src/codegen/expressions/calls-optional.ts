@@ -23,8 +23,15 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { compileBuiltinStaticCall } from "./call-builtin-static.js";
+import { compileNamespaceStaticCall } from "./call-namespace-static.js";
+import { emitCalleeCallableGuard, registerCalleeCallableGuard } from "./calls-guards.js";
+import { isGlobalBuiltinIdentifier } from "./global-builtin-identifier.js";
+import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";
 import { isBuiltinTypeName } from "../builtin-tags.js";
+import { builtinNamespaceConstantValue } from "../builtin-value-read.js";
+import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
 import { emitIsUndefF64, f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 
 export function compileOptionalCallExpression(
@@ -33,6 +40,17 @@ export function compileOptionalCallExpression(
   expr: ts.CallExpression,
 ): InnerResult {
   const propAccess = expr.expression as ts.PropertyAccessExpression;
+  // (#7469) A global built-in namespace or constructor is never nullish, and neither is its own static method, so no
+  // `?.` of `JSON?.parse?.(s)` can short-circuit: it is the native static call. Any other member is a value read, called
+  // below; a namespace constant (`Math?.PI?.()`) supplies that value itself.
+  const builtinName = globalBuiltinName(ctx, fctx, propAccess.expression);
+  if (builtinName !== undefined) {
+    const builtinCall =
+      compileBuiltinStaticCall(ctx, fctx, expr, propAccess) ??
+      compileNamespaceStaticCall(ctx, fctx, expr, propAccess) ??
+      compileBuiltinConstantValueCall(ctx, fctx, expr, propAccess, builtinName);
+    if (builtinCall !== undefined) return builtinCall;
+  }
   // `obj.method?.(args)` short-circuits on the METHOD VALUE, not on `obj`.
   // It is a distinct AST shape from `obj?.method(args)`: the question-dot is
   // carried by the CallExpression while the PropertyAccessExpression is plain.
@@ -192,6 +210,18 @@ export function compileOptionalCallExpression(
   // `s: string | undefined`) or built-in (`a: number[] | undefined`) receiver:
   // no arm above dispatches their methods.
   const ladderReceiver = isLadderMethodReceiver(tsReceiverType);
+  // (#7430, #7469) `o?.f?.(args)` also short-circuits on the callee VALUE, which neither the typed closure-field call
+  // (an undefined field traps it) nor the dynamic method ladder (an undefined property throws) can do. Unless a declared
+  // or built-in method resolves it, past the receiver test it is the `o.f?.(args)` call on the held receiver, for a
+  // struct and a dynamic receiver alike; the receiver's short-circuit must match that call's `undefined` result.
+  const calleeValueCall = !methodResolved && !ladderReceiver && expr.questionDotToken !== undefined;
+  if (calleeValueCall) {
+    const delegated = withPreEvaluatedExpression(fctx, propAccess.expression, tmp, () =>
+      compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess),
+    );
+    resultType = settleDelegatedResult(fctx, delegated, resultType);
+    methodResolved = true;
+  }
   if (!methodResolved && ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || ladderReceiver)) {
     const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, tmp);
     if (delegated !== undefined) {
@@ -232,7 +262,7 @@ export function compileOptionalCallExpression(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultType },
-    then: ladderReceiver ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
+    then: ladderReceiver || calleeValueCall ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
     else: elseInstrs,
   });
 
@@ -251,11 +281,35 @@ function optionalUndefinedInstrs(ctx: CodegenContext, type: ValType): Instr[] {
   return undef;
 }
 
+/**
+ * (#7469) `Math?.PI?.(args)`: the `?.()` value call reads its callee from the namespace carrier, which holds only
+ * methods, so a constant comes from the native table instead. A number is neither nullish nor callable, so the call
+ * evaluates its arguments and throws a TypeError.
+ */
+function compileBuiltinConstantValueCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  namespace: string,
+): InnerResult | undefined {
+  const constant = builtinNamespaceConstantValue(namespace, propAccess.name.text);
+  if (constant === undefined || expr.questionDotToken === undefined) return undefined;
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  return compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess, () => {
+    fctx.body.push({ op: "f64.const", value: constant });
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+  });
+}
+
+/** `recv.m?.(args)`; `readCallee` pushes the callee in place of the default `[[Get]](recv, "m")`. */
 function compileOptionalPropertyValueCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
+  readCallee?: () => void,
 ): InnerResult {
   const externref: ValType = { kind: "externref" };
   const receiverType = compileExpression(ctx, fctx, propAccess.expression);
@@ -275,6 +329,7 @@ function compileOptionalPropertyValueCall(
   // `canonicalUndefinedExternInstrs` supplies the lane's real `undefined`.
   const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
+  registerCalleeCallableGuard(ctx);
   const applyIdx = reserveApplyClosure(ctx);
   const vecBuilders = ensureObjVecBuilders(ctx);
   const arrayNewIdx = vecBuilders?.newIdx;
@@ -296,9 +351,13 @@ function compileOptionalPropertyValueCall(
     return externref;
   }
 
-  fctx.body.push({ op: "local.get", index: receiverLocal });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-  fctx.body.push({ op: "call", funcIdx: resolvedGetIdx });
+  if (readCallee !== undefined) {
+    readCallee();
+  } else {
+    fctx.body.push({ op: "local.get", index: receiverLocal });
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+    fctx.body.push({ op: "call", funcIdx: resolvedGetIdx });
+  }
   const calleeLocal = allocLocal(fctx, `__optprop_fn_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.tee", index: calleeLocal });
   fctx.body.push({ op: "ref.is_null" });
@@ -312,17 +371,23 @@ function compileOptionalPropertyValueCall(
   fctx.body.push({ op: "call", funcIdx: resolvedNewIdx });
   const argsLocal = allocLocal(fctx, `__optprop_args_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.set", index: argsLocal });
-  for (const argument of expr.arguments) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, ts.isSpreadElement(argument) ? argument.expression : argument);
-    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
-    fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
+  // (#7430) A spread contributes its runtime element count, so it goes through the shared expander.
+  if (!tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, argsLocal, "__objvec_push", resolvedPushIdx)) {
+    for (const argument of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const argType = compileExpression(ctx, fctx, argument);
+      if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
+      fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
+    }
   }
+  // (#7469) Only a nullish `m` short-circuits; any other non-callable throws, as in an ordinary call.
+  emitCalleeCallableGuard(ctx, fctx, calleeLocal);
   fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "local.get", index: receiverLocal });
   fctx.body.push({ op: "local.get", index: argsLocal });
-  fctx.body.push({ op: "call", funcIdx: resolvedCallIdx });
+  // A spread or the TypeError can register late imports, which shift a defined function's index: re-resolve it by name.
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? resolvedCallIdx });
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
 
@@ -333,6 +398,12 @@ function compileOptionalPropertyValueCall(
     else: elseInstrs,
   });
   return externref;
+}
+
+/** The global built-in `expr` names (`JSON`, `(Math as any)`), unless a local binding shadows it. */
+function globalBuiltinName(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): string | undefined {
+  const unwrapped = unwrapTransparentExpression(expr);
+  return ts.isIdentifier(unwrapped) && isGlobalBuiltinIdentifier(ctx, fctx, unwrapped) ? unwrapped.text : undefined;
 }
 
 const PRIMITIVE_METHOD_RECEIVER =

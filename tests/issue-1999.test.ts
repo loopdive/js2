@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 async function run(source: string) {
   const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error("compile error: " + r.errors[0]?.message);
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  const instance = await instantiateWithRuntime(r);
   if ((instance.exports as any).__module_init) (instance.exports as any).__module_init();
   return (instance.exports as any).test();
 }
@@ -71,8 +70,7 @@ describe("#1999 string += on a closure-captured variable", () => {
     }`;
     const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error("compile error: " + r.errors[0]?.message);
-    const imports = buildImports(r.imports, undefined, r.stringPool);
-    const { instance } = await WebAssembly.instantiate(r.binary, imports);
+    const instance = await instantiateWithRuntime(r);
     expect(await (instance.exports as any).test()).toBe("ab");
   });
 

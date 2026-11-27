@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -361,6 +362,30 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(workflow).not.toContain("mergeQueue(branch:");
     expect(workflow).not.toContain("check-runs?per_page=100");
     expect(workflow).toContain('echo "skip=1" >> "$GITHUB_OUTPUT"');
+  });
+
+  it("(#7558) both promotion gates read a held promotion PR as unable to land", () => {
+    // PR checks are mostly skipped since #7558, so a promotion that fails only
+    // in the merge queue keeps green PR checks and gets a `hold` label. If the
+    // gates looked at FAILURE conclusions alone they would wait for it forever.
+    const filterOf = (file: string) => {
+      const text = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), "utf8");
+      const match = /PR_FAILING="\$\(printf '%s' "\$PR_JSON" \| jq -r \\\n\s+'([^\n]+)'\)"/.exec(text);
+      expect(match, file).not.toBeNull();
+      expect(text, file).toContain("--json number,statusCheckRollup,labels");
+      return match![1]!;
+    };
+    const filter = filterOf("npm-compat-refresh.yml");
+    expect(filterOf("npm-compat-promote.yml")).toBe(filter);
+    const count = (pr: object) =>
+      execFileSync("jq", ["-r", filter], { input: JSON.stringify([pr]), encoding: "utf8" }).trim();
+    const green = [
+      { name: "cla-check", conclusion: "SUCCESS" },
+      { name: "quality", conclusion: "SKIPPED" },
+    ];
+    expect(count({ number: 1, statusCheckRollup: green, labels: [] })).toBe("0");
+    expect(count({ number: 1, statusCheckRollup: green, labels: [{ name: "hold" }] })).toBe("1");
+    expect(count({ number: 1, statusCheckRollup: [{ conclusion: "FAILURE" }], labels: [] })).toBe("1");
   });
 
   it("keeps the generic behind-PR sweep away from the npm promotion branch", () => {
