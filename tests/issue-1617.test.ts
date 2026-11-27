@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { REPO_ROOT } from "./helpers/repo-paths.js";
 
 // #1617: the #1589 loop pre-box pass wrongly boxed body-local `let`/`const`
 // names captured by a closure, conflating the hoisted f64 value slot with the
@@ -78,7 +79,7 @@ describe("#1617 — loop pre-box must not box body-local let/const captured by a
   it("validates the playground calendar example (renderCal regression)", async () => {
     // Direct guard for the reported failure: function #25 "renderCal" must
     // produce a module that validates.
-    const src = readFileSync(resolve(__dirname, "../playground/examples/dom/calendar.ts"), "utf-8");
+    const src = readFileSync(join(REPO_ROOT, "website/playground/examples/dom/calendar.ts"), "utf-8");
     await compileValid(src);
   });
 
