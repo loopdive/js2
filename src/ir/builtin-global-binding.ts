@@ -133,25 +133,31 @@ export function scriptVarOfRealmGlobal(sourceFiles: readonly ts.SourceFile[]): t
   return found;
 }
 
-/** The checker may report only lib declarations for a script function, so also check the source binding. */
-export function undeclaredGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
-  return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
+/** A missing checker binding can still be a property installed on the global object or its prototype. */
+export function unchangedUndeclaredGlobal(
+  node: ts.Identifier,
+  checker: ts.TypeChecker,
+  files: readonly ts.SourceFile[],
+): boolean {
+  return (
+    isValueReference(node) &&
+    isUndeclaredInFile(node) &&
+    checker.getSymbolAtLocation(node) === undefined &&
+    !files.some(
+      (file) =>
+        sourceMayPatchPrototype(file, "Object") ||
+        sourceMayWriteGlobalObject(file) ||
+        sourceMayWriteBindingUnseen(file, node.text) ||
+        sourceMayWriteUnspelledMember(file),
+    )
+  );
 }
 
-/** Read the held Object.prototype function only when no source can replace or shadow the global property. */
 export function inheritedMethodRead(
   node: ts.Identifier,
   checker: ts.TypeChecker,
   files: readonly ts.SourceFile[],
 ): string | undefined {
   const method = nativeObjectPrototypeMethod(node.text);
-  if (!method || !isValueReference(node) || !undeclaredGlobal(checker, node)) return undefined;
-  const mayChange = files.some(
-    (file) =>
-      sourceMayPatchPrototype(file, "Object") ||
-      sourceMayWriteGlobalObject(file) ||
-      sourceMayWriteBindingUnseen(file, method) ||
-      sourceMayWriteUnspelledMember(file),
-  );
-  return mayChange ? undefined : objectPrototypeMethodId(method);
+  return method && unchangedUndeclaredGlobal(node, checker, files) ? objectPrototypeMethodId(method) : undefined;
 }

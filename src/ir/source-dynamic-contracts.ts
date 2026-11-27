@@ -43,7 +43,7 @@ import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import { realmBuiltinOperand } from "./realm-static-call.js";
 import {
-  undeclaredGlobal,
+  unchangedUndeclaredGlobal,
   type GlobalBindingResolver,
   inheritedMethodRead,
   pristineBuiltinGlobal,
@@ -413,7 +413,8 @@ export function programDynamicContracts(
       ? {
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
-          unresolvedNameIsAbsent: (node) => !OBJECT_PROTOTYPE_KEYS.has(node.text) && undeclaredGlobal(checker, node),
+          unresolvedNameIsAbsent: (node) =>
+            !OBJECT_PROTOTYPE_KEYS.has(node.text) && unchangedUndeclaredGlobal(node, checker, sourceFiles),
           inheritedGlobalIntrinsic,
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
