@@ -241,7 +241,7 @@ import {
   sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
-import { collectBindingPatternNames } from "./analysis/ast-scope.js";
+import { argumentsObjectOwner, collectBindingPatternNames, ownArgumentsObjectUse } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -3027,39 +3027,17 @@ let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
 // resolve a callee's MISSING formals with the same verdict its own claim uses.
 let currentClaimTypeMap: TypeMap | undefined;
 
-/** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
-export function functionBodyReferencesArguments(body: ts.Node): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isIdentifier(node) && node.text === "arguments") {
-      found = true;
-      return;
-    }
-    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node))) return;
-    ts.forEachChild(node, visit);
-  };
-  visit(body);
-  return found;
-}
-
 /**
- * (#7106 S1e) `arguments.length` read by the claimed top-level function's OWN
- * body (an arrow inside it inherits the binding and is admitted; a nested
- * `function` has its own `arguments` and is not), unshadowed, on a lane with
- * the argc-protocol wrapper. Every other `arguments` use stays rejected.
+ * (#7106 S1e) `arguments.length` read by the claimed top-level function's own arguments object (an arrow inside it
+ * inherits the object; a nested `function` has its own), when that is its only use of the object, on a lane with the
+ * argc-protocol wrapper. Every other `arguments` use stays rejected.
  */
-function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
-  if (currentArgumentsSubject === null) return false;
-  if (!ts.isIdentifier(expr.name) || expr.name.text !== "length") return false;
-  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "arguments") return false;
-  if (scope.has("arguments")) return false;
-  if (currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") !== true) return false;
-  for (let cur: ts.Node | undefined = expr.parent; cur; cur = cur.parent) {
-    if (cur === currentArgumentsSubject) return true;
-    if (ts.isFunctionDeclaration(cur) || ts.isFunctionExpression(cur) || ts.isMethodDeclaration(cur)) return false;
-  }
-  return false;
+function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression): boolean {
+  if (currentArgumentsSubject === null || !ts.isIdentifier(expr.expression)) return false;
+  if (expr.name.text !== "length" || expr.expression.text !== "arguments") return false;
+  if (argumentsObjectOwner(expr.expression) !== currentArgumentsSubject) return false;
+  if (ownArgumentsObjectUse(currentArgumentsSubject) !== "length") return false;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
 /** Resolve whether param `argIdx` of local function `calleeName` is dynamic
@@ -3099,17 +3077,10 @@ function underArityDirectCallIsBuildable(
   // A callee that can reach direct `eval` consumes `__argc` even without a
   // lexical `arguments` read (legacy's `reachesDirectEval`); keep it legacy.
   if (subtreeMentionsIdentifier(declaration.body, "eval")) return false;
-  if (!directCallPublishesArgc(declaration)) return true;
+  if (ownArgumentsObjectUse(declaration) === "none") return true;
   return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
-/**
- * (#7106 S1i) Does an under-arity direct call to `declaration` have to publish
- * `__argc`? Exactly when the callee's own entry prologue consumes it — its
- * body reads its own `arguments` (legacy's `needsImplicitArgumentsObject` for
- * fixed formals; a formal named `arguments` is excluded by
- * `hasFixedIrParameters`' identifier check only when it shadows, so test it).
- */
 function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -3119,12 +3090,6 @@ function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   };
   visit(root);
   return found;
-}
-
-export function directCallPublishesArgc(declaration: ts.FunctionDeclaration): boolean {
-  if (!declaration.body) return false;
-  if (declaration.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
-  return functionBodyReferencesArguments(declaration.body);
 }
 
 function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeMap | undefined): boolean {
@@ -9651,7 +9616,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
   // prepared component cannot name.
-  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr)) {
+  if (
+    booleanReadBesideCarrier(binOp, left, right) &&
+    lowersAsPreparedComponent(expr) &&
+    !readsNonCarrierLocal(left === "boolean" ? expr.right : expr.left)
+  ) {
     return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
@@ -12298,6 +12267,15 @@ function resolvedKindFamily(kind: ResolvedKind): OperandFamily {
   return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
 }
 
+/**
+ * (#7408) Does `operand` read an unannotated local that is not dynamic-shaped? Its family is `unknown` only because
+ * the binary does not trace the initializer; from-ast lowers it in the initializer's representation.
+ */
+function readsNonCarrierLocal(operand: ts.Expression): boolean {
+  const read = unwrapPhase1Parens(operand);
+  return ts.isIdentifier(read) && unannotatedLocal(read) !== undefined && !dynamicShapedValue(read);
+}
+
 /** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
 function unannotatedLocal(identifier: ts.Identifier): ts.VariableDeclaration | undefined {
   const declaration = closureLocalDeclaration(identifier);
@@ -13508,7 +13486,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPropertyAccessExpression(expr)) {
     if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
-    if (phase1ArgumentsLengthRead(expr, scope)) return true;
+    if (phase1ArgumentsLengthRead(expr)) return true;
     // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.
     if (ts.isIdentifier(expr.expression) && !scope.has(expr.expression.text) && ambientNamespaceConstantRead(expr)) {
       return true;

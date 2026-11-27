@@ -339,7 +339,8 @@ import {
   type WrapperAmbience,
   type WrapperConstruction,
 } from "./wrapper-construction.js";
-import { collectPatternBindingNames, resolvesToSourceBinding } from "./analysis/ast-scope.js";
+import { collectPatternBindingNames, ownArgumentsObjectUse, resolvesToSourceBinding } from "./analysis/ast-scope.js";
+import { argumentsLengthRead, refuseArgumentsObjectUse } from "./arguments-object.js";
 import {
   isPatternDeclaration,
   planElementReads,
@@ -362,8 +363,6 @@ import {
   mixedPrimitiveConditionalArms,
   type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
   effectiveIrParamTypeNode,
-  functionBodyReferencesArguments,
-  directCallPublishesArgc,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -1940,6 +1939,7 @@ export function lowerFunctionAstToIr(
     scope.set("this", { kind: "local", value: constructorInitSelf, type: selfType });
   }
   if (options.resolver?.abortedBody?.(fn)) return { main: abortBody(builder), lifted: [], liftedUnitProvenance: [] };
+  refuseArgumentsObjectUse(fn, options.unselected, name);
 
   builder.openBlock();
 
@@ -1992,7 +1992,7 @@ export function lowerFunctionAstToIr(
   const cx: LowerCtx = {
     ...sourceScope,
     builder,
-    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && functionBodyReferencesArguments(fn.body)
+    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && ownArgumentsObjectUse(fn) !== "none"
       ? { argumentsLength: {} }
       : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
@@ -2082,8 +2082,7 @@ export function lowerFunctionAstToIr(
     return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
-  // (#7106 S1e) `arguments.length` is read at ENTRY, before any nested call
-  // can clobber the call site's published count — exactly legacy's prologue.
+  // (#7106 S1e) The count is read at entry, before a nested call can replace it (legacy's prologue).
   if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
   // (#7106 S3c) OrdinaryCallBindThis binds `this` once, at entry.
   if (options.ambientThisStrict !== undefined && ts.isFunctionDeclaration(fn) && !options.moduleInitUnit) {
@@ -6286,24 +6285,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
   const builtinProtoMember = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
   if (builtinProtoMember !== null) return builtinProtoMember;
-  // (#7106 S1e) `arguments.length` — the entry-time count (selector-admitted
-  // only in the claimed function's own body, unshadowed).
-  if (
-    ts.isIdentifier(expr.name) &&
-    expr.name.text === "length" &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "arguments" &&
-    !cx.scope.has("arguments")
-  ) {
-    const entry = cx.argumentsLength?.value;
-    if (entry === undefined) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: arguments.length outside its function's entry prologue (${cx.funcName})`,
-      );
-    }
-    return entry;
-  }
+  const argumentsLength = argumentsLengthRead(expr, cx.argumentsLength?.value, cx.funcName); // (#7562)
+  if (argumentsLength !== undefined) return argumentsLength;
   const constant = constantMemberRead(expr, (name) => cx.scope.has(name), cx.resolver, functionObjectLoweringHost(cx));
   if (constant !== undefined) return cx.builder.emitConst({ kind: "f64", value: constant }, irVal({ kind: "f64" }));
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
@@ -7992,8 +7975,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // time to one IR arg per literal element. The pre-expansion arity
   // check below counts spread elements as their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
-  const underArity = planUnderArityDirectCall(expr, direct, expandedArgExprs.length, cx);
-  if (expandedArgExprs.length !== calleeSig.params.length && underArity === null) {
+  const argumentCount = planDirectCallArgumentCount(expr, direct, expandedArgExprs.length, cx);
+  if (expandedArgExprs.length !== calleeSig.params.length && argumentCount === null) {
     demoteToLegacy(
       "call-arity-unsupported",
       `ir/from-ast: call to ${calleeName} has ${expandedArgExprs.length} args, expected ${calleeSig.params.length} in ${cx.funcName}`,
@@ -8066,13 +8049,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     }
     args.push(argVal);
   }
-  if (underArity !== null) {
+  if (argumentCount !== null) {
     // (#7106 S1i) Legacy's order: supplied arguments, the `undefined` pads,
     // then `__argc` (emitSetArgc) immediately before the call.
     for (let i = args.length; i < calleeSig.params.length; i++) {
       args.push(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined));
     }
-    if (underArity.publishArgc) cx.builder.emitDynPublishArgc(expandedArgExprs.length);
+    if (argumentCount.publishArgc) cx.builder.emitDynPublishArgc(expandedArgExprs.length);
   }
   const result = cx.builder.emitCall(direct.target, args, calleeSig.returnType);
   if (result === null) {
@@ -8088,22 +8071,23 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
 }
 
 /**
- * (#7106 S1i) An under-arity direct call (`isWritable(obj, name)` on four
- * formals): legacy pads each missing formal with the canonical `undefined`
- * and publishes `__argc = actual` when the callee reads its own `arguments`.
- * Admitted only when every missing formal is the dynamic carrier (a concrete
- * formal takes legacy's `0` sentinel, not `undefined`) and the exact callee
- * declaration is known, so the argc decision is the callee's, not a guess.
- * `null` = not an under-arity call this lowering can build.
+ * (#7106 S1i) How a direct call supplies its argument count: an under-arity
+ * call (`isWritable(obj, name)` on four formals) pads each missing formal with
+ * `undefined`, as legacy does, and publishes `__argc = actual` when the callee
+ * reads its own `arguments`; (#7562) unselected (Prepared), an exact-arity call
+ * publishes too, as a dispatched caller's count is still installed. Missing
+ * formals must be the dynamic carrier (not legacy's `0` sentinel) and the
+ * exact callee declaration known. `null` = the call is not planned here.
  */
-function planUnderArityDirectCall(
+function planDirectCallArgumentCount(
   expr: ts.CallExpression,
   direct: IrDirectCallLoweringPlan,
   actual: number,
   cx: LowerCtx,
 ): { readonly publishArgc: boolean } | null {
   const params = direct.signature.params;
-  if (actual >= params.length || expr.arguments.some(ts.isSpreadElement)) return null;
+  const underArity = actual < params.length;
+  if (actual > params.length || (underArity ? expr.arguments.some(ts.isSpreadElement) : !cx.unselected)) return null;
   for (let i = actual; i < params.length; i++) if (params[i]!.kind !== "dynamic") return null;
   const binding = direct.target.binding;
   const declaration = binding.kind === "unit" ? cx.identityContext?.declarationByUnitId.get(binding.unitId) : undefined;
@@ -8115,7 +8099,7 @@ function planUnderArityDirectCall(
   ) {
     return null;
   }
-  return { publishArgc: directCallPublishesArgc(declaration) };
+  return { publishArgc: ownArgumentsObjectUse(declaration) !== "none" };
 }
 
 /**
@@ -16952,6 +16936,7 @@ function liftClosureBody(
     ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
   };
   if (cx.resolver?.abortedBody?.(expr)) return abortBody(builder, closureSubtype);
+  refuseArgumentsObjectUse(expr, cx.unselected, liftedName);
 
   builder.openBlock();
   if (functionMemberClosure) {
