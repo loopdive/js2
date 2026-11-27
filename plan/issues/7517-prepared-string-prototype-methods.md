@@ -1,10 +1,10 @@
 ---
 id: 7517
 title: "Prepared: String.prototype methods read off a dynamic value"
-status: ready
-sprint: current
+status: wont-fix
+sprint: Backlog
 created: 2026-11-26
-updated: 2026-11-26
+updated: 2026-11-27
 priority: high
 horizon: l
 feasibility: hard
@@ -13,8 +13,17 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 depends_on: []
-related: [7486, 7489, 7354, 7352, 7369, 7313]
+related: [7486, 7489, 7354, 7352, 7369, 7313, 7561]
+superseded_by: 7561
 ---
+
+> **Superseded by the Codex string lane on #7561 (see coordination PR #7526); wont-fix (2026-11-27,
+> lead decision).** The lane has already built `trim`, `indexOf`, `substring`, `slice`, `concat` and
+> `fromCharCode` on the #7561 base, with one shared UTF-16 range body used by both emitters. That is
+> the "one implementation" this plan asked for, so implementing it here would build a second one. No
+> code from this plan was pushed; the local emitter-extraction draft was dropped. The measurements
+> below (42 files, S1 34 / S2 8, main `1a726b3e`) and the reviewed design notes remain as input for
+> that lane.
 
 # #7517 — Prepared: String.prototype methods off a dynamic value
 
