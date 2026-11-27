@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * #2106 value-rep P3 — slice S0: `any[]` array-element tag recovery (host mode).
@@ -28,7 +29,7 @@ import { compile } from "../src/index.js";
 async function runStr(src: string): Promise<string | number | undefined> {
   const r = await compile(src, { fileName: "test.ts" });
   expect(r.binary).toBeTruthy();
-  const { instance } = await WebAssembly.instantiate(r.binary, (r.importObject ?? {}) as WebAssembly.Imports);
+  const instance = await instantiateWithRuntime(r);
   return (instance.exports.test as () => string | number | undefined)?.();
 }
 
