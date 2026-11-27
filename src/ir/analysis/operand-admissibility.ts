@@ -556,6 +556,13 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
   return isNullCarrier(consumer);
 }
 
+/** (#7375) Does the lane read a boolean / string compound RHS with ToNumber? Its `native-dynamic-to-number`. */
+export function laneReadsToNumber(
+  supports: ((capability: "native-dynamic-to-number") => boolean) | undefined,
+): boolean {
+  return supports?.("native-dynamic-to-number") === true;
+}
+
 /**
  * (#7375) A numeric compound reads a boolean or string right-hand side with ToNumber, as the binary form reads it
  * (`numericReaderOperandToF64`). Not `+=` (a string concatenates) or `**=` (exact-exponentiation operands).

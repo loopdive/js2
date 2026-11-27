@@ -265,6 +265,7 @@ import {
   nativeI32OperandsAdmissible,
   type OperandFamily,
   compoundWriteAdmissible,
+  laneReadsToNumber,
 } from "./analysis/operand-admissibility.js";
 import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
 import { someBigIntOperand } from "./bigint-operand-refusal.js";
@@ -7677,7 +7678,7 @@ function isPhase1ClosureLiteral(
     additiveLane: additiveLane(),
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
-    nativeDynamicToNumber: currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-to-number") === true,
+    nativeDynamicToNumber: laneReadsToNumber(currentSelectionOptions?.supportsBackendCapability),
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
     wrappedMethodCall: dynamicMethodCallTakesWrapper,
     functionObjectReadLocals: closureFunctionObjectReadLocals(plan),
@@ -9791,7 +9792,7 @@ function isSelectableNumberCompound(
   // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
   // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
   // the generic binary arm would then judge `n + 1` and refuse it.
-  const toNumber = currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-to-number") === true;
+  const toNumber = laneReadsToNumber(currentSelectionOptions?.supportsBackendCapability);
   const rhsFamily = readsDynamicScriptVar(expr.right)
     ? "dynamic"
     : binaryOperandFamily(expr.right, scope, localClasses);

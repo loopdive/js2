@@ -71,6 +71,7 @@ import {
   numericReaderOperandsBoxed,
   booleanReadAsNumber,
   compoundRhsReadsToNumber,
+  laneReadsToNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isBigIntUnsafeDynamicOperator,
@@ -10937,9 +10938,12 @@ function lowerDynamicMemberCompound(
   return true;
 }
 
-/** (#7375) Does the lane read a boolean / string compound RHS with ToNumber (`native-dynamic-to-number`)? */
-function laneReadsToNumber(cx: LowerCtx): boolean {
-  return cx.resolver?.supportsBackendCapability?.("native-dynamic-to-number") === true;
+/** (#7375) An admitted compound RHS as the f64 its ToNumber reads. */
+function admittedCompoundRhsToF64(value: IrValueId, rhs: ts.Expression, cx: LowerCtx): IrValueId {
+  const numeric = numericReaderOperandToF64(value, rhs, cx);
+  // invariant (producer-promise): `compoundWriteAdmissible` admits only RHS families ToNumber reads — #7144.
+  if (numeric === null) throw new Error(`ir/from-ast: admitted compound RHS has no f64 (${cx.funcName})`);
+  return numeric;
 }
 
 /**
@@ -10957,12 +10961,14 @@ function dynamicCompoundStep(
   const rhsValue = lowerExpr(rhs, cx, irDynamic());
   const rhsType = cx.builder.typeOf(rhsValue);
   const rhsFamily = irOperandFamily(rhsType, rhs);
-  if (!compoundWriteAdmissible(token, "dynamic", rhsFamily, laneReadsToNumber(cx))) {
+  if (
+    !compoundWriteAdmissible(token, "dynamic", rhsFamily, laneReadsToNumber(cx.resolver?.supportsBackendCapability))
+  ) {
     const detail = `${ts.tokenToString(token)} of ${describeIrType(rhsType)} has no carrier (${cx.funcName})`;
     demoteToLegacy("compound-assign-unsupported", `ir/from-ast: dynamic compound ${detail}`);
   }
   // (#7375) An admitted boolean or string RHS enters the step as its ToNumber, an f64 the step reads.
-  const operand = compoundRhsReadsToNumber(token, rhsFamily) ? numericReaderOperandToF64(rhsValue, rhs, cx)! : rhsValue;
+  const operand = compoundRhsReadsToNumber(token, rhsFamily) ? admittedCompoundRhsToF64(rhsValue, rhs, cx) : rhsValue;
   const result = lowerDynamicBinaryValues(compoundStepOperator(token), old, operand, left, rhs, cx);
   // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
   if (result === null) throw new Error(`ir/from-ast: admitted dynamic compound has no lowering (${cx.funcName})`);
@@ -13568,7 +13574,7 @@ function lowerCompoundAssignment(
   // (#7144) Which slot / value families each operator writes is
   // `compoundWriteAdmissible`; the arms below are its producers.
   const slotFamily = irOperandFamily(logicalType, id);
-  const toNumber = laneReadsToNumber(cx);
+  const toNumber = laneReadsToNumber(cx.resolver?.supportsBackendCapability);
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "string") {
     const lhs =
       storage.kind === "moduleGlobal"
@@ -13674,10 +13680,7 @@ function lowerCompoundAssignment(
     );
   }
   // An f64 slot is f64 already; (#7375) an admitted boolean or string RHS is read with ToNumber.
-  const numericRhs = numericReaderOperandToF64(rhsValue, rhs, cx);
-  // invariant (producer-promise): `compoundWriteAdmissible` admits only RHS families ToNumber reads — #7144.
-  if (numericRhs === null) throw new Error(`ir/from-ast: admitted numeric compound RHS has no f64 (${cx.funcName})`);
-  const result = emitNumberBinary(binaryOp, lhs, numericRhs, id, rhs, cx);
+  const result = emitNumberBinary(binaryOp, lhs, admittedCompoundRhsToF64(rhsValue, rhs, cx), id, rhs, cx);
   if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
   else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
   else cx.builder.emitRefCellSet(storage.value, result);
