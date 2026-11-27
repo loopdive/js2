@@ -650,3 +650,19 @@ Other decisions:
   shortens the range, an IR-only dispatch does not.
 - **Nits.** The issue title now says weekly. The pages test name no longer
   says daily. Rollback references the new Part A tip `27a77da585`.
+
+## Follow-up: 102 shards for the queue's edition gate (owner decision 2026-11-27)
+
+The first queue run under the new cadence (run 45930010495, PR #7518) took
+19 minutes from enqueue to merge. Its 8 IR shards ran between 8.5 and 14.75
+minutes each; the fixed cost of a shard (checkout, Node, install, bundles) is
+about 35 seconds. The slowest shard sets the wait, and the runners are there
+(120), so `scripts/test262-current-edition.json` now says `"chunks": 102`,
+the same number of shards the legacy matrix used.
+
+- Expected: about 90 ES5 tests per shard, one to two minutes each; about one
+  more runner-hour per merge for the fixed cost (102 x 35 s).
+- The shards read `chunks` from that one file (matrix, `TEST262_CHUNK_TOTAL`
+  and the merge job's expected count), so nothing else changes.
+- During the weekly full run (80 runners busy) the gate's shards run in waves.
+- The numbers above for 8 shards in this file are the record of the first cut.
