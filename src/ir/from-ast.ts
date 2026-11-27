@@ -16709,7 +16709,7 @@ function lowerClosureExpressionWithSignature(
     ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
     ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
   });
-  if (functionObjects.createsFunctionObjects(cx.resolver))
+  if (functionObjects.isFunctionObject(cx.resolver, expr))
     functionObjects.emitFunctionObjectInit(cx.builder, closure, expr);
   return closure;
 }
