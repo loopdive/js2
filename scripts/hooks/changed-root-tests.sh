@@ -3,6 +3,13 @@
 #
 # The full tests/*.test.ts population is too large for every commit, so this
 # mirrors CI #3008: run only root test files added or modified by the branch.
+#
+# The base is the merge-base with main, so the selection is everything between
+# main and this checkout — in a merge group that includes every PR queued ahead
+# of this one (#7558). Every failure to compute the selection exits 1: a gate
+# that passes having selected nothing because git failed is the defect.
+#
+#   --list   print the selection (one path per line) and exit, running nothing
 
 set -u
 
@@ -40,11 +47,20 @@ fi
 
 # Comparing the base to the working tree includes both the existing branch
 # commits and the staged commit that pre-commit is about to create.
+if ! diff_out="$(git diff --name-only --diff-filter=AM "$base" -- tests/)"; then
+  echo "changed-root-tests: git diff against $base failed; refusing to pass unchecked." >&2
+  exit 1
+fi
 changed="$(
-  git diff --name-only --diff-filter=AM "$base" -- tests/ |
+  printf '%s\n' "$diff_out" |
     grep -E '^tests/[^/]+\.test\.ts$' |
     grep -vE '^tests/(linear-|c-abi\.|simd|test262-(chunk|vitest))' || true
 )"
+
+if [ "${1:-}" = "--list" ]; then
+  if [ -n "$changed" ]; then printf '%s\n' "$changed"; fi
+  exit 0
+fi
 
 if [ -z "$changed" ]; then
   echo "changed-root-tests: no root test files changed."

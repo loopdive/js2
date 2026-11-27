@@ -71,8 +71,10 @@ env:
 
 concurrency:
   # Long build, and the artifact is content-keyed, so let a newer dispatch win.
+  # (#7558) Never on push: a run is ~25 minutes, longer than the interval
+  # between merges, so cancelling would let no post-merge run finish.
   group: quickjs-wasi-artifact-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   build:

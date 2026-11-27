@@ -167,7 +167,9 @@ describe("#6799 .husky/pre-push wiring", () => {
 
   it("(#7558) the changed-root-test bound fails the push, it never skips", () => {
     const roots = hook.slice(hook.indexOf("(6c)"));
-    expect(roots).toContain("timeout 1200 pnpm run -s test:changed-root");
+    expect(roots).toContain('"$bound" 1200 pnpm run -s test:changed-root');
+    // No bounding tool refuses the push instead of running unbounded.
+    expect(roots).toContain("no \\`timeout\\` or \\`gtimeout\\` on PATH");
     const onTimeout = roots.slice(roots.indexOf("-eq 124"), roots.indexOf("\nfi", roots.indexOf("-eq 124")));
     expect(onTimeout).toContain("exit 1");
   });

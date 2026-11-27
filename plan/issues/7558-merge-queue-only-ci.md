@@ -158,8 +158,15 @@ After the existing fast gates, the hook runs, in this order:
 3. `pnpm run test:changed-root` — the existing selector
    (`scripts/hooks/changed-root-tests.sh`), which already runs each changed
    root test file alone and stops at the first failure — under a 20-minute
-   bound (`timeout`, when installed). Expiry is a failure with a message, not a
-   skip. No escape flag: none exists for pre-push.
+   bound (`timeout` or `gtimeout`; neither present refuses the push). Expiry is
+   a failure with a message, not a skip. No escape flag: none exists for
+   pre-push.
+
+The section judges the pushed refs from the hook's stdin: deletes and tags skip
+it; a pushed branch that is not HEAD, or a dirty tracked tree, is refused
+(the tests read the working tree); no main ref fails closed. Accepted cost:
+every push re-runs every changed root test of the branch, not only the ones
+the push itself touched — ~45 s per file per push.
 
 ### auto-enqueue interplay
 
@@ -213,3 +220,25 @@ the `needs` cascade); no copied job bodies; no step left that can never run
 - Only the PR's own run can prove that the PR-level contexts really publish
   as `skipped`/green within minutes and that the next `merge_group` run is
   complete (`quality` including the changed-root step).
+
+## Review r1 (2026-11-27) — fixed
+
+- B1: the queue's changed-root selection was `HEAD^1`, which in a multi-PR
+  group covers only the last PR while the earlier PRs' runs are cancelled on
+  merge. Now a selection step fetches `origin/main` and deepens the checkout,
+  and the selector diffs against the merge-base with main (everything not yet
+  on main); every failure to resolve the base or compute the diff exits 1.
+  Tested by `tests/hooks/changed-root-tests.test.ts`.
+- B2: both npm-compat promotion gates (`npm-compat-refresh.yml`,
+  `npm-compat-promote.yml`) treat a `hold` label like a failing check, with an
+  identical jq line in each; `tests/npm-compat-partials.test.ts` executes it.
+- N1: `equivalence-gate` runs (and fails) when `changes` failed or was
+  cancelled; the model test now forces each upstream job to fail and proves no
+  required context turns into a skip.
+- N2: `quickjs-wasi-artifact.yml` no longer cancels in progress on push.
+- N3: pre-push reads the pushed refs (above); `tests/hooks/pre-push-pushed-refs.test.ts`.
+- N4: root `tests/issue-*.test.ts` files run only in `quality`'s fatal step;
+  the advisory `issue-tests-changed` matrix keeps `tests/ir/` files. Harness
+  preparation is skipped when no root test changed.
+- N5: corrected the cheap-gate, `issue-tests.yml`, test262-workflow,
+  auto-enqueue and dev-self-merge statements.

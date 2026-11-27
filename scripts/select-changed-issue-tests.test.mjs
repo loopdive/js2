@@ -306,11 +306,14 @@ function discoveryResult(directory, value) {
   return { ...result, output: readFileSync(output, "utf8") };
 }
 
-test("actual discovery publishes the same ordered paths with contiguous per-file ordinals", () =>
+test("actual discovery publishes the tests/ir paths with contiguous per-file ordinals", () =>
   fixture(({ create, run, directory }) => {
-    const expected = ["tests/ir/a.test.ts", "tests/issue-b.test.ts"];
-    expected.forEach(create);
-    const files = JSON.parse(success(run(["--changed", "--strict", "--json"], [...expected].reverse())));
+    // (#7558) root tests/issue-* files are validated here but run in quality's
+    // fatal changed-root step, so only tests/ir files reach the advisory matrix.
+    const changed = ["tests/ir/a.test.ts", "tests/ir/c.test.ts", "tests/issue-b.test.ts"];
+    const expected = ["tests/ir/a.test.ts", "tests/ir/c.test.ts"];
+    changed.forEach(create);
+    const files = JSON.parse(success(run(["--changed", "--strict", "--json"], [...changed].reverse())));
     const result = discoveryResult(directory, files);
     success(result);
     const output = Object.fromEntries(

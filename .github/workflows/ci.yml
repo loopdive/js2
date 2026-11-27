@@ -550,8 +550,25 @@ jobs:
         # equivalence shards.
         run: pnpm exec vitest run tests/issue-1580.test.ts
 
-      - name: Prepare Test262 harness inputs for changed root tests
+      - name: Select changed root test files (#3008/#7558)
+        id: root_tests
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'merge_group'
+        # The selector diffs against the merge-base with a FRESH origin/main, so
+        # every queue run covers everything between main and its own commit —
+        # including the PRs ahead of it in the same group, whose own runs are
+        # cancelled when the group merges first. That needs real history on
+        # both sides, not the depth-2 checkout: a failed fetch, an unresolvable
+        # merge-base or a failed diff fails this step (fail closed).
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=200 origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --no-tags --deepen=200 origin "$GITHUB_SHA"
+          sh scripts/hooks/changed-root-tests.sh --list > "$RUNNER_TEMP/changed-root-tests.txt"
+          echo "count=$(grep -c . "$RUNNER_TEMP/changed-root-tests.txt" || true)" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/changed-root-tests.txt"
+
+      - name: Prepare Test262 harness inputs for changed root tests
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'merge_group' && steps.root_tests.outputs.count != '0'
         run: |
           # The root-test gate below executes Test262 integration tests when a
           # PR changes them. Keep the regular checkout lightweight, but prepare
@@ -579,11 +596,9 @@ jobs:
         # `issue-tests-gate` runs every root file once its baseline is seeded.
         # (#7558) Runs in the merge queue, not on the PR: the pre-push hook runs
         # the same selector locally, and this is the gate for pushes without
-        # it (forks). HEAD^1 is the queue commit's first parent, so the diff is
-        # exactly the queued change-set (depth 2, see the checkout).
-        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'merge_group'
+        # it (forks). The selection step above prepared the history it diffs.
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'merge_group' && steps.root_tests.outputs.count != '0'
         env:
-          CHANGED_ROOT_TESTS_BASE: HEAD^1
           # Keep this broad, toolchain-light gate on the native engine. The
           # dedicated QuickJS artifact workflow exercises the default engine;
           # the selector tests below still delete this env to prove the default.
@@ -862,9 +877,12 @@ jobs:
               JSON.stringify(files) !== JSON.stringify([...files].sort())) {
             throw new Error("Invalid changed issue-test selection");
           }
-          console.log(`Selected ${files.length} changed issue test file(s):`, files);
-          const matrix = { include: files.map((file, ordinal) => ({ ordinal, file })) };
-          appendFileSync(process.env.GITHUB_OUTPUT, `files=${JSON.stringify(files)}\ncount=${files.length}\nmatrix=${JSON.stringify(matrix)}\n`);
+          // (#7558) Changed root tests/issue-*.test.ts files run fatally, each
+          // alone, in quality's changed-root step; only tests/ir/ files run here.
+          const advisory = files.filter((file) => file.startsWith("tests/ir/"));
+          console.log(`Selected ${advisory.length} changed tests/ir file(s):`, advisory);
+          const matrix = { include: advisory.map((file, ordinal) => ({ ordinal, file })) };
+          appendFileSync(process.env.GITHUB_OUTPUT, `files=${JSON.stringify(advisory)}\ncount=${advisory.length}\nmatrix=${JSON.stringify(matrix)}\n`);
           NODE
 
   issue-tests-changed:
@@ -1199,13 +1217,22 @@ jobs:
 
   equivalence-gate:
     needs: [changes, equivalence-shard]
-    if: always() && needs.changes.outputs.code == 'true'
+    # (#7558) Required, and a skipped required check satisfies the ruleset: so
+    # skip only on a pull request (`changes` skipped) or a validated
+    # npm-compat-only change (code=false). A failed or cancelled `changes`
+    # runs this job, which then fails.
+    if: always() && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Verify every equivalence shard passed its baseline gate
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
           SHARD_RESULT: ${{ needs.equivalence-shard.result }}
         run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::the changes job did not succeed (result: $CHANGES_RESULT), so the equivalence suite was not run"
+            exit 1
+          fi
           if [ "$SHARD_RESULT" != "success" ]; then
             echo "::error::one or more equivalence shards failed their local baseline gate (matrix result: $SHARD_RESULT)"
             exit 1

@@ -90,7 +90,8 @@ function parseJobs(text: string): Job[] {
 
 const U = Symbol("unknown");
 type Value = string | boolean | typeof U;
-type RunState = "run" | "maybe" | "skipped";
+/** "failed": the job ran and failed — forced by a scenario, never derived. */
+type RunState = "run" | "maybe" | "skipped" | "failed";
 
 const STATUS_FUNCTION = /\b(?:always|success|failure|cancelled)\(\)/;
 
@@ -150,12 +151,16 @@ function evaluate(condition: string, resolve: (id: string) => Value): Value {
   return or();
 }
 
-function runStates(jobs: Job[], event: Event): Map<string, RunState> {
+function runStates(jobs: Job[], event: Event, failed: ReadonlySet<string> = new Set()): Map<string, RunState> {
   const byName = new Map(jobs.map((j) => [j.name, j]));
   const states = new Map<string, RunState>();
   const state = (name: string): RunState => {
     const known = states.get(name);
     if (known) return known;
+    if (failed.has(name)) {
+      states.set(name, "failed");
+      return "failed";
+    }
     const job = byName.get(name)!;
     const needStates = job.needs.map(state);
     const resolve = (id: string): Value => {
@@ -165,11 +170,11 @@ function runStates(jobs: Job[], event: Event): Map<string, RunState> {
       const result = /^needs\.([a-z0-9-]+)\.result$/.exec(id);
       if (result) {
         const s = state(result[1]!);
-        return s === "run" ? "success" : s === "skipped" ? "skipped" : U;
+        return s === "run" ? "success" : s === "skipped" ? "skipped" : s === "failed" ? "failure" : U;
       }
-      // A skipped job's outputs are empty strings.
+      // A skipped or failed job's outputs are empty strings.
       const output = /^needs\.([a-z0-9-]+)\.outputs\./.exec(id);
-      if (output && state(output[1]!) === "skipped") return "";
+      if (output && ["skipped", "failed"].includes(state(output[1]!))) return "";
       return U; // inputs, vars, job outputs, event payload
     };
     let s: RunState;
@@ -179,7 +184,7 @@ function runStates(jobs: Job[], event: Event): Map<string, RunState> {
     else {
       s = cond === U ? "maybe" : "run";
       if (!STATUS_FUNCTION.test(job.condition)) {
-        if (needStates.includes("skipped")) s = "skipped";
+        if (needStates.includes("skipped") || needStates.includes("failed")) s = "skipped";
         else if (needStates.includes("maybe")) s = "maybe";
       }
     }
@@ -332,6 +337,31 @@ describe("#7558 required contexts: slim pull request, full merge queue", () => {
       for (const p of prods) expect(p.state, p.file).not.toBe("skipped");
     });
   }
+
+  it("merge_group: no single failed upstream job turns a required context into a skip", () => {
+    // A skipped required check satisfies the ruleset, so a context whose
+    // upstream failed or was cancelled must RUN and fail, never skip.
+    for (const [context, files] of Object.entries(PRODUCERS))
+      for (const file of files) {
+        const text = read(file);
+        if (!triggers(text).has("merge_group")) continue;
+        const jobs = parseJobs(text);
+        const job = jobs.find((j) => j.display === context);
+        if (!job) continue;
+        for (const failedJob of ancestors(jobs, job.name))
+          expect(
+            runStates(jobs, "merge_group", new Set([failedJob])).get(job.name),
+            `${context} (${file}) after ${failedJob} failed`,
+          ).not.toBe("skipped");
+      }
+  });
+
+  it("the failure model has teeth: the pre-#7558 equivalence-gate condition is caught", () => {
+    const jobs = parseJobs(read("ci.yml")).map((j) =>
+      j.name === "equivalence-gate" ? { ...j, condition: "always() && needs.changes.outputs.code == 'true'" } : j,
+    );
+    expect(runStates(jobs, "merge_group", new Set(["changes"])).get("equivalence-gate")).toBe("skipped");
+  });
 
   it("pull_request: quality and equivalence-gate are skipped; the quick test and cla-check run", () => {
     expect(productions("pull_request", "quality").map((p) => p.state)).toEqual(["skipped"]);

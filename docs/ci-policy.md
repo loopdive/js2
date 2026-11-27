@@ -26,12 +26,17 @@ real on the merged tree.
 
 **Where each check runs (#7558, owner decision 2026-11-27).** The merge queue
 is the only authoritative gate. On `pull_request` only `cla-check` and
-`cheap gate (main-ancestor + lint)` run (typecheck + lint, ~1 min);
+`cheap gate (main-ancestor + lint)` run — typecheck + lint, ~1 min, and only
+when the PR touches a test262-sharded path; otherwise `test262-pr-stub.yml`
+publishes the cheap gate as a green stub, so a docs- or tests-only PR gets no
+typecheck at all on the PR;
 `quality` and `equivalence-gate` report `skipped` (ci.yml's `changes` and
 `quality` jobs carry `if: github.event_name != 'pull_request'`, everything
 else follows through `needs`); `merge shard reports` and `check for test262
 regressions` are green no-ops, published by `test262-sharded.yml` or, for a
-path-excluded PR, `test262-pr-stub.yml`. In `merge_group` all six run in full.
+path-excluded PR, `test262-pr-stub.yml`. The one other PR-triggered run is
+`issue-tests.yml`, and only when a PR changes that detector's own five
+machinery files. In `merge_group` all six run in full.
 Fast feedback before the queue comes from the pre-push hook (`.husky/pre-push`:
 typecheck, lint, format, ratchets, size budgets, issue-id gates and the
 changed root test files, each alone). Forks have no hook: their only real
@@ -194,9 +199,9 @@ On a pull request test262 never runs (#2519, #7551): the two required
 contexts are green no-ops, and since #7558 the same holds for every check but
 `cla-check` and the cheap gate (§1, "Where each check runs").
 
-Two test262 workflows currently run on PRs:
+The test262 workflows:
 
-- **`test262-sharded.yml` is the authoritative PR gate.** The required
+- **`test262-sharded.yml` is the authoritative gate, in the merge queue.** The required
   check is `merge shard reports`. Since #7551 it carries the IR-path
   current-edition gate in the merge queue, and the legacy matrix runs weekly
   (see "The merge-queue test262 gate" below). The queue-model notes that
@@ -376,8 +381,8 @@ Two test262 workflows currently run on PRs:
     than the inline catastrophic guard's 200. It does not fail on individual
     pass→fail rows while net ≥ 0. It always publishes a context: on the
     intentional no-shards path it exits cleanly without looking for artifacts.
-- **`test262-differential.yml` runs in parallel** as a diagnostic signal
-  (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
+- **`test262-differential.yml` is `workflow_dispatch`-only** — a diagnostic
+  signal (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
   Useful for triaging "which exact tests flipped on my branch?" but the
   sharded `merge shard reports` aggregate is what gates the merge.
 - **`test262-pr-stub.yml` is the path-excluded companion producer (#4).**

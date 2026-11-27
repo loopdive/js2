@@ -50,7 +50,8 @@ name: Auto-enqueue green PRs
 on:
   # PRIMARY (responsive): fire right after the workflows whose completion can make
   # a PR enqueueable. "Test262 Sharded" + "CI" cover ALL required checks
-  # (`cheap gate` + `merge shard reports`, and `quality`). With grace 0 (#2786)
+  # (`cheap gate` + `merge shard reports`, and `quality`; since #7558 `quality`
+  # and `equivalence-gate` complete as `skipped` on a PR). With grace 0 (#2786)
   # this run enqueues every just-green PR; it is the primary enqueue path.
   #
   # NOTE — this allowlist is a maintenance trap by construction: it must be kept
