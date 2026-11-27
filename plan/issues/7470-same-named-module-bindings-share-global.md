@@ -1,7 +1,8 @@
 ---
 id: 7470
 title: "Same-named top-level bindings in different files share one module global"
-status: in-progress
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-26
 updated: 2026-11-27
@@ -332,15 +333,19 @@ only), 88 cases. Each row is compared with node 22's answer for the same sources
 - **Single-file bytes: identical.** 389 test262 files × gc/standalone = 778 compiles, base vs new, 0 differences:
   the 240-file sample plus 149 module-goal files (`flags: [module]`, with `export`/`import`, no fixture) from
   `language/module-code`, `language/export` and `language/import`.
-- **compileMulti tests: no change.** The 48 related test files that call `compileMulti` (#4133, #3505, #2930, #2931,
-  #6669, #6684, #3364, #4204, #1282, #4018, #4182, namespace, lodash, …) give the same 34 failures on base and new;
-  all are environment failures (missing FYI fixtures and packages). The other 337 tests pass on both.
+- **compileMulti tests: no new failures.** All 260 test files that call `compileMulti` were run on base and new.
+  - The 48 directly related files (#4133, #3505, #2930, #2931, #6669, #6684, #3364, #4204, #1282, #4018, #4182,
+    namespace, lodash, …) give the same 34 failures on both, and 337 passes.
+  - The other 212 files: every failure that appeared only on new disappeared once the QuickJS eval adapter was built
+    for the new compiler bundle. What remains is a subset of base's failures. 3 tests (#6834) fail on base only.
+  - The failures common to both are environment failures: missing FYI fixtures, packages and the full test262 lanes.
 - **lodash-es: no change.**
   - The upstream suite (`tests/dogfood/lodash-upstream-suite.mjs --package=lodash-es`) compiles and validates on
     both. The binary shrinks from 3,241,627 to 3,229,910 bytes.
   - It passes 0/62 on both, because this container does not provide the `js2wasm:runtime-eval` import.
   - `tests/lodash-es-e2e.test.ts`, `tests/issue-6985-lodash-es-o4.test.ts` and
     `tests/issue-3995-lodash-es-global-builtin-alias.test.ts` pass, with 12 passed and 2 skipped.
+- **Equivalence gate:** `node scripts/equivalence-gate.mjs` exits 0. There are no new regressions: 4,849 pass and 20 fail, against 22 known failures in the baseline, 2 of which now pass.
 - **Scoped test262 diff, per test** (`language/module-code|language/import|language/export`, 731 verdicts):
   - standalone: 437 pass before and after, 0 status changes;
   - `TEST262_COMPILER_PATH=ir`: 176 pass before and after, 0 status changes.
