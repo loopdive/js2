@@ -7811,3 +7811,19 @@ not done yet (next part). `from-ast.ts` 17172 → 17152.
   l0a-relational 9, l0b-expressions 6, l0b-statements 7, l0c-captured-writes 5, l0c-function-declarations 5,
   m-refusals 42, o-objects 13, p 25, r-provider-census 117, str 17, t 105, ty 61, w 8.
 - Gates exit 0, also with `LOC_GATE_BASE` = origin/main (a9cdc8857a).
+
+### L0c part 1, review round 1
+
+- **A1 (wrong value, fixed).** `localDeclarationCaptures` took a function's `let`/`const` too and hoisted it as
+  `undefined`, losing its TDZ. It now takes `var` declarations only; a nested declaration that reads or writes a
+  `let`/`const` ends at the run-time abort (`typeof x` before `let x`: node `tdz`, ours: abort).
+- **A2 (wrong value, fixed).** "Hoisted" was decided by name, so a block `let x` wrote the function's cell of `var x`.
+  The cell now records the function body it was bound for; a declaration writes it only when it is a `var` of that
+  body. The block `let` refuses as a redeclaration (abort).
+- Quality: orphaned doc comments moved back; `validateExactCapturePlan` lives in `closure-captures.ts`; the stale
+  slice-3 comment is replaced; the dynamic conditional join takes a call through a binding of the dynamic value and
+  `laneMixedConditional` is back to L0b's rule; `hoistFunctionDeclarations` picks its declarations, refuses a
+  parameter's name before lowering, and answers a Set; the capture scan is uncached (no dead parameter) and
+  `enclosingFunctionBody` has no defensive test.
+- Proof: the 404 probes are identical to part 1 (0 wrong); runner targeted 44, sample 87, unchanged; ordinary bytes
+  identical (33 programs × 2); the 17 modified root test files each exit 0 alone; gates exit 0.
