@@ -8,6 +8,7 @@ import type { AdditiveProof } from "./analysis/operand-admissibility.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { emitUndefinedStringOr } from "./f64-undefined-marker.js";
 import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import { irVal, type IrType, type IrValueId } from "./nodes.js";
 import { STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER } from "./regexp-runtime-contract.js";
@@ -50,10 +51,12 @@ export function lowerPrimitiveToString(
           ? builder.emitUnary("f64.convert_i64_s", value, f64)
           : null;
   if (asF64 === null) return null;
-  const result = builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_STRING_FN), [asF64], { kind: "string" });
-  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-  if (result === null) throw new Error(`ir: ${IR_NUMBER_TO_STRING_FN} produced no result`);
-  return result;
+  return emitUndefinedStringOr(builder, value, () => {
+    const result = builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_STRING_FN), [asF64], { kind: "string" });
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    if (result === null) throw new Error(`ir: ${IR_NUMBER_TO_STRING_FN} produced no result`);
+    return result;
+  });
 }
 
 /**

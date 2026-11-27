@@ -192,6 +192,7 @@ import {
 import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
 import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue, moduleInitPrologueForcesInit } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
+import { undefinedCapableSlotType } from "./value-tags.js"; // (#7464)
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
@@ -3408,7 +3409,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // declaration-vs-declaration half of #4204's assignment rule.
       redeclarationWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
-      resolveWasmType(ctx, varType)
+      undefinedCapableSlotType(ctx, decl.name, resolveWasmType(ctx, varType))
     );
   }
 

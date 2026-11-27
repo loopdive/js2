@@ -1,7 +1,8 @@
 ---
 id: 7464
 title: "f64 `undefined` sentinel residuals: per-evaluation statics, `for (var …)` heads, String/JSON/typeof, same-named module `let`s"
-status: ready
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-26
 updated: 2026-11-26
@@ -12,7 +13,11 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7366, 7360, 7406]
+related: [7366, 7360, 7406, 7470, 7529]
+# 2026-11-26 (review): a module binding's slot type calls `undefinedCapableSlotType` directly instead of through a
+# one-line pass-through in module-var-undefined-seed.ts, which costs declarations.ts one import line (+1).
+loc-budget-allow:
+  - src/codegen/declarations.ts
 ---
 
 # #7464 — what the f64 `undefined` sentinel still gets wrong
@@ -34,8 +39,10 @@ with the same lowering) to an f64 that carries the `undefined` sentinel (`UNDEF_
 
 1. **Per-evaluation statics.** A class declared in a function body gets its static `undefined` seed once, from the
    module prologue, and not each time the class declaration is evaluated.
-2. **`for (var …)` heads.** A `var` head that declares several bindings, one of them `number | undefined`, emits
-   instructions that fail validation. The single-binding `var` head is correct.
+2. **`for (var …)` heads.** `hoistVarDeclarations` gives a `number | undefined` var an externref slot and stores
+   `undefined` into it at function entry. `compileForStatement` then retyped that slot to f64, so the entry store
+   failed validation. This holds for one binding or several (re-measured 2026-11-26; the earlier note that the
+   single-binding head is correct was wrong).
 3. **Readers of the sentinel.** `String()`, `JSON.stringify` (a property holding `undefined` must be skipped),
    `typeof`, and the parameter-property assignment read the raw f64 and do not test for the sentinel. These are the
    sentinel readers that #7360 and #7366 did not audit. #7406 is the boolean counterpart.
@@ -45,12 +52,72 @@ with the same lowering) to an f64 that carries the `undefined` sentinel (`UNDEF_
 
 ## Acceptance criteria
 
-- Each row above answers like node on gc and standalone.
-- Every row is pinned by a test, and the pins fail on `origin/main` 313281866f.
-- No test262 byte change outside the affected shapes.
-- The reviewer's nits from the same round are folded in, or answered:
+- Each row above answers like node on gc and standalone. **Met for cases 1–3, except two case-3 rows moved to
+  [#7529](./7529-f64-undefined-leftovers-json-param-props-ctor-closures.md):** `JSON.stringify` of an `undefined`
+  property (a native codec defect) and the `number | undefined` parameter property (blocked on that defect). Case 4
+  moved to #7470.
+- Every row is pinned by a test, and the pins fail on `origin/main` 313281866f. **Met** for every fixed row (the two
+  `Number()` rows guard the brand drop and pass on main by construction).
+- No test262 byte change outside the affected shapes. **Met** on 240 test262 files × gc/standalone. Two typed shapes
+  outside the listed rows do change bytes, both towards node: `String`/`+`/template of a `for-of` element over a
+  numeric array (holes now read `undefined`, pinned), and a dead sentinel test on `g ?? 0` where TypeScript has
+  already narrowed a branded binding to `number` (code size only).
+- The reviewer's nits from the same round are folded in, or answered. **All three folded:**
   - `moduleF64UndefinedSeedGlobals` walks the program three times per compile (declarations.ts, the prologue gate,
-    the emit). One walk is enough.
+    the emit). One walk is enough. *Folded: the walk is cached per compile.*
   - `class-bodies.ts` and `class-constructor-wrapper.ts` still write the sentinel inline. They should call
-    `pushUndefF64`, as the seed and the loops do.
+    `pushUndefF64`, as the seed and the loops do. *Folded.*
   - The header of `module-var-undefined-seed.ts` (lines 46–51) still lists the f64 slot as an open residual.
+    *Updated.*
+- Code quality (from the plan: no budget grants): one +1-line `loc-budget-allow` on `declarations.ts`, the import
+  that replaced a one-line pass-through the first review asked to remove (see the frontmatter).
+
+## Implementation Plan
+
+Re-measured on origin/main 6694a8b839 (2026-11-26); every row reproduces on gc and standalone.
+
+| Case | Module | Change |
+| --- | --- | --- |
+| 1 | `declarations/module-var-undefined-seed.ts`, `statements/nested-declarations.ts` | The seed registry keeps each static's declaration. `emitClassStaticF64UndefinedSeeds` re-seeds a function-local class's statics at each evaluation, before its static initialisers. Reuses `pushUndefF64` and the existing registry; there is no second list. |
+| 2 | `statements/loops.ts` | A `var` head that reuses a hoisted externref slot keeps that type, as the `seedUninitialisedForLet` doc already says. |
+| 3 | the shared sentinel readers (String/concat coercion, JSON, `typeof`) and the parameter-property store | Test the sentinel where an f64 is read as a value, reusing `emitIsUndefF64`/`f64MayHoldUndefined`. |
+| 4 | — | Split out as #7470: it is not sentinel-specific (every same-named top-level binding across files shares one global) and needs about 8 places in 7 files. |
+
+Code-quality criterion: no new predicate or seed list beside the existing ones, no budget grants, gc bytes
+unchanged outside the affected shapes (checked on 240 test262 files × gc/standalone).
+
+Out of scope, noted: `` `${g}` `` with `g: number | undefined` is a compile error ("Template literal numeric
+substitution requires number_toString"). `static a: number` (no `undefined` in the type) is not re-seeded either.
+
+## Results (2026-11-26, merged with origin/main 1a726b3e64)
+
+gc and standalone answer the same on every row.
+
+| Case | Program | node | main | now |
+| --- | --- | --- | --- | --- |
+| 1 | function-local class `static a: number \| undefined`, `f(true) + f(false) * 10` | 77 | wrong | 77 |
+| 2 | `for (var g: number \| undefined, i = 0; …)` and the single-binding head | 2 | invalid Wasm | 2 |
+| 3 | module `let`: `String(g)`, `"" + g`, `g + ""` | "undefined" | "NaN" | "undefined" |
+| 3 | field / static: `String`, `typeof` | "undefined" | "NaN" / "number" | "undefined" |
+| 3 | `String(+g)`, `String(Number(g))` (ToNumber drops the brand) | "NaN" | "NaN" | "NaN" |
+
+Case 3 brands an f64 slot that can hold `undefined` once, at its declaration (`undefinedCapableSlotType` in
+`value-tags.ts`, applied to fields, statics and module bindings). The existing `emitNumberToStringSentinelAware`
+reader now runs on every lane: its JS-host-only gate was dead, because `coercionMode()` always returns `"standalone"`.
+The IR's ToString and `typeof` share `emitUndefinedStringOr` (`src/ir/f64-undefined-marker.ts`).
+
+Checks: 240 test262 files × gc/standalone byte-identical to origin/main; pin tests fail on main and pass now.
+
+### Left open (filed as #7529, except the template literal)
+
+- **JSON.stringify:** the native codec writes `null` for a property that holds `undefined`, even for
+  `JSON.stringify({ a: undefined })`. Its `$AnyValue` arm maps tag 1 to `"null"` (`json-codec-native.ts` ~L411).
+  This is a codec defect, not a sentinel one.
+- **Parameter properties:** a `number | undefined` parameter property has no struct field (#7215), so `??`, `String`
+  and `typeof` see NaN. Giving it a branded field fixes those but turns `JSON.stringify(new C(undefined))` into
+  `{"a":null}` until the codec defect is fixed.
+- **Omitted f64 constructor arguments** are padded with `0`, not the sentinel (`new-super.ts` ~L7051), and
+  `function-arity-mismatch` pins that 0.
+- `` `${g}` `` is still a compile error.
+- **Closure capture:** a closure that reads a captured, never-assigned `number | undefined` `var` or `let` sees NaN,
+  not `undefined`, on main too (pinned with `it.fails` in the #7464 test).
