@@ -3,7 +3,8 @@
 // decides whether reflective operations leave the closed-struct path.
 import { describe, expect, it } from "vitest";
 import { tryNativeExnRender } from "../scripts/lib/wasm-exn-render.mjs";
-import { buildImports, compile, instantiateWasm } from "../src/index.ts";
+import { compile } from "../src/index.ts";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 type Lane = "gc" | "standalone";
 
@@ -28,9 +29,7 @@ async function runLane(source: string, lane: Lane): Promise<string> {
       ? (tryNativeExnRender(instance, value) ?? "[wasm-object]")
       : String(value);
   }
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-  imports.setInstance?.(instance);
+  const instance = await instantiateWithRuntime(result);
   return String((instance.exports.main as () => unknown)());
 }
 

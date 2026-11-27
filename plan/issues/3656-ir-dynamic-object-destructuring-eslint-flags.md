@@ -4,7 +4,7 @@ id: 3656
 title: "IR: dynamic destructured parameter blocks ESLint getInactivityReasonMessage"
 status: ready
 created: 2026-07-26
-updated: 2026-08-26
+updated: 2026-11-26
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -435,3 +435,9 @@ hashing differently. `legacyFieldsHashKey` keys on `kind` plus `typeIdx`
 hash differently and produce two structs that both look fine in isolation. The
 struct-convergence test above is the guard; the `abi-signature-parity` check is
 the backstop. Everything else in S1–S3 fails safe to legacy.
+
+## Root-test status (2026-11-26, lane S24)
+
+Measured on main 1a726b3e. With the raw harness the test fails earlier, on an opaque native ref (`expected {} …`); routed through the shared `instantiateWithRuntime` harness (branch `s24-classb-parked`) it reaches the failure below. The shared harness unmasks this failure but does not fix it, so it is not a stale-harness (class B) issue.
+
+`tests/issue-3656.test.ts` fails at line 53: `reason({…, replacedBy: "stable"})` returns `'This feature has been abandoned.'` instead of `'renamed:stable'` (the wrong arm). That is this issue's own acceptance criterion, still unmet.

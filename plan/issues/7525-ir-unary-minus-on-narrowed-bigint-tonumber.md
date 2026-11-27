@@ -162,3 +162,11 @@ byte-identical. The real fix — ToNumeric dynamic ops that let the IR claim the
 - **#7526** — a ToNumeric dynamic numeric op family (`neg`, binary `- * / %`, `++` / `--`, BigInt-aware `+` and loose
   equality), so the IR can claim these units instead of refusing them; it also fixes un-narrowed `any` holding a
   BigInt and `bigint | number` on both pipelines.
+
+### Merge with main (2026-11-27)
+
+Main's #7354 O7 folded the dynamic compound arms of `lowerCompoundAssignment` into one `dynamicCompoundStep` and
+added a dynamic **member** compound (`o.x op= v`, `o.x++`, `lowerDynamicMemberCompound`). The slot refusal now sits
+before main's unified arm; the member arm asks the same `refuseBigIntDynamicOperand` (Prepared `o.x *= u` with `u`
+narrowed to bigint compiled on the merged tree and is now refused, pinned). `o.x` narrowed through an implicit-`any`
+receiver is not typed bigint by the checker, so those rows stay with #7526.

@@ -1,6 +1,8 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
 import { runTest262File } from "./test262-runner.js";
+import { TEST262_ROOT } from "./helpers/repo-paths.js";
 
 // #1805 — early-error enforcement: references to a switch CaseBlock's
 // lexically-declared names (let/const/class/function) outside the switch
@@ -68,7 +70,6 @@ describe("#1805 switch-case lexical-declaration leak (unit)", () => {
 });
 
 describe("#1805 switch scope-lex test262 negative tests now pass", () => {
-  const ROOT = "/workspace/test262";
   const files = [
     "test/language/statements/switch/scope-lex-const.js",
     "test/language/statements/switch/scope-lex-class.js",
@@ -79,7 +80,7 @@ describe("#1805 switch scope-lex test262 negative tests now pass", () => {
 
   for (const rel of files) {
     it(`${rel}`, async () => {
-      const r = await runTest262File(`${ROOT}/${rel}`, "language/statements", 20000);
+      const r = await runTest262File(join(TEST262_ROOT, rel), "language/statements", 20000);
       expect(r.status).toBe("pass");
     });
   }

@@ -166,12 +166,29 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 - Growth allowances go in the PR's own `plan/issues/*.md` YAML frontmatter with
   a dated rationale; **never** edit `scripts/*-baseline.json` (main is its sole
   writer).
+- **The pre-push hook is the only check of your code before the merge queue
+  (#7558).** A PR runs only `cla-check` and the cheap gate, so pre-push also
+  runs the size budgets, the issue-id gates against main and open PRs, and
+  every root test file the push adds or modifies, each alone (~45 s per file on
+  a 4-core box; bounded at 20 min, and running out of time fails the push). It
+  has no skip flag. It judges the pushed refs: deletes and tags skip it, and it
+  refuses a pushed branch that is not HEAD, a dirty tracked tree, a missing
+  main ref, or a box without `timeout`/`gtimeout`. A failure it misses costs a queue run and a `hold` park.
+- **A branch stacked on an unmerged branch cannot meet that 20-minute bound**,
+  because the hook also runs the base's test files (#7561's alone take ~15
+  min). Set the hook's own variable to the branch you stacked on:
+  `CHANGED_ROOT_TESTS_BASE=origin/<base-branch> git push …` runs only your
+  slice's files. Run the base's files your change can affect by hand.
+- **A test that spawns `git` must strip the `GIT_*` environment.** Changed
+  tests now run inside a git hook, where `GIT_DIR` and friends point at the
+  real repository: on 2026-11-27 a test's `git init` hit the real git dir
+  instead of its temp dir.
 
 ## Running Tests
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
-- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory single-fork (~9 min) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
+- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory in parallel forks (`VITEST_MAX_FORKS`, else cores − 1 capped by free RAM, #7565) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
 - **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)-1` (min 1 — one core is left for the shell/editor/sshd; boxes are not all 4-core, so never hardcode it). Baseline 2026-05-20 on a 4-core/16GB container, then at pool 4: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
 
@@ -822,6 +839,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
   - **Do NOT rely on `git log --grep="#N"` alone.** PR numbers and issue ids share ONE sequence, so it matches `Merge pull request #N` and reads as "already merged" when it is not (hit 2026-07-25 on #3571).
   - **It caught nothing that day because the old gate could not.** All three hand checks PASSED for #3571 while #3603's S1 slice was the same work, actively claimed by another lane — overlap by _idiom_, not by id, with neither issue citing the other.
   - **REMAINING BLIND SPOT the script cannot close:** a lane that has started but not yet claimed or pushed leaves no trace in main, open PRs, or the claim ref. **Claim at DISPATCH time** (`claim-issue.mjs <id> <agent> --branch <b>`), not at first push, or the next dispatcher is unprotected. `claim-issue.mjs` exit 0 is advisory (shared slug). Push branches to the **`fork`** so GitHub rejects dup PRs. This is the fix for the 2026-07-17 duplication (#3310/#3311/#3341/#3308 re-implemented by both lanes).
+- **Open-PR file overlap — advisory, automatic (#7559).** `node scripts/pr-file-overlap.mjs` lists every open PR that changes the files of your branch (default), of `--paths a b` (before you start), or of an issue's Implementation Plan (`--issue <id>`). It never blocks: the pre-dispatch gate reports an overlap as a caution (exit 2) and the pre-push hook prints a ≤10-line summary; a last line `NOT CHECKED` means GitHub was unreachable and you do not know. Example: on 2026-11-27 two PRs that changed `src/ir/from-ast.ts` landed first and put four PRs of another lane into conflict, and neither lane knew. Settle an overlap with the other lane on the standing coordination PR #7526. It replaces the retired lock table `plan/method/file-locks.md`.
 - **Tech lead populates TaskList** — devs self-serve from it. No per-task dispatch messages needed.
 - **Owner pins + scope are how the auto-dispatcher is steered.** The native agent-teams auto-dispatcher only auto-offers tasks with **no `owner`**, and it does **not** read role. So the tech lead encodes routing in two places the dispatcher/agents actually honor:
   - **Set `owner` immediately** on any task pinned to a specific agent (e.g. an in-flight `[CONFLICT]` for a named senior-dev, or a one-PR migration). An ownerless `in_progress` task is the #1 mis-route cause — the dispatcher re-offers it. Reconcile (`TaskUpdate status=completed` the moment a PR merges) so stale entries never get re-offered.
@@ -832,6 +850,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 - **Pull-main-first + push-on-in-progress (the branch is a live sync point)**: when an agent moves a task to **in-progress** it MUST (1) pull/merge latest `origin/main` into its worktree branch FIRST — never start on a stale base — and (2) **push that branch to origin immediately** (an initial / WIP / grounding commit is fine). Do **not** work local-only for a long window before the first push: an unpushed branch is invisible, so staleness and collisions hide until the PR finally surfaces (e.g. a ~30-min local-only window before the PR appeared). Pushing early makes the branch a **live sync point** other agents can see and rebase against, and makes the assignment concrete. Keep merging `origin/main` as work proceeds. This is additive to — not a replacement for — the merge-before-PR step and the floor/CI discipline below.
 - **Dev self-check, then stand down — the SERVER-SIDE workflow enqueues (#2786)**: the gate is GitHub's checks API, not any committed feed. When the PR's **required checks are all green** (`gh pr checks <N>` / `gh pr view <N> --json statusCheckRollup,mergeStateStatus,isDraft,labels` — authoritative list in `docs/ci-policy.md` §7 — **six**, re-verify with `gh api repos/loopdive/js2wasm/rules/branches/main --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'`: `cheap gate (main-ancestor + lint)`, `quality`, `merge shard reports`, plus `equivalence-gate`, `check for test262 regressions`, `cla-check`; `linear-tests` is NOT required, #3934), `mergeStateStatus == CLEAN`, the PR is not a draft and carries no `hold` label — the dev marks the task completed and **stands down. The dev does NOT enqueue.** The single enqueuer is now the server-side `.github/workflows/auto-enqueue.yml` (`scripts/enqueue-green-prs.mjs`): its `workflow_run`-on-completion trigger fires right after the required-check workflows finish, and with the grace window now **0** (#2786) it enqueues every just-green PR within ~one workflow-startup — without depending on any agent surviving. **Why the change:** the old "dev self-enqueue once" model relied on a backgrounded CI watcher that **died with the dev process** on stand-down, so green PRs stranded un-enqueued (#2225, #2247). Moving enqueue to the GitHub Actions workflow — the one actor that is long-lived and outside agent lifecycle — closes that hole. The merge queue still re-validates required checks on the merged state (`merge_group`), and `auto-park` (#2547) `hold`-labels any PR that fails the re-run. **NEVER enqueue or re-enqueue from a dev/agent** — re-enqueue **loops** on the queue head caused the ~3.5h cancellation churn of 2026-06-20 (re-adding the PR that is in the in-flight group rebuilds it and CANCELS its run; the workflow that drove that loop has since been deleted — memory `project_merge_queue_requeue_cancels_run`, re-verified 2026-08-02); the workflow's single trailing-add never loops. See `.claude/skills/dev-self-merge/SKILL.md`. **Backstops (not the mechanism):** the workflow's ~30-min cron and the tech lead's per-loop open-PR sweep catch the rare stray the responsive run misses (e.g. a PR the queue dropped on main-advance). Manual `node scripts/enqueue-green-prs.mjs` forces a sweep now. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are never auto-enqueued. **Security:** the workflow's author-trust gate is now load-bearing — it enqueues only OWNER/MEMBER/COLLABORATOR PRs; external-contributor PRs require a deliberate maintainer enqueue plus a green `cla-check`.
 - **The per-PR CI status feed (one JSON file per PR under a .claude/ci-status directory) is RETIRED and was deleted in #6796 — do not look for it, wait on it, or gate on it.** Its three writer workflows (ci-status-feed, ci-status-basic, ci-status-pending) were `workflow_dispatch`-only stubs and were deleted with it; the newest feed file had been from the PR-471 era and the directory was last touched 2026-07-05. A current PR will NEVER get a feed file — treating its absence as "CI still in flight" strands you forever. Query the checks API directly (`gh pr checks <N>`, `gh pr view <N> --json statusCheckRollup,mergeStateStatus`).
+- **A green PR proves almost nothing — the merge queue is the only gate (#7558).** On `pull_request` only `cla-check` and `cheap gate (main-ancestor + lint)` (typecheck + lint, and only when a test262-sharded path changed — otherwise it is a green stub) really run, plus `issue-tests.yml` when its own machinery changes; `quality` and `equivalence-gate` report `skipped` (ci.yml's two root jobs carry `if: github.event_name != 'pull_request'`), and `merge shard reports` / `check for test262 regressions` are the green no-ops below. A PR is therefore enqueue-eligible within ~2 minutes; everything else runs in `merge_group`, and a failure there auto-parks the PR with `hold`. `quality` only aggregates the parallel `quality-lane (<lane>)` matrix jobs (#7563): read the red lane's log, not `quality`'s.
 - **PR-level `check for test262 regressions` (and `merge shard reports`) green is a DESIGNED no-op on `pull_request` — NOT conformance evidence.** No test262 runs on a PR (#2519 slim-down), so on a PR both jobs green-skip. Never read a green PR-level regression check as "this PR causes no regressions". Since #7551 the queue's test262 gate is the **IR current-edition per-test diff** in `merge shard reports`, run in the **`merge_group` re-validation on the merged state**; the legacy-lane gates (standalone floor/net #1897/#2097, edition ratchet) run in the **weekly** full run and catch other regressions after the fact (see "Test262 → Cadence"). `check for test262 regressions` is a no-op in every event (its gates are host-only; cleanup #7552). That is why `auto-park` (#2547) exists and why a fully-green PR can still fail the queue and be parked with a bot `hold` label.
 - **Silence vs. pings is the dev health signal.** A dev correctly waiting on CI runs a **background watcher** and goes quiet (see `developer.md` CI-wait protocol) — silence is the healthy state, do NOT poke a silent dev. By contrast, **repeated `idle_notification` pings mean the opposite**: a dev with no background watcher idling in-context, or one wedged (e.g. a tool-param failure loop). Treat a stream of idle pings as an escalation/health signal — redirect to unowned work, send `shutdown_request` if idle, or recognize a wedged agent (it pings but can't ack shutdown; clears on lead-session end). Don't mistake an agent waiting on an already-merged PR for one doing work — reconcile the TaskList (`completed` on merge) so it learns its PR landed.
 - **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
@@ -919,6 +938,25 @@ tail does not.** "Always get PRs into the queue" is satisfied by making them
 backstop rules under "PR-queue shepherd" for the only sanctioned manual enqueue,
 which is one-shot, PAT-authenticated, and never repeated.
 
+**Coordination thread: PR #7526 (project-lead order, 2026-11-27).** It is a
+standing draft PR that is never merged. Read its newest comments at session
+start. Post a comment there for every project-lead decision and every change
+that affects other lanes: CI and merge-queue behaviour, a rule in this file, a
+shared module you are about to restructure, another lane's PR you are about to
+push to, close or release. A decision that only one session knows does not
+exist for the others.
+
+**One issue per PR (project-lead order, 2026-11-27).** Every code PR has its
+own issue file, `plan/issues/<id>-<slug>.md`, with the plan and the result of
+that PR. Do not add a slice as a new section of a collection issue: #7354's
+file grew to hold a dozen slices, and nobody could tell from an issue what a PR
+did.
+
+- Allocate the id with `claim-issue.mjs --allocate` before coding (see
+  "Project Structure").
+- A larger effort keeps one parent issue that only lists its child issues.
+- A docs-only PR is the exception, per the rule below.
+
 **Docs-only changes go in ONE open PR — check before opening a second.** If a
 docs-only PR is already open (issue files under `plan/issues/`, `plan/` notes,
 `docs/`, README-level edits), **push your docs commits onto that PR's branch
@@ -962,8 +1000,8 @@ layer on top — GitHub branch protection is the hard block.
   ```
 - **A SKIPPED required check SATISFIES the requirement.** A job skipped by its
   own `if:` still publishes a check run (conclusion `skipped`) and branch
-  protection accepts it — on a docs-only PR `equivalence-gate` skips via the
-  path filter and the PR is still `CLEAN`. So do **not** decide readiness by
+  protection accepts it — on every PR `quality` and `equivalence-gate` skip
+  (#7558) and the PR is still `CLEAN`. So do **not** decide readiness by
   counting six `SUCCESS` conclusions in `statusCheckRollup`; you will not find
   them and will wrongly conclude the PR is not ready. Use `mergeStateStatus`.
   (Different thing entirely: a **workflow**-level `paths:` skip creates no check

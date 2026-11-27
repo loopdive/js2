@@ -87,6 +87,7 @@ import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { checkerTypeIgnoresOmission, jsDocMarksParamOptional } from "../shared/omittable-param.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
@@ -240,7 +241,7 @@ import {
   sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
-import { collectBindingPatternNames } from "./analysis/ast-scope.js";
+import { argumentsObjectOwner, collectBindingPatternNames, ownArgumentsObjectUse } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -596,6 +597,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * that result whatever the selector resolved from the lattice.
    */
   readonly resultWidensToDynamic?: (fn: ts.FunctionDeclaration) => boolean;
+  /** (#7448) `jsDocParamLowersAsExternref`'s question for the function's result. */
+  readonly legacyResultIsExternref?: (fn: ts.FunctionDeclaration) => boolean;
   /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
@@ -2582,24 +2585,21 @@ function isIrClaimable(
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
 /**
- * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
- * the IR must ASK about rather than derive? True for a JSDoc type outside the
- * certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
- * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes)
- * and for any bracketed tag (`@param {string} [functionName]`). Legacy lowers
- * these from the checker and the answer is NOT syntactic (measured 2026-10-21:
- * `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag →
- * externref; `{string|number}` → `$AnyValue`; `{string|undefined}` →
- * `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
- * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the
- * registered legacy signature, and keeps its prior answer otherwise. A real
- * `.type` annotation is never a candidate (#2135's union rejection stands).
+ * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot the IR must ASK about rather than
+ * derive? True for a JSDoc type outside the certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
+ * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes), for any bracketed tag
+ * (`@param {string} [functionName]`), and (#7448) for a position a caller omits (`h()` for `@param {number} x`, see
+ * `checkerTypeIgnoresOmission`). Legacy lowers these from the checker and the answer is NOT syntactic (measured
+ * 2026-10-21: `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag → externref; `{string|number}`
+ * → `$AnyValue`; `{string|undefined}` → `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
+ * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the registered legacy signature, and keeps
+ * its prior answer otherwise. A real `.type` annotation is never a candidate (#2135's union rejection stands).
  */
 export function jsDocParamIsExternrefCandidate(param: ts.ParameterDeclaration): boolean {
   if (param.type !== undefined || param.parent === undefined) return false;
   const jsDocType = ts.getJSDocType(param);
   if (jsDocType === undefined) return false;
-  if (ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed === true)) return true;
+  if (jsDocMarksParamOptional(param) || checkerTypeIgnoresOmission(param)) return true;
   return (
     jsDocType.kind !== ts.SyntaxKind.NumberKeyword &&
     jsDocType.kind !== ts.SyntaxKind.StringKeyword &&
@@ -2945,23 +2945,32 @@ function resolveReturnType(
     const literalKind = uniformLiteralReturnKind(fn.body);
     if (literalKind !== null) return literalKind;
   }
-  // (#7106 S1b) An unannotated function whose value returns are all one
-  // concrete kind but whose body can FALL OUT (no terminating last statement:
-  // `switch` without default, a guard `if`) returns that kind OR `undefined`.
-  // Legacy registers the checker's `T | undefined` as `externref` — measured
-  // 2026-10-20 on assert.js's `formatIdentityFreeValue`: `(param externref)
-  // (result externref)` — so the IR signature is the dynamic carrier, the
-  // concrete returns box at `coerceReturnValue`, and the fall-out is
-  // #7104's `dyn.undefined`. Same divergence guard as the dynamic arm below.
-  if (
-    ts.isFunctionDeclaration(fn) &&
-    fn.body &&
+  const concreteLattice =
     mapped !== undefined &&
-    (mapped.kind === "f64" || mapped.kind === "bool" || mapped.kind === "string" || mapped.kind === "object") &&
-    irFunctionBodyReturnsValue(fn.body) &&
-    !functionBodyAlwaysTerminates(fn.body)
-  ) {
-    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+    (mapped.kind === "f64" || mapped.kind === "bool" || mapped.kind === "string" || mapped.kind === "object");
+  if (ts.isFunctionDeclaration(fn) && fn.body && concreteLattice) {
+    // (#7106 S1b) An unannotated function whose value returns are all one
+    // concrete kind but whose body can FALL OUT (no terminating last statement:
+    // `switch` without default, a guard `if`) returns that kind OR `undefined`.
+    // Legacy registers the checker's `T | undefined` as `externref` — measured
+    // 2026-10-20 on assert.js's `formatIdentityFreeValue`: `(param externref)
+    // (result externref)` — so the IR signature is the dynamic carrier, the
+    // concrete returns box at `coerceReturnValue`, and the fall-out is
+    // #7104's `dyn.undefined`. Same divergence guard as the dynamic arm below.
+    if (irFunctionBodyReturnsValue(fn.body) && !functionBodyAlwaysTerminates(fn.body)) {
+      return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+    }
+    // (#7448) A self-recursive body (`return 1 + f()`) gets the checker's
+    // circular `any`, which legacy registers as externref while the lattice
+    // infers a scalar. Claiming the scalar only withdraws on
+    // `abi-signature-parity` after the claim, so refuse here. A #7331 widened
+    // result is the exception: the override map gives it legacy's carrier.
+    if (
+      currentSelectionOptions?.legacyResultIsExternref?.(fn) === true &&
+      currentSelectionOptions.resultWidensToDynamic?.(fn) !== true
+    ) {
+      return null;
+    }
   }
   if (mapped?.kind === "f64") return "f64";
   if (mapped?.kind === "bool") return "bool";
@@ -3024,39 +3033,17 @@ let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
 // resolve a callee's MISSING formals with the same verdict its own claim uses.
 let currentClaimTypeMap: TypeMap | undefined;
 
-/** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
-export function functionBodyReferencesArguments(body: ts.Node): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isIdentifier(node) && node.text === "arguments") {
-      found = true;
-      return;
-    }
-    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node))) return;
-    ts.forEachChild(node, visit);
-  };
-  visit(body);
-  return found;
-}
-
 /**
- * (#7106 S1e) `arguments.length` read by the claimed top-level function's OWN
- * body (an arrow inside it inherits the binding and is admitted; a nested
- * `function` has its own `arguments` and is not), unshadowed, on a lane with
- * the argc-protocol wrapper. Every other `arguments` use stays rejected.
+ * (#7106 S1e) `arguments.length` read by the claimed top-level function's own arguments object (an arrow inside it
+ * inherits the object; a nested `function` has its own), when that is its only use of the object, on a lane with the
+ * argc-protocol wrapper. Every other `arguments` use stays rejected.
  */
-function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
-  if (currentArgumentsSubject === null) return false;
-  if (!ts.isIdentifier(expr.name) || expr.name.text !== "length") return false;
-  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "arguments") return false;
-  if (scope.has("arguments")) return false;
-  if (currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") !== true) return false;
-  for (let cur: ts.Node | undefined = expr.parent; cur; cur = cur.parent) {
-    if (cur === currentArgumentsSubject) return true;
-    if (ts.isFunctionDeclaration(cur) || ts.isFunctionExpression(cur) || ts.isMethodDeclaration(cur)) return false;
-  }
-  return false;
+function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression): boolean {
+  if (currentArgumentsSubject === null || !ts.isIdentifier(expr.expression)) return false;
+  if (expr.name.text !== "length" || expr.expression.text !== "arguments") return false;
+  if (argumentsObjectOwner(expr.expression) !== currentArgumentsSubject) return false;
+  if (ownArgumentsObjectUse(currentArgumentsSubject) !== "length") return false;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
 /** Resolve whether param `argIdx` of local function `calleeName` is dynamic
@@ -3096,17 +3083,10 @@ function underArityDirectCallIsBuildable(
   // A callee that can reach direct `eval` consumes `__argc` even without a
   // lexical `arguments` read (legacy's `reachesDirectEval`); keep it legacy.
   if (subtreeMentionsIdentifier(declaration.body, "eval")) return false;
-  if (!directCallPublishesArgc(declaration)) return true;
+  if (ownArgumentsObjectUse(declaration) === "none") return true;
   return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
 }
 
-/**
- * (#7106 S1i) Does an under-arity direct call to `declaration` have to publish
- * `__argc`? Exactly when the callee's own entry prologue consumes it — its
- * body reads its own `arguments` (legacy's `needsImplicitArgumentsObject` for
- * fixed formals; a formal named `arguments` is excluded by
- * `hasFixedIrParameters`' identifier check only when it shadows, so test it).
- */
 function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -3116,12 +3096,6 @@ function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
   };
   visit(root);
   return found;
-}
-
-export function directCallPublishesArgc(declaration: ts.FunctionDeclaration): boolean {
-  if (!declaration.body) return false;
-  if (declaration.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
-  return functionBodyReferencesArguments(declaration.body);
 }
 
 function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeMap | undefined): boolean {
@@ -4454,8 +4428,8 @@ function isPhase1MutableMemberTarget(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (target.questionDotToken !== undefined) return false;
-  // (#7338) A read-modify-write of a carrier's member: `lowerPropertyCompound`
-  // takes object / class receivers only, and `dyn.member_set` has no compound.
+  // (#7338) A read-modify-write of a carrier's member: the ordinary pipeline keeps this refusal by policy, its
+  // bytes unchanged; only the Prepared resolver admits it (#7354 O7, `dynamicCompoundMemberWrites`).
   if (readsCarrier(target.expression)) return shapeNo("member-compound-dynamic-receiver", target);
   if (ts.isPropertyAccessExpression(target)) {
     if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
@@ -7250,7 +7224,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
 
 /** (#7106 S5, lever L) A `<module-init>` `var` list: its names are script `var`s in their `__mod_<name>` slots. */
 function isScriptVarList(list: ts.Node): boolean {
-  return currentSubjectIsModuleInit && isModuleInitVarList(list);
+  return currentSubjectIsModuleInit && isModuleInitVarList(list, "statement-and-for-heads");
 }
 
 /**
@@ -9656,7 +9630,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
   // prepared component cannot name.
-  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr)) {
+  if (
+    booleanReadBesideCarrier(binOp, left, right) &&
+    lowersAsPreparedComponent(expr) &&
+    !readsNonCarrierLocal(left === "boolean" ? expr.right : expr.left)
+  ) {
     return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
@@ -12303,6 +12281,15 @@ function resolvedKindFamily(kind: ResolvedKind): OperandFamily {
   return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
 }
 
+/**
+ * (#7408) Does `operand` read an unannotated local that is not dynamic-shaped? Its family is `unknown` only because
+ * the binary does not trace the initializer; from-ast lowers it in the initializer's representation.
+ */
+function readsNonCarrierLocal(operand: ts.Expression): boolean {
+  const read = unwrapPhase1Parens(operand);
+  return ts.isIdentifier(read) && unannotatedLocal(read) !== undefined && !dynamicShapedValue(read);
+}
+
 /** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
 function unannotatedLocal(identifier: ts.Identifier): ts.VariableDeclaration | undefined {
   const declaration = closureLocalDeclaration(identifier);
@@ -13513,7 +13500,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPropertyAccessExpression(expr)) {
     if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
-    if (phase1ArgumentsLengthRead(expr, scope)) return true;
+    if (phase1ArgumentsLengthRead(expr)) return true;
     // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.
     if (ts.isIdentifier(expr.expression) && !scope.has(expr.expression.text) && ambientNamespaceConstantRead(expr)) {
       return true;
@@ -13913,7 +13900,7 @@ function isDynamicHomeOpenCarrier(value: EmptyObjectExpression): boolean {
 function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): boolean {
   return (
     ts.isIdentifier(decl.name) &&
-    isModuleInitVarList(decl.parent) &&
+    isModuleInitVarList(decl.parent, "statement-and-for-heads") &&
     currentModuleBindingResolver?.(decl.name)?.valueKind.kind === "dynamic" &&
     currentSelectionOptions?.isOpenObjectBinding?.(decl) === true
   );
@@ -14212,7 +14199,9 @@ export function assessModuleInit(
   };
   findDynamicModuleUpdate(sourceFile);
   currentIrSafeVarDeclarationLists =
-    scriptVarGate || hasDynamicModuleUpdate ? collectIrSafeModuleVarDeclarationLists(population) : new Set();
+    scriptVarGate || hasDynamicModuleUpdate
+      ? collectIrSafeModuleVarDeclarationLists(population, "statement-and-for-heads")
+      : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();

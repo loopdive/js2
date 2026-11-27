@@ -157,25 +157,30 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: false,
       functions: false,
       namesSymbol: false,
-      namesErrors: false,
+      realmFamilies: new Set(),
     });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       functions: false,
       namesSymbol: false,
-      namesErrors: false,
+      realmFamilies: new Set(),
     });
   });
 
-  // (#7354 G1) An Error constructor makes objects; naming one (not as a member) admits the object kind.
+  // (#7354 G1) An Error constructor makes objects; naming one (not as a member) admits the object kind. (#7350 B3a) The
+  // answer is the set of realm constructor families the program names.
   it("answers whether the program names an Error constructor", () => {
-    expect(objects("export const e = new TypeError('m');")).toMatchObject({ present: true, namesErrors: true });
-    expect(objects("export const o = { TypeError: 1 }; export const v = o.TypeError;").namesErrors).toBe(false);
+    const families = (source: string) => [...objects(source).realmFamilies];
+    expect(objects("export const e = new TypeError('m');")).toMatchObject({ present: true });
+    expect(families("export const e = new TypeError('m');")).toEqual(["error"]);
+    expect(families("export const o = { TypeError: 1 }; export const v = o.TypeError;")).toEqual([]);
     // A binding or a label spelled like one is not the global.
-    expect(objects("function f(RangeError: unknown) { return RangeError; } export const v = f(1);").namesErrors).toBe(
-      false,
-    );
-    expect(objects("TypeError: for (;;) { break TypeError; }").namesErrors).toBe(false);
+    expect(families("function f(RangeError: unknown) { return RangeError; } export const v = f(1);")).toEqual([]);
+    expect(families("TypeError: for (;;) { break TypeError; }")).toEqual([]);
+    // (#7350 B3a) A wrapper constructor is a function value and makes no object; a constant folded off it is no read.
+    expect(objects("export const s = String;")).toMatchObject({ present: false });
+    expect(families("export const s = String;")).toEqual(["wrapper"]);
+    expect(families("export const n = Number.MAX_VALUE;")).toEqual([]);
   });
 
   // (#7354 F1) A function expression is the one producer of a function value the source shows here.

@@ -283,7 +283,15 @@ describe("#5748 unary adapter admission preserves actual effects", () => {
 // `resolveCompatibilitySemanticImport` now binds only the `date` accelerator.
 
 function platformContext(deps?: Record<string, any>): PlatformCapabilityAdapterContext {
-  return { deps, getNodeRequire: () => undefined, wrapWasmClosure: () => null, wrapUnknownCallable: (value) => value };
+  const nativeMiss = Symbol("native-miss");
+  return {
+    deps,
+    getNodeRequire: () => undefined,
+    wrapWasmClosure: () => null,
+    wrapUnknownCallable: (value) => value,
+    nativePrimitiveToHost: () => nativeMiss,
+    nativeMiss,
+  };
 }
 function withCrypto<T>(crypto: object, body: () => T): T {
   const original = Object.getOwnPropertyDescriptor(globalThis, "crypto");
@@ -320,6 +328,27 @@ describe("#5748 factored host builtin constructor plumbing", () => {
     expect(typeof call).toBe("function");
     expect(call!("a", "b")).toBe("wrapped:a:wrapped:b");
     expect(events).toEqual(["get", "get", "wrap:a", "wrap:b", "deps"]);
+  });
+  // (#7504) A native string struct reached `fs.readFile` / `https.get` as an empty options object.
+  it("passes a native primitive argument as its host value, and wraps only the rest", () => {
+    const received: unknown[] = [];
+    const nativeString = { nativeString: "/etc/hostname" };
+    const context = platformContext({
+      crypto: {
+        randomUUID: (...args: unknown[]) => {
+          received.push(...args);
+          return "ok";
+        },
+      },
+    });
+    context.nativePrimitiveToHost = (value) => (value === nativeString ? "/etc/hostname" : context.nativeMiss);
+    context.wrapUnknownCallable = (value) => `wrapped:${String(value)}`;
+    const call = resolvePlatformCapabilityImport(
+      { type: "node_builtin_fn", moduleName: "crypto", name: "randomUUID" },
+      context,
+    );
+    expect(call!(nativeString, "other")).toBe("ok");
+    expect(received).toEqual(["/etc/hostname", "wrapped:other"]);
   });
   it("captures Node module method once with its actual receiver", () => {
     const events: string[] = [];

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * #2515 S0 — kill the residual late-import / global-index-shift emit bug
@@ -220,7 +221,7 @@ describe("#2515 S0 — host (GC) mode unchanged", () => {
   async function runGc(src: string): Promise<number | undefined> {
     const r = await compile(src, { fileName: "test.ts", target: "gc" });
     expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
-    const { instance } = await WebAssembly.instantiate(r.binary, r.importObject ?? {});
+    const instance = await instantiateWithRuntime(r);
     return (instance.exports as { test?: () => number }).test?.();
   }
 

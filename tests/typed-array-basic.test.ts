@@ -1,17 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = await compile(source);
-  if (!result.success) {
-    throw new Error(
-      `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
-    );
-  }
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env: { console_log_number: () => {}, console_log_bool: () => {}, console_log_string: () => {} },
-  });
-  return (instance.exports as any)[fn](...args);
+  const exports = await compileToWasm(source);
+  return exports[fn]!(...args);
 }
 
 describe("TypedArray basic support", () => {

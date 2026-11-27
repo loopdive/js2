@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-11-26T08:11:01.176Z",
+  "generatedAt": "2026-11-27T20:27:13.962Z",
   "measuredRange": {
     "oldest": "2026-11-23T00:37:46.670Z",
-    "newest": "2026-11-26T08:09:24.440Z"
+    "newest": "2026-11-27T20:26:19.010Z"
   },
   "correctness": {
     "definition": {
@@ -6527,11 +6527,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 2047590,
+        "durationMs": 1466774,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 187930408,
+        "binaryBytes": 187930430,
         "categories": {},
         "error": null
       },
@@ -6566,7 +6566,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 126565,
+            "durationMs": 92182,
             "binaryBytes": 15524350,
             "invalidBatches": 0
           },
@@ -6586,7 +6586,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 300417,
+            "durationMs": 213326,
             "binaryBytes": 14994168,
             "invalidBatches": 7
           },
@@ -6606,7 +6606,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 131757,
+            "durationMs": 98464,
             "binaryBytes": 5981984,
             "invalidBatches": 2
           },
@@ -6626,7 +6626,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 39791,
+            "durationMs": 27018,
             "binaryBytes": 925565,
             "invalidBatches": 0
           },
@@ -6650,7 +6650,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6687,7 +6687,7 @@
             "status": "fail",
             "passed": 0,
             "total": 44,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6838,7 +6838,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6854,7 +6854,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6918,7 +6918,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6931,7 +6931,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6998,7 +6998,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7092,7 +7092,7 @@
             "status": "fail",
             "passed": 0,
             "total": 23,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -7222,7 +7222,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7241,7 +7241,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7254,7 +7254,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7354,7 +7354,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7403,7 +7403,7 @@
             "status": "fail",
             "passed": 0,
             "total": 74,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -8016,7 +8016,7 @@
             "status": "fail",
             "passed": 0,
             "total": 83,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -8293,7 +8293,7 @@
             "status": "fail",
             "passed": 0,
             "total": 31,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -8498,7 +8498,7 @@
             "status": "fail",
             "passed": 0,
             "total": 11,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9075,7 +9075,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9166,7 +9166,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9278,7 +9278,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9651,7 +9651,7 @@
             "status": "fail",
             "passed": 0,
             "total": 14,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9790,7 +9790,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9976,7 +9976,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9989,7 +9989,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10365,7 +10365,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10534,7 +10534,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10547,7 +10547,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10581,7 +10581,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10594,7 +10594,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10640,7 +10640,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -10731,7 +10731,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10753,7 +10753,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10769,7 +10769,7 @@
             "status": "fail",
             "passed": 0,
             "total": 29,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -10980,7 +10980,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11033,7 +11033,7 @@
             "status": "fail",
             "passed": 0,
             "total": 54,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11205,7 +11205,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11242,7 +11242,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11258,7 +11258,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11543,7 +11543,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11580,7 +11580,7 @@
             "status": "fail",
             "passed": 0,
             "total": 32,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11728,7 +11728,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -11829,7 +11829,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11875,7 +11875,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11918,7 +11918,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12054,7 +12054,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12178,7 +12178,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12194,7 +12194,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12213,7 +12213,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12265,7 +12265,7 @@
             "status": "fail",
             "passed": 0,
             "total": 29,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -12383,7 +12383,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12533,7 +12533,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12660,7 +12660,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12682,7 +12682,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12740,7 +12740,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:a01a2917ebcf26ac threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1341:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12784,8 +12784,8 @@
               "flatten"
             ],
             "optimizationLevel": 4,
-            "compileDurationMs": 12757.981423,
-            "moduleCompileDurationMs": 11.897282999998424,
+            "compileDurationMs": 9458.301873,
+            "moduleCompileDurationMs": 4.384062999999514,
             "binaryBytes": 594541,
             "moduleImportCount": 44,
             "functionImportCount": 35
@@ -12795,53 +12795,53 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.0011390789316646256,
-            "nodeUs": 0.0005852976768726079,
-            "wasmStdUs": 0.000013480010047710974,
-            "nodeStdUs": 0.000012532602987404003,
-            "ratio": 0.5134466242453135,
-            "ratioStd": 0.015814693122953288,
+            "wasmUs": 0.0008744957155901505,
+            "nodeUs": 0.0004527110397347468,
+            "wasmStdUs": 0.000001493711006399219,
+            "nodeStdUs": 7.709493298633977e-7,
+            "ratio": 0.5181481814718059,
+            "ratioStd": 0.0011929857726365343,
             "ratioSamples": [
-              0.4995788349635353,
-              0.5371446008643795,
-              0.5104114767918969,
-              0.5277597319224985,
-              0.5103741289193225,
-              0.5380130385679078,
-              0.5116140746305874,
-              0.5499070898769977,
-              0.5134466242453135
+              0.520733778300114,
+              0.5169406629021228,
+              0.5179053867066922,
+              0.5185892185214876,
+              0.5181629755257984,
+              0.5181481814718059,
+              0.5177825686325411,
+              0.5160709889798399,
+              0.5182884515022932
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 586710,
+            "iters": 6818325,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.001171582212675862,
-              0.0011282695028208215,
-              0.0011460227369586187,
-              0.0011281450801942305,
-              0.0011461232977094935,
-              0.0011283871077668649,
-              0.0011433655468642443,
-              0.001128206439294357,
-              0.0011390789316646256
+              0.00087262018164303,
+              0.000875345631075397,
+              0.0008771079407336468,
+              0.0008744957155901505,
+              0.0008731069580873127,
+              0.0008737095987653877,
+              0.0008749264665445435,
+              0.0008763910491212464,
+              0.0008728545500544685
             ],
             "nodeSamplesUs": [
-              0.0005852976768726079,
-              0.0006060438717601422,
-              0.0005849431576081402,
-              0.0005953895450929926,
-              0.0005849516797026242,
-              0.0006070869765305042,
-              0.0005849619062234458,
-              0.0006204087198128495,
-              0.0005848562322121602
+              0.00045440280420790683,
+              0.00045250175079659277,
+              0.0004542589272291698,
+              0.00045350404974828527,
+              0.0004524116993548005,
+              0.0004527110397347468,
+              0.00045302167321202677,
+              0.0004522799954530811,
+              0.00045239043313446135
             ],
-            "compileDurationMs": 24314.194035,
-            "moduleCompileDurationMs": 14.510560999999143,
-            "instantiateDurationMs": 28.993553000000247,
+            "compileDurationMs": 17991.666659,
+            "moduleCompileDurationMs": 5.4704190000011295,
+            "instantiateDurationMs": 9.973520999999892,
             "binaryBytes": 956530,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12859,11 +12859,11 @@
               {
                 "level": 4,
                 "outcome": "optimized",
-                "durationMs": 18458
+                "durationMs": 13735
               }
             ],
             "rawBinaryBytes": 1192326,
-            "optimizeDurationMs": 18458,
+            "optimizeDurationMs": 13735,
             "optimizationOmittedPasses": [
               "flatten"
             ]
@@ -12873,53 +12873,53 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.04363302209078263,
-            "nodeUs": 0.0005921994060355153,
-            "wasmStdUs": 0.00041537591158486483,
-            "nodeStdUs": 0.000007390945317112319,
-            "ratio": 0.013735160441154847,
-            "ratioStd": 0.0002079482283851835,
+            "wasmUs": 0.03460055147389118,
+            "nodeUs": 0.00045909408571814743,
+            "wasmStdUs": 0.00013646131016542123,
+            "nodeStdUs": 0.0000036501538637862514,
+            "ratio": 0.01326554446098928,
+            "ratioStd": 0.0001305951969657961,
             "ratioSamples": [
-              0.013747477051451382,
-              0.013266558651986993,
-              0.013491250794381793,
-              0.013921369224259078,
-              0.01383648278147043,
-              0.01360402761534149,
-              0.013767266098374597,
-              0.013372113856362859,
-              0.013735160441154847
+              0.013247855416555338,
+              0.01326554446098928,
+              0.01337757964714841,
+              0.013159495032305155,
+              0.01324104854829889,
+              0.01288830440938886,
+              0.013268403715026616,
+              0.01329060450934075,
+              0.013287843287697818
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 645156,
+            "iters": 1891658,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.04398627153742559,
-              0.04409183360303163,
-              0.04384693159483601,
-              0.042882473386279485,
-              0.04351590623043187,
-              0.0429953329117253,
-              0.04363302209078263,
-              0.043732311254953145,
-              0.04311557979775032
+              0.03473239031579718,
+              0.03437233421686229,
+              0.034409534915932426,
+              0.03467668997250057,
+              0.03458324284833656,
+              0.03480753920634807,
+              0.03460055147389118,
+              0.034598598689614596,
+              0.0347174605557664
             ],
             "nodeSamplesUs": [
-              0.0006047002585396674,
-              0.0005849468965682701,
-              0.0005915499507100355,
-              0.0005969827452598601,
-              0.0006021070872774524,
-              0.0005849096962619118,
-              0.0006007074258000616,
-              0.0005847934453031324,
-              0.0005921994060355153
+              0.00046012968517504787,
+              0.00045596772778176985,
+              0.0004603162939592202,
+              0.00045632772942990723,
+              0.00045791839751243484,
+              0.0004486101610331514,
+              0.00045909408571814743,
+              0.00045983629176106266,
+              0.00046132017521185423
             ],
-            "compileDurationMs": 24431.381407,
-            "moduleCompileDurationMs": 9.02150999999867,
-            "instantiateDurationMs": 13.991376999998465,
+            "compileDurationMs": 17997.477356,
+            "moduleCompileDurationMs": 5.840218999997887,
+            "instantiateDurationMs": 11.847592000001896,
             "binaryBytes": 956474,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12937,11 +12937,11 @@
               {
                 "level": 4,
                 "outcome": "optimized",
-                "durationMs": 18520
+                "durationMs": 13766
               }
             ],
             "rawBinaryBytes": 1192252,
-            "optimizeDurationMs": 18521,
+            "optimizeDurationMs": 13766,
             "optimizationOmittedPasses": [
               "flatten"
             ],
@@ -12950,7 +12950,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-11-26T08:09:24.440Z",
+      "measuredAt": "2026-11-27T20:26:19.010Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -32659,7 +32659,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 10434,
+        "durationMs": 10284,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -32667,12 +32667,12 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+193134"
+            "sample": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+192959"
           }
         },
         "errors": [
           {
-            "message": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+193134",
+            "message": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+192959",
             "line": 1,
             "column": 1,
             "severity": "error"
@@ -32681,7 +32681,7 @@
       },
       "validation": {
         "validates": false,
-        "firstError": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+193134"
+        "firstError": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+192959"
       },
       "capabilities": {
         "nodeFs": false
@@ -34922,51 +34922,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 6.034386043680172,
-            "nodeUs": 0.002945209649063975,
-            "wasmStdUs": 1.7681434535888234,
-            "nodeStdUs": 0.0012234429022633495,
-            "ratio": 0.0004886367193396968,
-            "ratioStd": 0.00013499101870437436,
+            "wasmUs": 5.737052337903961,
+            "nodeUs": 0.0028309182923654664,
+            "wasmStdUs": 0.04764350632039201,
+            "nodeStdUs": 0.0006006832966296056,
+            "ratio": 0.0004931857913571538,
+            "ratioStd": 0.00010467636315425334,
             "ratioSamples": [
-              0.0004857083632445878,
-              0.0004886367193396968,
-              0.00048526292978578426,
-              0.00046789935527105685,
-              0.00045332871298706925,
-              0.0005894758360381825,
-              0.0005165391756100256,
-              0.0009144707489473418,
-              0.0005314635708690751
+              0.0006006293548318826,
+              0.0008183442976819786,
+              0.00047027964648998014,
+              0.0004673917612077589,
+              0.0005248237288462585,
+              0.0004899388688353869,
+              0.0005609552742154037,
+              0.0004931857913571538,
+              0.000491754396143046
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 13141,
+            "iters": 46238,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              5.886386271973478,
-              5.791151814930261,
-              6.069306902062592,
-              6.043099992390272,
-              6.034386043680172,
-              6.0246812266947405,
-              11.611791796666584,
-              6.2781578266489655,
-              5.882620120233694
+              5.879792140663272,
+              5.720982784722373,
+              5.737052337903961,
+              5.761348414723838,
+              5.7274136857130875,
+              5.758152623383334,
+              5.719027899130487,
+              5.719015571607903,
+              5.756772719408458
             ],
             "nodeSamplesUs": [
-              0.0028590670415856493,
-              0.0028297694240456543,
-              0.002945209649063975,
-              0.002827562590277937,
-              0.002735560458848665,
-              0.003551404002969425,
-              0.005997945362005415,
-              0.005741191689745295,
-              0.0031263982951656674
+              0.003531575759992155,
+              0.00468173363901432,
+              0.002698018945363989,
+              0.0026928067824893045,
+              0.0030058826071810356,
+              0.002821142782881946,
+              0.0032081188634022866,
+              0.0028205372204673286,
+              0.0028309182923654664
             ],
-            "compileDurationMs": 2514.157321000006,
+            "compileDurationMs": 2489.565745,
             "binaryBytes": 72158,
             "moduleImportCount": 17,
             "functionImportCount": 17,
@@ -34991,53 +34991,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 6.034386043680172,
-        "nodeUs": 0.002945209649063975,
-        "wasmStdUs": 1.7681434535888234,
-        "nodeStdUs": 0.0012234429022633495,
-        "ratio": 0.0004886367193396968,
-        "ratioStd": 0.00013499101870437436,
+        "wasmUs": 5.737052337903961,
+        "nodeUs": 0.0028309182923654664,
+        "wasmStdUs": 0.04764350632039201,
+        "nodeStdUs": 0.0006006832966296056,
+        "ratio": 0.0004931857913571538,
+        "ratioStd": 0.00010467636315425334,
         "ratioSamples": [
-          0.0004857083632445878,
-          0.0004886367193396968,
-          0.00048526292978578426,
-          0.00046789935527105685,
-          0.00045332871298706925,
-          0.0005894758360381825,
-          0.0005165391756100256,
-          0.0009144707489473418,
-          0.0005314635708690751
+          0.0006006293548318826,
+          0.0008183442976819786,
+          0.00047027964648998014,
+          0.0004673917612077589,
+          0.0005248237288462585,
+          0.0004899388688353869,
+          0.0005609552742154037,
+          0.0004931857913571538,
+          0.000491754396143046
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 13141,
+        "iters": 46238,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          5.886386271973478,
-          5.791151814930261,
-          6.069306902062592,
-          6.043099992390272,
-          6.034386043680172,
-          6.0246812266947405,
-          11.611791796666584,
-          6.2781578266489655,
-          5.882620120233694
+          5.879792140663272,
+          5.720982784722373,
+          5.737052337903961,
+          5.761348414723838,
+          5.7274136857130875,
+          5.758152623383334,
+          5.719027899130487,
+          5.719015571607903,
+          5.756772719408458
         ],
         "nodeSamplesUs": [
-          0.0028590670415856493,
-          0.0028297694240456543,
-          0.002945209649063975,
-          0.002827562590277937,
-          0.002735560458848665,
-          0.003551404002969425,
-          0.005997945362005415,
-          0.005741191689745295,
-          0.0031263982951656674
+          0.003531575759992155,
+          0.00468173363901432,
+          0.002698018945363989,
+          0.0026928067824893045,
+          0.0030058826071810356,
+          0.002821142782881946,
+          0.0032081188634022866,
+          0.0028205372204673286,
+          0.0028309182923654664
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-11-26T07:33:01.536Z",
+      "measuredAt": "2026-11-27T19:51:52.659Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",

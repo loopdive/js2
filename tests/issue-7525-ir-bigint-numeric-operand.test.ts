@@ -137,6 +137,10 @@ describe("#7525 — the Prepared path refuses the same operators by name", () =>
       "*= on a narrowed copy",
       'function f(t, u) { if (typeof t === "bigint" && typeof u === "bigint") { var k = t; k *= u; return typeof k; } return "o"; }',
     ],
+    [
+      "*= into a dynamic member",
+      'function f(o, u) { if (typeof u === "bigint") { o.x *= u; return typeof o.x; } return "o"; }',
+    ],
   ])("%s on a narrowed BigInt", async (_, source) => {
     const result = await compilePrepared(source, options(), undefined, "refuse");
     expect(result.success).toBe(false);

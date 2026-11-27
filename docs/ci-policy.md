@@ -20,8 +20,30 @@ Related issues:
 
 ## 1. Required status checks on `main`
 
-A PR cannot merge until every check listed here reports `success` for the
-PR's head SHA.
+A PR cannot merge until every check listed here reports `success` or
+`skipped` for the PR's head SHA, and the merge queue then re-runs them for
+real on the merged tree.
+
+**Where each check runs (#7558, owner decision 2026-11-27).** The merge queue
+is the only authoritative gate. On `pull_request` only `cla-check` and
+`cheap gate (main-ancestor + lint)` run — typecheck + lint, ~1 min, and only
+when the PR touches a test262-sharded path; otherwise `test262-pr-stub.yml`
+publishes the cheap gate as a green stub, so a docs- or tests-only PR gets no
+typecheck at all on the PR;
+`quality` and `equivalence-gate` report `skipped` (ci.yml's `changes`,
+`quality-lane` and `quality` jobs carry `if: github.event_name != 'pull_request'`, everything
+else follows through `needs`); `merge shard reports` and `check for test262
+regressions` are green no-ops, published by `test262-sharded.yml` or, for a
+path-excluded PR, `test262-pr-stub.yml`. The one other PR-triggered run is
+`issue-tests.yml`, and only when a PR changes that detector's own five
+machinery files. In `merge_group` all six run in full.
+Fast feedback before the queue comes from the pre-push hook (`.husky/pre-push`:
+typecheck, lint, format, ratchets, size budgets, issue-id gates and the
+changed root test files, each alone). Forks have no hook: their only real
+validation is the queue, which an external PR reaches only by a deliberate
+maintainer enqueue (`auto-enqueue`'s author-trust gate). Accepted price: a
+broken PR is found in the queue, costs one queue run and is auto-parked.
+Rollback: revert #7558.
 
 ### Required-checks list (paste into GitHub UI verbatim)
 
@@ -47,15 +69,16 @@ classic endpoint (`gh api repos/loopdive/js2wasm/branches/main/protection`) answ
 | ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
 | `merge shard reports`               | `.github/workflows/test262-sharded.yml` | **merge queue (#7551):** the IR-path current-edition gate — fails on any pass → not-pass of the current edition against the base commit's IR measurement. **Weekly full run / dispatch:** aggregates the 102 legacy standalone shards (weekly) and runs the legacy gates (standalone net guard #1897, high-water floor #2097, per-edition ratchet), which there detect regressions after the fact — see §3 |
-| `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
+| `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) on the merged tree; merge queue and push only (#7558 — the stale-base dup-ID check #2530 moved to the pre-push hook); runs as parallel `quality-lane` jobs that `quality` aggregates (#7563)                         |
 | `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
 | `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | js-host rolling-baseline diff (`scripts/diff-test262.ts`). A **net** gate, not a per-row one: fails when net (improvements − wasm-change regressions) < 0, when any path bucket has > 50 regressions, when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions, or on any uncatchable-trap growth (#3189). A +5 / −4 diff passes it. Pass→fail rows of a **completed** edition are blocked by `merge shard reports` instead — see "What blocks a pass→fail row" in §3 |
 | `cla-check`                         | `.github/workflows/cla-check.yml`       | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded                                                                                                                                                 |
 
 ### Optional / informational checks (NOT required to merge)
 
-These run on PRs for visibility but are not in the required-checks list.
-A failure here surfaces in the PR Checks tab but does not block merge.
+None of these runs on a pull request any more (#7558): the `ci.yml` jobs
+run in `merge_group` and on push, the path-filtered lanes on push to `main`
+only (detected after merge). A failure here does not block a merge.
 
 | Check name                                                 | Workflow file                                 | Why it isn't required                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -67,9 +90,9 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 | `differential gate (branch vs main)`                       | `.github/workflows/test262-differential.yml`  | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas.                                                                                                                                                                                                                                                                                                                     |
 | `measure-and-gate`                                         | `.github/workflows/benchmark-refresh.yml`     | Same-run benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on substantial PR regressions (§6 below). Promote to required once the expanded suite has a longer stable signal window.                                                                                                                                                                                                                                                                                |
 | `Test262 Canary`                                           | `.github/workflows/test262-canary.yml`        | Smoke check on a small slice of test262 — fast feedback, not authoritative.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `cross-backend-parity`                                     | `.github/workflows/cross-backend-parity.yml`  | #2711 — runs the #1854 cross-backend differential harness (WasmGC/host vs linear/standalone) over the builtin corpus; red on a host↔standalone divergence. Advisory: deliberately NOT in the required list and deliberately does NOT run in `merge_group`, so it cannot block or wedge the queue. **Do not promote to required while it skips `merge_group`** — a required check that never runs in the queue blocks it permanently (see §below on test262-sharded skip). Per-method gaps it documents: child issues #2715–#2721. |
-| `porffor-source-native-canary`                             | `.github/workflows/porffor-source-canary.yml` | #3478 — explicitly initializes only the pinned optional Porffor gitlink, then compares real-source JavaScript, production linear-Wasm, and sanitizer-instrumented Porffor-C under both allocator policies. Advisory and absent from `merge_group`, so the optional submodule cannot become a required queue dependency.                                                                                                                                                                                                           |
-| `semantic-sanitizers`                                      | `.github/workflows/porffor-direct-ab.yml`     | #3482 — relevant PRs must execute all four native rows: both plain direct-Porffor rows must reproduce their pinned UBSan misalignment finding, while both JS2 rows must remain sanitizer-clean with exact output. Expected direct safety failures are evidence, not skips. Advisory and absent from `merge_group`; its separate optimized job runs only by `workflow_dispatch`, uploads complete evidence without a performance threshold, and never auto-updates results.                                                        |
+| `cross-backend-parity`                                     | `.github/workflows/cross-backend-parity.yml`  | #2711 — runs the #1854 cross-backend differential harness (WasmGC/host vs linear/standalone) over the builtin corpus; red on a host↔standalone divergence. Advisory: deliberately NOT in the required list; runs on push to `main` only (#7558), so it cannot block or wedge the queue. **Do not promote to required while it skips `merge_group`** — a required check that never runs in the queue blocks it permanently (see §below on test262-sharded skip). Per-method gaps it documents: child issues #2715–#2721. |
+| `porffor-source-native-canary`                             | `.github/workflows/porffor-source-canary.yml` | #3478 — explicitly initializes only the pinned optional Porffor gitlink, then compares real-source JavaScript, production linear-Wasm, and sanitizer-instrumented Porffor-C under both allocator policies. Advisory and push-to-`main` only (#7558), so the optional submodule cannot become a required queue dependency.                                                                                                                                                                                                           |
+| `semantic-sanitizers`                                      | `.github/workflows/porffor-direct-ab.yml`     | #3482 — relevant pushes to `main` (#7558; formerly PRs) execute all four native rows: both plain direct-Porffor rows must reproduce their pinned UBSan misalignment finding, while both JS2 rows must remain sanitizer-clean with exact output. Expected direct safety failures are evidence, not skips. Advisory and absent from `merge_group`; its separate optimized job runs only by `workflow_dispatch`, uploads complete evidence without a performance threshold, and never auto-updates results.                                                        |
 
 ### Reading a PR's check state — three facts that have each caused a wrong call
 
@@ -172,9 +195,13 @@ reviewer should require a normal CODEOWNER approval before merging.
 
 ## 3. Test262 gate decision (sharded + merge-queue model)
 
-Two test262 workflows currently run on PRs:
+On a pull request test262 never runs (#2519, #7551): the two required
+contexts are green no-ops, and since #7558 the same holds for every check but
+`cla-check` and the cheap gate (§1, "Where each check runs").
 
-- **`test262-sharded.yml` is the authoritative PR gate.** The required
+The test262 workflows:
+
+- **`test262-sharded.yml` is the authoritative gate, in the merge queue.** The required
   check is `merge shard reports`. Since #7551 it carries the IR-path
   current-edition gate in the merge queue, and the legacy matrix runs weekly
   (see "The merge-queue test262 gate" below). The queue-model notes that
@@ -354,8 +381,8 @@ Two test262 workflows currently run on PRs:
     than the inline catastrophic guard's 200. It does not fail on individual
     pass→fail rows while net ≥ 0. It always publishes a context: on the
     intentional no-shards path it exits cleanly without looking for artifacts.
-- **`test262-differential.yml` runs in parallel** as a diagnostic signal
-  (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
+- **`test262-differential.yml` is `workflow_dispatch`-only** — a diagnostic
+  signal (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
   Useful for triaging "which exact tests flipped on my branch?" but the
   sharded `merge shard reports` aggregate is what gates the merge.
 - **`test262-pr-stub.yml` is the path-excluded companion producer (#4).**
@@ -1071,10 +1098,10 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 
 | Required check                      | Workflow              | What it protects against                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
+| `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck. The only code check a PR runs (#7558); it runs again in the queue before any test262 shard. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
 | `merge shard reports`               | `test262-sharded.yml` | **in the merge queue:** the IR-path current-edition per-test gate (#7551) — each PR validated on its own merge_group ref against the measurement of the commit its group was built on. **On the weekly full run:** the legacy standalone lane's aggregate and gates (#1897, #2097, edition ratchet), not a merge gate — see §3. |
-| `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
-| `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
+| `quality`                           | `ci.yml`              | merge queue and push only — `skipped` on a PR (#7558). Source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), the change-scoped ratchets, issue integrity, **the dogfood emitted-binary validation floor (#5336)** and, in the queue, the root test files the queued PR adds or modifies (#3008). Since #7563 these run as parallel `quality-lane` matrix jobs; `quality` fails unless all succeeded.                                                                              |
+| `equivalence-gate`                  | `ci.yml`              | merge queue and push only — `skipped` on a PR (#7558). Semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged. Each of the 8 shards runs its files in one fork per runner core (#7565) and logs its slowest files, with a warning for any file over 150 s: one file that slow sets the queue's clock, so split it.                                                                                                                                                                                                                                                                                                                                                                            |
 | `check for test262 regressions`     | `test262-sharded.yml` | js-host net gate (net ≥ 0, ≤ 50 per bucket, ratio, trap growth) below the inline catastrophic threshold. Not per-row: pass→fail rows of a completed edition are blocked by `merge shard reports` (§3, #6786).                                                                                                                                                                                                                                                                         |
 | `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
@@ -1141,7 +1168,7 @@ was banked.
 
 ### Dogfood emitted-binary validation floor (#5336) — a step, not a seventh context
 
-`pnpm run check:dogfood-validation` runs as a **step inside `quality`**, so it
+`pnpm run check:dogfood-validation` runs as a **step inside `quality`** (its `ratchets` lane), so it
 gates without changing the required-checks ruleset. It compiles the pinned
 tarball entry of six npm-compat packages (no test execution, no upstream
 clone) and fails when `compile.success` is true but the emitted binary is
@@ -1152,8 +1179,8 @@ bug — which is why it needs no baseline and no golden number.
 Why it exists: #5390 broke it for moment and survived **five merges with all
 six required checks green**, because no check read `compile.validated`.
 Measured cost: **25.7 s** in `quality` on a 4-vCPU `ubuntu-latest`
-(concurrency 3, bounded by moment's ~13 s compile), against a job that runs
-~10 min — about 4 %. If it ever needs to become its own required context —
+(concurrency 3, bounded by moment's ~13 s compile); since #7563 it shares
+a ~2 min lane with the change-scoped ratchets. If it ever needs to become its own required context —
 e.g. to move it off `quality`'s critical path — that is a ruleset change and
 goes through §8, not through a workflow edit.
 
@@ -1236,6 +1263,8 @@ Version tags (`v*`) drive `publish-npm.yml`, which publishes whatever
 lockstep with `node scripts/release.mjs <x.y.z>`, land a `release:` PR, then
 tag the merge commit — the workflow's `verify-version` job fails the publish
 if the tag and `package.json` versions disagree. Full flow: [releasing.md](releasing.md).
+
+A `release:` PR is validated like any other: in the merge queue (#7558).
 
 **Before tagging, the full test262 run must be green on the release commit
 (#7551).** The merge queue only gates the IR current edition; the full run

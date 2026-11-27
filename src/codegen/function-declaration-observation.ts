@@ -5,7 +5,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { condenseDirectedGraph } from "./analysis/strongly-connected-components.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
+import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "../shared/annexb-block-functions.js";
 import { getOrRegisterRefCellType } from "./registry/types.js";
 
 interface FunctionObservationContextFacts {

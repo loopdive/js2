@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("default parameter values", () => {
   it("numeric default value is used when argument is omitted", { timeout: 15000 }, async () => {
@@ -17,10 +17,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(42);
   });
@@ -39,10 +36,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(99);
   });
@@ -67,10 +61,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.noArgs()).toBe(3); // 1 + 2
     expect(exports.oneArg()).toBe(12); // 10 + 2
@@ -91,10 +82,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe("Hello world");
   });
@@ -113,10 +101,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe("Hello Bob");
   });
@@ -138,10 +123,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.withDefault()).toBe(50); // 5 * 10
     expect(exports.withOverride()).toBe(15); // 5 * 3
@@ -167,10 +149,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.withDefault()).toBe(1);
     expect(exports.withTrue()).toBe(1);
@@ -190,10 +169,7 @@ describe("default parameter values", () => {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
     ).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(
-      result.binary,
-      buildImports(result.imports, undefined, result.stringPool),
-    );
+    const instance = await instantiateWithRuntime(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(14); // (3+4) * 2
   });

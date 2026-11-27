@@ -88,7 +88,7 @@ import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand } from "./host-bigint-carrier.js";
-import { emitMaybeBigIntLooseEquality, emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383, #7373)
+import { emitMaybeBigIntComparison, emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383, #7373, #7403)
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
 
@@ -1751,8 +1751,8 @@ export function compileBinaryExpression(
         op === ts.SyntaxKind.LessThanEqualsToken ||
         op === ts.SyntaxKind.GreaterThanToken ||
         op === ts.SyntaxKind.GreaterThanEqualsToken;
-      const maybeBigIntLooseEq = emitMaybeBigIntLooseEquality(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType);
-      if (maybeBigIntLooseEq !== undefined) return maybeBigIntLooseEq;
+      const maybeBigInt = emitMaybeBigIntComparison(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType);
+      if (maybeBigInt !== undefined) return maybeBigInt;
 
       // The i64 comparison below cannot represent arbitrary-width host BigInts and its f64 conversion also loses
       // integer precision. Let JavaScript perform the exact abstract equality / relational algorithm with a host.

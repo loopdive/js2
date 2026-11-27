@@ -48,6 +48,10 @@ import {
   type NativeClosureMethodEntry,
 } from "../../../runtime/wasmgc/values/closure-method-body.js";
 import { buildNativeClosureVectorApplyDefinition } from "../../../runtime/wasmgc/values/closure-vector-apply-body.js";
+import {
+  buildArgumentsCountBody,
+  buildPublishArgcBody,
+} from "../../../runtime/wasmgc/values/closure-invocation-bodies.js";
 import type { ClosureInvocationLayout } from "../../../runtime/wasmgc/values/closure-invocation-types.js";
 import {
   requireNativeBooleanBoxReservations,
@@ -79,6 +83,9 @@ export interface NativeInvocationReservations {
   readonly undefinedValue: FunctionReservation;
   /** (#7354 C2) `js.closure.receiver`: the `__current_this` the dispatcher installed. */
   readonly receiver?: FunctionReservation;
+  /** (#7562) `js.closure.arguments-length` and `js.closure.publish-argc`: the count protocol outside the dispatcher. */
+  readonly argumentsLength?: FunctionReservation;
+  readonly publishArgc?: FunctionReservation;
   readonly isUndefined: FunctionReservation;
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
@@ -204,6 +211,8 @@ export function reserveNativeInvocationResources(
     ...(borrowedSubstrate.value === undefined ? substratePlan.reservationKeys : []),
     ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
     ...(requirements.receiver ? [key("receiver")] : []),
+    ...(requirements.argumentsLength ? [key("arguments-length")] : []),
+    ...(requirements.publishArgc ? [key("publish-argc")] : []),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
   ]);
@@ -232,6 +241,15 @@ export function reserveNativeInvocationResources(
   });
   const receiver = requirements.receiver
     ? tx.reserveFunction(key("receiver"), "__closure_receiver", { params: [], results: [{ kind: "externref" }] })
+    : undefined;
+  const argumentsLength = requirements.argumentsLength
+    ? tx.reserveFunction(key("arguments-length"), "__closure_arguments_length", {
+        params: [],
+        results: [{ kind: "f64" }],
+      })
+    : undefined;
+  const publishArgc = requirements.publishArgc
+    ? tx.reserveFunction(key("publish-argc"), "__closure_publish_argc", { params: [{ kind: "i32" }], results: [] })
     : undefined;
   const isUndefined = tx.reserveFunction(key("is-undefined"), "__closure_is_undefined", {
     params: [{ kind: "externref" }],
@@ -262,6 +280,8 @@ export function reserveNativeInvocationResources(
     globals,
     undefinedValue,
     ...(receiver ? { receiver } : {}),
+    ...(argumentsLength ? { argumentsLength } : {}),
+    ...(publishArgc ? { publishArgc } : {}),
     isUndefined,
     methods,
     ...(applyVector ? { applyVector } : {}),
@@ -280,6 +300,8 @@ export function reserveNativeInvocationResources(
         : []),
       undefinedValue,
       ...(receiver ? [receiver] : []),
+      ...(argumentsLength ? [argumentsLength] : []),
+      ...(publishArgc ? [publishArgc] : []),
       isUndefined,
       ...methods.map((row) => row.function),
       ...(applyVector ? [applyVector] : []),
@@ -465,6 +487,16 @@ export function fillNativeInvocationResources(
   });
   if (pack.receiver)
     tx.fillFunction(pack.receiver, { locals: [], body: [{ op: "global.get", index: state.currentThis }] });
+  // (#7562) Every entry into a reading function publishes its count first, so an unpublished one is the abort.
+  if (pack.argumentsLength)
+    tx.fillFunction(pack.argumentsLength, {
+      locals: [
+        { name: "__argc", type: { kind: "i32" } },
+        { name: "__extras", type: { kind: "ref_null", typeIdx: state.extrasVecTypeIdx } },
+      ],
+      body: buildArgumentsCountBody(state, { argc: 0, extras: 1 }, [{ op: "unreachable" }]),
+    });
+  if (pack.publishArgc) tx.fillFunction(pack.publishArgc, { locals: [], body: buildPublishArgcBody(state) });
   tx.fillFunction(pack.isUndefined, {
     locals: [],
     body: buildClosureUndefinedTest(0, values.types.anyValue.typeIndex),

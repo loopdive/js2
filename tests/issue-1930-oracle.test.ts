@@ -14,7 +14,7 @@ import { analyzeSource } from "../src/checker/index.js";
 import { TsCheckerOracle } from "../src/checker/oracle.js";
 import { ts } from "../src/ts-api.js";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 function oracleFor(source: string) {
   const { sourceFile, checker } = analyzeSource(source, "oracle-probe.ts");
@@ -101,9 +101,7 @@ export function test() {
       { fileName: "t.ts" },
     );
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
-    const imports = buildImports(result.imports, undefined, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setExports?.(instance.exports as Record<string, Function>);
+    const instance = await instantiateWithRuntime(result);
     const v = (instance.exports as Record<string, () => unknown>).test();
     expect(v).toBe("threw:Cannot convert a Symbol value to a number");
   });
