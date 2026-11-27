@@ -283,15 +283,17 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
  * (#7471) `delete <recv>.<key>` (§13.5.1.2): the [[Delete]] of the key on the call's once-evaluated receiver, its
  * Boolean into the call's result. An object's or a function's is the realm's OrdinaryDelete; in strict code a `false`
  * answer is a TypeError. A number's or a Boolean's wrapper owns no property, and a string's owns only its `length` and
- * indices, so every other key answers `true`. V8 gives a sloppy function an own non-configurable `caller` and
- * `arguments` that the specification does not, so where a value may be a function a delete of either refuses by name.
+ * indices, so every other key answers `true`. (#7489) A sloppy function's own `caller` is the realm's, so its delete is
+ * OrdinaryDelete too; its own `arguments` is not (`functionOwnKeyGap`), so where a value may be a function a delete of
+ * it refuses by name, as the read and write arms do.
  */
 export function dynamicMemberDelete(b: MemberAccessBuilders, instr: Call, strict: boolean): IrInstr[] {
   const [recv, key] = instr.args as [IrValueId, IrValueId];
   const site: MemberSite = { instr, recv, key, label: instr.target.name };
   const name = constantKey(b, site);
-  if (FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(name) && b.kindsOf(recv).includes("function"))
-    gap(`member delete '${name}' (V8's own function property) where a value may be a function`);
+  const functionGap = functionOwnKeyGap(name);
+  if (functionGap !== undefined && b.kindsOf(recv).includes("function"))
+    gap(`member delete '${name}' of a value that may be a function needs ${functionGap}`);
   const ordinaryDelete = (kind: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] => {
     if (!strict) return [realmCall("js.object.delete", [recv, key], r)];
     const deleted = b.fresh();

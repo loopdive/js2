@@ -54,6 +54,8 @@ describe("#7471 slice 1 — delete of an object's or a function's member", () =>
       'function f(x) {} var out = "" + (delete f.length) + "," + f.length + "," + (delete f.name) + ",[" + f.name + "],"' +
         ' + (delete f.prototype) + "," + typeof f.prototype;',
     ],
+    // (#7489) A sloppy function's own `caller` is the realm's non-configurable one, so OrdinaryDelete answers `false`.
+    ["a function's own caller", 'function f() {} var out = "" + (delete f.caller) + "," + (f.caller === null);'],
     [
       "a function's prototype in strict code",
       '"use strict"; function f(x) {} var out = "none"; try { delete f.prototype; } catch (e) { out = e.name; }',
@@ -126,9 +128,11 @@ describe("#7471 slice 1 — delete of an object's or a function's member", () =>
       gapText("__ir_dyn_delete_sloppy with a computed key"),
     ],
     [
-      "a function's caller (V8's own property)",
-      "function f() {} var x = delete f.caller;",
-      gapText("member delete 'caller' (V8's own function property) where a value may be a function"),
+      "a function's own arguments",
+      "function f() {} var x = delete f.arguments;",
+      gapText(
+        "member delete 'arguments' of a value that may be a function needs a sloppy function's own arguments object",
+      ),
     ],
     ["`this`'s member", "var x = delete this.x;", "ir/from-ast: 'this' reference outside an instance method body"],
   ])("refuses %s by name", async (_label, source, reason) => {
