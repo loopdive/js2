@@ -210,6 +210,12 @@ g() + ',' + g(1, 2, 3) + ',' + f(1)` gives `0,3,1` as node does.
   named `arguments` (`p(4)`: 4/4/4) and the property-name users `a.arguments`
   (3/3/3) and `{arguments: 1}` (3/3/3). All three drop a dead
   `__ir_arguments_length` entry read, since none reads an arguments object.
+  Re-measured after merging main (head vs merge base `1051faa835`): the same
+  three differ with the same hashes and results; the other 11 are identical.
+- After the merge: typecheck exit 0; the gates chain passes against the merge
+  base. With `LOC_GATE_BASE` at `origin/main` (`b78ea8d439`) only the LOC gate
+  fails, on `src/codegen/native-strings.ts` (2208 > 2205), a file this branch
+  does not touch: main shrank it after the merge.
 - Test file: 27 rows, exit 0.
 
 ### Next (follow-up issues)
