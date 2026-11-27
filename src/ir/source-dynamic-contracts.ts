@@ -318,15 +318,15 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
      */
     readonly closuresBindReceivers?: () => boolean;
-    /**
-     * (#7363 A4) Some sloppy function binds ambient `this`, which a plain call makes the global object, and lets it
-     * escape (`ownThisEscapes`): a global-object value may then write any global, which `pristineBuiltinGlobal` does not
-     * see.
-     */
-    readonly ambientThisMayBeGlobal?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
   };
+  /**
+   * (#7363 A4) Some sloppy function binds ambient `this`, which a plain call makes the global object, and lets it
+   * escape (`ownThisEscapes`): a global-object value may then write any global, which `pristineBuiltinGlobal` does not
+   * see. Admission asks it (`refuseUnadmittedLiteralEvalSites`); no lowering does.
+   */
+  readonly ambientThisMayBeGlobal: boolean;
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
    * a function on the native lane whose closures are function objects and that reads its own `this`, the strictness
@@ -403,6 +403,7 @@ export function programDynamicContracts(
     ...provenance,
     functionDeclarationValues,
     codeStrictness,
+    ambientThisMayBeGlobal: receivers.ambientThisMayBeGlobal,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
       ? {
@@ -413,7 +414,6 @@ export function programDynamicContracts(
           staticFunctionValue: (declaration) =>
             !receivers.closuresBindReceivers && staticFunctionValue(checker, policy, startupSources, declaration),
           closuresBindReceivers: () => receivers.closuresBindReceivers,
-          ambientThisMayBeGlobal: () => receivers.ambientThisMayBeGlobal,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,

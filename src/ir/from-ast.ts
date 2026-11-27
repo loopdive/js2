@@ -1025,8 +1025,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
-  /** (#7363 A4) Some sloppy function lets its ambient `this`, the global object on a plain call, escape. */
-  ambientThisMayBeGlobal?(): boolean;
   /** (#7354 U) The function's body is the run-time abort (`abort-bodies.ts`); its statements are not lowered. */
   abortedBody?(fn: ts.FunctionLikeDeclaration): boolean;
   /**
@@ -7753,24 +7751,10 @@ function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null 
 
 /**
  * (#7363 A4) A literal direct eval runs its text, a called script of the program (`init`: its module-init, `null` when
- * the text runs nothing), while the global `eval` is the realm's %eval%. That holds at every site when no source
- * rebinds `eval` (`isPristineBuiltinGlobal`) and no sloppy function lets the global object escape through its `this`
- * (`ambientThisMayBeGlobal`), which would write it unseen. The site's completion value is A5's.
+ * the text runs nothing). Admission refused the program unless every site discards its value and the global `eval` is
+ * the realm's %eval% (`refuseUnadmittedLiteralEvalSites`), so the site is just that call.
  */
-function lowerLiteralEvalCall(
-  expr: ts.CallExpression,
-  init: IrFuncRef | null,
-  statementPosition: boolean,
-  cx: LowerCtx,
-): null {
-  const gap = !statementPosition
-    ? "its completion value needs #7363 A5"
-    : cx.resolver?.isPristineBuiltinGlobal?.(expr.expression as ts.Identifier) !== true ||
-        cx.resolver?.ambientThisMayBeGlobal?.() !== false
-      ? "the global eval is not pristine (#7363 A4)"
-      : undefined;
-  if (gap !== undefined)
-    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval literal: ${gap} in ${cx.funcName}`);
+function lowerLiteralEvalCall(init: IrFuncRef | null, cx: LowerCtx): null {
   if (init !== null) cx.builder.emitCall(init, [], null);
   return null;
 }
@@ -7845,7 +7829,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     return result;
   }
   const literalEvalInit = cx.resolver?.literalEvalCalledInit?.(expr);
-  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(expr, literalEvalInit, statementPosition, cx);
+  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(literalEvalInit, cx);
   if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier))
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({

@@ -13,12 +13,16 @@ import { foldedEvalDeclarationNames } from "../frontend/eval/declaration-names.j
 import {
   evalBodyHasUseStrictDirective,
   foldedEvalStaticSyntaxError,
+  hasHtmlLikeComment,
   parseEvalSource,
 } from "../frontend/eval/script.js";
-import { identifierWritesOf } from "../shared/binding-writes.js";
+import { identifierWritesOf, isCommaExpression } from "../shared/binding-writes.js";
 import { planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { resolvesToSourceBinding } from "./analysis/ast-scope.js";
+import { MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import { IrUnsupportedError } from "./outcomes.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import type { ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 
 /** A qualifying site and the program script that holds its text. */
 export interface LiteralEvalSource {
@@ -94,6 +98,58 @@ export function verifyLiteralEvalSources(
   return { calls, sources, dependencies: new Map([...sources].map((source) => [source, [entry]])) };
 }
 
+/**
+ * (#7363 A4, A5) Admission of a related site, before any unit lowers: the select-time refusal of the program when the
+ * site's value is used (A5), or else when the global `eval` may not be the realm's %eval% there (A4): a source rebinds
+ * it (`isPristineBuiltinGlobal`, absent off the native lane), or a sloppy function lets its ambient `this`, the global
+ * object, escape and write it unseen. Otherwise nothing, and lowering emits the site as the call of its text. The label
+ * keeps the text the lowering gave it, so census rows compare across the move.
+ */
+export function literalEvalSiteRefusal(
+  call: ts.CallExpression,
+  contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
+): IrUnsupportedError | undefined {
+  const gap = !discardsValue(call)
+    ? "its completion value needs #7363 A5"
+    : contracts.resolver.isPristineBuiltinGlobal?.(call.expression as ts.Identifier) !== true ||
+        contracts.ambientThisMayBeGlobal
+      ? "the global eval is not pristine (#7363 A4)"
+      : undefined;
+  return gap === undefined
+    ? undefined
+    : new IrUnsupportedError(
+        "literal-eval-site-unsupported",
+        "select",
+        `ir/from-ast: eval literal: ${gap} in ${MODULE_INIT_UNIT_NAME}`,
+      );
+}
+
+/**
+ * The call's value is discarded: through parentheses, it is the expression of an expression statement, the operand
+ * of `void`, or the left operand of a comma. from-ast lowers each of these in statement position
+ * (`lowerDiscardedExpression`), which a site needs: its call returns nothing. from-ast's other statement positions
+ * are left out because their value goes on: a comma's right operand and a conditional's arm are the value of the
+ * enclosing expression. A for head's expressions are values there, and so is each clause of an incrementor's comma
+ * list (`lowerForUpdateExpr` splits it before `lowerDiscardedExpression` could see the comma), so a left operand there
+ * is not discarded either.
+ */
+export function discardsValue(call: ts.CallExpression): boolean {
+  let node: ts.Expression = call;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const parent = node.parent;
+  if (ts.isExpressionStatement(parent) || ts.isVoidExpression(parent)) return true;
+  return (
+    ts.isBinaryExpression(parent) && isCommaExpression(parent) && parent.left === node && !incrementorClause(parent)
+  );
+}
+
+/** The comma is the for incrementor or, through unparenthesized commas, one of its clauses. */
+function incrementorClause(comma: ts.BinaryExpression): boolean {
+  let node: ts.Expression = comma;
+  while (ts.isBinaryExpression(node.parent) && isCommaExpression(node.parent)) node = node.parent;
+  return ts.isForStatement(node.parent) && node.parent.incrementor === node;
+}
+
 function literalEvalSites(file: ts.SourceFile): readonly LiteralEvalSite[] {
   const sites: LiteralEvalSite[] = [];
   const visit = (node: ts.Node): void => {
@@ -157,10 +213,12 @@ function isLexicalList(node: ts.Node): boolean {
 
 /**
  * The text is a Script, not a Module, that PerformEval runs without a SyntaxError, declares nothing, stores into no
- * identifier, holds no nested eval, and lowers as one init chunk. The static check here is the spec's; the Prepared
+ * identifier, holds no nested eval, and lowers as one init chunk. A text that may hold an HTML-like comment is none:
+ * its TypeScript parse is not the Script PerformEval runs. The static check here is the spec's; the Prepared
  * entry also keeps a text only when the compile's gates pass it as they pass an entry (`test262-prepared-entry.ts`).
  */
 function textRunsAsScript(call: ts.CallExpression, text: string): boolean {
+  if (hasHtmlLikeComment(text)) return false;
   const script = parseEvalSource(text, false, false);
   const names = foldedEvalDeclarationNames(script.sourceFile);
   return (

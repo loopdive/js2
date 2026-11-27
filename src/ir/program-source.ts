@@ -38,7 +38,7 @@ import { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
-import { verifyLiteralEvalSources, type LiteralEvalSource } from "./eval-literal.js";
+import { literalEvalSiteRefusal, verifyLiteralEvalSources, type LiteralEvalSource } from "./eval-literal.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
@@ -1589,6 +1589,13 @@ export function prepareIrProgramSources(
     });
     const startupSources = sourceFiles.filter((source) => !literalEval.sources.has(source));
     const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources);
+    // (#7363 A4, A5) A site that does not lower refuses the program at select, owned by the entry's init.
+    for (const call of literalEval.calls.keys()) {
+      const refusal = literalEvalSiteRefusal(call, dynamicContracts);
+      if (!refusal) continue;
+      diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(input.entrySource);
+      throw refusal;
+    }
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {

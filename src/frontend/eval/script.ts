@@ -64,6 +64,21 @@ export function parseEvalSource(source: string, inheritedStrict: boolean, caller
   return { sourceFile, statements, bodyIsStrict, evalIsStrict: bodyIsStrict || callerStrict };
 }
 
+// A line that may begin, after white space and comments, with Annex B's `-->`. The optional prefix up to a comment's
+// end lets a comment opened on an earlier line count as well.
+const HTML_CLOSE_COMMENT_LINE = /^(?:.*\*\/)?(?:\s|\/\*.*?\*\/)*-->/;
+
+/**
+ * The text may hold an Annex B (B.1.1) HTML-like comment: `<!--` anywhere, or `-->` at the start of a line. TypeScript
+ * does not implement them, so it parses `a <!--b` as `a < !(--b)`. A consumer that runs such a text from its parse
+ * refuses it. Conservative: an occurrence in a string or a comment counts too, which only refuses.
+ */
+export function hasHtmlLikeComment(text: string): boolean {
+  return (
+    text.includes("<!--") || text.split(/\r\n?|[\n\u2028\u2029]/).some((line) => HTML_CLOSE_COMMENT_LINE.test(line))
+  );
+}
+
 /**
  * The SyntaxError message PerformEval raises before running the Script, in
  * spec order: a parse failure, a Script early error, then (§19.2.1.3 step 5.a)

@@ -33,6 +33,9 @@ related: [7354, 7106, 7345, 3630]
 # 2026-11-26 (A4 narrowed): from-ast +27: `lowerLiteralEvalCall` (the site's call of its called init or its named
 # refusal, 22 lines with its doc) and the resolver's `literalEvalCalledInit` / `ambientThisMayBeGlobal`; lowerCall
 # is 306 lines, +1 over main (the A2 label's branch becomes the arm). The other A4 files stay under their ceilings.
+# 2026-11-27 (RV7502 finding 2): program-source.ts +7, the one admission point that refuses a site at select before
+# any unit lowers (`literalEvalSiteRefusal` in eval-literal.ts, under its ceiling). from-ast -16: the gate leaves
+# `lowerLiteralEvalCall`; lowerCall stays at 306.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts
@@ -740,3 +743,54 @@ Built as planned, with three deviations, each stated here.
 Re-measured: the 12 acceptance files pass with the real harness
 (`npx tsx scripts/ir-census/prepared-census.mts --files twelve.txt --out <fresh> --harness real --jobs 3`); the
 7363, Prepared-entry and `issue-7354-{c2,o1,f1,fa}*` files pass (293 and 165 tests).
+
+#### RV7502 finding 2 (2026-11-27, base `f6ae7432`)
+
+The A4/A5 gate moves from lowering to admission, so a site refuses at select and is never claimed and withdrawn.
+
+- **`discardsValue(call)`** (`eval-literal.ts`): through parentheses, the call is the expression of an expression
+  statement (a label included), the operand of `void`, or the left operand of a comma. Each is a place where from-ast
+  passes `statementPosition = true` (`lowerDiscardedExpression`: the statement walkers, the `void` arm, both comma
+  arms). from-ast's other statement positions are excluded: a comma's right operand and a conditional's arm hand their
+  value on. A for head's expressions are values in from-ast (`lowerForInitializer`, `lowerForUpdateExpr`), and the
+  incrementor's comma list is split clause by clause before `lowerDiscardedExpression` sees it, so
+  `for (…; …; eval("1"), i++)` is not discarded. That keeps the one decisive property: every admitted site is lowered
+  in statement position.
+- **Admission** (`literalEvalSiteRefusal(call, contracts)`, called from one loop in `prepareIrProgramSources` right
+  after `programDynamicContracts`): not `discardsValue` → A5; else the contracts' `isPristineBuiltinGlobal` (the same
+  memoized predicate) not true, or `ambientThisMayBeGlobal` → A4. The refusal is an `IrUnsupportedError` with the new
+  code `literal-eval-site-unsupported` at stage `select`, owned by the entry's init, with the old label text, so every
+  pin and census label is unchanged. `ambientThisMayBeGlobal` moved from the resolver to a field of the contracts: no
+  lowering asks it any more.
+- **Lowering**: `lowerLiteralEvalCall(init, cx)` only emits the call; its `statementPosition` parameter and its gate are
+  gone. lowerCall stays at 306 lines.
+- **Adapter**: `withLiteralEvalSources` returns the with-texts failure as-is when its code is
+  `literal-eval-site-unsupported`. The second compile runs only for any other failure (a text the IR cannot lower).
+  Cost: an A4/A5 refusal compiles once instead of twice.
+- **A visible change**: admission sees every site, also one lowering never reaches. `var v; do { break; v =
+  eval("1"); } while (false);` compiled on `f6ae7432` (the second compile, without texts, never lowered the dead
+  site) and now refuses by A5. So do `0, eval("1");` and `c ? eval("1") : 0;`, which from-ast lowered in statement
+  position. All three are pinned.
+- **Annex B HTML-like comments** (lead's item): TypeScript has no B.1.1, so `eval("o.p <!--o.p")` parsed as
+  `o.p < !(--o.p)` and made a source. `hasHtmlLikeComment(text)` (`src/frontend/eval/script.ts`, shared with #7487)
+  is true for `<!--` anywhere or a line that begins with `-->` after white space and comments. It is conservative
+  (a string or comment occurrence counts too), and `textRunsAsScript` asks it, so such a text makes no source and
+  its site keeps slice 1's label.
+- **Pins** (`issue-7363-eval-a4.test.ts`, 57 tests): six `discardsValue` forms lower and run; six value-used forms
+  refuse by A5 (`var v =`, comma right, an argument, a condition, a conditional's arm, an incrementor clause); the A4
+  refusal is one compile (a pass-through spy on `runPreparedIrPipelinePresentation` counts 1; the two fallback rows
+  count 2) and has code `literal-eval-site-unsupported` at `select`; the dead-code site; the three HTML texts make no
+  source and refuse by slice 1's label; the control `1 < !--y`; four `hasHtmlLikeComment` shapes.
+- **Mutation**: 15, each reverted alone, each red: the expression-statement, `void` and comma-left arms, the
+  parenthesis walk, left-operand-only, the incrementor exclusion, the A5 condition, the pristine condition, the
+  ambient-`this` condition, the admission call, the adapter's early return, the `<!--` test, the `-->` test, the
+  comment-end prefix, and the site predicate's HTML check.
+- **Census.** 12 acceptance files, real harness: 12 pass. 118 A0 files: real and stand-in each 12 pass, 1 fail, 105
+  compile errors, as on `cfcee6c6`. Against `f6ae7432` with both harnesses, no file passes or fails differently. 15 (real) and 13 (stand-in) compile
+  errors stop earlier, at the admission refusal, where lowering used to reach a later stop first:
+  - 13 now read A5: 4 `identifier "String" is not in scope`, 3 `direct call to "eval" has no exact AST-site plan`
+    (`cptn-nrml-expr-obj`, `cptn-nrml-expr-prim`, `typeof/syntax`), 2 `unknown class "RegExp"`, 2 dynamic `+`
+    (`S15.10.4.1_A5_T3`, `cptn-thrw-prim`), 1 `.indexOf` on string, 1 heterogeneous array sink (`S12.6.3_A5`).
+  - 2 (real only) now read A4 instead of `identifier "globalThis" is not in scope`:
+    `S15.3.4.3_A3_T9` and `S15.3.4.4_A3_T9`. Their related site discards its value but the A4 proof fails for the
+    program; lowering used to stop at the runtime shim's `globalThis` read first.
