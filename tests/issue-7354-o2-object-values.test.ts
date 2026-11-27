@@ -186,7 +186,9 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
     // Only the static's receiver is that form: a constructor among its arguments is read.
     expect(names("Object.defineProperty(String.prototype, 'g', { value: 1 });")).toEqual(["%String%"]);
     // A mention anywhere else counts, also a value passed on.
-    expect(names("export const a = [1].map(String);")).toEqual(["%String%"]);
+    // (#7354 A1) ... and an array literal names %Array%, its `constructor`.
+    expect(names("export const a = [1].map(String);")).toEqual(["%Array%", "%String%"]);
+    expect(names("export const a = [];")).toEqual(["%Array%"]);
   });
 
   // (#7354 F1) A function expression is the one producer of a function value the source shows here.

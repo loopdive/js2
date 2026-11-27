@@ -50,8 +50,7 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
         table: [
           // (#7354 T) `typeof JSON` refuses by name: JSON is a standard global this path does not provide.
           'formatIdentityFreeValue: ir/from-ast: identifier "JSON" is not in scope in formatIdentityFreeValue',
-          "compareArray: dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
-          '<module-init>__closure_10: ir/from-ast: identifier "Array" is not in scope in <module-init>__closure_10',
+          // (#7354 A1) compareArray reads computed keys, and compareArray.format reads `Array`: both lower now.
         ],
       });
     },
@@ -66,12 +65,14 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
     SLOW,
   );
 
+  // (#7354 A1) compareArray lowers: it answers node's answer, and a wrong expectation throws.
   it(
-    "compareArray's abort is uncatchable: assert.throws does not see it as the expected throw",
-    async () =>
-      expect((await run("assert.throws(Test262Error, function(){ compareArray(1, 2); });\n")).outcome).toBe(
-        "trap in compareArray",
-      ),
+    "compareArray compares arrays",
+    async () => {
+      const body = "if (compareArray([1, 2], [1, 2]) !== true || compareArray([1], [2]) !== false) throw 1;\n";
+      expect((await run(body)).outcome).toBe("returned");
+      expect((await run(body.replace("!== true", "!== false"))).outcome).toBe("threw");
+    },
     SLOW,
   );
 });
