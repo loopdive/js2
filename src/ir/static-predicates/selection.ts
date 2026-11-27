@@ -249,7 +249,7 @@ function binaryOperandConsumed(
     return parent.right === child && annotatedLocalTakesBoolean(parent.left, options);
   if (!isTypedBinaryOperator(op)) return false;
   if (isEqualityOperator(op) && partner.kind === ts.SyntaxKind.NullKeyword) return nullComparisonFolds(op, "boolean");
-  if (isStrictEqualityOperator(op) && isUndefinedCompareOperand(partner, () => !options.isGlobalUndefined(partner))) {
+  if (isStrictEqualityOperator(op) && isUndefinedCompareOperand(partner, (_, id) => !options.isGlobalUndefined(id))) {
     return undefinedCompareOperandAdmissible("boolean");
   }
   const partnerFamily = expressionFamily(partner, options);
