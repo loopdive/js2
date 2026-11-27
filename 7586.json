@@ -1,0 +1,12 @@
+{
+  "id": "7586",
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/es5-inherited-global-read",
+  "reserved_at": "2026-11-27T14:34:57Z",
+  "claimed_at": "2026-11-27T14:34:57Z",
+  "updated_at": "2026-11-27T14:34:57Z",
+  "write_id": "72916-mrad8l3k",
+  "pr_scan": "ok"
+}
