@@ -34,6 +34,7 @@ const MODULE_OPTIONS = {
   numberStorage: "f64",
   allowHostExterns: false,
   allowBuiltinMapExtern: false,
+  scriptVarModel: "statement-and-for-heads",
 } as const;
 
 interface Fixture {

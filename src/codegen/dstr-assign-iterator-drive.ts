@@ -52,7 +52,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildDestructureNullThrow } from "./destructuring-params.js";
 import { emitObjectDestructureFromLocal } from "./expressions/assignment.js";
 import { emitToPropertyKeyOnce } from "./expressions/computed-member-reference.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import {
   emitResolvedIdentifierWriteFromStack,
   resolveModuleAwareIdentifierWriteTarget,

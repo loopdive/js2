@@ -59,6 +59,12 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # requirements at the only place both owners meet; that line takes materializePhysicalProgram from 300 to 301 lines
 # (func-budget-allow below). src/ir/from-ast.ts shrinks (the descriptor-definition lowering moved to
 # open-object-carrier.ts).
+# 2026-11-26 (slice O, step O7): src/ir/from-ast.ts +50, the dynamic member compound arm (`lowerDynamicMemberCompound`,
+# 41 lines with its doc) and the docs of the three shared steps it introduces. The extractions it makes pay for the rest:
+# `lowerDynamicBinaryValues` replaces lowerBinary's `+` arm and `tryLowerDynamicArithmetic`, the two dynamic-slot arms
+# of lowerCompoundAssignment become one, `dynamicIncrement` and `dynamicNamedMember` replace inline copies, and the
+# f64 tail loses its dead conversions. The arm needs lowerExpr, the producer and the builder, so it stays beside its
+# typed sibling `lowerPropertyCompound` (no new module, per the plan).
 func-budget-allow:
   - src/ir/program-consumer.ts::materializePhysicalProgram
 loc-budget-allow:
@@ -5748,6 +5754,214 @@ declaration's position; the name joins the script var homes (`irOwnedScriptVarHo
 block, strict code, or a lexical top-level name of the same name refuses by name. Estimate L; not started unless
 1–3 land with budget left. Lead decision: not in this slice.
 
+### O1c parked (2026-11-26)
+
+Branch `claude/7354-o1c`, head 31398135e8 (from main 41f0654e8c), no PR. Parked by the lead because its measured yield is 0: the 411 sample stays at 83 → 83, nothing lost.
+
+What it does:
+- A read of a native Object.prototype method by constant key (`readsPrototypeMethods` in the one source walk, `source-plain-objects.ts`) admits the function kind.
+- The P1 method-call shape's fallback becomes the run-time abort where the program creates no source function, so no dispatcher is needed there.
+- A detached call (`var h = o.hasOwnProperty; h('a')`) still refuses by name.
+
+Effect:
+- S12's finding (2), a dead `__fv`, runs.
+- S12's finding (1) is from-ast's "method call … on externref not in slice 4" on a function-local `{}`, P1's known limit, and stays an abort body.
+
+It is tested: 8 O1c tests, 2 mutations, 804/804 Prepared bytes identical. Take it into the PR of whichever slice can show a yield for it (S12, or O6).
+
+### O7: compound member writes on a dynamic value (plan rev 2, 2026-11-26, `claude/7354-o7-compound-member` from main c3b7be667a; rev 1 2636299c10 drew PRV-O7's PLAN BLOCKER B1–B4)
+
+**Rows.** These are S9's census failure cluster 10 (main 6694a8b8). The list is committed as
+`plan/samples/7354-o7-cluster10.txt`: `language/expressions/compound-assignment/11.13.2-23-s.js` … `-44-s.js`, 22
+files, all `onlyStrict`.
+
+- Every one is `assert.throws(TypeError, function(){ obj.prop OP= 20; })`, then `assert.sameValue(obj.prop, v)`.
+  - In 23–33 the property is non-writable; in 34–44 it is a getter-only accessor.
+  - The 11 operators are `*= /= %= += -= <<= >>= >>>= &= ^= |=`.
+- The yield is reproducible on main (B1). The command, run from a worktree of the measured commit with the test262
+  submodule present:
+
+  ```bash
+  npx tsx scripts/ir-census/prepared-census.mts --files plan/samples/7354-o7-cluster10.txt \
+    --out .tmp/o7.jsonl --harness real
+  ```
+
+  - Before, main c3b7be667a: **0 / 22 pass**. All 22 trap in the test's function expression, whose abort body stands
+    for "ir/from-ast: compound property write on dynamic not in IR scope".
+  - The 411 sample holds one of these files, `11.13.2-24-s.js`, so its run is expected to move +1: 83 → 84 at base
+    bb9123f6a3, with 0 regressions (PRV-O7). Its list, tally script and exact runner command are
+    committed with this plan: `plan/samples/7354-o411.txt`, `7354-tally411.mjs`, `README-7354-o411.md`.
+- **Desugared proxy (B1).** Measured on main c3b7be667a with the real harness (assert.js + sta.js, strict prologue).
+  Each of the 22 programs with `obj.prop OP= 20` rewritten as `var t = obj.prop OP 20; obj.prop = t;` **passes**
+  (22 / 22). That runs, end to end, on what main already lowers:
+  - the get, including the getter call through the realm for 34–44;
+  - the dynamic operator;
+  - the strict set's TypeError.
+  The only missing piece is the compound form itself.
+- S12's (1), "method call … on externref": 0 rows on 6694a8b8 (S9). It is not in O7.
+
+**Target structure** (B2–B4):
+
+- **One dynamic binary producer (B2).** lowerBinary's dynamic arms already do the operator step:
+  - `+` boxes a concrete operand (`boxConcreteToDynamic`), then `emitDynamicAdd`;
+  - the ToNumber operators use `tryLowerDynamicArithmetic` (`relOperandToF64` → `emitNumberBinary`).
+
+  They become one producer, `lowerDynamicBinaryValues(op, lhs, rhs, left, right, cx)`. Its inputs are the two
+  lowered values and their source nodes (the right node may be absent for `++` / `--`), not a `ts.BinaryExpression`.
+  - lowerBinary calls it: the same instructions, in the same order.
+  - lowerCompoundAssignment's two dynamic-slot arms (`+=` and the numeric tail when `slotFamily === "dynamic"`) call
+    it, which replaces their own copies.
+  - The new member arm calls it.
+
+  So this is one producer with three callers, not a third copy. The f64-slot tail of lowerCompoundAssignment (not
+  dynamic) stays as it is. Its bytes are an explicit obligation: it must produce the same output.
+- **Order (N2).** `relOperandToF64` / ToPrimitive of the old value is emitted inside the producer, after the RHS was
+  lowered. That is ApplyStringOrNumericBinaryOperator's order: GetValue(lref), then evaluate the RHS, then
+  ToPrimitive / ToNumeric of the left, then of the right.
+- **Member arm** in `lowerPropertyCompound`:
+  1. The receiver once.
+  2. A shared target helper: `dynamicNamedMember(lhs, recv, cx) → { target, key, sloppy } | undefined`. The plain
+     write's arm in `lowerPropertyAssignment` uses it too, which removes its inline copy.
+     - `sloppy` is the plain arm's rule: `moduleVec || !cx.functionCodeStrict`.
+     - **B4:** the compound arm refuses a script-var vec receiver by name ("compound member write on a script-var
+       array"). Its expando store rule is the plain arm's, which this slice does not prove for read-modify-write.
+  3. `old = emitDynMemberGet(target, key)`.
+  4. The RHS, lowered dynamic (a synthetic `1` for `++` / `--`).
+  5. `lowerDynamicBinaryValues`.
+  6. `emitDynMemberSet(target, key, result, sloppy)`.
+- **N1.** `lowerPropertyCompound` takes the compound token. Admission is `compoundWriteAdmissible(token, "dynamic",
+  family(rhs))`. `**=` is not admitted for the dynamic family, so it keeps a named refusal.
+- **`++` / `--` are not `+= 1` (B5, PRV-O7 rev 2).** An update expression is ToNumeric(old) ± 1 (§13.4.2.1), never
+  ApplyStringOrNumericBinaryOperator. So `o.x = "1"; o.x++` gives 2, where `o.x += 1` gives "11".
+  - The member arm's `++` / `--` therefore does not call `lowerDynamicBinaryValues`.
+  - It uses the identifier twin's dynamic step, which `lowerIncrementDecrement`'s dynamic arm already has:
+    `emitDynToNumber`, f64 add/sub of 1, box `NumberF64`. That step is extracted as `dynamicIncrement(current, op, cx)`
+    and called by both. It is the second extraction from an existing arm, not a fourth copy.
+  - Tests:
+    - `o.x = "1"; o.x++` gives 2 and `o.x--` gives 0, against `o.x += 1` giving "11";
+    - mutation: `++` routed through the dynamic `+`.
+- **The ordinary pipeline keeps its refusal (B3).**
+  - Policy: no new JS-host work, and ordinary bytes stay identical.
+  - NB1 (PRV-O7): the flag follows the resolver-capability pattern of `createsFunctionObjects` and
+    `closuresBindReceivers`. No existing Prepared-only signal means "the dynamic member operations of this lane are
+    legalized by the realm" in a form this arm can ask, so the flag stays. If one exists by implementation time, the
+    arm uses it instead.
+  - The member arm is taken only when the resolver supplies `dynamicCompoundMemberWrites()`. Only the Prepared
+    resolver (`source-dynamic-contracts.ts`, the native-lane block) supplies it.
+  - Absent, the arm is the existing named refusal, unchanged. That is not a silent default: the ordinary pipeline
+    gets today's demote with today's text. So a dynamic receiver that the ordinary selector's syntactic
+    `readsCarrier` misses still demotes at build, as today.
+  - The rationales that become wrong are rewritten:
+    - `select.ts` ~4444 ("`dyn.member_set` has no compound") will say that the ordinary pipeline keeps the refusal
+      by policy;
+    - `lowerPropertyCompound`'s docstring ("extern receivers … demote") will name the Prepared dynamic arm.
+  - Ordinary bytes are measured on the equivalence gate and the 13 playground examples × default/standalone, not only
+    the playground.
+- **N3.** A run-time BigInt operand throws the TypeError of `dyn.to_number` where node computes. The binary path has
+  the same limit today. It is stated here and pinned by no test, since the path cannot construct a BigInt.
+- **N4.** The nullish-receiver test checks that `__dyn_member_get` on `null` / `undefined` throws TypeError (O4), in a
+  program that catches (M2). If that program shape still refuses, the test pins the refusal instead.
+- **N5.** A computed key, expression position and `?.` stay as they are today.
+
+**Acceptance.**
+
+- New `tests/issue-7354-o7-compound-member.test.ts`, with the O2 run harness (node agrees; a wrong twin throws):
+  - each of the 11 operators on a writable data property, through a script-var object and a parameter;
+  - `++` / `--`;
+  - `+=` with a string operand;
+  - a getter/setter pair: one get and one set observed;
+  - order (N2), with valueOf-logging objects as stored value and RHS: get, RHS, valueOf(old), valueOf(rhs). Once for a
+    numeric operator, once for `+=`;
+  - strict non-writable → TypeError, value unchanged;
+  - strict getter-only → TypeError;
+  - sloppy non-writable → no-op;
+  - the nullish receiver (N4).
+- Named refusal pins:
+  - a computed key;
+  - a script-var vec receiver (B4);
+  - `**=`;
+  - the ordinary pipeline's refusal, unchanged text (B3).
+- Two cluster rows as real-harness programs: one non-writable, one accessor.
+- Census of `plan/samples/7354-o7-cluster10.txt` with the command above: 22 / 22 expected.
+- Bytes:
+  - `check:prepared-bytes`: changes only where a program has a dynamic compound member write. Every changed row is
+    explained.
+  - Ordinary: identical on the 13 playground examples × default/standalone and on the equivalence gate.
+- Mutations:
+  - no read (RHS only);
+  - the sloppy bit inverted;
+  - `+=` on the numeric path;
+  - the old value's ToNumber emitted before the RHS.
+- **Code quality:**
+  - one dynamic binary producer, three callers;
+  - one dynamic increment step, two callers;
+  - one dynamic member target helper, two callers;
+  - no new IR operation and no new module;
+  - from-ast's net growth is offset by the extractions, and any remaining grant is stated with its reason.
+
+### O7 result (2026-11-26, branch `claude/7354-o7-impl` from the plan head 0429434615)
+
+Built as planned. Where the code differs from the plan's wording, and why:
+
+- **Producer.** `lowerDynamicBinaryValues(op, lhs, rhs, left, right, cx)` absorbs `tryLowerDynamicArithmetic` and
+  lowerBinary's `+` arm. Its `right` node is required: `++`/`--` never reach it (B5), so an optional node would be a
+  dead parameter. lowerBinary now asks it before the relational arm; the operator sets are disjoint, so no
+  instruction moves.
+- **lowerCompoundAssignment.** The two dynamic-slot arms (`+=` and the numeric tail's dynamic branch) are one arm
+  calling the producer. Its result is boxed by `dynamicBinaryOnCarrier`, which the member arm shares. The f64 tail
+  loses only its conversions that cannot convert (an f64 slot and an admitted RHS are f64 already). Its bytes are
+  unchanged. A captured dynamic `+=` now refuses with the numeric arm's text instead of its own.
+- **Increment.** `dynamicIncrement` is the identifier arm's former inline step, which now calls it.
+- **Target.** `dynamicNamedMember` is the plain write's former inline target. `lowerPropertyAssignment` calls it,
+  and so does the member arm.
+- **N1.** `lowerPropertyCompound(lhs, token, rhs, cx)`. The typed arm derives its operator with
+  `numberCompoundBinaryOperator(token) ?? updateStepOperator(token)`. `updateStepOperator` lives in
+  `operand-admissibility.ts` and also replaces the dispatcher's inline step for the element arm.
+- **B4.** The script-var array refusal is written, but no program reaches it today: an array literal refuses first
+  on this lane (`resolver cannot register vec for array literal`). The test pins that refusal.
+- **Found, not fixed: a function declaration's last statement.** In `function f(p){ p.x += 1; }` the void-tail
+  path sends the statement through `lowerDiscardedExpression` → lowerBinary, which defers a member compound. The
+  function's body is the run-time abort. Not in a test262 cluster row: those are function expressions with a dynamic
+  result, which take the statement path. The same holds for an expression-position compound (N5).
+
+Measured:
+
+- **Cluster 10** (`prepared-census.mts --harness real`): 0 → **22 / 22**.
+- **411 sample** (real runner; base `main2-411.jsonl`, main bb9123f6a3): 83 → **84**. The only flip is
+  fail → pass on `11.13.2-24-s`. No pass was lost.
+- **Bytes.** The 13 playground examples × default/standalone are byte-identical to the base. So is
+  `check:prepared-bytes` on all 804 rows: no proving program has a dynamic compound member write. Also identical:
+  12 compound/binary probes × default/standalone, and 4 Prepared probes of the identifier dynamic compound and the
+  binary producer.
+- **Equivalence gate.** No new regression: 20 failing, against 22 in the baseline.
+- **Mutations.** Each one fails `tests/issue-7354-o7-compound-member.test.ts`:
+
+  | mutation | failing tests |
+  |---|---|
+  | no read | 6 |
+  | sloppy bit inverted | 5, both cluster rows among them |
+  | `+=` on the numeric path | 3 |
+  | the old value's ToNumber before the RHS | 1 (the order test) |
+  | `++` through the dynamic `+` | 1 |
+- **Pin updated.** `tests/issue-7354-o2-accessors.test.ts` pinned the accessor `o.x += 1` / `o.x++` refusal. It now
+  agrees with node: one getter and one setter call each.
+
+### O7 review RV7491 (2026-11-26): fixes
+
+The verdict was REQUEST CHANGES (minor), with no wrong answers; 22/22 reproduced.
+
+- **F1.** The dynamic read-modify-write step is one helper, `dynamicCompoundStep(token, old, left, rhs, cx)`: the RHS
+  on the carrier, admission, the dynamic binary producer, the carrier form. The dynamic-slot arm and the member arm
+  both call it, so their RHS hint no longer drifts (both are `irDynamic()`). Prepared bytes 804/804 are unchanged.
+- **F2.** `lowerElementCompound` takes the compound token like `lowerPropertyCompound`. Both take their operator from
+  the one `compoundStepOperator` (`operand-admissibility.ts`), which replaces `updateStepOperator`.
+- **F3.** The unreachable `op === undefined` branch and the script-var-vec guard (B4) are gone. The vec row's pin
+  stays at its literal's refusal, which comes first on this lane.
+- **F4.** The slot arm's entry gate is direct: a dynamic slot that is no captured cell and no `**=`.
+- **F5.** Filed as [#7535](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7535-fn-declaration-tail-member-compound-abort)
+  (after S21's #7492 `lowerTail` rewrite).
+- **F6.** Filed as [#7536](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7536-move-dynamic-operator-helpers-out-of-from-ast).
+
 ### Order and gates
 1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
@@ -6989,3 +7203,57 @@ leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7
 - Node 25 (not installed).
 - The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
   h-script-var-dynamic-home and 3518-native-invocation-substrate suites.
+
+## Slice O2 r1 fix (2026-11-26, branch `claude/7354-o2-fix` from `main` c3b7be667a; PR 7415 merged without it)
+
+- **Blocker fixed: `new` on an accessor function** constructed an object (node: TypeError). IsConstructor is now the
+  function object's own answer where the source creates a function value without [[Construct]]
+  (`ProgramObjects.nonConstructors`: an accessor): `dynamicConstruct` asks the new realm row `js.object.is-constructor`
+  after the function-kind test (the arguments are already evaluated, §13.3.5.1.1), and `init-function` marks such a
+  function in its bag's flags (bit 0x40, free on the realm `$Object`) only in a program that asks. Elsewhere `new`
+  and `init-function` keep their bytes. The premise checks: `F.prototype` is created only for constructors (init),
+  `instanceof g` and `Object.create(g.prototype)` read `g.prototype` (undefined → their TypeErrors; tested).
+- **One built-in call sequence** (`buildBuiltinVectorCall`): the kernel's `method0..3`, the getter and the setter.
+  Getter and setter take the same arms with or without `accessorCalls`: a built-in half is called, a source half is
+  the dispatcher's call or, without `accessorCalls` (no source half can exist), the trap. **Cost, measured:** the
+  kernel read and the set adapter of every realm program change bytes (`check:prepared-bytes` vs main c3b7be667a: 14
+  of 804 rows — 46 47 48 53 74 149 180 204 239 244 445 532 533 581 — each run on main and head with the same outcome;
+  prelude + `assert(true);` 031c67f3… → 76b0dffa…). Kept for one sequence and the symmetry; the alternative (the old
+  two shapes) restores those bytes.
+- `isFunctionObject` asks `sourceDynamicClosureSignature` which accessors are function objects (no second copy).
+- Already done by a3ee87c5d9 / cd503a9d41 (another session, merged with PR 7415): the dispatch partition, the
+  kernel-dependency spread, the undefined-key refusal, `SourceObjectSetOperands` (kept, extended by
+  `AccessorCallOperands`), and the resource-join callable row as an expected-limit pin (#7463; the file is 15/15).
+- Known limit kept: `realmAccessors` fires for `Object.create(c)` without a property map (the legalization keeps the
+  `descriptors-define` arm when the argument's kinds are not folded); one unused dispatcher function at most.
+
+Proof: the reviewer's five batches (196 programs) main vs head: identical verdicts except the three blocker programs,
+WRONG → node's `T`; `issue-7354-o2-accessors` 49 / 49 (run in describe-sized parts), new `new`-on-accessor tests
+with wrong twins (getter, setter, the body never runs, arguments first, declarations still construct, `prototype` /
+`instanceof` / `Object.create`); `issue-7354-o2-object-values` 14 / 14; resource-join 15 / 15, getter-invocation 37,
+runtime-providers 299, o1-create-and-define-properties 14, c2-constructors 19, p1-method-values 19, r-provider-census
+117, native-realm-requirements 25; `issue-3518-native-getter-results` 19 / 21 — the same 2 fail on main (not modified
+here). Gates: typecheck, LOC / function budgets (also `LOC_GATE_BASE` = main), coercion-sites, oracle-ratchet,
+dead-exports, import-cycles, compiler-boundaries inventory: exit 0; from-ast net 0.
+
+### Review r2 of PR 7446 (2026-11-26)
+
+- One constructor rule: `isConstructorFunction` (`function-object-lowering.ts`: a declaration or function expression,
+  not a generator or async function) is what `init-function` records; it always sets the bag's bit, and
+  `dynamicConstruct` always asks `js.object.is-constructor` after the function-kind test. `ProgramObjects
+  .nonConstructors`, the `marksNonConstructors` gate and the row `Body`'s `served` parameter are gone (Prepared bytes
+  of `new` / function-creating programs change; agreed). An arrow function as a value is not expressible on this
+  path yet (`closure must have a return type annotation`, `module-level closure binding … not in module-init`), so
+  the arrow case has no probe.
+- The bag is cast once in init (`bagObject` + a typed local); getOwn's ABI comment no longer names status 3;
+  `buildBuiltinVectorCall` / `buildAccessorCall` take the arguments together with their vector local
+  (`BuiltinCallArguments`), so arguments without a vector cannot be expressed; the `NOT_CONSTRUCTOR` comment names
+  the legacy `OBJ_FLAG_CONSTRUCTOR` (0x20) as a different realm's.
+- Re-run: blocker programs + wrong twins 6 / 6; o2-accessors `new` block 6 / 6; o2-object-values 13 / 13;
+  c2-constructors 19, c2-this 18, f1b-function-objects 9, f2 10, m-refusals 43; the reviewer's five batches vs main
+  c3b7be667a: identical verdicts except the three blocker programs (WRONG → `T`). Gates (chained, bare): typecheck,
+  LOC / function budgets (also `LOC_GATE_BASE` = origin/main 1a726b3e64), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, compiler-boundaries inventory: exit 0.
+- Follow-ups to file: (1) the realm `$Object` flags field index (`OBJECT_FLAGS_FIELD = 4`) has a third copy in
+  `mixed-object-access` bodies — one named constant for the layout; (2) `dynamicClosureSignature` is asked twice for
+  an accessor (from-ast's signature choice and `isFunctionObject`) — one answer per closure literal.

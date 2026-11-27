@@ -19,7 +19,7 @@ import {
   emitRuntimeEvalSharedValueUnwrap,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isStrictContext } from "../../shared/is-strict-function.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders } from "../object-runtime.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";

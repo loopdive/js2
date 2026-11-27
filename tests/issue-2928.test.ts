@@ -12,27 +12,13 @@ import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-
-const INTERP_FILES = [
-  "types.ts",
-  "opcodes.ts",
-  "encoder.ts",
-  "runtime-ops.ts",
-  "eval-environment.ts",
-  "emitter.ts",
-  "loop.ts",
-  "dynamic-function.ts",
-] as const;
-
-function stripModuleSyntax(source: string): string {
-  return source
-    .replace(/^import[\s\S]*?;\n/gm, "")
-    .replace(/^export \{[^;]+;\n/gm, "")
-    .replace(/\bexport (?=(?:type|interface|class|const|function)\b)/g, "");
-}
+// @ts-expect-error untyped .mjs build script
+import { INTERP_FILES, stripModuleSyntax } from "../scripts/runtime-eval-provider.mjs";
 
 function e2BundleSource(): string {
-  const interpreter = INTERP_FILES.map((name) => stripModuleSyntax(readFileSync(resolve("src/interp", name), "utf8")));
+  const interpreter = (INTERP_FILES as readonly string[]).map((name) =>
+    stripModuleSyntax(readFileSync(resolve("src/interp", name), "utf8")),
+  );
 
   return [
     ...interpreter,
@@ -81,6 +67,9 @@ function e2BundleSource(): string {
         const block: any = {};
         block.type = "BlockStatement";
         block.body = [ret];
+        // The body offsets a real parser reports for the assembled source the mock parser accepts.
+        block.start = 25;
+        block.end = 41;
         const a: any = {};
         a.type = "Identifier";
         a.name = "a";

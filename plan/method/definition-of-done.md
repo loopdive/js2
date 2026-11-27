@@ -26,7 +26,7 @@ An issue is **done** when all of the following are true:
 ## Bookkeeping
 - [ ] `plan/log/dependency-graph.md` updated (completed issue struck through)
 - [ ] Sprint doc updated with result
-- [ ] File locks removed from `plan/method/file-locks.md`
+- [ ] `node scripts/pr-file-overlap.mjs` run on the branch; any overlap with another lane's open PR settled on #7526
 - [ ] Blocked issues checked — newly unblocked issues have `status` updated appropriately
 
 ## What "done" is NOT

@@ -103,6 +103,10 @@ export type IrUnsupportedCode =
   | IrFallbackReason
   | "anonymous-class"
   | "static-class-initialization"
+  | "class-definition-evaluation"
+  | "class-export-unsupported"
+  | "export-target-unsupported"
+  | "restricted-global-lexical"
   | "void-call-expression"
   | "array-representation-unsupported"
   | "nullish-value-unsupported"

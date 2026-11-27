@@ -66,7 +66,7 @@ import type { ObjLitDefineCopyHelpers } from "./objlit-dynamic-accessors.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { argumentsBeforeDefaults, endArgumentsBeforeDefaults } from "./object-method-arguments-first.js"; // (#6651 A11)
-import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
+import { isStrictFunction, isSimpleParameterList } from "../shared/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { isGrowthSwitchedReceiver } from "./statements/array-share-group.js";
 import { collectInstrs } from "./statements/shared.js";

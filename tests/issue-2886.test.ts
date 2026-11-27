@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // #2886 — `new <global-non-constructor-builtin>()` must throw a real TypeError.
 //
@@ -24,9 +24,7 @@ async function run(source: string, fn = "test", args: unknown[] = []): Promise<u
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
   expect(WebAssembly.validate(result.binary)).toBe(true);
-  const imports = buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { setExports?: (e: object) => void }).setExports?.(instance.exports as object);
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]!(...args);
 }
 

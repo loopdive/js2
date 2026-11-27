@@ -154,13 +154,17 @@ jobs:
           # merge queue, so force-updating it cannot eject anything, and the
           # regenerated artifact is the only thing that can make it mergeable.
           PR_JSON="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number,statusCheckRollup 2>/dev/null || echo "unreadable")"
+            --state open --json number,statusCheckRollup,labels 2>/dev/null || echo "unreadable")"
           if [ "$PR_JSON" = "unreadable" ]; then
             PR_NUMBER="unreadable"
           else
             PR_NUMBER="$(printf '%s' "$PR_JSON" | jq -r '.[0].number // empty')"
+            # (#7558) "Cannot land" = a FAILURE check OR a `hold` label. A PR
+            # runs almost no checks any more, so a promotion that fails only in
+            # the merge queue is auto-parked with `hold` while every PR check
+            # stays green. Keep this line identical to its twin in npm-compat-promote.yml.
             PR_FAILING="$(printf '%s' "$PR_JSON" | jq -r \
-              '[.[0].statusCheckRollup[]? | select((.conclusion // "") == "FAILURE")] | length')"
+              '([.[0].statusCheckRollup[]? | select((.conclusion // "") == "FAILURE")] | length) + ([.[0].labels[]? | select(.name == "hold")] | length)')"
           fi
           case "$PR_NUMBER" in
             "")
@@ -176,7 +180,7 @@ jobs:
               ;;
             *)
               if [ "${PR_FAILING:-0}" -gt 0 ]; then
-                echo "::warning title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open but has ${PR_FAILING} failing check(s); it cannot land as-is, so measuring and regenerating its branch instead of waiting for it."
+                echo "::warning title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open but has ${PR_FAILING} failing check(s) or a hold label; it cannot land as-is, so measuring and regenerating its branch instead of waiting for it."
                 PR_NUMBER=""
               else
                 echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is still open; skipping this measurement entirely. The run after it merges will measure a fresher main."

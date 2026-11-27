@@ -143,19 +143,20 @@ test("#7354 X: the worker reader reports a kind only for a value it read", () =>
     wasmCase(null),
   ])
     assert.deepEqual(kinds(row), []);
-  // Read: a host error payload, a host object by its constructor, a module rendering, a host error.
+  // Read: a host error payload, a host object by its constructor, a host error.
   assert.deepEqual(kinds(wasmCase(new RangeError("not a TypeError"))), ["RangeError", "RangeError"]);
   class Test262Error extends Error {}
   assert.deepEqual(kinds(wasmCase(new Test262Error())), ["Error", "Test262Error"]);
+  assert.deepEqual(kinds({ error: new TypeError("x"), instance: null }), ["TypeError", "TypeError"]);
+  // (#7453) A module's rendering is text, never a kind: only its `__exn_render_kind` export names one.
   assert.deepEqual(
     kinds(wasmCase(Object.create(null)), () => "Test262Error: TypeError"),
-    ["Test262Error"],
+    [],
   );
   assert.deepEqual(
     kinds(wasmCase(Object.create(null)), () => "TypeError"),
-    ["TypeError"],
+    [],
   );
-  assert.deepEqual(kinds({ error: new TypeError("x"), instance: null }), ["TypeError", "TypeError"]);
   // A primitive has no kind, whatever its text says.
   assert.deepEqual(kinds(wasmCase("TypeError: x")), []);
 });

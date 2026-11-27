@@ -15,7 +15,7 @@ import { getOrRegisterErrorStructType } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";
-import { isStrictContext } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "../shared/is-strict-function.js";
 import type { ts } from "../ts-api.js";
 
 /**

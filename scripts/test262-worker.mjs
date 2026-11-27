@@ -191,8 +191,9 @@ createFreshCompiler();
 // Standalone/WASI now default to `hostBridge: "off"` so a DEPLOYED pure-Wasm
 // module ships only its own exports; the harness is the opt-in case. Injecting
 // it in both wrappers covers every compile site at once — and a caller may
-// still override by passing its own `hostBridge`.
-const HARNESS_HOST_BRIDGE = { hostBridge: "always" };
+// still override by passing its own `hostBridge`. (#7453) The runtime-negative
+// verdict also reads a thrown payload's error kind through `__exn_render_kind`.
+const HARNESS_INSPECTION = { hostBridge: "always", exceptionKindExport: true };
 
 // #6776: the worker validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
 const WORKER_SELF_VALIDATES = { validate: false };
@@ -204,7 +205,7 @@ const IR_ROUTE_CENSUS = { trackIrOutcomes: true };
 
 function compileSingleSource(source, options) {
   const opts = {
-    ...HARNESS_HOST_BRIDGE,
+    ...HARNESS_INSPECTION,
     ...(options.wholeProgram === undefined ? WORKER_SELF_VALIDATES : {}),
     ...IR_ROUTE_CENSUS,
     ...options,
@@ -214,7 +215,7 @@ function compileSingleSource(source, options) {
 
 function compileMultipleSources(files, entryFile, options) {
   const opts = {
-    ...HARNESS_HOST_BRIDGE,
+    ...HARNESS_INSPECTION,
     ...(options.wholeProgram === undefined ? WORKER_SELF_VALIDATES : {}),
     ...IR_ROUTE_CENSUS,
     ...options,
@@ -1737,7 +1738,7 @@ async function doCompile(
     // measurement, which is the one thing a shadow oracle must never do. So
     // the caller is told, and the row is stamped `linked-harness-fallback`.
     const bodyOptions = {
-      ...HARNESS_HOST_BRIDGE, // (#6723 D4) same bridge as the provider and the honest lane
+      ...HARNESS_INSPECTION, // (#6723 D4) same bridge as the provider and the honest lane
       ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
@@ -2145,7 +2146,7 @@ process.on("message", async (msg) => {
   // the TEST262_COMPILER_PATH=ir measurement lane sends; every baselined lane
   // keeps its verdicts (20-row standalone A/B identical; #7447 extends it).
   const prepared = preparedRequest !== undefined;
-  const throwRule = { expectedErrorType, originalHarness, prepared };
+  const throwRule = { expectedErrorType, prepared };
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
   // it); `harnessPrefix` is run natively in the per-test sandbox before
@@ -2909,8 +2910,9 @@ process.on("message", async (msg) => {
       return;
     } catch (execErr) {
       const execMs = performance.now() - execStart;
-
-      if (isRuntimeNegative) {
+      const thrown = readWorkerThrown(execErr, instance, currentNativeEvalBoundaryObservation?.reader("exported-test"));
+      // (#7459) The same rule as the original-harness arms: only the expected kind passes.
+      if (isRuntimeNegative && runtimeNegativeThrowAccepted(execErr, thrown, throwRule)) {
         sendOwnedResult({
           id,
           status: "pass",
@@ -2922,11 +2924,7 @@ process.on("message", async (msg) => {
         return;
       }
 
-      let errInfo = extractWasmExceptionMessage(
-        execErr,
-        instance,
-        currentNativeEvalBoundaryObservation?.reader("exported-test"),
-      );
+      let errInfo = thrown.text;
 
       // Annotate with source location via source map
       const byteOffset = extractWasmByteOffset(execErr);
@@ -3416,10 +3414,13 @@ function diffRealmSurface(snap) {
 // threw `nextPromise.then is not a function` no matter what `buildImports`
 // passed later. Optional-chained on both arguments: an older bundle without
 // the export simply primes as before.
+// (#7431) Prime through the same installer `installAmbientCompatibility`
+// uses: below Node 23 it also adds the #6440 `Promise.try` polyfill, which
+// otherwise reads as `Promise.try:added` drift after the first instantiate.
 // Explicit IR must not prime unrelated legacy host products after the native
 // compiler has captured Promise. Later actual constructor effects stay intact.
 if (process.env.TEST262_COMPILER_PATH !== "ir") {
-  runtimeBundle._installPromiseKeyedCombinators?.(Promise, runtimeBundle._mirrorPolyfillThenable);
+  runtimeBundle._installSelectedPromiseCompatibility?.(Promise, runtimeBundle._mirrorPolyfillThenable);
 }
 let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
 let realmCanaryChecks = 0;

@@ -19,9 +19,10 @@
 // quietly turn the throw back into `return []`.
 //
 // Only `renameInstrOperands` is exported; the twins in `src/ir/verify.ts`
-// (`collectUses`), `src/ir/lower.ts` (`emitInstrTree`, `collectIrUses`) and
-// `src/ir/passes/monomorphize.ts` (`collectUses`) are module-local by design,
-// so they are covered by the compile-time half only.
+// (`collectUses`) and `src/ir/lower.ts` (`emitInstrTree`, `collectIrUses`) are
+// module-local by design, so they are covered by the compile-time half only.
+// (`src/ir/passes/monomorphize.ts` kept a third copy until #7448; it now asks
+// the shared `collectUses` in `src/ir/core/nodes.ts`.)
 
 import { describe, expect, it } from "vitest";
 

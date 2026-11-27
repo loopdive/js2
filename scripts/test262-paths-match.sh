@@ -140,9 +140,13 @@ classify_test262_path() {
     scripts/compiler-inputs-hash.mjs) echo standalone ;;
     scripts/quickjs-artifact/*) echo standalone ;;
     scripts/generate-editions.ts) echo both ;;
+    # The per-merge IR measurement's scope (#7551): which edition runs, and how
+    # it is selected and compared. The IR measurement is a standalone lane.
+    scripts/test262-edition-scope.ts | scripts/test262-current-edition.json | scripts/test262-edition-reclassified.json | scripts/lib/gh-api-retry.mjs | scripts/lib/regression-annotation.mjs) echo standalone ;;
     scripts/test262-worker.mjs) echo both ;;
     tests/test262-chunk*.test.ts) echo both ;;
     tests/test262-runner.ts) echo both ;;
+    tests/test262-categories.ts) echo both ;;
     tests/test262-scope-classification.test.ts) echo both ;;
     tests/test262-shared.ts) echo both ;;
     # Any FUTURE weight-map variant we have not classified above stays `both`

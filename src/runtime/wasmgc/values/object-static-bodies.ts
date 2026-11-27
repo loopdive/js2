@@ -5,7 +5,8 @@
  * primitive, the run-time abort for a kind the kernel does not serve) and taken ToPropertyKey, in the specification's
  * order; these bodies continue from there over the Property Descriptor record (`descriptor-record-bodies.ts`).
  */
-import type { FuncHandle, Instr, TypeHandle } from "../../../wasm/model/instructions.js";
+import type { FuncHandle, Instr } from "../../../wasm/model/instructions.js";
+import { argumentVectorEach, argumentVectorElement } from "./argument-vector-bodies.js";
 import {
   definePropertyOrThrow,
   descriptorRecordLocals,
@@ -17,14 +18,11 @@ import {
 import { CREATE_DATA_PROPERTY, type SourceObjectDefinition } from "./source-object-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { I31_HEAP_TYPE } from "./prototype-receiver-bodies.js";
+import { eachOwnKey, type OwnKeyWalkOperands } from "./own-key-walk-bodies.js";
 
-export interface ObjectStaticOperands extends DescriptorRecordOperands {
-  readonly ownKeys: FuncHandle;
-  readonly ownDescriptor: FuncHandle;
+export interface ObjectStaticOperands extends DescriptorRecordOperands, OwnKeyWalkOperands {
   readonly newVector: FuncHandle;
   readonly push: FuncHandle;
-  readonly vectorTypeIdx: TypeHandle;
-  readonly vectorArrayTypeIdx: TypeHandle;
 }
 
 const get = (index: number): Instr => ({ op: "local.get", index });
@@ -53,8 +51,8 @@ export function buildDescriptorDefineDefinition(
 /**
  * `js.object.descriptors-define(object, properties)`: ObjectDefineProperties (§20.1.2.3.1). Every own enumerable
  * property of `properties` is read and converted (in own-key order) before the first define, so a TypeError in a later
- * descriptor defines nothing; the records wait in an argument vector, five entries each (key, value, getter, setter,
- * the word as an i31).
+ * descriptor defines nothing; (#7377) the keys come from the realm's own-key walk (`eachOwnKey`), Symbols included. The
+ * records wait in an argument vector, five entries each (key, value, getter, setter, the word as an i31).
  */
 export function buildDescriptorsDefineDefinition(
   d: ObjectStaticOperands,
@@ -63,58 +61,11 @@ export function buildDescriptorsDefineDefinition(
   const [keys, list, index, key, field] = [2, 3, 4, 5, 6];
   const record = descriptorRecordLocals(7);
   const [word, value, getter, setter] = record.slots as [number, number, number, number];
-  const vector = (local: number): Instr[] => [
-    get(local),
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-  ];
-  const element = (local: number, offset: number): Instr[] => [
-    ...vector(local),
-    { op: "struct.get", typeIdx: d.vectorTypeIdx, fieldIdx: 1 },
-    get(index),
-    ...(offset ? [n(offset), { op: "i32.add" } as Instr] : []),
-    { op: "array.get", typeIdx: d.vectorArrayTypeIdx },
-  ];
-  const each = (local: number, step: number, body: Instr[]): Instr[] => [
-    n(0),
-    set(index),
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            get(index),
-            ...vector(local),
-            { op: "struct.get", typeIdx: d.vectorTypeIdx, fieldIdx: 0 },
-            { op: "i32.ge_u" },
-            { op: "br_if", depth: 1 },
-            ...body,
-            get(index),
-            n(step),
-            { op: "i32.add" },
-            set(index),
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-  ];
+  const element = (offset: number): Instr[] =>
+    argumentVectorElement(d, [get(list)], offset ? [get(index), n(offset), { op: "i32.add" }] : [get(index)]);
   const push = (value: Instr[]): Instr[] => [get(list), ...value, call(d.push)];
+  // Only the attribute word of [[GetOwnProperty]] decides: an absent key's word is 0, not enumerable.
   const collect: Instr[] = [
-    ...element(keys, 0),
-    set(key),
-    // Only the attribute word of [[GetOwnProperty]] decides: an absent key's word is 0, not enumerable.
-    get(1),
-    get(key),
-    call(d.ownDescriptor),
-    { op: "drop" },
-    { op: "drop" },
-    { op: "drop" },
-    set(word),
-    { op: "drop" },
     get(word),
     n(flags.enumerable),
     { op: "i32.and" },
@@ -135,15 +86,15 @@ export function buildDescriptorsDefineDefinition(
     },
   ];
   const apply: Instr[] = [
-    ...element(list, 0),
+    ...element(0),
     set(key),
-    ...element(list, 1),
+    ...element(1),
     set(value),
-    ...element(list, 2),
+    ...element(2),
     set(getter),
-    ...element(list, 3),
+    ...element(3),
     set(setter),
-    ...element(list, 4),
+    ...element(4),
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: I31_HEAP_TYPE },
     { op: "i31.get_s" },
@@ -158,13 +109,10 @@ export function buildDescriptorsDefineDefinition(
       ...record.locals,
     ],
     body: [
-      get(1),
-      call(d.ownKeys),
-      set(keys),
       call(d.newVector),
       set(list),
-      ...each(keys, 1, collect),
-      ...each(list, 5, apply),
+      ...eachOwnKey(d, [get(1)], { keys, index, key, word }, collect),
+      ...argumentVectorEach(d, [get(list)], index, 5, apply),
     ],
   };
 }

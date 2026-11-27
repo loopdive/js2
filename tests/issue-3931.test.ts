@@ -10,9 +10,10 @@
 // is asserted here:
 //
 //   (a) the hoist FIRES under the IR front-end in every configuration —
-//       fast+nativeStrings, plain nativeStrings, standalone, wasi, and host
-//       (host has no flattenable descriptor, so there it is the guard that is
-//       dropped, not a flatten that is hoisted);
+//       fast+nativeStrings, plain nativeStrings, standalone and wasi. (A host
+//       string lane used to be asserted too; since #6708 S6 (612cea9864) the
+//       default JS environment runs on native strings, so the default lane is
+//       checked by its runtime result instead);
 //   (b) results stay byte-faithful against the JS reference, including the
 //       shapes where the hoist is what makes them non-trivial (rope receiver,
 //       substring view with a non-zero offset, high code units);
@@ -27,6 +28,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 const ENV_STUB = {
   console_log_number: () => {},
@@ -49,12 +51,12 @@ function refHash(s: string): number {
 }
 
 /** Every configuration the issue's acceptance criteria name. */
-const CONFIGURATIONS: Array<{ tag: string; opts: Record<string, unknown>; native: boolean }> = [
-  { tag: "fast+nativeStrings", opts: { fast: true, nativeStrings: true }, native: true },
-  { tag: "nativeStrings", opts: { nativeStrings: true }, native: true },
-  { tag: "standalone", opts: { target: "standalone" }, native: true },
-  { tag: "wasi", opts: { target: "wasi" }, native: true },
-  { tag: "host", opts: {}, native: false },
+const CONFIGURATIONS: Array<{ tag: string; opts: Record<string, unknown> }> = [
+  { tag: "default (no options; native since #6708 S6)", opts: {} },
+  { tag: "fast+nativeStrings", opts: { fast: true, nativeStrings: true } },
+  { tag: "nativeStrings", opts: { nativeStrings: true } },
+  { tag: "standalone", opts: { target: "standalone" } },
+  { tag: "wasi", opts: { target: "wasi" } },
 ];
 
 /** The WAT of one named function (the recogniser only ever touches one fn). */
@@ -80,12 +82,13 @@ async function watOf(source: string, fnName: string, opts: Record<string, unknow
   return out.join("\n");
 }
 
-interface Built {
-  exports: Record<string, unknown>;
-  toNative: (s: string) => unknown;
-}
-
-async function buildNative(source: string, opts: Record<string, unknown> = {}): Promise<Built> {
+/**
+ * Strings cross through the compiled JS value adapter (#6708), so callers pass
+ * plain JS strings. The test-only `__test_str_from_externref` export is no
+ * longer emitted: it is built from `wasm:js-string` imports, which the native
+ * JS environment no longer requests (#6979).
+ */
+async function buildNative(source: string, opts: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const r = await compile(source, { nativeStrings: true, testRuntime: true, fileName: "issue-3931.ts", ...opts });
   if (!r.success) {
     const errors = Array.isArray(r.errors) ? r.errors.map((err) => err.message).join("; ") : "no errors array";
@@ -93,9 +96,8 @@ async function buildNative(source: string, opts: Record<string, unknown> = {}): 
   }
   const built = buildImports(r.imports, ENV_STUB, r.stringPool);
   const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-  const exports = instance.exports as Record<string, unknown>;
-  built.setExports?.(exports as Record<string, Function>);
-  return { exports, toNative: exports.__test_str_from_externref as (s: string) => unknown };
+  built.setExports?.(instance.exports as Record<string, Function>);
+  return jsFacingExports(r, instance);
 }
 
 describe("#3931 the char-read-loop hoist fires under the IR front-end", () => {
@@ -105,17 +107,11 @@ describe("#3931 the char-read-loop hoist fires under the IR front-end", () => {
       // The IR owns the body — that is the precondition the whole issue is
       // about, and it is what made the legacy recogniser unreachable here.
       expect(wat).toMatch(/\$\$ir\d/);
-      if (config.native) {
-        // Native strings: the flatten is hoisted into a preheader slot and the
-        // body reads code units straight out of the flat descriptor.
-        expect(wat).toContain("$$slot___cca_flat");
-        expect(wat).toContain("array.get_u");
-      } else {
-        // Host strings: nothing to flatten, so the win is the dropped guard —
-        // one bare builtin call per read, no `length` re-read to bound it.
-        expect(wat).not.toContain("$$slot___cca_flat");
-      }
-      // Both: the §22.1.3.3 NaN arm is proven dead …
+      // The flatten is hoisted into a preheader slot and the body reads code
+      // units straight out of the flat descriptor.
+      expect(wat).toContain("$$slot___cca_flat");
+      expect(wat).toContain("array.get_u");
+      // The §22.1.3.3 NaN arm is proven dead …
       expect(wat).not.toContain("f64.const nan");
       // … and `(h * 31 + c) | 0` now composes in native i32 instead of the
       // f64 ToInt32 bit-decomposition, which is where the time actually went.
@@ -137,20 +133,22 @@ describe("#3931 the char-read-loop hoist fires under the IR front-end", () => {
     // standalone/wasi take no host-string argument, so they are covered by the
     // shape assertions above plus the standalone case further down.
     for (const opts of [{ fast: true }, {}] as Array<Record<string, unknown>>) {
-      const { exports, toNative } = await buildNative(HASH_SRC, opts);
+      const exports = await buildNative(HASH_SRC, opts);
       const hashStr = exports.hashStr as (s: unknown) => number;
-      for (const s of subjects) expect(hashStr(toNative(s))).toBe(refHash(s));
+      for (const s of subjects) expect(hashStr(s)).toBe(refHash(s));
     }
   });
 
-  it("host mode: hash results stay byte-faithful", async () => {
-    const r = await compile(HASH_SRC, { testRuntime: true, fileName: "issue-3931-host.ts" });
+  // Was "host mode": with no options the default JS environment now runs on
+  // native strings (#6708 S6, 612cea9864); this is the default lane's check,
+  // replacing the former host `fires for` WAT case.
+  it("the default lane (no options): hash results stay byte-faithful", async () => {
+    const r = await compile(HASH_SRC, { testRuntime: true, fileName: "issue-3931-default.ts" });
     expect(r.success).toBe(true);
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);
     const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-    const exports = instance.exports as Record<string, unknown>;
-    built.setExports?.(exports as Record<string, Function>);
-    const hashStr = exports.hashStr as (s: string) => number;
+    built.setExports?.(instance.exports as Record<string, Function>);
+    const hashStr = jsFacingExports(r, instance).hashStr as (s: string) => number;
     for (const s of ["", "a", "hello world", "héllo ☃", "￿￾"]) expect(hashStr(s)).toBe(refHash(s));
   });
 });
@@ -169,9 +167,9 @@ describe("#3931 the hoisted read stays byte-faithful on the hard receivers", () 
     `;
     const ref = (s: string) => refHash(s.substring(2));
     for (const opts of [{ fast: true }, {}] as Array<Record<string, unknown>>) {
-      const { exports, toNative } = await buildNative(src, opts);
+      const exports = await buildNative(src, opts);
       const sub = exports.sub as (s: unknown) => number;
-      for (const s of ["abcdef", "ab", "", "héllo ☃ x"]) expect(sub(toNative(s))).toBe(ref(s));
+      for (const s of ["abcdef", "ab", "", "héllo ☃ x"]) expect(sub(s)).toBe(ref(s));
     }
   });
 
@@ -192,14 +190,14 @@ describe("#3931 the hoisted read stays byte-faithful on the hard receivers", () 
       }
       return h;
     };
-    const { exports, toNative } = await buildNative(src, { fast: true });
+    const exports = await buildNative(src, { fast: true });
     const nest = exports.nest as (a: unknown, b: unknown) => number;
     for (const [a, b] of [
       ["abc", "xy"],
       ["", "q"],
       ["zz", ""],
     ] as const) {
-      expect(nest(toNative(a), toNative(b))).toBe(ref(a, b));
+      expect(nest(a, b)).toBe(ref(a, b));
     }
     // The OUTER receiver's read is still hoisted from inside the inner loop:
     // the inner loop cannot invalidate `0 <= i < a.length`.
@@ -223,9 +221,9 @@ describe("#3931 the hoisted read stays byte-faithful on the hard receivers", () 
       }
       return h;
     };
-    const { exports, toNative } = await buildNative(src, { fast: true });
+    const exports = await buildNative(src, { fast: true });
     const brk = exports.brk as (s: unknown) => number;
-    for (const s of ["abcdefgh", "ab", ""]) expect(brk(toNative(s))).toBe(ref(s));
+    for (const s of ["abcdefgh", "ab", ""]) expect(brk(s)).toBe(ref(s));
   });
 
   it("a non-bitwise consumer takes the widened read and stays exact", async () => {
@@ -243,9 +241,9 @@ describe("#3931 the hoisted read stays byte-faithful on the hard receivers", () 
       for (let i = 0; i < s.length; i++) acc = acc + s.charCodeAt(i);
       return acc;
     };
-    const { exports, toNative } = await buildNative(src);
+    const exports = await buildNative(src);
     const sum = exports.sum as (s: unknown) => number;
-    for (const s of ["abc", "", "￿😀", "héllo ☃"]) expect(sum(toNative(s))).toBe(ref(s));
+    for (const s of ["abc", "", "￿😀", "héllo ☃"]) expect(sum(s)).toBe(ref(s));
   });
 
   it("an `i += 3` step and a non-zero init stay correct", async () => {
@@ -261,9 +259,9 @@ describe("#3931 the hoisted read stays byte-faithful on the hard receivers", () 
       for (let i = 2; i < s.length; i += 3) h = (h * 31 + s.charCodeAt(i)) | 0;
       return h;
     };
-    const { exports, toNative } = await buildNative(src, { fast: true });
+    const exports = await buildNative(src, { fast: true });
     const st = exports.st as (s: unknown) => number;
-    for (const s of ["￿￾Xabc", "ab", "", "abcdefghij"]) expect(st(toNative(s))).toBe(ref(s));
+    for (const s of ["￿￾Xabc", "ab", "", "abcdefghij"]) expect(st(s)).toBe(ref(s));
   });
 });
 
@@ -381,10 +379,10 @@ describe("#3931 non-matching shapes keep the guarded lowering", () => {
   for (const negative of NEGATIVE) {
     it(negative.name, async () => {
       // Non-fast, so the §22.1.3.3 NaN result keeps its exact f64 semantics.
-      const { exports, toNative } = await buildNative(negative.src);
+      const exports = await buildNative(negative.src);
       const fn = exports[negative.fn] as (...a: unknown[]) => number;
       for (const args of negative.args) {
-        expect(fn(...args.map((s) => toNative(s)))).toBe(negative.ref(...args));
+        expect(fn(...args)).toBe(negative.ref(...args));
       }
       // …and no hoist was installed for it.
       expect(await watOf(negative.src, negative.fn, { nativeStrings: true })).not.toContain("__cca_");
