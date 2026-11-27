@@ -15,7 +15,7 @@ import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import { isArrayLiteralCall } from "./dynamic-realm-calls.js";
-import { ARRAY_ID, errorConstructorSelector, WRAPPER_IDS } from "./builtin-prototype-keys.js";
+import { ARRAY_ID, FUNCTION_ID, errorConstructorSelector, WRAPPER_IDS } from "./builtin-prototype-keys.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
@@ -219,6 +219,8 @@ export interface ProgramFamilies {
   readonly arrays: boolean;
   /** (#7557) A value may be an Object.prototype method: the program spells one's name (`ProgramObjects`). */
   readonly objectMethods: boolean;
+  /** (#7557) The program names `Function`, so it can obtain %Function.prototype% (`Function.prototype`). */
+  readonly functionPrototype: boolean;
 }
 
 export function programFamilies(program: LegalizationProgram): ProgramFamilies {
@@ -230,6 +232,7 @@ export function programFamilies(program: LegalizationProgram): ProgramFamilies {
     prototypes: named.has("%Object%") || wrappers.size > 0,
     arrays: named.has(ARRAY_ID),
     objectMethods: program.objects.objectMethods,
+    functionPrototype: named.has(FUNCTION_ID),
   };
 }
 

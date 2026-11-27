@@ -175,6 +175,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
         : functionChainAnswer(
             b,
             instr,
+            value,
             prototype,
             (t) => [unread(t)],
             (t) => [boolean(true, t)],

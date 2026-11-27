@@ -151,6 +151,8 @@ export const NATIVE_OBJECT_PROTOTYPE_METHODS = Object.freeze([
   "propertyIsEnumerable",
 ] as const);
 export type NativeObjectPrototypeMethod = (typeof NATIVE_OBJECT_PROTOTYPE_METHODS)[number];
+/** (#7557) The Function.prototype methods the realm's built-in caller answers through a value. */
+export const NATIVE_FUNCTION_PROTOTYPE_METHODS = Object.freeze(["call", "apply", "bind"] as const);
 /** (#7354 G1) The Error constructors (§20.5.1, §20.5.6.1): `Error` first, then the six NativeErrors. */
 export const NATIVE_ERROR_CONSTRUCTORS = Object.freeze([
   "Error",
@@ -186,6 +188,7 @@ const NATIVE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
   Object: NATIVE_OBJECT_STATICS,
   "Object.prototype": NATIVE_OBJECT_PROTOTYPE_METHODS,
   "Error.prototype": ["toString"],
+  "Function.prototype": NATIVE_FUNCTION_PROTOTYPE_METHODS,
   // (#7354 A1) Array's methods come with A1b; IsArray is the realm's brand test.
   Array: ["isArray"],
   ...Object.fromEntries(NATIVE_WRAPPER_CONSTRUCTORS.map((name) => [name + ".prototype", ["toString", "valueOf"]])),
@@ -257,6 +260,9 @@ export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   "%Array%",
   realmMethodId("Array", "isArray"),
   "%Array.prototype%",
+  // (#7557) `Function` and the Function.prototype methods a call through a value answers.
+  "%Function%",
+  ...NATIVE_FUNCTION_PROTOTYPE_METHODS.map((name) => realmMethodId("Function.prototype", name)),
 ]);
 /** An intrinsic family (#7354 G1, W2): a constructor, its prototype object, and the members both own. */
 interface Family {
@@ -584,6 +590,8 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       ["HostEnsureCanCompileStrings", "ParseText", "OrdinaryFunctionCreate", "MakeConstructor"],
       [reference("prototype", functionPrototype, false, false)],
       true,
+      // (#7557) Held as a value (`Function.prototype`); a call or `new` of it is the built-in arm's run-time abort.
+      "native",
     ),
     ...members("Object", objectStatics),
     ...members("Object.prototype", objectMethods),

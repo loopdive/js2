@@ -169,7 +169,8 @@ function prototypeOf(b: ConvertingBuilders, call: BuiltinCall, result: IrValueId
     isOrdinaryObject(kind)
       ? (s: IrValueId) => [realmCall("js.object.inherits", [argument, receiver], s)]
       : kind === "function"
-        ? (s: IrValueId) => functionChainAnswer(b, instr, receiver, constant(false), constant(true), s, BOOLEAN)
+        ? (s: IrValueId) =>
+            functionChainAnswer(b, instr, argument, receiver, constant(false), constant(true), s, BOOLEAN)
         : constant(false);
   // (#7557) An object V, then ToObject(this value): a detached call's `undefined` or `null` throws.
   const coercible =

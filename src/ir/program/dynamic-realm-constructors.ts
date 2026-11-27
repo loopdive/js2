@@ -41,6 +41,7 @@ import {
   NATIVE_WRAPPER_CONSTRUCTORS,
   WRAPPER_OF_PRIMITIVE,
   ERROR_ID,
+  FUNCTION_ID,
   errorConstructorName,
   errorConstructorSelector,
   wrapperConstructorSelector,
@@ -257,30 +258,52 @@ function arrayOf(
 }
 
 /**
- * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
+ * The answer of a walk over the function `fn`'s [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
  * isPrototypeOf's step 3): `no` (false), but where `families.errors` and `prototype` is `%Error%` the run-time abort,
- * which ends the program before the arm's own (unread) answer, and (W2) where `families.prototypes` `yes` for
- * %Object.prototype% (module doc).
+ * which ends the program before the arm's own (unread) answer, (W2) where `families.prototypes` `yes` for
+ * %Object.prototype% (module doc), and (#7557) where `families.functionPrototype` `yes` for %Function.prototype% on
+ * every chain but its own (whose [[Prototype]] is %Object.prototype%).
  */
 export function functionChainAnswer(
   b: ChainBuilders,
   instr: IrInstr,
+  fn: IrValueId,
   prototype: IrValueId,
   no: Arm,
   yes: Arm,
   r: IrValueId,
   resultType: IrType,
 ): IrInstr[] {
+  const same = (value: IrValueId, then: Arm, otherwise: Arm): Arm => {
+    const cond = b.fresh();
+    return (s) => [
+      b.intrinsic(instr, "js.value.strict_eq", [prototype, value], cond),
+      b.branch(cond, then, otherwise, s, resultType),
+    ];
+  };
   const test =
     (id: string, then: Arm, otherwise: Arm): Arm =>
     (s) => {
-      const [value, same] = [b.fresh(), b.fresh()];
-      return [
-        ...b.realmIntrinsic(id, value),
-        b.intrinsic(instr, "js.value.strict_eq", [prototype, value], same),
-        b.branch(same, then, otherwise, s, resultType),
-      ];
+      const value = b.fresh();
+      return [...b.realmIntrinsic(id, value), ...same(value, then, otherwise)(s)];
     };
   const errors: Arm = b.families.errors ? test(ERROR_ID, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no) : no;
-  return (b.families.prototypes ? test("%Object.prototype%", yes, errors) : errors)(r);
+  const functions: Arm = b.families.functionPrototype
+    ? (s) => {
+        const [realm, text, key, value, own] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
+        // %Function%'s `prototype` is read only and non-configurable: the realm's %Function.prototype%.
+        const itself: Arm = (t) => [
+          b.intrinsic(instr, "js.value.strict_eq", [fn, value], own),
+          b.branch(own, no, yes, t, resultType),
+        ];
+        return [
+          ...b.realmIntrinsic(FUNCTION_ID, realm),
+          b.text("prototype", text),
+          carried(text, key),
+          realmCall("js.object.get", [realm, key, realm], value),
+          ...same(value, itself, errors)(s),
+        ];
+      }
+    : errors;
+  return (b.families.prototypes ? test("%Object.prototype%", yes, functions) : functions)(r);
 }

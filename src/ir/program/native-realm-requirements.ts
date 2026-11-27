@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  NATIVE_FUNCTION_PROTOTYPE_METHODS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
@@ -35,7 +36,7 @@ export interface NativeRealmDescription {
   /**
    * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
    * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
-   * since no other read can reach one; (#7354 G1) the Error family where the program can observe an error
+   * since no other read can reach one, and (#7557) so the Function.prototype methods; (#7354 G1) the Error family where the program can observe an error
    * ({@link heldErrorConstructors}).
    */
   readonly intrinsics: readonly string[];
@@ -117,18 +118,30 @@ const intrinsicOf = (use: Use): string | undefined =>
   use.feature === "js.object.intrinsic" && use.selector !== undefined
     ? NATIVE_VALUE_INTRINSICS[use.selector]
     : undefined;
-const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
+/**
+ * (#7354 P1, #7557) The prototype methods the realm holds as a group, by name: the Object.prototype methods, and the
+ * Function.prototype methods its built-in caller answers.
+ */
+const methodGroup = (parent: string, names: readonly string[]) => ({
+  names,
+  ids: names.map((name) => realmMethodId(parent, name)),
+});
+const METHOD_GROUPS = [
+  methodGroup("Object.prototype", NATIVE_OBJECT_PROTOTYPE_METHODS),
+  methodGroup("Function.prototype", NATIVE_FUNCTION_PROTOTYPE_METHODS),
+];
 /** `Error.prototype.toString`'s id, and the family's: the Error constructors' and it. */
 const ERROR_TO_STRING = realmMethodId("Error.prototype", "toString");
 /** (#7354 A1) The Array family, and the RangeError its arrays throw. */
 const ARRAY_ID = "%Array%",
   RANGE_ERROR_ID = "%RangeError%";
 const FAMILY_IDS: readonly string[] = [...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`), ERROR_TO_STRING];
-/** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
-const readsPrototypeMethod = (use: Use): boolean =>
-  METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
-  (use.feature === "js.object.get" &&
-    (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly (string | undefined)[]).includes(use.constantKey));
+/** (#7354 P1) A use that may reach a method of `group`: a constant key naming one, or the method itself. */
+const readsGroupMethod =
+  (group: (typeof METHOD_GROUPS)[number]) =>
+  (use: Use): boolean =>
+    group.ids.includes(intrinsicOf(use) ?? "") ||
+    (use.constantKey !== undefined && group.names.includes(use.constantKey));
 /** Whether some function of `program` binds a caught value: the one way a thrown error becomes a program value. */
 function bindsCaughtValue(program: PreparedIrProgram): boolean {
   let binds = false;
@@ -211,7 +224,7 @@ function calculate(
     !!(source.signatures.length || source.shapes.length || source.units.length || source.allocations.length);
   const numbers = numberUses(access);
   const held = heldFamilyMembers(access.uses, program);
-  const methods = access.uses.some(readsPrototypeMethod);
+  const methods = METHOD_GROUPS.flatMap((group) => (access.uses.some(readsGroupMethod(group)) ? group.ids : []));
   if (!selectedSource && !access.uses.length && !numbers.length) return undefined;
   const anchor = program.inventory.sources.find((row) => row.kind === "entry");
   if (!anchor) fail("missing prepared entry anchor");
@@ -222,7 +235,7 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
-    intrinsics: VALUE_IDS.filter((id) => (methods && METHOD_IDS.includes(id)) || held.has(id)),
+    intrinsics: VALUE_IDS.filter((id) => methods.includes(id) || held.has(id)),
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

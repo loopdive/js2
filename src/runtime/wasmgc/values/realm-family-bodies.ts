@@ -62,12 +62,15 @@ export interface RealmFamilyOperands {
 const global = (index: number): Instr => ({ op: "global.get", index });
 const asObject = (d: Pick<RealmFamilyOperands, "objectTypeIdx">): Instr[] => asOrdinaryObject(d.objectTypeIdx);
 
-/** The externref of the realm's entry or object `id` ((#7354 W2) its Object.prototype too). */
+/**
+ * The externref of the realm's entry or object `id` ((#7354 W2) its Object.prototype too; (#7557) %Function.prototype%
+ * is the bootstrap entry named by its behavior).
+ */
 function intrinsic(d: RealmFamilyOperands, id: string): Instr[] {
   if (id === "%Object.prototype%") return [global(d.objectPrototype)];
   const object = d.objects.find((row) => row.id === id);
   if (object) return [global(object.global)];
-  const entry = d.entries.find((row) => row.id === id);
+  const entry = d.entries.find((row) => row.id === (id === "%Function.prototype%" ? "function-prototype" : id));
   if (!entry) throw new Error(`realm family: no entry or object ${id}`);
   return [global(entry.singleton), { op: "ref.as_non_null" }, { op: "extern.convert_any" }];
 }

@@ -11,6 +11,7 @@
  */
 import {
   NATIVE_ERROR_CONSTRUCTORS,
+  NATIVE_FUNCTION_PROTOTYPE_METHODS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   NATIVE_VALUE_INTRINSICS,
@@ -73,16 +74,24 @@ export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
 export const errorConstructorId = (name: string): string | undefined =>
   (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(name) ? `%${name}%` : undefined;
 
+/** The realm constructors but the Error constructors, by global name. */
+const REALM_CONSTRUCTOR_NAMES: ReadonlySet<string> = new Set([
+  "Object",
+  "Array",
+  "Function",
+  ...NATIVE_WRAPPER_CONSTRUCTORS,
+]);
+
 /**
  * (#7354 W2) The catalog id of the realm constructor the global `name` names, if it names one: an Error constructor,
- * a wrapper constructor (`NATIVE_WRAPPER_CONSTRUCTORS`), `Object` or (#7354 A1) `Array`. The IR's one read of which global names read
- * realm constructors (`identifier-read.ts`).
+ * a wrapper constructor (`NATIVE_WRAPPER_CONSTRUCTORS`), `Object`, (#7354 A1) `Array` or (#7557) `Function`. The IR's
+ * one read of which global names read realm constructors (`identifier-read.ts`).
  */
 export const realmConstructorId = (name: string): string | undefined =>
-  errorConstructorId(name) ??
-  (name === "Object" || name === "Array" || (NATIVE_WRAPPER_CONSTRUCTORS as readonly string[]).includes(name)
-    ? `%${name}%`
-    : undefined);
+  errorConstructorId(name) ?? (REALM_CONSTRUCTOR_NAMES.has(name) ? `%${name}%` : undefined);
+
+/** (#7557) The catalog id of `%Function%`. */
+export const FUNCTION_ID = "%Function%";
 
 /** (#7354 A1) The catalog ids of `%Array%` and `Array.isArray`. */
 export const ARRAY_ID = "%Array%";
@@ -96,6 +105,7 @@ export const realmHoldsStatic = (path: string): boolean => NATIVE_VALUE_INTRINSI
  * wrapper of each primitive kind, the wrapper constructors in selector order, and `js.object.wrapper-data`'s questions.
  */
 export {
+  NATIVE_FUNCTION_PROTOTYPE_METHODS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_WRAPPER_CONSTRUCTORS,
   REALM_BRAND,
@@ -155,7 +165,7 @@ const CATALOG_OBJECTS: ReadonlySet<string> = new Set(
 
 /**
  * The catalog's string keys of `id` whose value the realm can hold: data, a function value of
- * `NATIVE_VALUE_INTRINSICS`, or an ordinary object of the catalog.
+ * `NATIVE_VALUE_INTRINSICS` or (#7557) of the bootstrap (%Function.prototype%), or an ordinary object of the catalog.
  */
 function holdableKeys(id: string): ReadonlySet<string> {
   return stringKeys(
@@ -164,6 +174,7 @@ function holdableKeys(id: string): ReadonlySet<string> {
         property.kind === "data" &&
         (property.value.kind !== "intrinsic" ||
           NATIVE_VALUE_INTRINSICS.includes(property.value.id) ||
+          NATIVE_REALM_CATALOG.bootstrap.includes(property.value.id) ||
           CATALOG_OBJECTS.has(property.value.id)),
     ),
   );
@@ -224,11 +235,13 @@ const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
 
 /**
  * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype: every key the
- * catalog gives them but `length` and `name`, which every function value owns from its creation.
+ * catalog gives them but `length` and `name`, which every function value owns from its creation, and (#7557) the
+ * Function.prototype methods the realm holds where a key names one (`native-realm-requirements.ts`).
  */
 const FUNCTION_REACHABLE_KEYS = new Set(
   [...realmStringKeys("%Function.prototype%"), ...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter(
-    (key) => key !== "length" && key !== "name",
+    (key) =>
+      key !== "length" && key !== "name" && !(NATIVE_FUNCTION_PROTOTYPE_METHODS as readonly string[]).includes(key),
   ),
 );
 

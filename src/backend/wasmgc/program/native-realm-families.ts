@@ -29,6 +29,16 @@ export function familyProperties(row: NativeRealmIntrinsic, holds: (id: string) 
 }
 
 /**
+ * (#7557) %Function.prototype%'s own data properties the realm holds (its held methods, `constructor` where it holds
+ * %Function%); its `caller` / `arguments` accessors are the IR's refusal (`FUNCTION_PROTOTYPE_ACCESSOR_KEYS`).
+ */
+export const functionPrototypeProperties = (
+  row: NativeRealmIntrinsic,
+  holds: (id: string) => boolean,
+): NativeBuiltinProperty[] =>
+  familyProperties({ ...row, properties: row.properties.filter((property) => property.kind === "data") }, holds);
+
+/**
  * The held families' ordinary objects, each after the object it links to (catalog order), as the kernel's requirement
  * field: none where the realm holds no family, so such a realm's requirements are what they were.
  */

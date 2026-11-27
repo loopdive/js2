@@ -40,7 +40,8 @@ import {
   type NativeStringValueReservations,
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
-import { familyObjects, familyProperties } from "./native-realm-families.js";
+import { familyObjects, familyProperties, functionPrototypeProperties } from "./native-realm-families.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS, realmMethodId } from "../../../runtime/contracts/native-realm-catalog.js";
 import {
   fillNativeRealmArrays,
   nativeRealmArrayInventory,
@@ -317,6 +318,10 @@ function beginRealm(
     ...heldRows.filter((row) => row.heldWith !== undefined && !row.callable).map((row) => row.id),
   ]);
   const holds = (id: string) => values.has(id);
+  // (#7354 P1) The realm's Object.prototype holds its methods itself; every other entry's holder lists it.
+  const objectPrototypeMethods = new Set(
+    NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
+  );
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
     const row = catalog.intrinsics.find((row) => row.id === id),
@@ -324,9 +329,9 @@ function beginRealm(
     const behavior =
       index < catalog.bootstrap.length
         ? call?.implementation
-        : row?.heldWith !== undefined || row?.constructible
-          ? "native"
-          : "object-prototype-method";
+        : objectPrototypeMethods.has(id)
+          ? "object-prototype-method"
+          : "native";
     const supported =
       index < catalog.bootstrap.length
         ? behavior === "function-prototype" || behavior === "throw-type-error"
@@ -350,6 +355,7 @@ function beginRealm(
       constructible: row.constructible,
       aliases: row.aliases,
       ...(entry === "native" ? { properties: familyProperties(row, holds) } : {}),
+      ...(entry === "function-prototype" ? { properties: functionPrototypeProperties(row, holds) } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
