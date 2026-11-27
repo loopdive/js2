@@ -141,20 +141,37 @@ ratchet; it is never a note beside it.
    - Watched timeout rows (section 3) run with a raised compile timeout of
      60 s instead of 30 s. This adds a `TEST262_COMPILE_TIMEOUT_MS` input to
      the compiler pool's `timeoutMs`; the default is unchanged.
-   - This needs the **full shard setup inside `merge-report`**:
-     - the test262 checkout (already there for the classifier);
-     - the compiler bundles;
-     - the eval and Temporal provider artifacts.
-   - That setup moves out of the two shard jobs into one composite action,
-     `.github/actions/test262-runner-setup`, used by `test262-shard`,
-     `test262-ir-measurement-shard` and both re-check steps. Today the bundle
-     build and the provider downloads are written out twice.
+   - **Same conditions as the shard it re-checks.** The re-check runs under
+     that shard's exact env (target, oracle mode, eval engine, proposals,
+     path filter). Only the pool size (1) and the compile timeout (60 s for
+     watched rows) differ.
+   - **Setup comes from one composite action,
+     `.github/actions/test262-runner-setup`.** It wraps the existing
+     `.github/actions/setup-node-pnpm` and does not repeat its steps.
+     - **Always:** checkout with submodules, the setup-node-pnpm call,
+       `pnpm install`, and the compiler and runtime bundle build. Today that
+       sequence is written out in both `test262-shard` and
+       `test262-ir-measurement-shard`.
+     - **Only with the explicit opt-in input `providers: true`:** downloading
+       the runtime-eval and Temporal provider artifacts, which today only
+       `test262-shard` does.
+   - **Who uses it:**
+     - `test262-shard` and the legacy re-check in `merge-report`, with
+       `providers: true`;
+     - `test262-ir-measurement-shard` and the IR re-check in
+       `merge-ir-measurement`, with `providers: false`.
+   - The IR lane therefore keeps exactly its current inputs. The providers do
+     not run in merge_group, so with providers on every IR queue shard would
+     fail, or the gate baseline would move without review.
    - The step is skipped when there are no candidates.
 5. **Override.** Each re-checked row replaces its shard row in the merged
    JSONL, marked `recheck: true`.
    - This happens **before** the ratchet runs and before the row-set artifact
      is written, so a flake that passes on re-check cannot turn main red.
-   - The daily run promotes the overridden JSONL.
+   - The daily run promotes the overridden JSONL, and promotion **keeps the
+     `recheck: true` marker** (with `recheck_pool: 1` and, for watched rows,
+     `recheck_compile_timeout_ms: 60000`). A promoted row measured under
+     different conditions stays identifiable.
 6. **Ratchet**: the completed-edition check, with the timeout rule of
    section 3.
 7. **Red.** If confirmed rows remain, `merge shard reports` fails: main is
@@ -248,6 +265,10 @@ push.**
 - It raises the label and alarm of section 2 on the **originating** PR set,
   `prs`: `post-merge-regression` when there is one PR, `-unattributed`
   otherwise.
+- The alarm also names the **current group or push as a second suspect**: the
+  merge group's PRs on the IR gate, or the push's first-parent PR set on the
+  legacy lane. It is listed in the comment and the #7526 message, not
+  labelled. Nothing about gating changes.
 - That PR has already merged, so this is post-merge by construction.
 - It then **leaves `timeoutWatch`** and is recorded in the artifact's
   `alarmed` list with its origin.
@@ -280,6 +301,9 @@ the alarm.
   - The artifact carries `timeoutWatch` and `alarmed`.
   - In merge_group, a confirmed repeat triggers the section 2 alarm on the
     originating PRs, not auto-park.
+  - For that alarm `merge-ir-measurement` gains job-level
+    `pull-requests: write` and `issues: write`; it has
+    `contents: read, actions: read` today.
   - This amends #7551 B3 (L150 and L312 say "gated").
 - **Legacy push lane and daily full run:** the completed-edition check reads
   the predecessor row-set artifact's `timeoutWatch` in the same way.
@@ -371,11 +395,15 @@ reason text says:
   - watched → fail: a confirmed repeat;
   - a never-passed timeout: never listed;
   - an `alarmed` row is not re-alarmed in the next measurement;
+  - the alarm lists the current group or push as a second suspect, unlabelled;
   - the P1/P2/P3 sequence: P1 merges on a first timeout, and groups P2 and
     P3 are not parked; the alarm names P1.
 - **`tests/test262-edition-ratchet.test.ts`:**
   - the completed-edition check uses the helper on a predecessor row set;
   - a `recheck: true` override that passes clears the row before the check.
+- **Workflow structure, setup:** `test262-runner-setup` downloads providers
+  only with `providers: true`; the IR shard and IR re-check call it with
+  `false`; the legacy shard and legacy re-check call it with `true`.
 - **New `tests/issue-7537-post-merge-attribution.test.ts`:**
   - k = 1 is labelled and k > 1 is labelled unattributed;
   - only new confirmed rows count, and a flake on re-run is not attributed;
@@ -429,8 +457,9 @@ reason text says:
   - one timeout helper (`scripts/lib/test262-timeout-watch.mjs`) shared by
     the ratchet and the IR gate;
   - one runner-setup composite action shared by both shard jobs and both
-    re-check steps, removing today's duplicated bundle build and provider
-    download steps;
+    re-check steps, wrapping `setup-node-pnpm`, with provider download as an
+    explicit opt-in; it removes today's duplicated checkout, install and
+    bundle-build sequence;
   - auto-park's PR-set and comment/label logic, shared rather than copied;
   - the push lane reuses `test262-shard` and `merge-report` instead of
     parallel jobs;
