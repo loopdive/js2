@@ -157,7 +157,7 @@ block; a block `let`/`const` of a hoisted name (redeclaration); `for (var k in �
   slot) and `blockFunction: { scope, varBinding? }`.
 - **Q6 (rebutted).** The two message rewrites are review item 4b of the slice brief (the "not in slice 3" texts must
   say what is unsupported); the closure-capture one keeps the prefix its tests match.
-- **Proof after the fixes** (head e8…, see the final commit):
+- **Proof after the fixes** (code at 9d480c1e77):
   - Probes: part 1's 404 identical to round 0 (361 right, 4 abort→right vs part 1, nothing else changed); the 105 L0c
     and reviewer programs identical to round 0; 77 own programs (Annex B, nested vars, hazards, `with`, h2 shapes, the
     dead-code sweep): 51 right, 21 abort, 5 refused. Wrong 0, invalid 0, exceptions 0.
