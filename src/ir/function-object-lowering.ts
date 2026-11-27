@@ -108,15 +108,27 @@ export function lowerTopLevelFunctionValue(
 }
 
 /**
+ * (#7354 O2) Whether a source function has [[Construct]]: a function declaration or expression (MakeConstructor in
+ * §10.2.9's callers); an arrow, a method, an accessor, a generator or an async function has none. `init-function`
+ * records the answer, which `new` asks (`dynamicConstruct`).
+ */
+function isConstructorFunction(fn: ts.FunctionLikeDeclaration): boolean {
+  return (
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    fn.asteriskToken === undefined &&
+    !fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  );
+}
+
+/**
  * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
  * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate, the §15.1.5 count the legacy metadata uses), `name`
- * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor (a function declaration or expression),
+ * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor ({@link isConstructorFunction}),
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
- * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
- * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
- * A function whose name is a computed key the compiler cannot evaluate refuses by name.
+ * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor
+ * ({@link isFunctionObject} says which closures). A function whose name is a computed key the compiler cannot evaluate refuses by name.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
@@ -126,7 +138,6 @@ export function emitFunctionObjectInit(
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
   if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
-  if (ts.isAccessor(fn) && type.signature.returnType?.kind !== "dynamic") return;
   const key =
     ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
   if (key === undefined)
@@ -136,14 +147,13 @@ export function emitFunctionObjectInit(
       "the name of a function under a computed key needs the key's value",
     );
   const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
-  const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
       builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature)),
       builder.emitCoerceToExternref(builder.emitStringConst(name)),
       builder.emitConst({ kind: "f64", value: expectedArgumentCountOfParams(fn.parameters) }, irVal({ kind: "f64" })),
-      builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
+      builder.emitConst({ kind: "bool", value: isConstructorFunction(fn) }, irVal({ kind: "i32", boolean: true })),
     ],
     null,
   );
@@ -168,6 +178,22 @@ export type LaneResolver = { createsFunctionObjects?(): boolean } | undefined;
  */
 export function onPreparedDynamicLane(resolver: LaneResolver): boolean {
   return createsFunctionObjects(resolver);
+}
+
+/**
+ * (#7354 O2) Whether the closure literal `fn` is created as a function object: where closures are, every one except an
+ * accessor that keeps the checker's typed signature (`sourceDynamicClosureSignature`: in an exported, typed #3518
+ * function), as before O2.
+ */
+export function isFunctionObject(
+  resolver:
+    | { createsFunctionObjects?(): boolean; dynamicClosureSignature?(fn: ts.FunctionLikeDeclaration): unknown }
+    | undefined,
+  fn: ts.FunctionLikeDeclaration,
+): boolean {
+  return (
+    createsFunctionObjects(resolver) && (!ts.isAccessor(fn) || resolver?.dynamicClosureSignature?.(fn) !== undefined)
+  );
 }
 
 export function functionObjectDynamicValue(

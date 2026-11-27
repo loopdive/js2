@@ -3340,9 +3340,9 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     const afinIdx = ctx.funcMap.get("__array_from_iter_n");
     const afinFn = afinIdx !== undefined ? definedFuncAt(ctx, afinIdx) : undefined;
     if (afinFn && afinFn.body.length > 0) {
-      // Closed-struct drain candidates need the USER arm; without `deps` they
-      // would hit the ladder's hard-cast tail, so admit them only with `deps`.
-      const userTypeIdxs = deps ? collectUserIterableStructTypeIdxs(ctx) : [];
+      // Closed structs drain via the USER arm or (#7424) the #3146 PARTIAL tail (no closed `next`), else hard-cast.
+      const drivable = deps !== undefined || (callIteratorIdx !== undefined && objDeps !== undefined);
+      const userTypeIdxs = drivable ? collectUserIterableStructTypeIdxs(ctx) : [];
       // (#3164) Native sync-generator frames are drainable through the
       // GENSTATE arm just filled above — admit their state struct types so an
       // externref-held generator (the fn-expr closure return / `g: any`)

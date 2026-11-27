@@ -519,12 +519,7 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
-    ...(calls && {
-      accessorCalls: {
-        source: [calls.get.handle, calls.set.handle],
-        builtin: [pack.functions.method0.handle, pack.functions.method1.handle],
-      },
-    }),
+    ...(calls && { accessorCalls: [calls.get.handle, calls.set.handle] as const }),
   };
 }
 /**
