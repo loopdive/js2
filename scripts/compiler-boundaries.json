@@ -2040,6 +2040,14 @@
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/arguments-object.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend lowering of a function's own arguments object (the count read and its refusals), keyed on ast-scope's owner rule; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/function-declaration-values.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
