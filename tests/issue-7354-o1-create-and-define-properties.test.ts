@@ -103,6 +103,18 @@ describe("#7354 O1 — what stays a refusal or the run-time abort", () => {
     },
     SLOW,
   );
+  it(
+    "(13, original shape) a held map on a receiver not shown fresh refuses: it may define any key (#7350 RV-PR7549)",
+    async () => {
+      expect(
+        await refusal(
+          "var n = Object.create(null); Object.defineProperties(n, n); n.v = 3; var out = String(n.v);",
+          runnerOptions(),
+        ),
+      ).toMatch(/identifier "Object" is not in scope/);
+    },
+    SLOW,
+  );
   // (#7354 O2) A getter read, a setter call and a descriptor field read through a getter run now
   // (issue-7354-o2-accessors).
   it.each([
