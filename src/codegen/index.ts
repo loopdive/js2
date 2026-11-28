@@ -678,16 +678,16 @@ import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
-import { absoluteGlobalIdx } from "./global-space.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import { exportDeferredDefaultGlobals } from "./global-export-fixup.js";
-import { moduleBindingOf } from "./module-binding-table.js";
+import { moduleBindingOf } from "./module-bindings/module-binding-table.js";
 import {
   noteImportedSourceFunction,
   ownSourceFunctionIdx,
   recordSourceModuleBindingView,
   snapshotSourceFunctionBindings,
   withSourceBindings,
-} from "./source-binding-projection.js";
+} from "./module-bindings/source-binding-projection.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import { optionalFieldFlag } from "./object-model/struct-optional-widen.js"; // (#6867)

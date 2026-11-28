@@ -3,8 +3,8 @@
 import type { ts } from "../ts-api.js";
 import { reportErrorNoNode } from "./context/errors.js";
 import type { CodegenContext } from "./context/types.js";
-import { absoluteGlobalIdx } from "./global-space.js";
-import { sourceModuleBindings } from "./module-binding-table.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
+import { sourceModuleBindings } from "./module-bindings/module-binding-table.js";
 
 /** Keep exported global descriptors aligned when late imports shift defined globals. */
 export function shiftModuleGlobalExportIndices(ctx: CodegenContext, threshold: number, delta: number): void {

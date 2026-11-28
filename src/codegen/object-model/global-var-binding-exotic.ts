@@ -37,7 +37,7 @@
  */
 import type { GlobalDef, Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { absoluteGlobalIdx } from "../global-space.js";
+import { absoluteGlobalIdx } from "../module-bindings/global-space.js";
 import {
   type ArmResources,
   armResources,

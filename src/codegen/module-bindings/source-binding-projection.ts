@@ -11,10 +11,10 @@
  * Saved state holds allocator objects (`WasmFunction`, `GlobalDef`), never indices: a late import shifts both index
  * spaces while a body compiles.
  */
-import type { GlobalDef, WasmFunction } from "../ir/types.js";
-import { ts } from "../ts-api.js";
-import type { CodegenContext, NativeGeneratorInfo } from "./context/types.js";
-import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
+import type { GlobalDef, WasmFunction } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
+import type { CodegenContext, NativeGeneratorInfo } from "../context/types.js";
+import { definedFuncAt, definedFuncHandleOf } from "../func-space.js";
 import { absoluteGlobalIdx, definedGlobalAt } from "./global-space.js";
 import {
   isCollidingModuleName,

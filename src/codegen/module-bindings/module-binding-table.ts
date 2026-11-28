@@ -11,9 +11,9 @@
  * `source-binding-projection.ts` points a name at another binding while that binding's module compiles. The Program
  * ABI registry resolves declarations through this table. A leaf module, so the registry can read it without a cycle.
  */
-import type { GlobalDef } from "../ir/types.js";
-import type { ts } from "../ts-api.js";
-import type { CodegenContext } from "./context/types.js";
+import type { GlobalDef } from "../../ir/types.js";
+import type { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
 
 export type ModuleBindingDeclaration = ts.VariableDeclaration | ts.BindingElement;
 

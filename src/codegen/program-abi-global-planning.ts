@@ -6,7 +6,7 @@ import type { IrGlobalRef } from "../ir/nodes.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { GlobalDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { type ModuleBindingDeclaration, moduleBindingOf } from "./module-binding-table.js";
+import { type ModuleBindingDeclaration, moduleBindingOf } from "./module-bindings/module-binding-table.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import type { ProgramAbiSession, ProgramAbiSlotLocator } from "./program-abi-session.js";
 

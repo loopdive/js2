@@ -72,7 +72,7 @@ import { expectedArgumentCountOfParams } from "../shared/function-expected-argum
 import { functionInstanceName } from "../shared/named-evaluation.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { EVAL_SOURCE_FILENAME } from "../frontend/eval/script.js";
-import { definedGlobalAt } from "./global-space.js";
+import { definedGlobalAt } from "./module-bindings/global-space.js";
 
 /** The closure-struct slot name. `$`-prefixed to stay out of name enumeration. */
 export const FN_META_FIELD = "$fnmeta";
