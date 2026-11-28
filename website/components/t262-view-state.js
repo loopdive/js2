@@ -1,10 +1,10 @@
 /**
- * Shared ?mode= / ?edition= / gated ?ir URL state for the two conformance surfaces
+ * Shared ?mode= / ?edition= / ?ir URL state for the two conformance surfaces
  * (website/index.html and website/public/benchmarks/report.html).
  *
- * Both pages share the JS-host/standalone lane and ES edition scope. The IR
- * toggle is available only when the URL contains ?ir; ?ir=1 selects it.
- * Links carry these choices:
+ * Both pages share the JS-host/standalone lane, ES edition scope and compiler
+ * path. The IR view is the default (#7537); `?ir=0` (or `?ir=`) selects the
+ * legacy view. Links carry these choices:
  *
  *   /?mode=standalone&edition=ES2015
  *   /benchmarks/report.html?mode=standalone&edition=ES2020
@@ -32,17 +32,33 @@
     }
   };
 
-  /** Reads the URL knobs. Missing/invalid values come back as null, never a guess. */
+  /**
+   * Reads the URL knobs. Missing/invalid mode and edition come back as null,
+   * never a guess. The JS-host lane was retired without an IR measurement, so
+   * `mode=host` is always the legacy view.
+   */
   const read = () => {
     const search = params();
     const rawMode = (search.get(MODE_PARAM) || "").trim().toLowerCase();
     const rawEdition = (search.get(EDITION_PARAM) || "").trim();
+    const mode = VALID_MODES.has(rawMode) ? rawMode : null;
     return {
-      mode: VALID_MODES.has(rawMode) ? rawMode : null,
+      mode,
       edition: rawEdition || null,
-      irAvailable: search.has(IR_PARAM),
-      ir: search.has(IR_PARAM) && search.get(IR_PARAM) === "1",
+      ir: mode !== "host" && (!search.has(IR_PARAM) || search.get(IR_PARAM) === "1"),
     };
+  };
+
+  // Defaults (standalone, overall, IR) are dropped so a shared URL only names what differs.
+  const applyKnobs = (search, { mode, edition, ir }) => {
+    if (mode === "host") search.set(MODE_PARAM, "host");
+    else if (mode === "standalone") search.delete(MODE_PARAM);
+
+    if (typeof edition === "string" && edition && edition !== "overall") search.set(EDITION_PARAM, edition);
+    else if (edition === "overall" || edition === null) search.delete(EDITION_PARAM);
+
+    if (ir === true) search.delete(IR_PARAM);
+    else if (ir === false) search.set(IR_PARAM, "0");
   };
 
   /**
@@ -54,18 +70,12 @@
    * pages and are dropped from the URL rather than written out, so the common
    * case stays a clean link and a shared URL only ever names what differs. The
    * mode default follows the pages: standalone (pure Wasm) is the lane both
-   * surfaces open on, so `?mode=host` is the explicit opt-in.
+   * surfaces open on, so `?mode=host` is the explicit opt-in. The IR view is
+   * the default too, so only the legacy view writes `ir=0`.
    */
-  const write = ({ mode, edition, ir } = {}) => {
+  const write = (knobs = {}) => {
     const search = params();
-    if (mode === "host") search.set(MODE_PARAM, "host");
-    else if (mode === "standalone") search.delete(MODE_PARAM);
-
-    if (typeof edition === "string" && edition && edition !== "overall") search.set(EDITION_PARAM, edition);
-    else if (edition === "overall" || edition === null) search.delete(EDITION_PARAM);
-
-    if (search.has(IR_PARAM) && typeof ir === "boolean") search.set(IR_PARAM, ir ? "1" : "");
-
+    applyKnobs(search, knobs);
     const query = search.toString();
     const next = `${global.location.pathname}${query ? `?${query}` : ""}${global.location.hash || ""}`;
     try {
@@ -79,7 +89,7 @@
   /**
    * Builds a link to the OTHER conformance surface carrying this view — both
    * pages read the same params, so following the link keeps the lane, edition
-   * and gated IR selection the reader is looking at. Defaults are dropped, same as write().
+   * and compiler path the reader is looking at. Defaults are dropped, same as write().
    */
   const linkTo = (href, { mode, edition, ir } = {}) => {
     const hashIndex = href.indexOf("#");
@@ -88,12 +98,7 @@
     const queryIndex = withoutHash.indexOf("?");
     const pathname = queryIndex < 0 ? withoutHash : withoutHash.slice(0, queryIndex);
     const search = new URLSearchParams(queryIndex < 0 ? "" : withoutHash.slice(queryIndex + 1));
-    if (mode === "host") search.set(MODE_PARAM, "host");
-    else if (mode === "standalone") search.delete(MODE_PARAM);
-    if (typeof edition === "string" && edition && edition !== "overall") search.set(EDITION_PARAM, edition);
-    else if (edition === "overall" || edition === null) search.delete(EDITION_PARAM);
-    const view = read();
-    if (view.irAvailable) search.set(IR_PARAM, (ir ?? view.ir) ? "1" : "");
+    applyKnobs(search, { mode, edition, ir: ir ?? read().ir });
     const query = search.toString();
     return `${pathname}${query ? `?${query}` : ""}${hash}`;
   };
@@ -167,12 +172,11 @@
 
   const bindIrToggle = (label) => {
     if (!label) return;
-    const view = read();
-    label.hidden = !view.irAvailable;
-    label.style.display = view.irAvailable ? "" : "none";
+    label.hidden = false;
+    label.style.display = "";
     const input = label.querySelector("input");
-    if (!input || !view.irAvailable) return;
-    input.checked = view.ir;
+    if (!input) return;
+    input.checked = read().ir;
     input.addEventListener("change", () => {
       write({ ir: input.checked });
       // A fresh document keeps historical in-flight hydration out of the IR view.
@@ -257,6 +261,30 @@
     }
   };
 
+  // The view this document was rendered for. A later write({ mode: "host" })
+  // changes read() but not what the page already loaded.
+  const documentIr = read().ir;
+
+  /**
+   * read() runs before the status file can arrive, so the IR view is chosen
+   * first and an unavailable IR measurement is resolved here: an IR document
+   * reloads as the legacy view (a fresh document, as for the toggle), and a
+   * legacy document shows the reason above its numbers.
+   */
+  const applyIrStatus = async (base, mode, node) => {
+    const reason = await irStatus(base, mode);
+    if (!reason) return;
+    if (documentIr) {
+      // Navigate to the legacy URL itself: a reload after write() would loop
+      // forever if replaceState is unavailable and the URL kept the IR view.
+      const { pathname, search, hash } = global.location;
+      global.location.replace(linkTo(`${pathname}${search}${hash}`, { ir: false }));
+      return;
+    }
+    node.textContent = reason;
+    node.hidden = false;
+  };
+
   global.t262ViewState = {
     read,
     write,
@@ -270,5 +298,6 @@
     showIrProvenance,
     historicalHostLabel,
     irStatus,
+    applyIrStatus,
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -3,6 +3,11 @@
 // The body producer of `prepareIrProgramSources`: one terminal unit (a function declaration or a script's module-init)
 // lowered from its AST and legalized, against the program-wide plans the producer prepared before any body.
 
+import {
+  supportsIrBackendTargetCapability,
+  type IrBackendTargetCapability,
+  type IrBackendTargetProfile,
+} from "./backend/legality.js";
 import { ts } from "../ts-api.js";
 import type { BlockFunctionHomes } from "./annexb-block-function-values.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
@@ -19,6 +24,7 @@ import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-loweri
 import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { demoteToLegacy } from "./outcomes.js";
+import { irUnitFuncRef } from "./core/callable-bindings.js";
 import type { AbortBodies } from "./abort-bodies.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -69,6 +75,8 @@ export interface SourceUnitLowering {
   readonly sourceMap: ((unit: TerminalUnit) => IrFunctionSourceMapContext) | undefined;
   /** (#7354 U) The `unlowerableBodies` policy, when switched on. */
   readonly abortBodies: AbortBodies | undefined;
+  /** (#7363) Each literal eval site's called source, which holds its text (`src/ir/eval-literal.ts`). */
+  readonly literalEvalCalls: ReadonlyMap<ts.CallExpression, ts.SourceFile>;
 }
 
 type LoweredSourceUnit = {
@@ -99,6 +107,7 @@ function lowerUnitOnce(
   abortBodies: AbortBodies | undefined,
 ): LoweredSourceUnit {
   const { input, identity, dynamicContracts } = lowering;
+  const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
     let symbol = input.checker.getSymbolAtLocation(node);
     const imported = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0;
@@ -121,7 +130,15 @@ function lowerUnitOnce(
     sourceClosureCallableParameter: (node) => lowering.closureCallableParameters.has(node),
     resolveModuleBinding: resolveBinding,
     scriptVarModel: () => "with-for-in-heads",
-    moduleInitFunctionValues: () => lowering.functionValues,
+    // (#7363) This script's: a called eval source makes none, so a call of it never remakes a function object.
+    moduleInitFunctionValues: () =>
+      lowering.functionValues.filter((value) => value.declaration.getSourceFile() === source),
+    literalEvalCalledInit: (call) => {
+      const called = lowering.literalEvalCalls.get(call);
+      if (!called) return undefined;
+      const unitId = identity.moduleInitUnitIdBySourceFile.get(called);
+      return unitId ? irUnitFuncRef({ unitId, name: identity.terminalByUnitId.get(unitId)!.displayName }) : null;
+    },
     annexBBlockFunctionHomes: (declaration) => lowering.blockFunctionHomes?.homesOf(declaration),
     preparedAsyncAwaitSite: (awaitExpression) => {
       const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
@@ -139,7 +156,6 @@ function lowerUnitOnce(
     ...dynamicContracts.resolver,
     ...(abortBodies ? { abortedBody: (fn) => abortBodies.has(fn) } : {}),
   };
-  const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const moduleInit = unit.kind === "module-init";
   const declaration = moduleInit
     ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
@@ -213,6 +229,16 @@ function lowerUnitOnce(
   return { lowered, functions };
 }
 
+const PREPARED_LANE: IrBackendTargetProfile = Object.freeze({
+  backend: "wasmgc",
+  target: "standalone",
+  allowHostImports: false,
+});
+const PREPARED_LANE_CAPABILITIES: ReadonlySet<IrBackendTargetCapability> = new Set([
+  "number-to-string",
+  "native-dynamic-to-number",
+]);
+
 /** Combine source-owned call/read plans; no physical provider is selected here. */
 function prepareSourceBuiltinResolvers(
   input: SourceUnitLowering["input"],
@@ -230,9 +256,11 @@ function prepareSourceBuiltinResolvers(
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
       ? {
           ...prepareObjectCreateResolver(input.checker, input.sourceFiles, roots),
-          // (#7354 T) The one lane capability this path binds: the native number formatter (Str2-c), so a `+` of a
-          // string and a number converts the number like a template does. Every other capability stays unanswered.
-          supportsBackendCapability: (capability: string) => capability === "number-to-string",
+          // The lane capabilities this path binds, through the backend legality rule; every other one stays
+          // unanswered. (#7354 T) The native number formatter (Str2-c): a `+` of a string and a number converts the
+          // number like a template does. (#7375) ToNumber of a boxed boolean / string compound right-hand side.
+          supportsBackendCapability: (capability: IrBackendTargetCapability) =>
+            PREPARED_LANE_CAPABILITIES.has(capability) && supportsIrBackendTargetCapability(PREPARED_LANE, capability),
           ...bigIntOperandOption(input.checker, true), // (#7525) refuse it by name
         }
       : {}),

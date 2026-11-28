@@ -157,7 +157,12 @@ describe("#7354 M1 — refusals that stay", () => {
       "function f(v){ v.a++; } f({a:1});",
       "ir/from-ast: unsupported expression kind PostfixUnaryExpression in f",
     ],
-    ["G45: delete", "function f(v){ return delete v.a; } f({a:1});", "ir/from-ast: delete has no IR lowering in f"],
+    // (#7471) A delete of a constant key runs (tests/issue-7471-prepared-delete); a computed key refuses, as a read's.
+    [
+      "G45: delete of a computed key",
+      "function f(v, k){ return delete v[k]; } f({a:1}, 'a');",
+      gapText("__ir_dyn_delete_sloppy with a computed key"),
+    ],
     ["G45: in", "function f(v){ return 'a' in v; } f({a:1});", gapText("__extern_has")],
     [
       "G45: for-in",

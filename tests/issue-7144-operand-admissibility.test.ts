@@ -96,12 +96,15 @@ function node(body: string): number {
   return new Function(`"use strict";\n${source(body).replace(/\bexport /g, "")}\nreturn run();`)() as number;
 }
 
-/** Selection agrees with the predicate, and a claim never withdraws. */
-async function expectAgreement(body: string, admissible: boolean): Promise<void> {
+/** Selection agrees with the predicate (per lane, where it asks a lane capability), and a claim never withdraws. */
+async function expectAgreement(
+  body: string,
+  admissible: boolean | ((lane: keyof typeof LANES) => boolean),
+): Promise<void> {
   for (const lane of Object.keys(LANES) as (keyof typeof LANES)[]) {
     const { claimed, postClaimErrors, result } = await outcome(body, lane);
     expect(postClaimErrors, `${lane}: ${body}`).toEqual([]);
-    expect(claimed, `${lane}: ${body}`).toBe(admissible);
+    expect(claimed, `${lane}: ${body}`).toBe(typeof admissible === "function" ? admissible(lane) : admissible);
     if (lane === "gc") expect(result.success, `${lane}: ${body}`).toBe(true);
     else expect(await runInstance(result, lane), `${lane}: ${body}`).toBe(node(body));
   }
@@ -162,9 +165,12 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
         for (const value of [PRODUCERS.number!, PRODUCERS.string!, PRODUCERS.boolean!, PRODUCERS.dynamic!]) {
           // `**=` shares `**`'s exact-exponentiation admission (#4787), which
           // excludes module init, so this harness never claims it.
+          // (#7375) `native-dynamic-to-number` holds on standalone only.
           await expectAgreement(
             `${slot} ${spelling} ${value.expr}; throw m;`,
-            op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken && compoundWriteAdmissible(op, slotFamily, value.family),
+            (lane) =>
+              op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
+              compoundWriteAdmissible(op, slotFamily, value.family, lane === "standalone"),
           );
         }
       }
@@ -237,7 +243,6 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
   it("a value `void` (the NaN sentinel for `undefined`) is admitted only where ToNumber reads it", async () => {
     // Observed as a value: refused at select (each was an IR-claimed wrong result before #7144 round 2).
     for (const body of [
-      'if ((void 0) === (void 0)) throw "y"; throw "nn";',
       'if (void 0 == null) throw "y"; throw "nn";',
       'if (void 0 != null) throw "y"; throw "nn";',
       'm = void 0; if (m === undefined) throw "y"; throw "nn";',
@@ -249,8 +254,6 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
       "throw typeof void 0;",
       "throw void 0;",
       "subject(void 0); throw m;",
-      // A parenthesised `void` is not the compare's `undefined` operand but its other side.
-      'if ((void 0) === undefined) throw m; throw "y";',
     ]) {
       await expectAgreement(body, false);
     }
@@ -268,6 +271,9 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
       'if (k === void 0) throw "y"; throw m;',
       'if (m !== void 0) throw m; throw "y";',
       'if (void 0 === void 0) throw m; throw "y";',
+      // (#7515) The compare reads its operands through parentheses, so this is the same strict undefined compare.
+      'if ((void 0) === (void 0)) throw m; throw "y";',
+      'if ((void 0) === undefined) throw m; throw "y";',
       "var u = (k < 1) | 0; throw m;",
       // (#7034 round 3) Lowered natively inside the identity, so the closure walk skips the `+` as the selector does.
       "var u = ((k < 1) + (k < 2)) | 0; throw m;",

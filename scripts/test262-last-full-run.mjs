@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// (#7551) The newest GREEN FULL test262 run on main: the daily (#7616) schedule run,
+// (#7551) The newest GREEN FULL test262 run on main: the daily schedule run,
 // or a `workflow_dispatch` with `full_run=true` (e.g. before a release). A run
 // counts as full only when both of its full-run producers succeeded — the
 // legacy baseline promotion and the full-corpus IR measurement — so a plain

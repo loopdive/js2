@@ -77,9 +77,10 @@ How it is enforced:
 (front door `wholeProgram: { kind: "prepared-program-required" }`), the figure
 the merge queue gates on for the current edition
 (`scripts/test262-current-edition.json`, ES5: a pass → not-pass of that
-edition parks the PR, #7551) and CI measures daily for the whole corpus. The
-site publishes the daily full run, plus the current edition's figure from the
-newest landed merge when that is newer, with its own commit and date (#7616). On 2026-11-16 that
+edition parks the PR, #7551) and CI measures daily for the whole corpus, which
+is what the site publishes and shows by default (#7537), plus the current
+edition's figure from the newest landed merge when that is newer, with its own
+commit and date (#7616). On 2026-11-16 that
 path passed no positive ES5 test: every test stops inside the shared harness
 prelude. It shares only `lowerFunctionAstToIr` with the ordinary pipeline, not
 the selector or the codegen-backed resolver, so a file with zero legacy units
@@ -364,7 +365,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 ## Test262
 
-**Cadence (#7551, owner decision 2026-11-26).**
+**Cadence (#7551, owner decision 2026-11-26; #7537, 2026-11-27).**
 
 - **Merge queue:** the required `merge shard reports` check runs test262 on
   the IR path (`TEST262_COMPILER_PATH=ir`, standalone), for the current
@@ -374,8 +375,19 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
     `scripts/test262-edition-reclassified.json` in the same PR. Otherwise it
     fails as `missing`.
   - Any pass → not-pass of that edition fails the check, and auto-park parks
-    the PR with the regressed tests listed. `compile_timeout` counts. So does
-    a test the run dropped, when the test262 revision is unchanged.
+    the PR with the regressed tests listed. So does a test the run dropped,
+    when the test262 revision is unchanged.
+  - **A first pass → `compile_timeout` is listed and watched, not gated**
+    (#7537, owner 2026-11-27). Only a repeat counts: the same row timing out
+    again in the next measurement on the first-parent lineage, and again on a
+    single-worker re-check with a 60 s compile timeout.
+    - A confirmed repeat never parks a later group. It labels and comments
+      on the PRs where the timeout first appeared (`timeoutWatch` in the
+      measurement artifact), naming the current group as a second suspect.
+    - Every regression is re-checked once before it gates; one that passes
+      was a shard-run flake. At most 50 rows are re-checked; above that the
+      verdict stands as measured. `scripts/test262-edition-verdict.sh` and
+      `scripts/lib/test262-timeout-watch.mjs`.
   - A crashed report or a failed baseline download is infra: the queue
     retries, nothing is parked.
   - With no comparable baseline, the summary says "No baseline — not
@@ -383,7 +395,35 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
     after an eval-engine change.
   - A push after a queue merge reuses the queue's measurement. A direct push
     measures again.
-- **Daily (schedule, 02:23 UTC; it fires hours late; #7616) and dispatch:**
+- **Every push to main (#7537): the legacy lane's COMPLETED editions** (those
+  with `completed: true` in the ratchet baseline; ES5 today, 16 shards,
+  `completedChunks` in `scripts/test262-current-edition.json`). They are
+  checked after the merge, test by test, against the previous push's
+  measurement, with the same re-check and timeout rule. A push never
+  promotes.
+  - A confirmed new failure fails the push run: **main is red**, and stays
+    red while the rows fail (the completed rule is absolute).
+  - Phase 1 is **label and alarm only**. The PR the push merged gets
+    `post-merge-regression`. When the push carried several PRs, all of them
+    get `post-merge-regression-unattributed`.
+    - One comment on each, and one on #7526, posted by the separate
+      `post-merge test262 alarm (#7537)` job (the only job with write scopes;
+      it runs no measured code).
+    - A later push that only finds the same rows labels nothing.
+    - With no earlier measurement, the completed rule (every row passes but
+      the ratchet's exceptions) is the baseline: a failure still fails the
+      run, but no PR is labelled; one "not attributed" notice goes to #7526.
+    - The alarm trusts no number in the report: PR numbers must be merges on
+      main's history, and a repeat's origin is re-read from the baseline run.
+  - **The lead reverts by hand, after 24 h:** the author has 24 h from the
+    label for a fix-forward PR. After that, if the latest push run on main
+    still fails the rows, the lead opens a plain revert PR through the queue.
+    Nothing reverts automatically.
+  - The lead records each incident (real or false positive) in
+    `plan/issues/7537-ci-test262-current-edition-scope.md`; after one week the
+    owner decides whether to automate the revert.
+- **Daily (schedule, 21:17 UTC; it fires hours late, measured 6.2–10.3 h on
+  the old 02:23 slot) and dispatch:**
   the full legacy matrix runs with its gates (high-water floor, edition
   ratchet, #1897 guard), then baseline promotion, plus the full-corpus IR
   measurement. Both matrices are capped at `max-parallel: 40`, so the queue
@@ -396,8 +436,8 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   - **Before a release, dispatch the full run by hand
     (`gh workflow run test262-sharded.yml --ref main -f full_run=true`); it must be green.** `full_run` runs exactly what the daily schedule runs. Do not add `compiler_path_measurement=true`: that is IR only.
   - `refresh-baseline.yml` is dispatch-only. **Nothing forces a baseline
-    refresh automatically.** A floor older than 192 h (8 days: derived for the
-    former weekly cadence, kept for the daily one, #7616) fails `baseline-floor-staleness-alert.yml` loudly,
+    refresh automatically.** A floor older than 48 h (the day plus the worst
+    measured start delay plus run time) fails `baseline-floor-staleness-alert.yml` loudly,
     with the age and the last green full run, and that is all it does. Its
     auto-heal was removed (owner decision 2026-11-26), because after a failed
     run it would bank the regression. A forced refresh is a manual dispatch.
@@ -456,8 +496,8 @@ passes (#6486 P3e, run 35178155322).
 
 | File                                                      | Lives in                    | Authoritative for                                                                                                          | Refreshed by                                                           | Validated by                                                                                                                                              |
 | --------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `benchmarks/results/test262-current.json`                 | main repo (committed, ~kB)  | landing-page summary, pass/total badges — **as of the last green daily run** (#7551, #7616)                                       | `test262-sharded.yml` `promote-baseline` job (daily schedule, after the legacy gates pass; #7551, #7616) | (none)                                                                                                                                                    |
-| `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | daily legacy-lane regression baseline (no longer a merge-queue gate, #7551); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (daily schedule; #7551, #7616)   | `pnpm run test:262:validate-baseline` spot-checks 50 random `pass` entries against HEAD (#1218) — a manual tool, not a per-PR workflow and not a required check (`docs/ci-policy.md`) |
+| `benchmarks/results/test262-current.json`                 | main repo (committed, ~kB)  | landing-page summary, pass/total badges — **as of the last green daily run** (#7537)                                        | `test262-sharded.yml` `promote-baseline` job (daily schedule, after the legacy gates pass; #7537)  | (none)                                                                                                                                                    |
+| `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | daily legacy-lane regression baseline (no longer a merge-queue gate, #7551); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (daily schedule; #7537)    | `pnpm run test:262:validate-baseline` spot-checks 50 random `pass` entries against HEAD (#1218) — a manual tool, not a per-PR workflow and not a required check (`docs/ci-policy.md`) |
 | `benchmarks/results/playground-benchmark-sidebar.json`    | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline                                  | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none)                                                                                                                                                    |
 | `benchmarks/results/npm-compat.json` (+ `-perf`, `-history`, and the `website/public/` twins) | main repo (committed) | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf | `npm-compat-refresh.yml` on every push to main, 6h cron backstop (#3988); promotes via a **PR on `ci/npm-compat-refresh`**, not a direct push | pre-promote check in that workflow: refuses to publish <20 packages or entries missing `name`/`compile` |
 
@@ -534,9 +574,10 @@ attention is on the edition being worked, and nothing reports it.
 separately against a committed floor in
 `scripts/test262-edition-ratchet-baseline.json` and fails if a **ratcheted**
 edition loses ground, whatever the headline did. It runs inside
-`merge shard reports` (`test262-sharded.yml`) on the **daily** full run
-(#7551, #7616). A breach fails that run and blocks promotion; it no longer blocks
-the merge queue.
+`merge shard reports` (`test262-sharded.yml`) on the **daily** full run, and
+for the completed editions on **every push to main** (#7537). A breach fails
+that run (a push run turns main red and labels the merged PR) and blocks
+promotion; it no longer blocks the merge queue.
 
 ```bash
 pnpm run check:edition-ratchet -- --results <run.jsonl> [--compare <baseline.jsonl>]
@@ -569,8 +610,10 @@ Five properties worth knowing before you touch it:
 2026-09-29).** Such an edition carries `completed: true` in the baseline, and
 from then on every one of its rows must pass in every run that contains it —
 full or partial, with or without a `--compare` baseline. One non-passing row
-fails the daily run's `merge shard reports` and blocks promotion (#7551: after
-the fact, not at merge time). There is no tolerance, no
+fails `merge shard reports` on the next push to main, after the merge, and
+blocks promotion (#7537: label and alarm, the lead reverts by hand after
+24 h; not at merge time). The one excuse is a first pass → `compile_timeout`
+that the edition report listed (`--listed-timeouts`); a repeat fails. There is no tolerance, no
 "net-positive" argument, and no re-baselining around it:
 
 - `--update` sets `completed` the first time a full run measures pass == total,
@@ -852,7 +895,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 - **Dev self-check, then stand down — the SERVER-SIDE workflow enqueues (#2786)**: the gate is GitHub's checks API, not any committed feed. When the PR's **required checks are all green** (`gh pr checks <N>` / `gh pr view <N> --json statusCheckRollup,mergeStateStatus,isDraft,labels` — authoritative list in `docs/ci-policy.md` §7 — **six**, re-verify with `gh api repos/loopdive/js2wasm/rules/branches/main --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'`: `cheap gate (main-ancestor + lint)`, `quality`, `merge shard reports`, plus `equivalence-gate`, `check for test262 regressions`, `cla-check`; `linear-tests` is NOT required, #3934), `mergeStateStatus == CLEAN`, the PR is not a draft and carries no `hold` label — the dev marks the task completed and **stands down. The dev does NOT enqueue.** The single enqueuer is now the server-side `.github/workflows/auto-enqueue.yml` (`scripts/enqueue-green-prs.mjs`): its `workflow_run`-on-completion trigger fires right after the required-check workflows finish, and with the grace window now **0** (#2786) it enqueues every just-green PR within ~one workflow-startup — without depending on any agent surviving. **Why the change:** the old "dev self-enqueue once" model relied on a backgrounded CI watcher that **died with the dev process** on stand-down, so green PRs stranded un-enqueued (#2225, #2247). Moving enqueue to the GitHub Actions workflow — the one actor that is long-lived and outside agent lifecycle — closes that hole. The merge queue still re-validates required checks on the merged state (`merge_group`), and `auto-park` (#2547) `hold`-labels any PR that fails the re-run. **NEVER enqueue or re-enqueue from a dev/agent** — re-enqueue **loops** on the queue head caused the ~3.5h cancellation churn of 2026-06-20 (re-adding the PR that is in the in-flight group rebuilds it and CANCELS its run; the workflow that drove that loop has since been deleted — memory `project_merge_queue_requeue_cancels_run`, re-verified 2026-08-02); the workflow's single trailing-add never loops. See `.claude/skills/dev-self-merge/SKILL.md`. **Backstops (not the mechanism):** the workflow's ~30-min cron and the tech lead's per-loop open-PR sweep catch the rare stray the responsive run misses (e.g. a PR the queue dropped on main-advance). Manual `node scripts/enqueue-green-prs.mjs` forces a sweep now. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are never auto-enqueued. **Security:** the workflow's author-trust gate is now load-bearing — it enqueues only OWNER/MEMBER/COLLABORATOR PRs; external-contributor PRs require a deliberate maintainer enqueue plus a green `cla-check`.
 - **The per-PR CI status feed (one JSON file per PR under a .claude/ci-status directory) is RETIRED and was deleted in #6796 — do not look for it, wait on it, or gate on it.** Its three writer workflows (ci-status-feed, ci-status-basic, ci-status-pending) were `workflow_dispatch`-only stubs and were deleted with it; the newest feed file had been from the PR-471 era and the directory was last touched 2026-07-05. A current PR will NEVER get a feed file — treating its absence as "CI still in flight" strands you forever. Query the checks API directly (`gh pr checks <N>`, `gh pr view <N> --json statusCheckRollup,mergeStateStatus`).
 - **A green PR proves almost nothing — the merge queue is the only gate (#7558).** On `pull_request` only `cla-check` and `cheap gate (main-ancestor + lint)` (typecheck + lint, and only when a test262-sharded path changed — otherwise it is a green stub) really run, plus `issue-tests.yml` when its own machinery changes; `quality` and `equivalence-gate` report `skipped` (ci.yml's two root jobs carry `if: github.event_name != 'pull_request'`), and `merge shard reports` / `check for test262 regressions` are the green no-ops below. A PR is therefore enqueue-eligible within ~2 minutes; everything else runs in `merge_group`, and a failure there auto-parks the PR with `hold`. `quality` only aggregates the parallel `quality-lane (<lane>)` matrix jobs (#7563): read the red lane's log, not `quality`'s.
-- **PR-level `check for test262 regressions` (and `merge shard reports`) green is a DESIGNED no-op on `pull_request` — NOT conformance evidence.** No test262 runs on a PR (#2519 slim-down), so on a PR both jobs green-skip. Never read a green PR-level regression check as "this PR causes no regressions". Since #7551 the queue's test262 gate is the **IR current-edition per-test diff** in `merge shard reports`, run in the **`merge_group` re-validation on the merged state**; the legacy-lane gates (standalone floor/net #1897/#2097, edition ratchet) run in the **daily** full run and catch other regressions after the fact (see "Test262 → Cadence"). `check for test262 regressions` is a no-op in every event (its gates are host-only; cleanup #7552). That is why `auto-park` (#2547) exists and why a fully-green PR can still fail the queue and be parked with a bot `hold` label.
+- **PR-level `check for test262 regressions` (and `merge shard reports`) green is a DESIGNED no-op on `pull_request` — NOT conformance evidence.** No test262 runs on a PR (#2519 slim-down), so on a PR both jobs green-skip. Never read a green PR-level regression check as "this PR causes no regressions". Since #7551 the queue's test262 gate is the **IR current-edition per-test diff** in `merge shard reports`, run in the **`merge_group` re-validation on the merged state**; the legacy-lane gates (standalone floor/net #1897/#2097, edition ratchet) run in the **daily** full run, and the completed-edition check on every push to main (#7537), and catch other regressions after the fact (see "Test262 → Cadence"). `check for test262 regressions` is a no-op in every event (its gates are host-only; cleanup #7552). That is why `auto-park` (#2547) exists and why a fully-green PR can still fail the queue and be parked with a bot `hold` label.
 - **Silence vs. pings is the dev health signal.** A dev correctly waiting on CI runs a **background watcher** and goes quiet (see `developer.md` CI-wait protocol) — silence is the healthy state, do NOT poke a silent dev. By contrast, **repeated `idle_notification` pings mean the opposite**: a dev with no background watcher idling in-context, or one wedged (e.g. a tool-param failure loop). Treat a stream of idle pings as an escalation/health signal — redirect to unowned work, send `shutdown_request` if idle, or recognize a wedged agent (it pings but can't ack shutdown; clears on lead-session end). Don't mistake an agent waiting on an already-merged PR for one doing work — reconcile the TaskList (`completed` on merge) so it learns its PR landed.
 - **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
 - Dev agents do NOT run full test262 locally — scoped checks only, CI validates conformance.

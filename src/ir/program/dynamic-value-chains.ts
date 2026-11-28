@@ -31,6 +31,17 @@ import {
 /** The dynamic value's carrier, the native externref. */
 export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
+/** The Boolean the realm's tests and `delete` answer (the chains' `TEST_RESULT` is unbranded). */
+export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+
+/** The constant Boolean `value` into `result`. */
+export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
+
 /** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
 export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
   kind: "coerce.to_externref",
@@ -42,7 +53,7 @@ export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)

@@ -11,9 +11,11 @@
  * refuses by name.
  */
 import { ts } from "../ts-api.js";
-import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
-import { irUnitFuncRef } from "./callable-bindings.js";
+import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
+import { someReturnedValue } from "./function-returns.js";
 import type { IrType } from "./core/types.js";
+import type { IrDirectCallSignature, IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
+import { irUnitFuncRef } from "./callable-bindings.js";
 import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
@@ -23,7 +25,29 @@ import type { IrModuleInitPlan } from "./program/startup.js";
 import type { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.js";
 import type { ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 
-type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
+export function sourceCallSignature(
+  declaration: ts.FunctionDeclaration,
+  params: readonly IrType[],
+  bodyResult: IrType | null,
+  isAsync: boolean,
+  resolver: ProgramDynamicContracts["resolver"],
+): IrDirectCallSignature {
+  const results = preparedIrProgramCallableResults({
+    funcKind: isAsync ? "async" : "regular",
+    resultTypes: bodyResult ? [bodyResult] : [],
+  });
+  const returnType = results[0] ?? null;
+  if (
+    returnType === null &&
+    resolver.createsFunctionObjects?.() &&
+    !isAsync &&
+    !declaration.asteriskToken &&
+    declaration.body &&
+    !someReturnedValue(declaration.body, () => true)
+  )
+    return { params, returnType, returnsImplicitUndefined: true };
+  return { params, returnType };
+}
 
 function unsupported(detail: string): never {
   throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
@@ -39,7 +63,7 @@ export function prepareSourceDirectCalls(
   sourceFiles: readonly ts.SourceFile[],
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   startup: readonly IrModuleInitPlan[],
-  signatures: ReadonlyMap<IrUnitId, Signature>,
+  signatures: ReadonlyMap<IrUnitId, IrDirectCallSignature>,
   uses: ReturnType<typeof buildIrProgramCallableBindingGraph>["uses"],
   codeStrictness: ProgramDynamicContracts["codeStrictness"],
   diagnostic: { active: IrUnitId | undefined },

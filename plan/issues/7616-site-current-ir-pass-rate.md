@@ -153,6 +153,16 @@ Implemented in 381af36a5e, revised after review r1 in 4d2748f047 and r2.
   `scope.json`, so its edition figure can appear on the deploy after it lands,
   once that group's run has completed (otherwise on the next deploy).
 
+## Merge with main (2026-11-28)
+
+#7537 landed first and made the full run daily itself, at `17 21 * * *` with
+a 48 h staleness threshold. This branch's own cadence edits (cron
+`23 2 * * *`, the 192 h threshold and its wording, described above) are
+dropped in favour of main's; the follow-up on the threshold is done there.
+What remains of this issue is the site part. Main now writes `scope.json`
+through `test262-edition-scope.ts meta`, so `compilerPath` and `target` are
+two optional flags of that command, passed only for the IR measurement.
+
 ## Follow-ups
 
 - Staleness threshold 192 h → ~32 h for the daily cadence (~24 h + 3.6 h

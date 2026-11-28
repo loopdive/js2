@@ -2144,9 +2144,15 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     // A lane that cannot SEE the artifact can never link it. Both shard jobs
     // used to skip the download on standalone cells.
     expect(workflow).not.toMatch(/Download compiled Temporal provider \(#5353\)\n\s+if:/);
-    // Three downloads: `test262-shard` and `test262-shard-mg` (both lanes), plus
-    // the host-only honest-audit shard, which reads the same artifact.
-    expect(workflow.match(/Download compiled Temporal provider \(#5353\)/g)?.length).toBe(3);
+    // Three downloads: `test262-shard` (since #7537 through the shared
+    // runner-setup action) and `test262-shard-mg` (both lanes), plus the
+    // host-only honest-audit shard, which reads the same artifact.
+    expect(workflow.match(/Download compiled Temporal provider \(#5353\)/g)?.length).toBe(2);
+    const setup = readRepoFile(".github", "actions", "test262-runner-setup", "action.yml");
+    // In the action the only condition is the explicit providers opt-in.
+    expect(setup).toMatch(/Download compiled Temporal provider \(#5353\)\n\s+if: inputs\.providers == 'true'\n/);
+    const shard = workflow.slice(workflow.indexOf("  test262-shard:\n"), workflow.indexOf("  test262-shard-mg:\n"));
+    expect(shard).toMatch(/test262-runner-setup\n\s+with:\n\s+providers: "true"/);
     // And the directory is always uploadable, even when the soft build failed —
     // `download-artifact` fails hard on a missing artifact, which would turn
     // this slice's fail-soft into a red standalone lane.

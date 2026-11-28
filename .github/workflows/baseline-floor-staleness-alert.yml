@@ -7,11 +7,11 @@ name: Baseline floor staleness alert (#2178)
 # every PR against a *floor* stored in `loopdive/js2wasm-baselines`
 # (test262-standalone-current.json / test262-current.json, each carrying a
 # `baseline_sha` = the main commit it was promoted for). The floor is supposed
-# to advance once a DAY via test262-sharded.yml's promote-baseline on the
-# daily full run (#7616; weekly 2026-11-26..27 under #7551; on every push to
-# main before that), so a breach is an AGE above 192 h (8 days; derivation and
-# why it was kept in scripts/check-baseline-floor-staleness.mjs) — scheduled
-# promotions that did not land.
+# to advance once a WEEK via test262-sharded.yml's promote-baseline on the
+# daily full run (#7537; weekly under #7551, and on every push to main before
+# that), so a breach is an AGE above 48 h (derivation in
+# scripts/check-baseline-floor-staleness.mjs) — a daily promotion that did not
+# land: no green full run has promoted for two days.
 # When a rapid burst of main pushes (the merge-queue "thrash") drops the
 # promote run for a standalone-shifting change, the floor stops advancing and
 # every PR on current main fails the guard against a stale floor — the queue
@@ -25,7 +25,7 @@ name: Baseline floor staleness alert (#2178)
 # alerts loudly: a red run naming the floor's age and the last green full run.
 #
 # (#7551, owner decision 2026-11-26) It NO LONGER auto-heals. The usual
-# reason for a stale floor is now a scheduled run whose gates FAILED, and a forced
+# reason for a stale floor is now a daily run whose gates FAILED, and a forced
 # refresh would bank exactly that regression. A forced refresh
 # (refresh-baseline.yml with force_baseline_refresh + confirm_force=YES) is a
 # manual dispatch only.
@@ -46,7 +46,7 @@ on:
       max_age_hours:
         description: "Floor staleness threshold (hours since the standalone floor was promoted) before this is a breach"
         required: false
-        default: "192"
+        default: "48"
         type: string
 
 permissions:
@@ -67,7 +67,7 @@ jobs:
     # (the runs that are SUPPOSED to promote a floor). Ignore pull_request /
     # merge_group sharded runs — they never promote, so their completion says
     # nothing about floor freshness. schedule/workflow_dispatch always run.
-    # (#7551) The promoting runs are now the daily `schedule` run (#7616) and a
+    # (#7551) The promoting runs are now the daily `schedule` run and a
     # `full_run` dispatch, so their completions say something about freshness.
     if: >-
       github.event_name != 'workflow_run' ||
@@ -94,10 +94,9 @@ jobs:
       - name: Compute floor staleness
         id: staleness
         env:
-          # (#7551) The floor is promoted by the scheduled full run (daily,
-          # #7616), so it trails main by up to a day of merges by design: breach
-          # on age, not count.
-          MAX_FLOOR_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_age_hours || '192' }}
+          # (#7537) The floor is promoted by the DAILY full run, so it trails
+          # main by up to a day of merges by design: breach on age, not count.
+          MAX_FLOOR_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_age_hours || '48' }}
         run: |
           set +e
           OUT=$(node scripts/check-baseline-floor-staleness.mjs --json --ref main 2>staleness.log)
@@ -137,7 +136,7 @@ jobs:
       - name: Name the last green full run (#7551)
         # Alert only: NOTHING is dispatched. The auto-heal that force-promoted
         # refresh-baseline.yml here is gone (owner decision 2026-11-26) — after
-        # a failed scheduled run it would bank the very regression that failed it.
+        # a failed daily run it would bank the very regression that failed it.
         if: steps.staleness.outputs.breach == 'true'
         id: last_green
         env:
@@ -164,8 +163,8 @@ jobs:
           MSG=$(node -e "
             const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
             const stale=(j.lanes||[]).filter(l=>l.breach).map(l=>l.lane+' '+l.ageHours+' h old').join(', ');
-            console.log('STALE baseline floor (#2178): '+stale+' — the scheduled promotion did not land. Last green full run: '+process.env.LAST_GREEN+'. Nothing dispatched.');
-          " 2>/dev/null || echo "STALE baseline floor (#2178) — the scheduled promotion did not land. Nothing dispatched.")
+            console.log('STALE baseline floor (#2178): '+stale+' — the daily promotion did not land. Last green full run: '+process.env.LAST_GREEN+'. Nothing dispatched.');
+          " 2>/dev/null || echo "STALE baseline floor (#2178) — the daily promotion did not land. Nothing dispatched.")
           curl -s --max-time 10 \
             -H "Title: js2wasm CI" \
             -H "Priority: high" \
@@ -178,5 +177,5 @@ jobs:
         env:
           LAST_GREEN: ${{ steps.last_green.outputs.run }}
         run: |
-          echo "::error::Baseline floor is older than the threshold (#2178, #7551): the scheduled promotion did not land. Last green full run: ${LAST_GREEN}. Nothing was dispatched — fix and re-dispatch the full run (gh workflow run test262-sharded.yml --ref main -f full_run=true), or force a refresh by manual dispatch of refresh-baseline.yml."
+          echo "::error::Baseline floor is older than the threshold (#2178, #7551): the daily promotion did not land. Last green full run: ${LAST_GREEN}. Nothing was dispatched — fix and re-dispatch the full run (gh workflow run test262-sharded.yml --ref main -f full_run=true), or force a refresh by manual dispatch of refresh-baseline.yml."
           exit 1
