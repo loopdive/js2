@@ -60,5 +60,11 @@ export function programObjects(
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || realmFamilies.has("error"), functions, namesSymbol, globalObject, realmFamilies };
+  return {
+    present: present || globalObject || realmFamilies.has("error"),
+    functions,
+    namesSymbol,
+    globalObject,
+    realmFamilies,
+  };
 }

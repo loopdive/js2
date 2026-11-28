@@ -2,8 +2,7 @@
 /**
  * (#7354 O4, O3, M1) A member read or write of the dynamic value with a constant key, as one chain over the receiver's
  * kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]] or [[Set]] for an object
- * ((#7354 G1) an error included), for a primitive what its pristine wrapper answers, and (#7609) for the sealed global
- * object the run-time abort. A key a built-in prototype
+ * ((#7354 G1) an error included), and for a primitive what its pristine wrapper answers. A key a built-in prototype
  * holds (the realm's prototypes do not hold it yet) or a computed key refuses by name.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
@@ -101,9 +100,8 @@ function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): str
   return miss === undefined ? key : gap(miss);
 }
 
-/** "a number", "an object", "the global object". */
-const article = (kind: CarrierKind) =>
-  kind === "object" ? "an object" : kind === "global" ? "the global object" : `a ${kind}`;
+/** "a number", "an object". */
+const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
 const WRAPPER: Readonly<Partial<Record<CarrierKind, string>>> = {
   number: "Number",
   boolean: "Boolean",
@@ -147,9 +145,6 @@ function memberAccess(
       // [[Get]] / [[Set]]): no Prepared program can obtain one to change it (M1, C1; the premise test pins it).
       case "primitive":
         return access.primitive(kind, r, throwTypeError);
-      // (#7609) The global object's properties are the script's bindings, which stay in their homes.
-      case "sealed":
-        return abort(r);
     }
   };
   return b.kindChain(instr, instr.recv, result, arm, kinds, access.resultType);

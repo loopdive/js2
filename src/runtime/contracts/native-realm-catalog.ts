@@ -224,15 +224,17 @@ const legacyProperty = (row: NativeRealmProperty): NativeRealmProperty => ({
 });
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
 /**
- * (#7609) §9.3.1 [[GlobalObject]], the value of `this` at script level. The realm models only its identity: the
- * Prepared path seals it (every keyed operation on it is the run-time abort), so the row lists no property. Its
- * [[Prototype]] is implementation-defined (§19); the realm links it to Object.prototype. The row brings itself: the
- * realm holds it where the program reads it.
+ * (#7609) §9.3.1 [[GlobalObject]], the value of `this` at script level. The realm models only its identity
+ * (`identityOnly`, no property): its own properties are the script's bindings and the host's, which stay in their
+ * homes, so the kernel aborts every query of them. Its [[Prototype]] is implementation-defined (§19); the realm links
+ * it to Object.prototype, the one object of the chain a program can hold. The row brings itself: the realm holds it
+ * where the program reads it.
  */
 export const GLOBAL_OBJECT_ID = "%GlobalObject%";
 const globalObjectRow: NativeRealmIntrinsic = {
   id: GLOBAL_OBJECT_ID,
   heldWith: GLOBAL_OBJECT_ID,
+  identityOnly: [],
   aliases: [GLOBAL_OBJECT_ID],
   prototype: objectPrototype,
   extensible: true,

@@ -8,6 +8,7 @@ import {
 } from "./builtin-function-bodies.js";
 import {
   buildBuiltinFunctionEntryGet,
+  holdsIdentityOnlyObject,
   type BuiltinFunctionPropertyOperands,
 } from "./builtin-function-property-bodies.js";
 import { BUILTIN_FUNCTION_PROTOTYPE_FIELD } from "./builtin-function-layouts.js";
@@ -99,9 +100,10 @@ export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands):
               { op: "ref.test", typeIdx: d.objectTypeIdx },
               { op: "i32.eqz" },
               { op: "if", blockType: empty, then: missing(3) },
-              ...object(d, 2),
-              get(1),
-              call(d.findOrdinary),
+              // (#7609) Where the realm holds an identity-only object, an ordinary object's own find is the kernel's.
+              ...(holdsIdentityOnlyObject(d)
+                ? [get(2), get(1), call(d.findOwn)]
+                : [...object(d, 2), get(1), call(d.findOrdinary)]),
               set(3),
               // Do not follow a parent or report its incompleteness until the own entry misses.
               get(3),

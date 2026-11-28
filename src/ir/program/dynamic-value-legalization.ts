@@ -53,8 +53,14 @@ import {
   type RealmConstruction,
 } from "./dynamic-realm-calls.js";
 import { GLOBAL_OBJECT_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
-import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
-import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
+import {
+  CARRIER,
+  additionBuilder,
+  chainBuilders,
+  conversionBuilders,
+  knownKinds,
+  type ChainBuilders,
+} from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
   IS_OBJECT,
@@ -64,7 +70,7 @@ import {
   admittedKinds,
   carrierKindOf,
   holdsFamily,
-  isSealed,
+  type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -223,24 +229,7 @@ export function legalizeDynamicValues(
           instr,
           instr.value,
           instr.result!,
-          (kind, result) => {
-            if (kind === "object" && program.objects.namesSymbol)
-              gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-            const tag = OBJECT_TAG[kind];
-            if (tag === undefined) return [intrinsic(instr, "js.value.unsupported", [], result)];
-            if (kind !== "object" || !errors) return [text(`[object ${tag}]`, result)];
-            // (#7354 G1) An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9).
-            const isError = fresh();
-            return [
-              realmCall("js.object.is-error", [instr.value], isError),
-              builders.branch(
-                isError,
-                (r) => [text("[object Error]", r)],
-                (r) => [text("[object Object]", r)],
-                result,
-              ),
-            ];
-          },
+          (kind, result) => objectTag(builders, program, instr, kind, result),
           kinds.kindsOf(instr.value),
         );
       case "string.const":
@@ -290,24 +279,6 @@ export function legalizeDynamicValues(
         if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         const realmIntrinsic = symbol === undefined ? undefined : realmIntrinsicOfHelper(symbol);
         if (realmIntrinsic !== undefined) return builders.realmIntrinsic(realmIntrinsic, instr.result!);
-        // (#7609) A for-in's key snapshot reads its receiver's keys: the run-time abort on the sealed global object.
-        const forInSealed =
-          irOrdinaryObjectCallableDeclaration(instr.target)?.feature === "js.object.for-in-keys"
-            ? kinds.kindsOf(instr.args[0]!).filter(isSealed)
-            : [];
-        if (forInSealed.length !== 0) {
-          const holdsSealed = fresh();
-          return [
-            ...anyKind(instr, forInSealed, instr.args[0]!, holdsSealed),
-            builders.branch(
-              holdsSealed,
-              (r) => builders.abort(instr, r),
-              (r) => [{ ...instr, result: r }],
-              instr.result!,
-              CARRIER,
-            ),
-          ];
-        }
         const dispatched = closureMethodArity(instr.target.name) !== undefined;
         const ctor = dispatched ? realmConstructorOf(instr.args[1]!, definitions) : undefined;
         if (ctor !== undefined) return realmConstruction(instr, ctor, instr.args.slice(2));
@@ -361,6 +332,44 @@ export function legalizeDynamicValues(
   // signature) has no carrier on this projection.
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
+}
+
+/**
+ * (#7354 M1, B-tag) `Object.prototype.toString`'s answer for a value of `kind` (`OBJECT_TAG`) into `result`. (#7354 G1)
+ * An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9). (#7609) The global object's tag is the host's
+ * (node's has an own `@@toStringTag` "global"), which the realm does not know: where the program holds it, an object
+ * that is it ends at the run-time abort.
+ */
+function objectTag(
+  b: ChainBuilders,
+  program: LegalizationProgram,
+  instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
+  kind: CarrierKind,
+  result: IrValueId,
+): IrInstr[] {
+  if (kind === "object" && program.objects.namesSymbol)
+    gap("Object.prototype.toString of an object in a program that names 'Symbol'");
+  if (kind !== "object") return [b.text(`[object ${OBJECT_TAG[kind]}]`, result)];
+  const ordinary = (r: IrValueId): IrInstr[] => {
+    if (!holdsFamily(program, "error")) return [b.text("[object Object]", r)];
+    const isError = b.fresh();
+    return [
+      realmCall("js.object.is-error", [instr.value], isError),
+      b.branch(
+        isError,
+        (s) => [b.text("[object Error]", s)],
+        (s) => [b.text("[object Object]", s)],
+        r,
+      ),
+    ];
+  };
+  if (!program.objects.globalObject) return ordinary(result);
+  const [global, isGlobal] = [b.fresh(), b.fresh()];
+  return [
+    ...b.realmIntrinsic(GLOBAL_OBJECT_ID, global),
+    b.intrinsic(instr, "js.value.strict_eq", [instr.value, global], isGlobal),
+    b.branch(isGlobal, (r) => [b.intrinsic(instr, "js.value.unsupported", [], r)], ordinary, result),
+  ];
 }
 
 /**

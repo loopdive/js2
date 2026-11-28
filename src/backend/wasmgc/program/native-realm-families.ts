@@ -37,6 +37,7 @@ export function familyObjects(heldRows: readonly NativeRealmIntrinsic[]): { read
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
       properties: familyProperties(row),
+      ...(row.identityOnly ? { identityOnly: true as const } : {}),
     }));
   return objects.length === 0 ? {} : { objects };
 }

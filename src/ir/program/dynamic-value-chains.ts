@@ -15,7 +15,7 @@ import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } fro
 import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import { ERROR_TO_STRING_ID, GLOBAL_OBJECT_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -24,7 +24,6 @@ import {
   TO_STRING_ARM,
   carrierKindOf,
   holdsFamily,
-  isSealed,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
@@ -48,8 +47,8 @@ const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
  * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, (#7609) a
- * read of the global object its kind, and the legalization records a concatenation's result as a string and (F2) a
- * ToPrimitive's result as a primitive (`learn`). Any other value may hold every admitted kind.
+ * read of the global object an object, and the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
+ * (`learn`). Any other value may hold every admitted kind.
  */
 export function knownKinds(
   fn: IrFunction,
@@ -139,10 +138,7 @@ export function chainBuilders(
       of.map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
       result,
     ).instrs;
-  /**
-   * The kind's test into `result`; (#7609) the global object is the realm's, by identity; (#7354 O2) an object is
-   * none of the other admitted kinds.
-   */
+  /** The kind's test into `result`; (#7354 O2) an object is none of the other admitted kinds. */
   const kindTest = (
     instr: IrInstr,
     kind: CarrierKind,
@@ -157,13 +153,6 @@ export function chainBuilders(
       return [
         ...anyKind(instr, others, value, other),
         { kind: "unary", op: "i32.eqz", rand: other, result, resultType },
-      ];
-    }
-    if (test === "global-object") {
-      const global = fresh();
-      return [
-        ...realmIntrinsic(GLOBAL_OBJECT_ID, global),
-        intrinsic(instr, "js.value.strict_eq", [value, global], result),
       ];
     }
     return [
@@ -320,11 +309,6 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     kind: CarrierKind,
     answer: ToPrimitiveAnswer,
   ): IrInstr[] => {
-    // (#7609) The global object's conversion would read its properties: the run-time abort, as the answer's primitive.
-    if (isSealed(kind)) {
-      const aborted = fresh();
-      return [...builders.abort(instr, aborted), ...answer.primitive(aborted, result)];
-    }
     const b = {
       carrier: CARRIER,
       fresh,

@@ -192,14 +192,9 @@ the value is sealed.
   through that intrinsic: `native-realm.ts` keeps the global object out of the function entries (the realm holds it
   as a family object, `familyObjects`), and the `js.object.intrinsic` body reads a held object from its global once
   the realm is initialized (`source-object-bodies.ts` now takes per-selector instructions instead of getters).
-- **Kind** (`dynamic-value-kinds.ts`): a kind of its own, `global`, with a row in every per-kind table. `typeof`
-  "object", truthiness true, strict equality by identity; its kind test is identity with the realm's value
-  (`KIND_TEST` "global-object"), so the object kind (the complement) excludes it. `MEMBER_ACCESS_ARM` "sealed"
-  (`isSealed`): member read and write, the `Object` statics, `hasOwnProperty` / `propertyIsEnumerable`,
-  `isPrototypeOf`, `instanceof`, `[[Construct]]`'s prototype link, a for-in key snapshot (`unlessSealed` in the
-  legalization), and every conversion (ToString, ToNumber, `+`'s ToPrimitive: one test in `toPrimitive`) end at the
-  run-time abort. `Object.prototype.toString`'s tag is the host's (`OBJECT_TAG` undefined): the abort. The kind is
-  admitted only where the source has a script-level `this` (`ProgramObjects.globalObject`).
+- **Seal** (review r1; see below): the row is identity-only, so the realm kernel aborts every query of its own
+  properties. In the IR it is an ordinary object; only `Object.prototype.toString` (answered without the kernel)
+  tests for it.
 - **Legalization**: `dyn.global_object` is `js.object.intrinsic(%GlobalObject%)`.
 - **Frontend**: new `src/ir/this-binding.ts` holds `bindEntryThis`, the `ThisKeyword` arm (`lowerThis`) and the one
   predicate `isScriptThis` (a `this` outside every function and class), which both the resolver hook
@@ -219,7 +214,9 @@ the value is sealed.
 - **B**: `this.x`, `this["x"]`, `this.x = v`, `g.x` through a held reference, also where `x` is a script `var`:
   the run-time abort.
 - **C**: `for (k in this)`, `Object.defineProperty(this, …)`, `Object.getOwnPropertyDescriptor(this, …)`,
-  `Object.create(this)`, `this.hasOwnProperty(…)`, `p.isPrototypeOf(this)`, `this instanceof F`: the run-time abort.
+  `this.hasOwnProperty(…)`, `this` as a property descriptor or a descriptor map, a read through an object whose
+  prototype it is: the run-time abort. `p.isPrototypeOf(this)`, `this instanceof F`, `Object.create(this)` and
+  `F.prototype = this; new F()` agree with node (review r1): they read its prototype link, not its properties.
   `"x" in this`, `delete this.x`, `Object.keys(this)`, `Object.getPrototypeOf(this)`, `this == null`,
   `this instanceof Object`, `new this` refuse at compile time, by the same names they refuse for any value.
 
@@ -240,3 +237,43 @@ the value is sealed.
   direct call installing no receiver (A2), a typed module binding, a constructor name, a `+`).
 - Tests: `tests/issue-7609-a1-global-object.test.ts` (7 tests, 10 compiles) and `tests/issue-7609-a1-sealed.test.ts`
   (9 tests, 10 compiles); `tests/issue-7354-c2-this.test.ts` loses its "`this` at top level refuses" row.
+
+## Review r1 (2026-11-28)
+
+Finding (blocking): ToPropertyDescriptor read the global object as an ordinary, empty object:
+`Object.defineProperty(o, "k", this)`, `Object.defineProperties(o, {k: this})`, `Object.create({}, {k: this})`
+answered `undefined` where node answers the script's `value` / `get`. The seal lived at six IR sites; a kernel
+routine that reads an object passed as data bypassed all of them.
+
+Fix: the seal moved into the realm kernel, on the existing identity-only mechanism (`BUILTIN_IDENTITY_ONLY_FLAG`).
+
+- The catalog row is `identityOnly: []` (no modelled property); `familyObjects` carries the mark to the kernel's
+  object requirement, and `realmFamilySeed` sets the flag on the object as it does on an identity-only constructor's
+  bag.
+- `builtin-function-property-bodies.ts`: `buildBuiltinFunctionFindOwn`, the own find every own query passes
+  ([[Get]], [[HasProperty]], [[Set]], HasOwnProperty, [[GetOwnProperty]], a define), aborts on a miss in a flagged
+  object (one helper, `abortIfIdentityOnly`), now also where the realm holds an identity-only object;
+  `buildBuiltinFunctionOwnKeys` aborts for a flagged object. `builtin-function-prototype-bodies.ts`:
+  `buildBuiltinFunctionLookup`'s ordinary arm finds through the kernel's own find instead of the storage's. Both
+  are emitted only where the realm holds an identity-only object (`holdsIdentityOnlyObject`), so every other
+  program keeps its bytes. Consequence: in a program that holds the global object, a for-in over an identity-only
+  constructor (`String`) aborts too (its own keys are unknown to the realm).
+- Gone from the IR: the `global` carrier kind and every row of it, `isSealed` and its call sites (member access,
+  `Object` statics, `ownProperty`, `isPrototypeOf`, `instanceof`, the construct link, conversions, the for-in arm).
+  The global object is an object (`carrierKindOf`), admitted with the object kind. One IR test is left:
+  `Object.prototype.toString` answers an object's tag without the kernel, so where the program holds the global
+  object it tests identity and aborts (`objectTag`, moved out of `legalizeDynamicValues`).
+- The non-blocking findings (two conversion vocabularies, `ownProperty`'s `default:`, the abort-as-answer helper
+  written twice, the for-in arm in the generic `call` case) went with the kind.
+
+Hunt (probes vs node, fresh realm; wrong 0, invalid 0, exceptions 0): aborted: `this` as a descriptor with
+`value` and with a script `get`, as a descriptor map's entry, as `Object.create`'s descriptor, as a descriptor map,
+a read through `Object.create(this)` and through `new F` with `F.prototype = this`, `new Error(this)`, `this.x`,
+for-in, `hasOwnProperty`, `defineProperty(this)`, `getOwnPropertyDescriptor(this)`, `Object.prototype.toString`,
+`+this`, `cat(this)`, `g.x` with a script `x`. Agreed: `this instanceof F`, `p.isPrototypeOf(this)`, `{get: this}`
+(TypeError), a `valueOf` returning it, `typeof Object.create(this)`, `typeof new F()`. Refused: `o[this]`
+(computed key), `JSON.stringify(this)`, `({}) instanceof this`. Twins: ordinary descriptors define their property.
+
+Bytes: Prepared programs without script-level `this` (6, prelude included) and ordinary (30 × gc/standalone)
+identical to the merge base. `var g = this; var out = 'x';` 23,357 B; `var g = this` versus `var g = {}`: +113 B.
+New test file `tests/issue-7609-a1-kernel-seal.test.ts` (8 tests, 10 compiles).

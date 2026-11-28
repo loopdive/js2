@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7609 A1 — the global object is sealed on the strict Prepared entry: each route by which a program could read,
-// write, convert or walk it ends at the run-time abort, never in a value. The twin shows every route answers node's
+// write, convert or enumerate its properties ends at the run-time abort (the realm kernel's own-property find),
+// never in a value. The twin shows every route answers node's
 // value on an ordinary object (and with a wrong answer throws), so the abort is the global object's alone.
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, it, vi } from "vitest";
@@ -36,8 +37,8 @@ describe("#7609 A1 — the sealed global object", () => {
     ["a concatenation through a parameter (ToPrimitive)", "function cat(a){ return a + ''; } var v = cat(this);"],
     ["Object.defineProperty on it", "var o = {}; Object.defineProperty(this, 'a1Probe', {value: 1});"],
     ["its hasOwnProperty", `${LIVE_FUNCTIONS} var v = this.hasOwnProperty('x');`],
-    ["isPrototypeOf with it", `${LIVE_FUNCTIONS} var p = {}; var v = p.isPrototypeOf(this);`],
-    ["Object.create with it as the prototype", "var o = Object.create(this);"],
+    ["a read through an object whose prototype it is", "var o = Object.create(this); var v = o.x;"],
+    ["an error message's conversion", "var e = new Error(this);"],
     ["Object.prototype.toString of it (its tag is the host's)", "var v = Object.prototype.toString.call(this);"],
   ])(
     "ends %s at the run-time abort",
