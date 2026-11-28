@@ -170,7 +170,7 @@ import {
   type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
-import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
+import type { IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
 import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
@@ -280,7 +280,11 @@ import {
   withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
-import { runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js";
+import {
+  applyRuntimeEvalBoundaryPlan,
+  runtimeEvalOwnsGlobalEval,
+  settleRuntimeEvalGlobalBindings,
+} from "./expressions/runtime-eval-provider.js";
 import {
   auditIrSkippedClassMemberSlots,
   auditIrSkippedFunctionSlots,
@@ -5436,11 +5440,7 @@ export function generateModule(
   importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
-  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
-  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
-    ctx.runtimeEvalCallableBoundaryEnabled = true;
-  }
+  applyRuntimeEvalBoundaryPlan(ctx, [ast.sourceFile]);
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   // (#6937) `inferModuleStrictArguments: false` = synthetic `export` on a SCRIPT; the
   // top-level goal must follow it like function strictness does (see #6937).
@@ -5901,6 +5901,7 @@ export function generateModule(
     // module-scope class static assignment needs its value cell registered
     // before the module initializer and exported bodies are emitted.
     registerModuleClassStaticAssignments(ctx, [ast.sourceFile]);
+    settleRuntimeEvalGlobalBindings(ctx); // (#7632) Nothing after this may add an eval-visible name or retype its global.
 
     // (#3523 R4) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. The plan remains an observer for
@@ -9898,11 +9899,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   const irAuthority = makeIrPlanningAuthority(multiAst.checker, irPlanningIdentityContext, options?.experimentalIR);
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
-  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
-  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
-    ctx.runtimeEvalCallableBoundaryEnabled = true;
-  }
+  applyRuntimeEvalBoundaryPlan(ctx, multiAst.sourceFiles);
   // Multi-file compilation is linked through import/export module records.
   //
   // (#6474) …except when the caller says the ENTRY may legitimately be a
@@ -10288,6 +10285,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // so their reads and calls resolve to the target instead of the graceful-null
     // default. Runs after collectDeclarations (targets registered), before bodies.
     const importFuncIdxBySource = registerImportBindingAliases(ctx, multiAst.sourceFiles, ownFuncIdxBySource);
+    settleRuntimeEvalGlobalBindings(ctx); // (#7632) Nothing after this may add an eval-visible name or retype its global.
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 

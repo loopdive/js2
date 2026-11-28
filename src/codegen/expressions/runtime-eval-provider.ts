@@ -7,6 +7,7 @@ import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.j
 import { emitBuiltinNamespaceObject } from "../builtin-static-globals.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { buildIrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 import {
   currentDirectEvalBindings,
   directEvalRunsAtScriptGlobal,
@@ -44,6 +45,15 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-i
 
 /** Core-Wasm provider namespace owned by #2928/#2527. */
 export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
+
+/** Build the program's runtime-eval boundary plan and enable the callable boundary it requires. */
+export function applyRuntimeEvalBoundaryPlan(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(sourceFiles, ctx.oracle);
+  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
+  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+    ctx.runtimeEvalCallableBoundaryEnabled = true;
+  }
+}
 
 /**
  * (#6979 S7-c) May this build import the `js2wasm:runtime-eval` provider ABI?
@@ -595,9 +605,24 @@ function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: Functio
   }
 }
 
+/**
+ * (#7632) Reserve the push/pull helpers at their first caller, but fill them only from settled bindings: an emitter
+ * reached during declaration collection would otherwise publish the static function value instead of its live
+ * `$__mod_` global and pull nothing back. The fill runs once, at whichever of reservation and settlement comes second.
+ */
 function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
+  if (ctx.runtimeEvalGlobalSyncReserved) return;
   reserveRuntimeEvalGlobalBindingSync(ctx);
-  if (ctx.runtimeEvalGlobalSyncFilled) return;
+  if (ctx.runtimeEvalGlobalBindingsSettled) fillRuntimeEvalGlobalBindingSync(ctx);
+}
+
+/** The eval-visible bindings and their globals are final: no later pass may add a name or retype its global. */
+export function settleRuntimeEvalGlobalBindings(ctx: CodegenContext): void {
+  ctx.runtimeEvalGlobalBindingsSettled = true;
+  if (ctx.runtimeEvalGlobalSyncReserved) fillRuntimeEvalGlobalBindingSync(ctx);
+}
+
+function fillRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
   emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx);
   const pullFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PULL_GLOBALS);
@@ -612,7 +637,6 @@ function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
     pullFn.locals = pullFctx.locals;
     pullFn.body = pullFctx.body;
   }
-  ctx.runtimeEvalGlobalSyncFilled = true;
   refreshRuntimeEvalCallableTrampolines(ctx);
 }
 

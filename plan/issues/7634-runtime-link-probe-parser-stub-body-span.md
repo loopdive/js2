@@ -50,7 +50,7 @@ in next to their `parse`.
 - `end` is `source.lastIndexOf("}") + 1`.
 
 It does not restate `functionSourceBodyStart`'s formula, so the mock checks the real assembler rather than mirroring
-it.
+it. It asserts that the parameter text contains no `{`, so a stub source that breaks that assumption fails loudly.
 
 **Reuse / duplicate removed.**
 - The probe's four function-AST returns go through the helper.
@@ -70,5 +70,5 @@ it.
 
 ## Note
 
-This is separable from #7632 as a PR, but it can only be shown green once #7632's compile fix is in, because the
-probe's user module does not compile on main. So #7634 lands either after #7632, or stacked on it.
+Its own PR, landing after #7632 (plan review R3): it can only be shown green once #7632's compile fix is in,
+because the probe's user module does not compile on main.

@@ -1,7 +1,8 @@
 ---
 id: 7632
 title: "Runtime-link probe: the user module fails with 'could not allocate its exact singleton support'"
-status: in-progress
+status: done
+completed: 2026-11-28
 sprint: current
 created: 2026-11-28
 updated: 2026-11-28
@@ -112,8 +113,7 @@ All 66 fills in the plain corpus happen in a runtime-eval consumer (`ctx.runtime
 `experimentalIR: false` too:
 
 1. **#7634: the probe's stub parser.** Its function ASTs lack the body span #7441 checks. That accounts for 11 of the
-   12 execution errors. It has its own issue file and plan, and lands as its own commit in this PR, because the probe
-   can only be shown green once this fix lets the user module compile.
+   12 execution errors. It has its own issue file and plan, and is its own PR, landing after this one (plan review R3).
 2. **#7633: `aotThrowRoundTrip`.** An AOT throw is not caught by interpreted `try/catch` across the module boundary.
    It is out of scope.
 
@@ -131,8 +131,13 @@ All 66 fills in the plain corpus happen in a runtime-eval consumer (`ctx.runtime
   the flag count stays the same.
 - The fill now runs exactly once, when the second of the two events happens (reserved, settled), whichever order
   they come in. No flag stays whose value depends on when it is read.
-- Both generators call `settleRuntimeEvalGlobalBindings(ctx)` right after `registerAnnexBGlobalLiveBindings`, the
-  last registration of eval-visible bindings: `generateModule` (index.ts ~5898) and `generateMultiModule` (~10279).
+- Both generators call `settleRuntimeEvalGlobalBindings(ctx)` at the end of their registration block, before route
+  planning (plan review R2):
+  - `generateModule`: after `registerModuleClassStaticAssignments`;
+  - `generateMultiModule`: after `registerImportBindingAliases`, which writes both fill inputs for imported names
+    (`moduleGlobals` and `liveFuncBindingGlobals`).
+- Each call carries the invariant as a one-line comment: nothing after it may add an eval-visible name or retype its
+  global.
 - Only these two generators create a `CodegenContext`, so no path reserves without ever settling.
 
 **What this removes.** The declaration-time `emitCachedFuncClosureAccess(d)` is gone, because the early seed now only
@@ -147,13 +152,12 @@ invariant), and nothing reads it before it is written.
   against the LOC ceiling.
 
 **Tests.**
-- A new `tests/issue-7632-runtime-eval-binding-sync.test.ts`, red on main and green after:
-  - (a) the minimal repro compiles on gc and standalone, each with `experimentalIR` on and off;
+- A new `tests/issue-7632-runtime-eval-binding-sync.test.ts`:
+  - (a) the minimal repro compiles on gc and standalone, each with `experimentalIR` on and off. The rows are red on
+    main only with the IR on; the IR-off rows are controls;
   - (b) semantics, from the emitted module: `__runtime_eval_pull_globals` writes `$__mod_d`, and
     `__runtime_eval_push_globals` reads `$__mod_d` rather than `$__fn_closure_d`. Prototype, standalone: pull writes
     global 1255 = `$__mod_d`, and push reads 1255.
-  - If the review prefers a runtime check, `new Function("d = …")` visible to AOT through the runtime-link probe is
-    the alternative. The probe needs #7634 for that.
 - `tests/issue-2928-runtime-link.test.ts`: the expected user-module import order becomes `apply_interpreted,
   indirect_eval, new_function, direct_eval`.
   - This is compiled output and has nothing to do with the stub. Measured with the prototype: the order is the same
@@ -167,7 +171,11 @@ invariant), and nothing reads it before it is written.
 **Byte identity (prototype, 2026-11-28, main 28ca865e).**
 - Plain corpus above: 300 compiles, gc + standalone, 0 byte differences.
 - Export-bearing corpus above: 300 compiles, all succeed. Exactly the 22 early-fill rows differ (11 per target),
-  and none of the other 278. Those 22 are the bug: their sync bodies were filled before the bindings were settled.
+  and none of the other 278.
+- Those 22 had sync bodies filled from inputs that were not yet final. No runtime difference has been observed for
+  them (plan review R1): the reviewer measured with the interpreter provider, where AOT reads go through the realm
+  path. Pin (b) is therefore structural, on the minimal repro.
+- gc bytes change only for export-bearing eval modules. test262 has none.
 - In the implementation PR, rerun on the same corpora with the Prepared lane added, plus the #7631 literal-`Function`
   corpus. The changed rows must be exactly the early-fill rows, and they are listed in the PR.
 
@@ -181,6 +189,6 @@ invariant), and nothing reads it before it is written.
   - the settled/reserved pair replaces the filled flag, with no new ordering-dependent flag;
   - no change to the singleton reuse check, which was right to refuse a mismatched ABI.
 - (d) gc and standalone byte-identical on everything but the early-fill rows of an export-bearing eval sample.
-- (e) `tests/issue-2928-runtime-link.test.ts` passes, together with #7634, except `aotThrowRoundTrip`, which cites
-  #7633.
+- (e) In `tests/issue-2928-runtime-link.test.ts`, the user-module compile row and the import-order row pass. The
+  execution rows belong to #7634, and `aotThrowRoundTrip` to #7633.
 - All gates are green, including `LOC_GATE_BASE=origin/main` with no grant for `src/codegen/index.ts`.
