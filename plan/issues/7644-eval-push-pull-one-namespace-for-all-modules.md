@@ -69,122 +69,166 @@ push and pull functions (`__runtime_eval_push_globals` / `__runtime_eval_pull_gl
 - #7530's EV1–EV4 rows still pass.
 - Single-file output stays byte-identical; the ES5 test262 IR gate shows no pass → not-pass.
 
-## Implementation Plan (2026-11-28, S7)
+## Implementation Plan (revision 2, 2026-11-28, S7)
 
 Branch `claude/7644-eval-push-pull-per-module`, stacked on #7572 (`claude/7632-singleton-support`, e7b1a08c98),
-because this change edits the fill step that #7572 rewrites. It is enqueued only after #7572 lands.
+because this change edits the fill step #7572 rewrote. #7572 builds the push and pull bodies once per program,
+after the multi-source settle point, with no source view applied. Enqueue only after #7572 lands.
 
-### Measured repro
+Revision 1 (a72f904e15) was blocked by PRV-7644 with 10 findings; the table at the end says how each is settled.
 
-`compileMulti`, standalone, QuickJS provider, IR path on and off. Probe `.tmp/7644/ev-qjs.mts`.
+### Measured repros
 
-| row | node | main 5e3c790785 | stacked on #7572 (53aeeb60b7) |
-| --- | --- | --- | --- |
-| EV5 (dep and c each eval-rebind their own `f`) | 42 | 41 | 41 |
-| EV5b (EV5 calling `run2()` first) | 24 | 14 | 14 |
+`compileMulti`, standalone, QuickJS provider, IR path on and off (identical in every row), on the stacked branch
+5693efdcf0 (main 5e3c790785 plus #7572; EV5 is the same on main). node runs the sources as `.mjs`. Probe
+`.tmp/7644/ev-qjs.mts`, rows `.tmp/7644/rows2.json`.
 
-Single-module controls on main show two defects that are **not** this issue, so they are out of scope (both are
-wrong with one module too, so a follow-up issue is needed):
+Every row except THROW1 uses the entry `import {run} from "./dep"; import {run2} from "./c"; export function
+main(){return run()*10+run2()}` and dep `function f(){return 3} export function run(){ eval("f = function(){return
+4}"); return f(); }`. The rows differ in c:
 
-- an eval write to a module `var v` is lost: 30 against node's 40;
-- `eval("f()")` reading a module function throws.
+| row | c | node | today | after |
+| --- | --- | --- | --- | --- |
+| EV5 | `function f(){return 1} … run2(){ eval("f = function(){return 2}"); return f(); }` | 42 | 41 | 42 |
+| READ2 | as EV5, eval `f = (function(o){ return function(){ return o()+1 } })(f)` | 42 | 41 | 42 |
+| NEST | as EV5, plus `function g(){ eval("0"); return 0 }`, eval `g(); f = function(){return 2}` | 42 | 41 | 42 |
+| THROWCB | c: `try { eval("f = function(){return 2}; t()") } catch {} return f()` with `t` throwing; dep's `run` then calls an eval-made `h` through `[0].map(h)`; entry runs c first | 42 | 41 | 42 |
+| INDIRECT | `run2(){ return (0,eval)("typeof f") === "undefined" ? 1 : 9; }` | 41 | 49 | 41 |
+| NEWFN | `run2(){ return new Function("return typeof f")() === "undefined" ? 1 : 9; }` | 41 | 49 | 41 |
+| LATER | `run2(){ const h = eval("(function(){ return f() })"); return [0].map(h)[0]; }` | 41 | 44 | still wrong: a stated limit, pinned at the value measured when it is implemented |
+| THROW1 (one module, #7646) | `try { eval("f = function(){return 2}; t()") } catch {} return f()` | 2 | 1 | 1, unchanged |
 
-Only top-level function bindings are mirrored for modules today, and that is what this issue fixes.
+LATER stays wrong by design: outside any eval no arm is active, and the default arm is empty for a colliding name (see Stated limits). It no longer reads dep's `f`.
+
+Out of scope: #7645 (a module `var` write is lost; `eval("f()")` throws, both with one module) and #7646 (THROW1:
+a throw through AOT code inside an eval skips the pull, also with one module).
 
 ### Cause
 
-- The push and pull helpers (`__runtime_eval_push_globals` / `__runtime_eval_pull_globals`) mirror bindings onto
-  the one shared global object, keyed by bare name.
-- Their bodies are built once (`fillRuntimeEvalGlobalBindingSync`) and read `ctx.moduleGlobals.get(name)` under
-  one view, so in a graph where two modules bind `f`, they carry one module's `__mod_f`.
-- c's eval therefore publishes dep's `f` and pulls its write back into dep's global.
-- The pair is called module-wide: by direct eval sites, by the global-scope entries (indirect eval, script eval,
-  `new Function`), by the callable trampolines (`runtime-eval-callable.ts`), and by the interpreted-callback path in
-  `object-runtime.ts` (~L6946-7022). Neither the trampolines nor the callback path know the calling source, so a
-  per-source pair alone is not enough.
+- The push and pull helpers (`__runtime_eval_push_globals` / `__runtime_eval_pull_globals`) mirror bindings onto the
+  one shared global object, keyed by bare name, and their bodies are built once under one view.
+- With two modules binding `f`, they carry one module's `__mod_f`, so c's eval publishes dep's `f` and pulls its
+  write back into dep's global.
+- The pair is called from direct eval sites, the global-scope entries (indirect eval, script eval, `new Function`),
+  the callable trampolines (`runtime-eval-callable.ts`), and the interpreted-callback path in `object-runtime.ts`
+  (~L6946-7022). The last two do not know the calling source.
 
-### Design: tag the active source in the existing provider-active flag
+### Design
 
-`__runtime_eval_provider_active` (`runtime-eval-boundary.ts`) is 0 or 1 today. Every reader only tests it for
-non-zero: `runtime-eval-callable.ts` ~L154, ~L174, ~L433, and the save/restore in `object-runtime.ts`. It becomes
-a tag:
+The provider-active flag `__runtime_eval_provider_active` (`runtime-eval-boundary.ts`) becomes a tag. Today it is
+0 or 1, and every reader only tests for non-zero (`runtime-eval-callable.ts` ~L154, ~L174, ~L433; the save/restore
+in `object-runtime.ts`).
 
-- 0: inactive.
-- 1: the shared view. Every global-scope entry and every source that needs no arms uses it.
-- 2 + i: source i. Only a source that contains a direct eval and binds a mirrored name that another module also
-  binds gets one.
-
-For each such colliding name, the push and the pull branch on the tag. Each arm is built under
-`withSourceBindings(ctx, source, …)`, which is #7558's per-source projection, unchanged. Names that only one
-module binds keep exactly today's code.
+- **Tags.** 0 = inactive, 1 = shared view, 2 + i = tagged source i.
+- **Which sources are tagged.** A source that contains a direct eval site (from `ctx.runtimeEvalBoundaryPlan.sites`,
+  kind `"direct-eval"`, matched to the source through the plan's own id, `stableSourceId` in
+  `src/ir/runtime-eval-boundary-plan.ts`, exported for this) **and** binds a mirrored name that another module also
+  binds (`isCollidingModuleName`, `module-binding-table.ts`).
+- **Which names have arms.** Only colliding mirrored names. Per name, the push and the pull branch on the tag:
+  - one arm per tagged source that binds the name, built under `withSourceBindings(ctx, source, …)`;
+  - **the default arm emits nothing** (finding 5, lead's call). Indirect eval and `new Function` run at global scope
+    and see no module bindings, as the spec says. A non-colliding name keeps exactly today's single code path.
+- **Program-level switch.** If no source is tagged (every single-source program), none of the changes below emit
+  anything new, and the output is today's.
 
 ### Steps
 
-1. **Constants, once** (`src/codegen/runtime-eval-boundary.ts`): export `RUNTIME_EVAL_PUSH_GLOBALS` and
-   `RUNTIME_EVAL_PULL_GLOBALS`. Delete the copies at `runtime-eval-provider.ts:58-59` and
-   `runtime-eval-callable.ts:61-62`, and the string literals in `object-runtime.ts` (~L6946).
-2. **New module `src/codegen/module-bindings/runtime-eval-source-tags.ts`** (small, one concern):
-   - `runtimeEvalSourceTag(ctx, source)`: 1, or 2 + index for a tagged source.
-   - `emitPerSourceArms(ctx, fctx, name, emitOne)`: the `if` chain on the tag, each arm under
-     `withSourceBindings`, and the default arm under the shared view.
-   - Colliding names come from the module binding table (`moduleBindingsNamed` and `isCollidingModuleName`, `module-binding-table.ts`). Whether a source contains a direct eval comes from `identifierIndex(source).has("eval")`
-     (`src/shared/callee-name-index.ts`).
-3. **`runtime-eval-provider.ts`:**
-   - `emitRuntimeEvalGlobalBindingPushBody`: extract the per-name value load (~L349-416) into
-     `emitMirroredBindingValue(ctx, fctx, name)`, including the wrap write-back. Colliding names go through
-     `emitPerSourceArms`.
-   - In the same loop, replace `ctx.topLevelFunctionDeclarations.get(name)` (the graph-wide name map #7530 removed
-     from eval liveness) with the declaration that owns the function handle in the current view (`sourceFunctionDeclarationForHandle`,
-     `program-abi-source-callable-planning.ts:156`).
-   - `emitRuntimeEvalGlobalBindingPullBody`: read the value once; the arms choose the target `global.set`.
-   - `emitRuntimeEvalProviderActive(ctx, fctx, tag)` replaces the boolean. `emitRuntimeEvalGlobalBindingSeed` takes
-     the calling source: the direct eval site passes `call.getSourceFile()`, and the global entries pass none
-     (tag 1).
-4. **`object-runtime.ts`:** the interpreted-callback path sets the flag to 1 before it calls the push. When any
-   source is tagged, it keeps a non-zero tag instead (`select(active, active, 1)`), so a callback inside c's eval
-   does not switch to the shared view. With no tagged source it emits today's `i32.const 1`.
-5. The trampolines need no change: they only test for non-zero.
+All tag code lives in `src/codegen/runtime-eval-boundary.ts`, next to `ensureRuntimeEvalProviderActiveGlobal` and
+the flag it owns (finding 7). It is 514 lines; this adds about 80, under the 1,500-line threshold.
+`module-bindings/` only supplies `isCollidingModuleName` and `withSourceBindings`.
 
-### Scope limits, stated in the code and the tests
+1. **Constants once.** `runtime-eval-boundary.ts` exports `RUNTIME_EVAL_PUSH_GLOBALS` / `RUNTIME_EVAL_PULL_GLOBALS`.
+   Delete the copies at `runtime-eval-provider.ts:58-59` and `runtime-eval-callable.ts:61-62`, and the literals in
+   `object-runtime.ts` (~L6946).
+2. **Tag helpers** in `runtime-eval-boundary.ts`:
+   - `runtimeEvalSourceTag(ctx, source)`: 1, or 2 + i;
+   - `runtimeEvalTagsInUse(ctx)`: is any source tagged;
+   - `emitPerSourceArms(ctx, fctx, name, emitOne)`: the `if` chain on the tag, each arm under `withSourceBindings`,
+     no default arm.
+3. **Push body** (`emitRuntimeEvalGlobalBindingPushBody`). Extract the per-name load (~L349-416) into
+   `emitMirroredBindingValue(ctx, fctx, name)`, with the wrap write-back. A colliding name goes through
+   `emitPerSourceArms`; any other name calls it directly, as today.
+4. **Pull body** (`emitRuntimeEvalGlobalBindingPullBody`). For a colliding name, each arm reads the global object's
+   value, coerces it to **that arm's own target global's type** (`emitRuntimeEvalPullCoerceCall` per arm, finding
+   9), and does the `global.set` there. The lexical-cell loop takes the same arms; the cell stays shared.
+5. **Direct eval sites**, only when `runtimeEvalTagsInUse(ctx)`:
+   - **Tag before push** (finding 1). The site saves the current tag in a local, sets its own source's tag, then
+     calls the push. Untagged sites in such a program set tag 1 the same way. With no tags in use, the order stays
+     push then `i32.const 1`, byte-identical.
+   - **Restore instead of reset** (finding 2). `emitRuntimeEvalResultUnwrap` restores the saved tag instead of
+     writing 0, so a nested eval does not drop the outer site to the default arm.
+   - **Throw path** (finding 3). The provider call is wrapped in `try` / `catch_all`: on an exception, it pulls,
+     restores the saved tag and rethrows. That also fixes THROWCB, and THROW1's shape inside tagged programs.
+     #7646 tracks THROW1 for single-source programs, whose bytes this change must not touch.
+   - `emitRuntimeEvalProviderActive(ctx, fctx, tag)` takes a tag (a number) instead of a boolean. The global-scope
+     entries keep tag 1.
+6. **Interpreted-callback path** (`object-runtime.ts` ~L7011). When tags are in use, it keeps a non-zero active tag
+   (`select(active, active, 1)`) instead of forcing 1, so a callback inside c's eval keeps c's arms.
+7. **One declaration lookup** (finding 8, lead's call). Fold
+   `sourceFunctionDeclarationForHandle(ctx, funcIdx) ?? ctx.funcMapOwnerDecl.get(name) ??
+   ctx.topLevelFunctionDeclarations.get(name)`, now copied at `method-trampolines.ts` ~L1097, ~L1395 and ~L1438,
+   into one helper, `topLevelFunctionDeclarationFor(ctx, name, funcIdx)`, beside `sourceFunctionDeclarationForHandle`
+   (`program-abi-source-callable-planning.ts`). Use it at those three sites and in the push (~L359, which reads
+   `topLevelFunctionDeclarations` alone today). The chain's order is unchanged, so its existing users keep their
+   bytes.
+8. **Trampolines unchanged.** They test for non-zero only.
 
-- **Global-scope entries use the shared view.** By the spec, indirect eval and `new Function` see no module
-  bindings at all. They keep today's behaviour.
-- **An interpreted function created by dep's eval and called later from c** resolves its free names through the
-  global mirror, under the tag active at that time. That is a limit of mirroring module scopes onto one global
-  object, so it gets a pin and its own follow-up issue.
-- **A nested eval** resets the flag to 0, as today.
+### Stated limits (pinned)
+
+- **LATER.** An interpreted function made by c's eval and called later by c's own AOT code, outside any eval, runs
+  under tag 1. For a colliding name the default arm is empty, so it cannot see c's `f`. Fixing that needs per-module
+  eval scope, not a mirror onto one global object.
+- **Single-source programs** keep today's behaviour everywhere, including THROW1 (#7646) and the deviation that
+  indirect eval and `new Function` see a module's own functions on the global object.
 
 ### Byte identity
 
-- With one source, no name collides: there are no arms, the tag is always `i32.const 1`, and the
-  `object-runtime` branch never fires.
-- Moving the constants changes no bytes.
-- The one step to prove is the declaration lookup in step 3. It must return the same declaration as
-  `topLevelFunctionDeclarations` for every single-source top-level function, or `isOrdinary` flips. The proof is
-  the byte gate below.
+- **When no source is tagged**, steps 2–6 emit nothing, and steps 1 and 7 move code without changing what is
+  emitted. That covers every single-source program and every multi-source program without a colliding eval-mirrored
+  name.
+- **Step 7** keeps the existing chain's order. In the push it adds the first two lookups before
+  `topLevelFunctionDeclarations`. In a single source those return the same declaration or none: the gate checks it,
+  with a byte sample whose push reaches a top-level generator and an async function (finding 8).
+- **Gate:**
+  - the 389-file sample, the eval/Annex B sample (113) and the reassign sample (553), × gc/standalone × IR on/off;
+  - the `mhash` clash-free graphs;
+  - #7530's EV1–EV4 graphs (no tagged source: each has one eval-binding module);
+  - the new generator/async sample.
+
+  All must be identical to the base.
 
 ### Tests
 
 New file `tests/issue-7644-eval-per-module-scope.test.ts`, standalone, IR path on and off:
 
-- **Structural, every run:** in EV5, the push and the pull carry both modules' `__mod_f`. Today they carry one.
-- **Under QuickJS (skipped where it is not built), against node:**
-  - EV5 and EV5b;
-  - a control where only dep declares `f`;
-  - `(0, eval)("typeof f")` from c, pinned at the shared view;
-  - an interpreted `[1].map(function () { return f(); })` inside c's eval, which checks step 4.
+- **Structural, every run:** in EV5, the push and the pull carry both modules' `__mod_f` behind tag arms, and
+  untagged single-source output has no tag compare.
+- **Under QuickJS (skipped where it is not built), against node:** EV5, READ2, NEST, THROWCB, INDIRECT and NEWFN at
+  node's answers; LATER pinned at its limit value; a control where only dep declares `f`.
 
 ### Acceptance
 
-- EV5 gives 42 and EV5b 24 on standalone, IR path on and off, under QuickJS.
-- #7530's EV1-EV4 rows still pass, and so do the #7632 and #7530 test files.
-- **Byte gate:** the 389-file sample, the eval/Annex B sample and the reassign sample, × gc/standalone × IR
-  on/off, all identical. The clash-free `mhash` graphs are identical too.
-- The equivalence gate passes, and the lodash-es size and compile time are reported.
+- The rows above give their "after" values.
+- The #7530 (EV1–EV4 included), #7632 and #7470 test files still pass.
+- The byte gate is identical, the equivalence gate passes, and lodash-es size and compile time are reported.
 - **Code quality:**
-  - The push/pull names are defined once.
-  - The push body no longer reads `ctx.topLevelFunctionDeclarations`.
-  - The per-source dispatch lives in one new module of at most ~120 lines, and its arms reuse
-    `withSourceBindings` without a copy.
-  - No new grant in `index.ts` or `declarations.ts`.
-  - Every non-colliding name keeps a single code path.
+  - the push/pull names are defined once;
+  - the declaration chain is one helper with four callers;
+  - the tag lives with its owner, `runtime-eval-boundary.ts`;
+  - the arms reuse `withSourceBindings` without a copy, and non-colliding names keep one path;
+  - no grant in `index.ts` or `declarations.ts`.
+
+### PRV-7644 findings (revision 1, a72f904e15)
+
+| # | finding | settled by |
+| --- | --- | --- |
+| 1 | the push runs before the tag is set | fixed: step 5, tag before push; READ2 pinned |
+| 2 | a nested eval resets the tag to 0 | fixed: step 5, save and restore; NEST pinned |
+| 3 | the throw path skips the pull and the reset | fixed: step 5, `try`/`catch_all` that pulls, restores and rethrows; THROWCB pinned; THROW1 filed as #7646 |
+| 4 | a same-module late callback sees dep's `f` | stated limit, pinned (LATER); with fix 5 it no longer sees another module's `f` |
+| 5 | the default arm pushes an arbitrary module's `f` | fixed (lead's call): the default arm emits nothing for colliding names; INDIRECT and NEWFN pinned |
+| 6 | `identifierIndex(…).has("eval")` over-matches | fixed: direct sites from `runtimeEvalBoundaryPlan.sites` |
+| 7 | the new module is misplaced | fixed (lead's call): the tag lives in `runtime-eval-boundary.ts` |
+| 8 | the declaration lookup diverges from its three copies | fixed (lead's call): one helper, four callers; generator/async byte sample |
+| 9 | the pull must coerce per arm | fixed: step 4 |
+| 10 | acceptance misses rows | fixed: every row above, with node's answers |
