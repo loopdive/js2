@@ -5,7 +5,6 @@
 // Each program runs against node twice, with the test262 runner's options: its answer returns, a wrong one throws.
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
-  abortBodies,
   abortsAtRunTime,
   agreesWithNode,
   preparedOptions,
@@ -416,13 +415,16 @@ describe("#7354 O2 — what stays an abort or a refusal", () => {
       ),
     SLOW,
   );
-  // A void function declaration's last statement takes the expression path, which defers a member compound.
+  // A void function declaration's last statement used to take the expression path, which deferred a member compound
+  // to the function's abort. On main d145642247 it lowers, and the getter and setter each run once (as for o.x += 1 at
+  // module level above); this row pins that answer against node.
   it(
-    "o.x += v on an accessor as a function declaration's last statement: the function's body is the abort",
-    async () => {
-      const bodies = await abortBodies("var o = {get x(){ return 1; }, set x(v){}}; function f(q){ q.x += 1; } f(o);");
-      expect(bodies.some((row) => row.startsWith("f: "))).toBe(true);
-    },
+    "o.x += v on an accessor as a function declaration's last statement: one getter and one setter call",
+    async () =>
+      agrees(
+        "var c = { s: '' }; var o = {get x(){ c.s += 'g'; return 1; }, set x(v){ c.s += 's' + v; }};" +
+          " function f(q){ q.x += 1; } f(o); var out = c.s;",
+      ),
     SLOW,
   );
 });
