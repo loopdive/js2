@@ -46,6 +46,26 @@ export function calleeNameIndex(sourceFile: ts.SourceFile): Map<string, CalleeSi
   return index;
 }
 
+const identifierIndexBySourceFile = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly ts.Identifier[]>>();
+
+/** Every identifier occurrence in the file, bucketed by name in document order, built once per source file. */
+export function identifierIndex(sourceFile: ts.SourceFile): ReadonlyMap<string, readonly ts.Identifier[]> {
+  const cached = identifierIndexBySourceFile.get(sourceFile);
+  if (cached) return cached;
+  const index = new Map<string, ts.Identifier[]>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const bucket = index.get(node.text);
+      if (bucket) bucket.push(node);
+      else index.set(node.text, [node]);
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  identifierIndexBySourceFile.set(sourceFile, index);
+  return index;
+}
+
 /**
  * Does `site` supply no value for parameter `paramIndex`? `new F` without
  * parentheses has no argument list at all, so it supplies none.

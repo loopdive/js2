@@ -29,9 +29,11 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
 import { emitScriptGlobalFunctionBindings } from "../global-function-bindings.js"; // (#4394) §9.1.1.4.18
 import { emitScriptGlobalVarBindings } from "../global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
 import { emitThrowJsError } from "../js-errors.js";
+import { liveFunctionBindings } from "../module-bindings/module-binding-table.js";
 import { addFuncType } from "../registry/types.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { scriptVarBindingNames } from "../source-scan-predicates.js";
+import { withSourceBindings } from "../module-bindings/source-binding-projection.js";
 import {
   emitModuleF64UndefinedSeeds,
   emitModuleVarUndefinedSeeds,
@@ -87,48 +89,50 @@ export function emitModuleInitPrologue(
 
   // (#2931) Seed each reassigned-function live-binding global with the
   // function's closure BEFORE any user init statement runs, so a read of the
-  // name before its reassignment still yields the function. Emitted via
-  // `emitCachedFuncClosureAccess` (NOT the identifier read-path, which would
-  // recurse into the live-binding `global.get` arm). Dedupe by global index so
-  // an import alias sharing the same global is seeded once.
-  if (!ctx.liveFuncBindingGlobals || ctx.liveFuncBindingGlobals.size === 0) return;
-  const seededGlobals = new Set<number>();
-  for (const liveName of ctx.liveFuncBindingGlobals) {
-    // (#4182) A module-scope Annex B block-fn binding starts as `undefined`
-    // (B.3.3.2.b CreateGlobalFunctionBinding(F, undefined)) unless a real
-    // top-level `function f` also exists — GDI initializes only that one.
-    // Without this split, pass 2 of the #2965 two-pass init compile would
-    // seed the block function's closure (its funcMap entry exists by then),
-    // making the pre-evaluation read wrongly observe the function. Under
-    // the `undefinedSingleton` regime the binding must read as `undefined`,
-    // not `null`, so seed the `$undefined` singleton rather than leaving
-    // the `ref.null.extern` global init.
-    if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
-      // Seed the regime's tag-1 `undefined` singleton.
-      const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
-      if (annexBGlobalIdx !== undefined && !seededGlobals.has(annexBGlobalIdx) && emitUndefinedExtern(ctx, initFctx)) {
-        initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
-        seededGlobals.add(annexBGlobalIdx);
-      }
-      continue;
-    }
-    const liveGlobalIdx = ctx.moduleGlobals.get(liveName);
-    const liveFuncIdx = ctx.funcMap.get(liveName);
-    if (liveGlobalIdx === undefined || liveFuncIdx === undefined) continue;
-    if (seededGlobals.has(liveGlobalIdx)) continue;
-    const closureType = emitCachedFuncClosureAccess(ctx, initFctx, liveName, liveFuncIdx);
-    if (closureType === null) {
-      // Could not build the closure — leave the global null-initialised.
-      continue;
-    }
-    // Closure struct (internal ref) → externref for the externref global.
-    initFctx.body.push({ op: "extern.convert_any" });
-    if (ctx.runtimeEvalGlobalFunctionBindings) {
-      emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
-    }
-    initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
-    seededGlobals.add(liveGlobalIdx);
+  // name before its reassignment still yields the function. Each binding is
+  // seeded under its own module's view (#7530), where the name shows that
+  // binding's global and function. No two bindings share a global, so each is
+  // seeded once.
+  for (const binding of liveFunctionBindings(ctx)) {
+    withSourceBindings(ctx, binding.source, () => seedLiveFunctionBinding(ctx, initFctx, binding.name));
   }
+}
+
+/**
+ * Seed the live-binding global `liveName` shows, via `emitCachedFuncClosureAccess`
+ * (NOT the identifier read-path, which would recurse into the live-binding
+ * `global.get` arm).
+ */
+function seedLiveFunctionBinding(ctx: CodegenContext, initFctx: FunctionContext, liveName: string): void {
+  // (#4182) A module-scope Annex B block-fn binding starts as `undefined`
+  // (B.3.3.2.b CreateGlobalFunctionBinding(F, undefined)) unless a real
+  // top-level `function f` also exists — GDI initializes only that one.
+  // Without this split, pass 2 of the #2965 two-pass init compile would
+  // seed the block function's closure (its funcMap entry exists by then),
+  // making the pre-evaluation read wrongly observe the function. Under
+  // the `undefinedSingleton` regime the binding must read as `undefined`,
+  // not `null`, so seed the `$undefined` singleton rather than leaving
+  // the `ref.null.extern` global init.
+  if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
+    // Seed the regime's tag-1 `undefined` singleton.
+    const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
+    if (annexBGlobalIdx !== undefined && emitUndefinedExtern(ctx, initFctx)) {
+      initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
+    }
+    return;
+  }
+  const liveGlobalIdx = ctx.moduleGlobals.get(liveName);
+  const liveFuncIdx = ctx.funcMap.get(liveName);
+  if (liveGlobalIdx === undefined || liveFuncIdx === undefined) return;
+  const closureType = emitCachedFuncClosureAccess(ctx, initFctx, liveName, liveFuncIdx);
+  // Could not build the closure — leave the global null-initialised.
+  if (closureType === null) return;
+  // Closure struct (internal ref) → externref for the externref global.
+  initFctx.body.push({ op: "extern.convert_any" });
+  if (ctx.runtimeEvalGlobalFunctionBindings) {
+    emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
+  }
+  initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
 }
 
 /**
@@ -139,7 +143,7 @@ export function emitModuleInitPrologue(
 export function moduleInitPrologueForcesInit(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
   return (
     ctx.restrictedGlobalLexicalName !== undefined ||
-    (ctx.liveFuncBindingGlobals?.size ?? 0) > 0 ||
+    liveFunctionBindings(ctx).length > 0 ||
     moduleF64UndefinedSeedGlobals(ctx, sourceFile).size > 0
   );
 }

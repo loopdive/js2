@@ -46,10 +46,10 @@
  * nothing else can reference."
  */
 import { forEachChild, ts } from "../../ts-api.js";
+import { identifierIndex } from "../../shared/callee-name-index.js";
 
 /** Per-file cache — the scans below are O(programSize), run once per file. */
 const closedArrayNamesBySourceFile = new WeakMap<ts.SourceFile, Set<string>>();
-const identifierIndexBySourceFile = new WeakMap<ts.SourceFile, Map<string, ts.Identifier[]>>();
 
 /**
  * Is `expr` an array literal whose every element is a primitive literal?
@@ -81,24 +81,6 @@ function isPrimitiveArrayLiteral(expr: ts.Expression): boolean {
     return false;
   }
   return true;
-}
-
-/** All identifier occurrences in the file, keyed by name. Cached per file. */
-function identifierIndex(sourceFile: ts.SourceFile): Map<string, ts.Identifier[]> {
-  const cached = identifierIndexBySourceFile.get(sourceFile);
-  if (cached) return cached;
-  const index = new Map<string, ts.Identifier[]>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      const bucket = index.get(node.text);
-      if (bucket) bucket.push(node);
-      else index.set(node.text, [node]);
-    }
-    forEachChild(node, visit);
-  };
-  forEachChild(sourceFile, visit);
-  identifierIndexBySourceFile.set(sourceFile, index);
-  return index;
 }
 
 /**

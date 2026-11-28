@@ -49,7 +49,8 @@ import {
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "../shared/is-strict-function.js";
-import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
+import { registerAnnexBLiveBinding } from "./module-global-registration.js";
+import { localGlobalIdx } from "./registry/imports.js";
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { compileNestedFunctionDeclaration } from "./statements/nested-declarations.js";
 
@@ -181,30 +182,22 @@ export function registerAnnexBGlobalLiveBindings(ctx: CodegenContext, sourceFile
       if (decls.some((fd) => nameReassignedInRange(annexBDeclaringRange(fd) ?? fd, name))) continue;
       const bindings = (ctx.annexBModuleBindings ??= new Set<string>());
       if (bindings.has(name)) continue;
-      let globalIdx = ctx.moduleGlobals.get(name);
-      if (globalIdx === undefined) {
-        globalIdx = nextModuleGlobalIdx(ctx);
-        ctx.mod.globals.push({
-          name: `__mod_${name}`,
-          type: { kind: "externref" },
-          mutable: true,
-          init: [{ op: "ref.null.extern" }],
-        });
-        ctx.moduleGlobals.set(name, globalIdx);
-      } else {
+      const globalIdx = ctx.moduleGlobals.get(name);
+      if (globalIdx !== undefined) {
         const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-        if (!global) continue;
-        if (global.type.kind !== "externref") {
-          // Only widen the value-typed carriers (`var f = 123`). A ref-typed
-          // global (e.g. a struct-shaped `var f = {…}`) has readers compiled
-          // against its heap type — leave such names on today's path.
-          if (global.type.kind !== "f64" && global.type.kind !== "i32") continue;
-          global.type = { kind: "externref" };
-          global.init = [{ op: "ref.null.extern" }] as Instr[];
+        // Only widen the value-typed carriers (`var f = 123`). A ref-typed
+        // global (e.g. a struct-shaped `var f = {…}`) has readers compiled
+        // against its heap type — leave such names on today's path.
+        if (!global || (global.type.kind !== "externref" && global.type.kind !== "f64" && global.type.kind !== "i32")) {
+          continue;
         }
       }
+      const { value } = registerAnnexBLiveBinding(ctx, name, decls);
+      if (value.type.kind !== "externref") {
+        value.type = { kind: "externref" };
+        value.init = [{ op: "ref.null.extern" }] as Instr[];
+      }
       bindings.add(name);
-      (ctx.liveFuncBindingGlobals ??= new Set<string>()).add(name);
       // CreateGlobalFunctionBinding makes an enumerable, non-configurable
       // global-object property — expose it to the global-object read path and
       // the runtime-eval script-binding sync like any script `var`.
