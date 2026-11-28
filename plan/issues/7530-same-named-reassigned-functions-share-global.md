@@ -37,151 +37,311 @@ scheme. The full plan is under "Implementation Plan" below.
 
 ## Acceptance criteria
 
-- Both rows, plus an imported reassigned function, answer like node on gc and standalone. Pin them with
-  `compileMulti` tests that fail on main.
-- Single-file output stays byte-identical.
+- **Fixed rows.** A, C, D, F, G, H, X, Y2, Z and AB1 (sources below) answer like node on gc and standalone, with
+  the IR path on and off. I answers like node with the IR path on.
+- **Rows that must keep passing:** B, B2, B3, E, Y3, Y5 and AB2.
+- **Pinned.** `tests/issue-7530-same-named-reassigned-functions.test.ts` holds every row above, and the fixed rows
+  fail on main.
+- **Byte identity.** The three single-file corpora and the clash-free `mhash` graphs under "Byte identity" give
+  identical bytes before and after. lodash-es passes its tests and upstream suite as before.
+- **Code quality.**
+  - One source of liveness: `ModuleBinding.liveFunction` in the table. `ctx.liveFuncBindingGlobals` is only the
+    bare-name view of it, written by the table and the projection and by nothing else.
+  - One allocation helper for `__mod_` globals. No inline `__mod_` push remains in `index.ts` or
+    `annexb-global-live-binding.ts`.
+  - One per-file view. Liveness travels in `ModuleNameState`, with no second save and restore.
+  - No name set beside the table: the `reassigned` set and `ctx.evalOnlyLiveFuncBindings` are removed.
+  - No budget grants, no new module, no branch for a state the table cannot reach.
 
 ## Implementation Plan
 
-Written against ada18e6bb6 (PR #7558 head, #7470) on 2026-11-28.
+Revision 2, against cada0d37f7 (branch `claude/7530-reassigned-functions`, stacked on PR #7558 / #7470), 2026-11-28.
+It answers review PRV-7530 of revision 1 (a22972b089).
 
-### Measurement (ada18e6bb6, 2026-11-28, `compileMulti`, probe `.tmp/7530/probe.mts`)
+### Out of scope
+
+- **Namespace-import reads** (`import * as d; d.f()`, rows N0 and N) belong to
+  #7620 (C8, which owns
+  `export * as ns`). N0 fails without any name clash, so this design cannot fix it.
+- **Row I0**, an import alias named like another file's own function with the IR path off, is
+  [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function).
+- **Row Y**, a cyclic import in which the reassigning module is imported by its importer, fails with no name clash.
+  The acyclic control (Y5) and the other cycle direction (Y3) both pass. It needs its own issue, or C8's cycle work.
+- **Rows T, T1 and T2**, a TS `namespace` variable named like an outer function, do not compile on any lane. The
+  compiler reports `Duplicate identifier 'f'` (T2) or `Cannot assign to 'f' because it is a function` (T, T1). So
+  their liveness cannot be measured (design step 5).
+
+### Measurement (cada0d37f7, 2026-11-28, `compileMulti`, probe `.tmp/7530/probe.mts`)
 
 The node column is node 22 running the `ts.transpileModule` output of the same sources.
 
-| shape | node | gc IR on | gc IR off | standalone IR on | standalone IR off |
+| row | node | gc IR on | gc IR off | standalone IR on | standalone IR off |
 | --- | --- | --- | --- | --- | --- |
-| A dep reassigns its own `f`; entry calls its own `f` (issue row 1) | 12 | 42 | 42 | 42 | 42 |
-| B entry reassigns its own `f`; dep calls its own `f` | 34 | 34 | 34 | 34 | 34 |
-| B2 entry reads, then reassigns its own `f`; dep calls its own | 14 | 14 | 14 | 14 | 14 |
-| B3 entry reassigns its own `f`, then dep calls its own | 42 | 42 | 42 | 42 | 42 |
-| C both reassign their own `f` | 24 | 44 | 44 | 44 | 44 |
-| D seed: dep reads its own `f` before and after its swap | 314 | 343 | 343 | 343 | 343 |
-| E `import { f }` of dep's reassigned `f`, no collision | 12 | 12 | 12 | 12 | 12 |
-| F E plus a third file with its own `function f` | 125 | 122 | 122 | 122 | 122 |
-| G `import { f as k }` of dep's reassigned `f`, entry's own `function f` | 127 | 112 | 112 | 112 | 112 |
-| H entry imports a never-reassigned `f` from `lib`; dep reassigns its own `f` | 12 | 42 | 42 | 42 | 42 |
-| I G's alias `k` and a third file's own `function k` | 25 | 55 | 55 | 55 | 55 |
-| I0 control for I: nothing reassigned | 15 | 15 | 55 | 15 | 55 |
+| A | 12 | 42 | 42 | 42 | 42 |
+| B | 34 | 34 | 34 | 34 | 34 |
+| B2 | 14 | 14 | 14 | 14 | 14 |
+| B3 | 42 | 42 | 42 | 42 | 42 |
+| C | 24 | 44 | 44 | 44 | 44 |
+| D | 314 | 343 | 343 | 343 | 343 |
+| E | 12 | 12 | 12 | 12 | 12 |
+| F | 125 | 122 | 122 | 122 | 122 |
+| G | 127 | 112 | 112 | 112 | 112 |
+| H | 12 | 42 | 42 | 42 | 42 |
+| I | 25 | 55 | 55 | 55 | 55 |
+| I0 ([#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function)) | 15 | 15 | 55 | 15 | 55 |
+| X | 12 | 42 | 42 | 42 | 42 |
+| Z | 31 | 14 | 14 | 14 | 14 |
+| Y | 15 | 11 | 11 | 11 | 11 |
+| Y2 | 41 | 44 | 44 | 44 | 44 |
+| Y3 | 12 | 12 | 12 | 12 | 12 |
+| Y5 | 15 | 15 | 15 | 15 | 15 |
+| AB1 | 23 | 21 | 21 | 21 | 21 |
+| AB2 | 23 | 23 | 23 | 23 | 23 |
+| N0 (#7620) | 4 | 3 | trap | 3 | trap |
+| N (#7620) | 14 | 43 | trap | 43 | trap |
+| T | 25 | CE | CE | CE | CE |
+| T1 | 25 | CE | CE | CE | CE |
+| T2 | 15 | CE | CE | CE | CE |
 
-- **The issue's row 2 no longer reproduces.** It read 14 in node and 34 on 50bce1ba04 ("entry reassigns, dep calls"). B, B2 and
-  B3 all match node on this head.
-- **What still fails.** A file whose own `f` is not reassigned reads another file's live global (A, D, F, H). Both
-  files reassigning (C) and the renamed import (G) also fail.
-- **I0 is a separate defect.** It fails with the IR path off even when nothing is reassigned: an import alias whose
-  local name is another file's own function. It belongs to the #4133 family (two files' functions sharing one
-  bare-name `funcMap` entry), not to this issue. File it on its own. Row I is in scope with the IR path on only.
+- **Issue row 2 does not reproduce.** It read 14 in node and 34 on 50bce1ba04 ("entry reassigns, dep calls").
+  B, B2 and B3 match node on this head.
+- **What fails is reading another module's live global.** A file that has no live binding of `f`, and does not
+  import one, still reads another file's live `f`: rows A, D, F, H, X, Z and AB1. The same holds when both files
+  reassign (C, Y2), and for a renamed import (G, I).
+- **Annex B is not involved in module graphs.** Module sources are strict, and `registerAnnexBGlobalLiveBindings`
+  skips strict sources (`annexb-global-live-binding.ts:175`). A Script compile puts every source in one realm, so
+  no clash between modules can arise there. AB1 fails because of the clash above: dep's block-scoped `f()` reads
+  entry's live global. AB2, the same block function beside a `let f`, passes.
+
+### Sources
+
+`entry.ts`, `dep.ts` and, where named, `c.ts` / `lib.ts`. Each row's `main()` is called.
+
+```ts
+// A
+entry: import { swap } from "./dep"; function f(): number { return 1; } export function main(): number { swap(); return f() * 10 + 2; }
+dep:   function f(): number { return 3; } export function swap(): void { f = () => 4; }
+// B
+entry: import { callF } from "./dep"; function f(): number { return 1; } export function main(): number { f = () => 3; return f() * 10 + callF(); }
+dep:   function f(): number { return 4; } export function callF(): number { return f(); }
+// B2: B with main = { const a = f(); f = () => 3; return a * 10 + callF(); }
+// B3: B with main = { f = () => 3; return callF() * 10 + 2; }
+// C
+entry: import { swap, callF } from "./dep"; function f(): number { return 1; } export function main(): number { f = () => 2; swap(); return f() * 10 + callF(); }
+dep:   function f(): number { return 3; } export function swap(): void { f = () => 4; } export function callF(): number { return f(); }
+// D
+entry: import { get, swap } from "./dep"; function f(): number { return 1; } export function main(): number { const a = get(); swap(); return a * 100 + f() * 10 + get(); }
+dep:   function f(): number { return 3; } export function get(): number { return f(); } export function swap(): void { f = () => 4; }
+// E
+entry: import { f, swap } from "./dep"; export function main(): number { const a = f(); swap(); return a * 10 + f(); }
+dep:   export function f(): number { return 1; } export function swap(): void { f = () => 2; }
+// F: E's dep, plus
+entry: import { f, swap } from "./dep"; import { h } from "./c"; export function main(): number { const a = f(); swap(); return a * 100 + f() * 10 + h(); }
+c:     function f(): number { return 5; } export function h(): number { return f(); }
+// G: E's dep, plus
+entry: import { f as k, swap } from "./dep"; function f(): number { return 7; } export function main(): number { const a = k(); swap(); return a * 100 + k() * 10 + f(); }
+// H
+entry: import { f } from "./lib"; import { swap } from "./dep"; export function main(): number { swap(); return f() * 10 + 2; }
+lib:   export function f(): number { return 1; }
+dep:   function f(): number { return 3; } export function swap(): void { f = () => 4; }
+// I: E's dep, plus (I0: the same with dep's swap body empty)
+entry: import { f as k, swap } from "./dep"; import { h } from "./c"; export function main(): number { swap(); return k() * 10 + h(); }
+c:     function k(): number { return 5; } export function h(): number { return k(); }
+// X
+entry: import { mk } from "./dep"; function f(): number { return 1; } export function main(): number { mk()(); return f() * 10 + 2; }
+dep:   function f(): number { return 3; } export function mk(): () => void { return () => { f = () => 4; }; }
+// Z
+entry: import { r } from "./dep"; function f(): number { return 1; } export function main(): number { return r * 10 + f(); }
+dep:   function f(): number { return 3; } export const r = f(); f = () => 4;
+// Y
+entry: import { g } from "./dep"; export function f(): number { return 1; } export function main(): number { const a = g(); f = () => 5; return a * 10 + g(); }
+dep:   import { f } from "./entry"; export function g(): number { return f(); }
+// Y2
+entry: import { g } from "./dep"; function f(): number { return 1; } export function k(): number { return f(); } export function main(): number { return g() * 10 + f(); }
+dep:   import { k } from "./entry"; function f(): number { return 3; } export function g(): number { f = () => 4; return f() + k() * 0; }
+// Y3
+entry: import { f, swap } from "./dep"; export const base = 10; export function main(): number { const a = f(); swap(); return a * 10 + f(); }
+dep:   import { base } from "./entry"; export function f(): number { return 1; } export function swap(): void { f = () => 2 + base * 0; }
+// Y5
+entry: import { g } from "./dep"; import { swap } from "./lib"; export function main(): number { const a = g(); swap(); return a * 10 + g(); }
+lib:   export function f(): number { return 1; } export function swap(): void { f = () => 5; }
+dep:   import { f } from "./lib"; export function g(): number { return f(); }
+// AB1
+entry: import { d } from "./dep"; function f(): number { return 1; } export function main(): number { f = () => 2; return f() * 10 + d(); }
+dep:   export function d(): number { let r = 0; { function f(): number { return 3; } r = f(); } return r; }
+// AB2: AB1's dep, plus
+entry: import { d } from "./dep"; let f = 1; export function main(): number { f = 2; return f * 10 + d(); }
+// N0
+entry: import * as d from "./dep"; export function main(): number { d.swap(); return d.f(); }
+dep:   export function f(): number { return 3; } export function swap(): void { f = () => 4; }
+// N: N0's dep, plus
+entry: import * as d from "./dep"; function f(): number { return 1; } export function main(): number { d.swap(); return f() * 10 + d.f(); }
+// T (one file; T2 drops `f = () => 2;`; T1 makes the namespace's `var f` non-exported)
+entry: function f(): number { return 1; } namespace N { export var f = (): number => 5; export function g(): number { return f(); } }
+       export function main(): number { f = () => 2; return f() * 10 + N.g(); }
+```
 
 ### Cause
 
 - **Registration is by name.** `registerReassignedFunctionGlobals` (`src/codegen/index.ts:9053`) collects exact
-  declarations (`reassignedDeclarations`) but registers one `__mod_f` per name (`index.ts:9224-9237`). It finds the
-  function through `ctx.funcMap.get(name)`, which holds the last file's `f` after collect. It also skips the name
-  when `ctx.moduleGlobals.has(name)`, even when another module's binding holds that entry.
-- **Liveness is graph-wide.** `ctx.liveFuncBindingGlobals` is a name set, so every file that spells `f` treats it as
-  live.
-- **The seed walks names.** The prologue seed (`declarations/module-init-prologue.ts:94-133`) walks that set by name,
-  under whatever view the last body pass applied.
+  declarations but mints one `__mod_f` per name (9224-9237). It finds the function through `ctx.funcMap.get(name)`,
+  the last file's `f` after collect, and skips the name whenever `ctx.moduleGlobals.has(name)`.
+- **Liveness is a graph-wide name set**, written from three places:
+  - this loop;
+  - Annex B (`annexb-global-live-binding.ts:207`);
+  - the import alias copy (`index.ts:9607`).
+
+  `ctx.evalOnlyLiveFuncBindings` is a second name set beside it.
+- **The seed walks names.** The initial-value code (`declarations/module-init-prologue.ts:94-133`) walks the set by
+  name, under the last body pass's view. That is why Z reads the entry's `f` during dep's module initialiser.
 
 ### Design
 
-A reassigned function's live global becomes a binding in #7470's table. Whether a name is a live function becomes
-part of what a bare name shows in the per-file view. No new keying and no new projection.
+Liveness has one source: the binding in #7470's table. `ctx.liveFuncBindingGlobals` becomes what
+`ctx.moduleGlobals` already is, a bare-name view of the table that the per-file projection re-points.
 
-1. **The table admits functions** (`src/codegen/module-binding-table.ts`).
-   - `ModuleBindingDeclaration` adds `ts.FunctionDeclaration`. The scope key does not change (a module's SourceFile,
-     or the Script realm), so `var f` and `function f` in one scope stay one binding.
-   - `ModuleBinding` gains `liveFunction?: true`.
-   - The table keeps live-function bindings in registration order: `markLiveFunctionBinding(ctx, binding)` and
-     `liveFunctionBindings(ctx)`. Their users are registration and the prologue seed.
-   - `ProgramAbiGlobalRegistry.moduleBinding` (`program-abi-global-planning.ts:61`) keeps a parameter typed as
-     `IrModuleBindingDeclaration` (a variable or binding element). So `src/ir` cannot ask about a function binding,
-     and needs no change.
-2. **Registration** (`src/codegen/module-global-registration.ts`).
-   - Extract the tail of `registerModuleGlobal` (lines 243-258) into one private helper. The tail does the scoped
-     lookup, mints a bare global, allocates or reuses one, then adds and attaches the binding.
-     `registerModuleGlobal` calls the helper after its guards.
-   - New `registerLiveFunctionGlobal(ctx, declaration)` calls the same helper with `{ kind: "externref" }`.
-   - It registers nothing in the two cases where today's loop `continue`s: the scope already has a binding of the
-     name (a same-scope `var f`), or the bare entry is a global no binding holds.
-   - Otherwise it mints the global, marks the binding live and adds the name to `ctx.liveFuncBindingGlobals`.
-   - A bare entry held by another module's binding now gets its own global. Today that global is silently shared.
+1. **The table owns liveness** (`module-binding-table.ts`).
+   - `ModuleBindingDeclaration` adds `ts.FunctionDeclaration`. The key is unchanged (a module's SourceFile, or the
+     one Script realm).
+   - `ModuleBinding` gains `liveFunction?: "assigned" | "eval"`.
+   - New `markLiveFunctionBinding(ctx, binding, kind)`:
+     - sets the field (`"assigned"` wins over `"eval"`);
+     - appends the binding to a registration-ordered list, read by `liveFunctionBindings(ctx)`;
+     - adds the name to `ctx.liveFuncBindingGlobals` when the bare `moduleGlobals` entry is this binding's global.
+       That is the only write to the set outside the projection.
+   - `ProgramAbiGlobalRegistry.moduleBinding` keeps the narrower `IrModuleBindingDeclaration` parameter, so `src/ir`
+     does not change.
+2. **One allocation helper** (`module-global-registration.ts`).
+   - Extract the tail of `registerModuleGlobal` (243-258: scoped lookup, mint bare / allocate / reuse an entry no
+     binding holds, add, attach) into a private `bindModuleGlobal`. Its users:
+     - `registerModuleGlobal`;
+     - new `registerLiveFunctionGlobal(ctx, declaration, kind)`;
+     - new `registerAnnexBLiveBinding(ctx, declaration)`.
+   - `registerLiveFunctionGlobal` keeps today's two skips:
+     - the scope already has a non-live binding of the name (a same-scope `var f`);
+     - the bare entry is a global no binding holds.
+
+     Otherwise it mints, or attaches the declaration to the scope's existing live binding, then marks the binding.
+     A duplicate `function f` in one Script (#3419: the last body wins) therefore attaches to one binding. The
+     function check below finds the surviving body.
+   - `registerAnnexBLiveBinding` takes the scope's existing binding or mints one, then marks it `"assigned"`. The
+     externref widening of an existing `var` global stays in `annexb-global-live-binding.ts`, which loses its
+     inline `__mod_` push.
 3. **The caller** (`index.ts`, `registerReassignedFunctionGlobals`).
-   - The loop at 9224-9237 iterates `reassignedDeclarations` and calls `registerLiveFunctionGlobal`. The
-     defined-function check uses `ownSourceFunctionIdx(ctx, sourceFile, name) ?? ctx.funcMap.get(name)`, so a
-     colliding name checks its own file's function.
-   - **Duplicate removed:** the parallel `reassigned` name set. Each of its adds pairs with a declaration add.
-     `evalOnlyLiveFuncBindings` asks the declaration set instead.
-   - The implementer confirms that the eval branch (9204-9217) always has a declaration (`topLevelFunctionDeclarations`
-     is filled together with `topLevelFunctionNames`). If it can lack one, that name keeps today's name-keyed path,
-     with the reason in a comment.
-   - **Duplicate removed:** the inline `__mod_` global push (9227-9233), replaced by `allocateModuleGlobal`.
-4. **Projection** (`src/codegen/source-binding-projection.ts`).
-   - **The state carries liveness.** `ModuleNameState` gains `liveFunction?: boolean`.
-     - `moduleNameState` captures `liveFuncBindingGlobals.has(name)` for a non-colliding name.
-     - `setModuleNameState` adds the name to the set or removes it, next to the two maps.
-     - A `ModuleBinding` is already a `ModuleNameState`, so the view's `globals` entries carry their liveness.
-   - **A view can hide a name.** `SourceBindingView.globals` becomes `Map<string, ModuleNameState>`. A frozen
-     `NO_MODULE_BINDING = {}` state hides a name: no value, no flag, not live.
-   - **Two new rules** in `recordSourceModuleBindingView`:
-     - each of the file's own colliding functions (`view.ownFunctions`) that has no binding of its own, while the name
-       has a binding elsewhere, gets `NO_MODULE_BINDING` (rows A, C, D, F, G);
-     - each import whose target has no module binding, under a name some binding holds, gets `NO_MODULE_BINDING`
-       (row H).
-   - **Live-function imports need no new rule.** The existing import rule handles a target that is a live function
-     once step 1 attaches the declaration (rows F, G). So does `registerImportBindingAliases` (`index.ts:9583`),
-     which already prefers `moduleBindingOf(target)`.
-   - **A namespace now hides liveness too.** `withDirectRuntimeModuleBindings` (`declarations.ts:1737`) shares
-     `setModuleNameState`. While a namespace body compiles, a namespace variable projected over a live function's
-     name now also hides that liveness. That is the correct scope. The single-file byte gate covers it.
-5. **Seed** (`src/codegen/declarations/module-init-prologue.ts`).
-   - Extract the per-name body of the loop at 96-132 into `seedLiveBinding(ctx, initFctx, name, seededGlobals)`.
-   - **First pass:** for each `liveFunctionBindings(ctx)` record, run it inside
-     `withSourceBindings(ctx, record.source, …)`. That is #7470's nested-view path: it lifts the last file's view and
-     applies the record's file.
-   - **Second pass:** the remaining names in the set (Annex B, import aliases), as today.
-   - In a graph without views, `withSourceBindings` just runs the action, and the two passes visit names in today's
-     order.
-   - `moduleInitPrologueForcesInit` (139-145) also counts `liveFunctionBindings(ctx).length`, because the set it
-     reads may be the projected one.
+   - The loop iterates `reassignedDeclarations` in insertion order. The kind is `"eval"` for a declaration added
+     only by the eval branch, `"assigned"` otherwise. The function check is
+     `ownSourceFunctionIdx(ctx, sourceFile, name) ?? ctx.funcMap.get(name)`.
+   - Removed:
+     - the `reassigned` name set;
+     - the inline push;
+     - `ctx.evalOnlyLiveFuncBindings` (and its field in `context/types.ts`).
+   - The eval branch's `!declaration` arms (9206, 9215) are dead and go, for two reasons:
+     - `topLevelFunctionNames` and `topLevelFunctionDeclarations` are filled together in `collectDeclarations`
+       (`declarations.ts:2565-2566`);
+     - the single-file pre-scan (`index.ts:5472-5476`) admits only declarations that `collectDeclarations` then
+       records.
 
-### Byte identity
+     Measured: no declaration-less eval name in any corpus below.
+   - **Finding 7.** `named-this-call.ts:655-656` asks
+     `moduleBindingOf(ctx, declaration)?.liveFunction === "eval"` of the declaration it already holds. So eval-only
+     liveness follows the binding, and the separate name set is gone.
+4. **Import aliases** (`index.ts`, `registerImportBindingAliases`).
+   - Delete `liveFuncBindingGlobals.add(localName)` (9607). An alias is live only where it is imported. The
+     projection's import rule (step 5) shows it in the importing file, from the target binding's `liveFunction`.
+   - The alias's `moduleGlobals` copy (9583-9585) stays as it is: it is #7470's, and the funcMap half belongs to
+     [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function).
+5. **Projection** (`source-binding-projection.ts`).
+   - `ModuleNameState` gains `liveFunction?: boolean`.
+     - `moduleNameState` reads it from the set, and from the binding for a colliding name.
+     - `setModuleNameState` writes it into the set next to the two maps.
+   - `SourceBindingView.globals` becomes `Map<string, ModuleNameState>`, and a frozen `NO_MODULE_BINDING = {}` state
+     hides a name.
+   - `recordSourceModuleBindingView` gains one rule. For each name of a live-function binding, each module source
+     must show, in this order:
+     1. its own binding of the name;
+     2. the binding its import of that local name resolves to (`aliasedValueDeclarationOf`);
+     3. `NO_MODULE_BINDING`.
 
-- **Single file.** No views exist, there is one scope, and declarations register in today's name order (the
-  `reassigned` and `reassignedDeclarations` adds are paired). So the same globals are minted in the same order.
-  - Gate: copy `.tmp/hash.mts` and `.tmp/sample3.txt` from the `claude/7470-module-bindings` worktree.
-  - Run the 389 files × gc/standalone on the base (ada18e6bb6) and on the new code. The outputs must be identical.
-- **Multi-file without collisions.** Copy `.tmp/mhash.mts` and add the `E` graph (an imported reassigned function),
-  so the live path is covered. Base vs new, gc/standalone × IR on/off: identical.
+     An entry is recorded only when this differs from what the bare name shows, in value global or in liveness. In
+     a Script compile every source shares the realm's binding, so step 1 always answers and nothing is recorded.
+   - The existing import condition also compares liveness, so a live alias (G, I) is shown in its importing file
+     only.
+   - This replaces revision 1's two special rules (an own colliding function, a never-reassigned import). Both are
+     instances of the third case.
+   - **Finding 4: the namespace projection keeps liveness out.** `withDirectRuntimeModuleBindings`
+     (`declarations.ts:1748`) passes the name's current `liveFunction` through, so a TS namespace binding never
+     changes liveness. The shapes where it would matter (T, T1, T2) do not compile on any lane, so a change there
+     could not be measured. Keeping today's behaviour is the only verifiable choice.
+6. **Seed** (`declarations/module-init-prologue.ts`).
+   - One loop over `liveFunctionBindings(ctx)`. Each record is seeded inside
+     `withSourceBindings(ctx, record.source, …)` (#7470's nested-view path), with the per-name body extracted as is,
+     including its Annex B arm and its `seededGlobals` dedupe.
+   - Annex B bindings are records now, and aliases no longer join the set, so the set walk goes away.
+   - `moduleInitPrologueForcesInit` asks `liveFunctionBindings(ctx).length > 0`.
+   - In a single file the list order equals today's set order: assignment-reassigned, then eval, then Annex B.
+
+### Byte identity (finding 6)
+
+Census on cada0d37f7 with a temporary counter in the mint loop (`.tmp/7530/instr.py`, `.tmp/7530/census.mts`;
+not committed). "Reach" means the loop runs with a non-empty set.
+
+| corpus | files | reach the loop | mint ≥ 1 global | eval branch runs | eval-only bindings | name with no declaration | duplicate declarations in one scope | name already in `moduleGlobals` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sample3.txt` (the 389-file #7470 sample) | 389 | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
+| `eval-sample.txt` | 113 | 3 | 1 | 94 | 1 | 0 | 0 | 0 |
+| `reassign-sample.txt` | 553 | 29 | 18 | 371 | 16 | 0 | 0 | 0 |
+| lodash-es (`compileProject(lodash.js)`) | 1 graph | yes | 475 gc / 473 standalone | yes | 476 gc / 474 standalone | 0 | 0 | 1 |
+
+- **The counts do not depend on the lane.** They are the same on gc and standalone, with the IR path on or off;
+  only lodash-es's totals differ by target.
+- **The 389-file sample barely exercises this code.** Only 2 of its files reach the loop:
+  `language/module-code/instn-local-bndng-export-{fun,gen}.js`. That is why the gate adds the other two corpora:
+  34 single files reach the loop in all.
+- **lodash-es is the large case.** It mints one eval-only live binding per function (it contains a dynamic
+  `Function` source), so it exercises the hiding rule heavily.
+  - It is a graph with name clashes (97 names), so its bytes are expected to change.
+  - Its one existing-global name is today a silently shared global. It gets its own global after this change.
+  - The gate for it is behaviour, not bytes, as in #7470:
+    - `tests/lodash-es-e2e.test.ts`, `tests/issue-6985-lodash-es-o4.test.ts` and
+      `tests/issue-3995-lodash-es-global-builtin-alias.test.ts`;
+    - the upstream suite (`tests/dogfood/lodash-upstream-suite.mjs --package=lodash-es`) compiles and validates;
+    - binary size and compile time, recorded before and after (base: 6,237,710 bytes gc, 6,113,303 standalone).
+
+Gate, base (cada0d37f7) against new, every corpus × gc/standalone × IR on/off:
+
+- `.tmp/7530/sample3.txt`: the 389-file sample, copied from the #7470 worktree.
+- `.tmp/7530/eval-sample.txt`: 113 eval and Annex B files.
+- `.tmp/7530/reassign-sample.txt`: 553 files picked by `.tmp/7530/find-reassign.mjs`, which match a function
+  declaration whose name is assigned, or `eval`.
+- `.tmp/mhash.mts` from the #7470 worktree, plus four graphs:
+  - E (an import of a reassigned function);
+  - a renamed import of a reassigned function with no name clash (G without entry's own `f`);
+  - E plus a third file that never names `f`;
+  - Y3 (cyclic).
 
 ### Tests
 
 New `tests/issue-7530-same-named-reassigned-functions.test.ts`, using the harness of
 `tests/issue-7470-same-named-module-bindings.test.ts`.
 
-- **Pin rows.** A, B, B2, C, D, E, F, G and H, with node's answers, × gc/standalone × `experimentalIR` on/off.
-- **Row I** with the IR path on only, citing the I0 issue.
-- **Rows that pass today.** B, B2 and E show that the fix keeps the reassigning file's own reads and the
-  non-colliding import working.
+- **Pin rows.** Every row of the acceptance criteria, × gc/standalone × `experimentalIR` on/off. Row I runs with the
+  IR path on only, citing [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function).
 - **Related suites.** `tests/issue-7470-*`, `tests/issue-2930*`, `tests/issue-2931*`, `tests/issue-4133*`,
-  `tests/issue-4182*` (Annex B seeds) and `tests/issue-3505*`.
-- **Gates.** The usual gates, unpiped, including `check:import-cycles`, because `module-init-prologue.ts` now imports
-  the projection module.
+  `tests/issue-4182*`, `tests/issue-3505*`, `tests/issue-6880*`, and the lodash-es tests #7470 ran.
+- **Gates.** Unpiped, including `check:import-cycles`, because `module-init-prologue.ts` now imports the projection
+  module.
 
 ### Risks
 
-- **Set readers outside a body pass.** Three files read `ctx.liveFuncBindingGlobals` at collect-time state:
-  `multi-prepared-module-init.ts:150`, `multi-prepared-module-init-census.ts:280` and
-  `ir-overlay-preparation.ts:115/168`. If the IR-on pin rows show one of them running inside a view, it asks
-  `liveFunctionBindings(ctx)` instead. Do not add a second set.
-- **The table answers for more declarations.** `moduleBindingOf` (typed `ts.Declaration`) now answers for function
-  declarations. Its codegen callers gate on a variable or binding element first:
-  - `module-namespace-value.ts:255`
-  - `module-var-undefined-seed.ts:135`
-  - `source-binding-projection.ts:130`
-  - `index.ts:9583`
-
-  The last two are the intended new users.
+- **Set readers outside a body pass.** `multi-prepared-module-init.ts:150`, `multi-prepared-module-init-census.ts:280`
+  and `ir-overlay-preparation.ts:115/168` read the set at collect-time state. There it still holds every live name whose binding
+  holds the bare entry, but not a colliding second binding, which shows only inside its own file's view. If an
+  IR-on pin row shows such a reader deciding wrongly, it asks `liveFunctionBindings(ctx)` instead. Do not add a
+  second set.
+- **Hidden names in files that never name them.** A graph with a live function makes every other module's view
+  hide that name. Readers keyed by a bare name the file never mentions do not run, and the mhash graph with a third
+  file checks this. In lodash-es that is about 475 names across every module, so record its compile time before and
+  after.
 
 ### Files and functions (for the lane split with C8, #7620)
 
@@ -189,24 +349,15 @@ New `tests/issue-7530-same-named-reassigned-functions.test.ts`, using the harnes
 | --- | --- |
 | `src/codegen/module-binding-table.ts` | `ModuleBindingDeclaration`, `ModuleBinding`, the table record; new `markLiveFunctionBinding`, `liveFunctionBindings` |
 | `src/codegen/source-binding-projection.ts` | `SourceBindingView`, `recordSourceModuleBindingView`, `ModuleNameState`, `moduleNameState`, `setModuleNameState`; new `NO_MODULE_BINDING` |
-| `src/codegen/module-global-registration.ts` | `registerModuleGlobal` (203-259, tail extracted); new `registerLiveFunctionGlobal` right after it. The TDZ functions (309 onward) are untouched |
-| `src/codegen/index.ts` | `registerReassignedFunctionGlobals` (9053-9240) only |
-| `src/codegen/declarations/module-init-prologue.ts` | the live-binding seed loop (88-133), `moduleInitPrologueForcesInit` (139-145) |
-| `src/codegen/program-abi-global-planning.ts` | the `moduleBinding` parameter type only, and only if the widened alias reaches it |
+| `src/codegen/module-global-registration.ts` | `registerModuleGlobal` (203-259, tail extracted to `bindModuleGlobal`); new `registerLiveFunctionGlobal` and `registerAnnexBLiveBinding` right after it. The TDZ functions (309 onward) are untouched |
+| `src/codegen/index.ts` | `registerReassignedFunctionGlobals` (9053-9240); one line of `registerImportBindingAliases` (9607) |
+| `src/codegen/annexb-global-live-binding.ts` | `registerAnnexBGlobalLiveBindings` (169-212) |
+| `src/codegen/declarations/module-init-prologue.ts` | the seed loop (88-133), `moduleInitPrologueForcesInit` (139-145) |
+| `src/codegen/declarations.ts` | `withDirectRuntimeModuleBindings`, line 1748 only |
+| `src/codegen/named-this-call.ts` | lines 655-656 |
+| `src/codegen/context/types.ts` | drop `evalOnlyLiveFuncBindings` (3203) |
 | `tests/issue-7530-same-named-reassigned-functions.test.ts` | new |
 
-- **Not touched:** `module-namespace-value.ts`, `identifiers.ts`, `identifier-module-storage.ts`, `declarations.ts`,
-  the TDZ registration functions and `src/ir/`.
-- **Expected C8 overlap.** The C8 shapes (`export * as ns`, a block-local `let` shadowing an import, cyclic-import
-  TDZ) most likely land in `module-namespace-value.ts`, the identifier readers and the TDZ functions of
-  `module-global-registration.ts`. The only shared file is `module-global-registration.ts`, in disjoint regions.
-
-### Code-quality acceptance criterion
-
-- **One allocation authority.** Live-function globals are minted through the same helper as `registerModuleGlobal`.
-  No second `__mod_` push remains in `index.ts`.
-- **One projection.** Liveness travels in `ModuleNameState`. No second save and restore exists for
-  `liveFuncBindingGlobals`.
-- **No parallel name set** beside `reassignedDeclarations`.
-- **No budget grants and no new module.** `index.ts` shrinks. No branch handles a state the table cannot reach.
-- **Review.** The adversarial review checks each of these points.
+- **Not touched:** `module-namespace-value.ts`, `identifiers.ts`, `identifier-module-storage.ts`, the TDZ
+  functions and `src/ir/`.
+- **Shared with C8:** `module-global-registration.ts` (disjoint regions) and `declarations.ts` (one line).
