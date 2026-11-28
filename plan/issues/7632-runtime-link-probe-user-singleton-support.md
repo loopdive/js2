@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: bugfix
 area: ir
 goal: ir-full-coverage
-related: [2928, 7631]
+related: [2928, 7631, 7633, 7634]
 ---
 
 # #7632: the runtime-link probe's user module no longer compiles
@@ -83,67 +83,104 @@ collectDeclarations → recordExportSignature → ensureNativeDynamicBoundaryBri
 That builds `__fn_tramp_d_cached` with the flag still unset, so its result is `(ref $string)`. Prepared IR planning
 (`prepareTopLevelFunctionValueTargetSupport` → `ensureFuncClosureSingletonAccessor`) later asks for the same
 singleton with the flag set, so it wants an `externref` result. The reuse check rejects the existing trampoline,
-`ensureFuncClosureSingleton` returns null, and the planner throws the invariant. The flag is read before it is
-written: the bug is ordering, not the IR. The legacy path keeps the stale `ref`-result wrapper silently, which is the
-shape #6647 fixed for live global bindings.
+`ensureFuncClosureSingleton` returns null, and the planner throws the invariant.
+
+**The flag is not the only stale input (plan review PRV-7632).** The whole push/pull sync is *filled* at that early
+point (`ensureRuntimeEvalGlobalBindingSync`, filled once: `runtimeEvalGlobalSyncFilled`), and its inputs are only
+final once `registerReassignedFunctionGlobals` and `registerAnnexBGlobalLiveBindings` have run:
+
+- push reads `ctx.liveFuncBindingGlobals` to publish a live `$__mod_<f>`;
+- pull filters on `ctx.moduleGlobals`, where the `$__mod_<f>` globals do not exist yet;
+- both read the global types that registration widens to `externref`.
+
+Measured on the minimal repro (standalone, main 28ca865e, IR off): `__runtime_eval_pull_globals` has 0 `global.set`,
+so an interpreted `d = …` never reaches AOT code. Moving only the flag earlier would make the repro compile and keep
+that hole.
+
+**How often.** test262 sources are scripts without exports, so they never reach the early fill:
+
+| corpus (150 eval/`Function` test262 files, assert + sta harness) | compiles | early fills |
+| ------------------------------------------------------------------ | -------- | ----------- |
+| as is, gc + standalone                                              | 300      | 0           |
+| with `export function __probeAny(x: any): any` and `__probeStr(s: string): string` appended | 300 | 22 (11 files × 2 targets) |
+
+All 66 fills in the plain corpus happen in a runtime-eval consumer (`ctx.runtimeEvalGlobalFunctionBindings` set).
+
+## Other failures in the runtime-link test
 
 `tests/issue-2928-runtime-link.test.ts` has two more failures that are not this bug. Both are measured on main with
 `experimentalIR: false` too:
 
-1. **A stale probe stub (fixed here).** Since #7441, `compileDynamicFunctionMeta` checks the body span
-   (`fitsFunctionSourceText(…, fnBody.start, fnBody.end)`). The probe's stub `parse` returns hand-built function ASTs
-   without `start`/`end`, so every dynamic `Function` in the probe throws a SyntaxError. That covers 11 of the 12
-   execution errors.
-2. **`aotThrowRoundTrip` (out of scope).** An exception thrown by an AOT function and caught by interpreted
-   `try/catch` crosses the module boundary uncaught. It fails the same with the IR on or off. Routed separately.
+1. **#7634: the probe's stub parser.** Its function ASTs lack the body span #7441 checks. That accounts for 11 of the
+   12 execution errors. It has its own issue file and plan, and lands as its own commit in this PR, because the probe
+   can only be shown green once this fix lets the user module compile.
+2. **#7633: `aotThrowRoundTrip`.** An AOT throw is not caught by interpreted `try/catch` across the module boundary.
+   It is out of scope.
 
 ## Implementation Plan
 
-**Module.** `src/codegen/expressions/runtime-eval-provider.ts`, which owns the provider linkage state
-(`runtimeEvalProviderLinkable`).
+**Module.** `src/codegen/expressions/runtime-eval-provider.ts`, which already splits
+`reserveRuntimeEvalGlobalBindingSync` (mint the two empty functions) from the fill.
 
-**Change.**
-- A new `applyRuntimeEvalBoundaryPlan(ctx, sourceFiles)` builds `ctx.runtimeEvalBoundaryPlan` and sets the two flags
-  derived from it, `runtimeEvalCallableBoundaryEnabled` and `runtimeEvalGlobalFunctionBindings`.
-- Both generators call it: `generateModule` (index.ts ~5439) and `generateMultiModule` (~9901).
+**Change: fill once the bindings are settled.**
+- The emitters (`emitRuntimeEvalGlobalBindingSeed`, `emitRuntimeEvalResultUnwrap`) still call
+  `ensureRuntimeEvalGlobalBindingSync`. That now reserves, and fills only if the bindings are already settled.
+- A new `settleRuntimeEvalGlobalBindings(ctx)` marks them settled, and fills if the sync was already reserved.
+- The fill moves unchanged into `fillRuntimeEvalGlobalBindingSync`.
+- `runtimeEvalGlobalSyncFilled` is replaced by `runtimeEvalGlobalBindingsSettled` (`src/codegen/context/types.ts`), so
+  the flag count stays the same.
+- The fill now runs exactly once, when the second of the two events happens (reserved, settled), whichever order
+  they come in. No flag stays whose value depends on when it is read.
+- Both generators call `settleRuntimeEvalGlobalBindings(ctx)` right after `registerAnnexBGlobalLiveBindings`, the
+  last registration of eval-visible bindings: `generateModule` (index.ts ~5898) and `generateMultiModule` (~10279).
+- Only these two generators create a `CodegenContext`, so no path reserves without ever settling.
 
-**Reuse / duplicate removed.**
-- The two identical "build plan, then set `runtimeEvalCallableBoundaryEnabled`" blocks in index.ts become the one call.
-- `registerReassignedFunctionGlobals` reads `ctx.runtimeEvalGlobalFunctionBindings` instead of recomputing its local
-  `runtimeEvalConsumer` from the plan, and stops writing the flag.
-- It keeps the eval-visible var widening, which must stay after declaration collection.
-- No new predicate and no change to `ensureFuncClosureSingleton`: the singleton becomes correct because its input is
-  final before the first reader.
+**What this removes.** The declaration-time `emitCachedFuncClosureAccess(d)` is gone, because the early seed now only
+reserves. So `ctx.runtimeEvalGlobalFunctionBindings` stays where it is, next to its var widening (the index.ts ~9208
+invariant), and nothing reads it before it is written.
+
+**Shared plan block (review item 6).**
+- The two identical blocks "build `ctx.runtimeEvalBoundaryPlan`, then set `runtimeEvalCallableBoundaryEnabled`"
+  (index.ts ~5439 and ~9901) become one `applyRuntimeEvalBoundaryPlan(ctx, sourceFiles)` in the same module.
+- It owns the plan and `runtimeEvalCallableBoundaryEnabled`, and nothing else.
+- The fold offsets the two settle calls, so `index.ts` does not grow. The prototype's settle calls alone were +2
+  against the LOC ceiling.
 
 **Tests.**
-- `tests/interp/runtime-function-link-probe.mjs`: the stub `parse` gives the four function ASTs their body span, via
-  one `withBodySpan(source, ast)` helper next to `parse`.
-- `tests/issue-2928-runtime-link.test.ts`: the user module's import order becomes `apply_interpreted, indirect_eval,
-  new_function, direct_eval`. The first request now comes from the declaration-time seed, which asks for the global
-  call support first. The assertion stays exact. The `aotThrowRoundTrip` expectation is not touched: that row stays
-  red, with the reason in the routed issue.
-- A new `tests/issue-7632-runtime-eval-binding-singleton.test.ts` compiles the minimal repro on gc and standalone,
-  each with `experimentalIR` on and off. It asserts success, and that `__fn_tramp_d_cached` returns `externref` in
-  each, so the wrapper ABI no longer depends on emission order.
+- A new `tests/issue-7632-runtime-eval-binding-sync.test.ts`, red on main and green after:
+  - (a) the minimal repro compiles on gc and standalone, each with `experimentalIR` on and off;
+  - (b) semantics, from the emitted module: `__runtime_eval_pull_globals` writes `$__mod_d`, and
+    `__runtime_eval_push_globals` reads `$__mod_d` rather than `$__fn_closure_d`. Prototype, standalone: pull writes
+    global 1255 = `$__mod_d`, and push reads 1255.
+  - If the review prefers a runtime check, `new Function("d = …")` visible to AOT through the runtime-link probe is
+    the alternative. The probe needs #7634 for that.
+- `tests/issue-2928-runtime-link.test.ts`: the expected user-module import order becomes `apply_interpreted,
+  indirect_eval, new_function, direct_eval`.
+  - This is compiled output and has nothing to do with the stub. Measured with the prototype: the order is the same
+    with the original and the stub-fixed probe, because the stub lives in the provider source, not the user module.
+  - `indirect_eval` comes first because the declaration-time `Function` companion seed lowers `Function` to
+    `indirect_eval("Function")` (`emitStandaloneIntrinsicFunctionValue`) before any body asks for `new_function`.
+  - Unverified (the clone is shallow): the old expectation predates that seed. The user module has not compiled on
+    main since then, so the expectation could not be refreshed.
+  - `aotThrowRoundTrip` stays excluded, citing #7633.
 
-**Byte identity (measured with a prototype, 2026-11-28, main 28ca865e).**
-- 150 test262 files that use `eval(`/`Function(` (built-ins/Function, language/eval-code, built-ins/global,
-  language/statements/function, with the assert and sta harness): 450 compiles across gc, standalone and Prepared,
-  all succeeding, 0 byte differences.
-- In the implementation PR: the same A/B, plus the 20-program literal-`Function` corpus from #7631, gc and standalone.
-- Any byte difference must be in a program where a function-value singleton was built during declaration
-  collection, and it is listed in the PR.
+**Byte identity (prototype, 2026-11-28, main 28ca865e).**
+- Plain corpus above: 300 compiles, gc + standalone, 0 byte differences.
+- Export-bearing corpus above: 300 compiles, all succeed. Exactly the 22 early-fill rows differ (11 per target),
+  and none of the other 278. Those 22 are the bug: their sync bodies were filled before the bindings were settled.
+- In the implementation PR, rerun on the same corpora with the Prepared lane added, plus the #7631 literal-`Function`
+  corpus. The changed rows must be exactly the early-fill rows, and they are listed in the PR.
 
 ## Acceptance
 
-- The minimal repro compiles on gc and standalone, with the IR on and off, and the new test pins the wrapper ABI.
-- `tests/issue-2928-runtime-link.test.ts` passes, except the `aotThrowRoundTrip` row, which has its own routed issue.
-  (Prototype: user module compiles; 11 of 12 execution errors are gone; with the import-order update only
-  `aotThrowRoundTrip` remains.)
-- The byte A/B above shows 0 differences outside the affected shape.
-- All gates are green.
-- Code quality:
-  - one helper replaces two duplicated blocks and one recomputation;
-  - no defensive branch;
+- (a) Red → green pin for the minimal repro: gc and standalone, IR on and off.
+- (b) Semantic pin: pull writes back `$__mod_d`, and push reads `$__mod_d`.
+- (c) Code quality:
+  - one plan/flag block for both generators;
+  - the sync fill in one place;
+  - the settled/reserved pair replaces the filled flag, with no new ordering-dependent flag;
   - no change to the singleton reuse check, which was right to refuse a mismatched ABI.
-
+- (d) gc and standalone byte-identical on everything but the early-fill rows of an export-bearing eval sample.
+- (e) `tests/issue-2928-runtime-link.test.ts` passes, together with #7634, except `aotThrowRoundTrip`, which cites
+  #7633.
+- All gates are green, including `LOC_GATE_BASE=origin/main` with no grant for `src/codegen/index.ts`.
