@@ -12,14 +12,18 @@
  * spaces while a body compiles.
  */
 import type { GlobalDef, WasmFunction } from "../ir/types.js";
+import { identifierIndex } from "../shared/callee-name-index.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, NativeGeneratorInfo } from "./context/types.js";
 import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
 import { absoluteGlobalIdx, definedGlobalAt } from "./global-space.js";
 import {
   isCollidingModuleName,
+  type LiveFunctionKind,
+  liveFunctionBindings,
   type ModuleBinding,
   moduleBindingOf,
+  moduleBindingOfGlobal,
   moduleBindingsNamed,
   sourceModuleBindings,
 } from "./module-binding-table.js";
@@ -37,8 +41,11 @@ interface SourceBindingView {
    * the name, so its calls take the legacy path instead of resuming another module's state machine (#3505).
    */
   readonly generators: Map<string, NativeGeneratorInfo | undefined>;
-  /** Its own colliding top-level bindings and the bindings its imports resolve to. */
-  readonly globals: Map<string, ModuleBinding>;
+  /**
+   * Its own colliding top-level bindings, the bindings its imports resolve to, and {@link NO_MODULE_BINDING} for a
+   * live function name it neither declares nor imports.
+   */
+  readonly globals: Map<string, ModuleNameState>;
 }
 
 const viewsByContext = new WeakMap<CodegenContext, Map<ts.SourceFile, SourceBindingView>>();
@@ -119,31 +126,48 @@ function importBindingNames(sourceFile: ts.SourceFile): ts.Identifier[] {
 
 /**
  * Complete `sourceFile`'s view with the module bindings it must see under a bare name another binding holds: its own
- * colliding top-level bindings, and each import binding whose target the bare name does not show.
+ * colliding top-level bindings, and each import binding whose target the bare name does not show, in value or in
+ * liveness. A live function name (#7530) that the source spells but neither declares nor imports is hidden, so its
+ * own same-named function, or an imported one with no binding, is called directly instead of through another
+ * module's global. A source that never spells the name cannot read it, so it keeps the bare view and its body
+ * compiles without the projection (in lodash-es, hundreds of names over every module).
  */
 export function recordSourceModuleBindingView(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  for (const [name, binding] of sourceModuleBindings(ctx, sourceFile)) {
+  const own = sourceModuleBindings(ctx, sourceFile);
+  for (const [name, binding] of own) {
     if (isCollidingModuleName(ctx, name)) viewOf(ctx, sourceFile).globals.set(name, binding);
   }
+  const imported = new Set<string>();
   for (const local of importBindingNames(sourceFile)) {
     const target = ctx.oracle.aliasedValueDeclarationOf(local);
     const binding = target && moduleBindingOf(ctx, target);
+    if (!binding) continue;
+    imported.add(local.text);
     if (
-      binding &&
-      (isCollidingModuleName(ctx, local.text) ||
-        isCollidingModuleName(ctx, binding.name) ||
-        ctx.moduleGlobals.get(local.text) !== absoluteGlobalIdx(ctx, binding.value))
+      isCollidingModuleName(ctx, local.text) ||
+      isCollidingModuleName(ctx, binding.name) ||
+      ctx.moduleGlobals.get(local.text) !== absoluteGlobalIdx(ctx, binding.value) ||
+      (ctx.liveFuncBindingGlobals?.has(local.text) ?? false) !== (binding.liveFunction !== undefined)
     ) {
       viewOf(ctx, sourceFile).globals.set(local.text, binding);
     }
   }
+  for (const { name } of liveFunctionBindings(ctx)) {
+    if (!own.has(name) && !imported.has(name) && identifierIndex(sourceFile).has(name)) {
+      viewOf(ctx, sourceFile).globals.set(name, NO_MODULE_BINDING);
+    }
+  }
 }
 
-/** What a bare module name shows: a value global and its TDZ flag, either possibly absent. */
+/** What a bare module name shows: a value global, its TDZ flag and its function liveness, each possibly absent. */
 export interface ModuleNameState {
   readonly value?: GlobalDef;
   readonly tdz?: GlobalDef;
+  readonly liveFunction?: LiveFunctionKind;
 }
+
+/** The state of a name a source has no binding of. */
+const NO_MODULE_BINDING: ModuleNameState = Object.freeze({});
 
 /**
  * Capture what `name` shows now. A colliding name answers with its binding object itself, so a TDZ flag the binding
@@ -156,7 +180,14 @@ export function moduleNameState(ctx: CodegenContext, name: string): ModuleNameSt
   const binding = isCollidingModuleName(ctx, name)
     ? moduleBindingsNamed(ctx, name).find((candidate) => candidate.value === value)
     : undefined;
-  return binding ?? { value, tdz: tdzIdx === undefined ? undefined : definedGlobalAt(ctx, tdzIdx) };
+  return (
+    binding ?? {
+      value,
+      tdz: tdzIdx === undefined ? undefined : definedGlobalAt(ctx, tdzIdx),
+      liveFunction:
+        value && ctx.liveFuncBindingGlobals?.has(name) ? moduleBindingOfGlobal(ctx, value)?.liveFunction : undefined,
+    }
+  );
 }
 
 /**
@@ -171,6 +202,8 @@ export function moduleBindingState(ctx: CodegenContext, binding: ModuleBinding):
 
 /** Make `name` show `state`: each part set at its current index, or removed when absent. */
 export function setModuleNameState(ctx: CodegenContext, name: string, state: ModuleNameState): void {
+  if (state.liveFunction) (ctx.liveFuncBindingGlobals ??= new Set<string>()).add(name);
+  else ctx.liveFuncBindingGlobals?.delete(name);
   const valueIdx = state.value && absoluteGlobalIdx(ctx, state.value);
   if (valueIdx === undefined) ctx.moduleGlobals.delete(name);
   else ctx.moduleGlobals.set(name, valueIdx);
@@ -213,9 +246,9 @@ function applyView(ctx: CodegenContext, view: SourceBindingView): SavedNames {
     saved.generators.set(name, ctx.nativeGenerators.get(name));
     projectGenerator(ctx, name, info);
   }
-  for (const [name, binding] of view.globals) {
+  for (const [name, state] of view.globals) {
     saved.globals.set(name, moduleNameState(ctx, name));
-    setModuleNameState(ctx, name, binding);
+    setModuleNameState(ctx, name, state);
   }
   return saved;
 }

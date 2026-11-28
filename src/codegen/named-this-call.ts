@@ -24,6 +24,7 @@ import type { BlockType, FuncHandle, Instr, ValType, WasmFunction } from "../ir/
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { moduleBindingOf } from "./module-binding-table.js";
 import { bodyReferencesOwnThis } from "../shared/body-references-own-this.js";
 import { isStrictContext } from "../shared/is-strict-function.js";
 import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
@@ -653,7 +654,7 @@ export function resolveNamedThisCallTarget(
     // (#6880) An eval-only live binding keeps the trampoline: the fallback
     // calls the same static function and drops the receiver.
     (ctx.liveFuncBindingGlobals?.has(callee.text) === true &&
-      ctx.evalOnlyLiveFuncBindings?.has(callee.text) !== true) ||
+      moduleBindingOf(ctx, declaration)?.liveFunction !== "eval") ||
     !declarationOwnsHandle(ctx, declaration, targetFuncIdx) ||
     userArguments.some((argument) => ts.isSpreadElement(argument)) ||
     (declaration.parameters[0] &&

@@ -1744,8 +1744,10 @@ function withDirectRuntimeModuleBindings<T>(
   const savedGlobals = new Map<string, ModuleNameState>();
   for (const [name, entry] of runtimeModuleGlobals(ctx, group.block)) {
     if (absoluteGlobalIdx(ctx, entry.value) === undefined) continue;
-    savedGlobals.set(name, moduleNameState(ctx, name));
-    setModuleNameState(ctx, name, entry);
+    const saved = moduleNameState(ctx, name);
+    savedGlobals.set(name, saved);
+    // A namespace member never changes whether the name reads as a live function (#7530).
+    setModuleNameState(ctx, name, { ...entry, liveFunction: saved.liveFunction });
   }
   try {
     return withRuntimeModuleCallableBindings(

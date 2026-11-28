@@ -1,7 +1,8 @@
 ---
 id: 7530
 title: "Same-named reassigned functions in different files share one live-binding global"
-status: in-progress
+status: done
+completed: 2026-11-28
 sprint: current
 created: 2026-11-26
 updated: 2026-11-28
@@ -50,7 +51,12 @@ scheme. The full plan is under "Implementation Plan" below.
   - One allocation helper for `__mod_` globals. No inline `__mod_` push remains in `index.ts` or
     `annexb-global-live-binding.ts`.
   - One per-file view. Liveness travels in `ModuleNameState`, with no second save and restore.
-  - No name set beside the table: the `reassigned` set and `ctx.evalOnlyLiveFuncBindings` are removed.
+  - No liveness name set beside the table: the `reassigned` set and `ctx.evalOnlyLiveFuncBindings` are removed.
+    `ctx.annexBModuleBindings` and `ctx.globalObjectVarBindings` stay: they record other facts about a name (it is
+    an Annex B B.3.3 binding, so `__module_init` evaluates its block declarations and seeds it `undefined`; it is a
+    global-object property), not whether it is live, and moving them into the table is outside this issue.
+  - (Review condition e) A live function name is hidden only in a source that spells it, so a module that never
+    names it compiles without the projection. lodash-es compile time before and after is under Results.
   - No budget grants, no new module, no branch for a state the table cannot reach.
 
 ## Implementation Plan
@@ -66,7 +72,7 @@ It answers review PRV-7530 of revision 1 (a22972b089).
 - **Row I0**, an import alias named like another file's own function with the IR path off, is
   [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function).
 - **Row Y**, a cyclic import in which the reassigning module is imported by its importer, fails with no name clash.
-  The acyclic control (Y5) and the other cycle direction (Y3) both pass. It needs its own issue, or C8's cycle work.
+  The acyclic control (Y5) and the other cycle direction (Y3) both pass. It is #7627.
 - **Rows T, T1 and T2**, a TS `namespace` variable named like an outer function, do not compile on any lane. The
   compiler reports `Duplicate identifier 'f'` (T2) or `Cannot assign to 'f' because it is a function` (T, T1). So
   their liveness cannot be measured (design step 5).
@@ -251,7 +257,8 @@ Liveness has one source: the binding in #7470's table. `ctx.liveFuncBindingGloba
    - The alias's `moduleGlobals` copy (9583-9585) stays as it is: it is #7470's, and the funcMap half belongs to
      [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function).
 5. **Projection** (`source-binding-projection.ts`).
-   - `ModuleNameState` gains `liveFunction?: boolean`.
+   - `ModuleNameState` gains `liveFunction?: LiveFunctionKind`, the same `"assigned" | "eval"` union as
+     `ModuleBinding.liveFunction`, so a binding passed as a state carries one representation (review condition a).
      - `moduleNameState` reads it from the set, and from the binding for a colliding name.
      - `setModuleNameState` writes it into the set next to the two maps.
    - `SourceBindingView.globals` becomes `Map<string, ModuleNameState>`, and a frozen `NO_MODULE_BINDING = {}` state
@@ -361,3 +368,120 @@ New `tests/issue-7530-same-named-reassigned-functions.test.ts`, using the harnes
 - **Not touched:** `module-namespace-value.ts`, `identifiers.ts`, `identifier-module-storage.ts`, the TDZ
   functions and `src/ir/`.
 - **Shared with C8:** `module-global-registration.ts` (disjoint regions) and `declarations.ts` (one line).
+
+## Results (2026-11-28)
+
+Implemented on `claude/7530-reassigned-functions` against 73c3b4070a, the plan's design with the changes below.
+Base for every before/after figure: 73c3b4070a, exported with `git archive` into `.tmp/base`.
+
+### Rows
+
+Measured with `.tmp/7530/probe.mts` and pinned in `tests/issue-7530-same-named-reassigned-functions.test.ts`
+(70 tests: 9 fixed rows and 8 kept rows on gc and standalone, IR on and off, plus the Annex B row on IR on).
+
+| row | node | before | after (all four lanes) |
+| --- | --- | --- | --- |
+| A | 12 | 42 | 12 |
+| C | 24 | 44 | 24 |
+| D | 314 | 343 | 313, see below |
+| D′ (D with `swap` declared before `get`) | 314 | 144 | 314 |
+| F | 125 | 122 | 125 |
+| G | 127 | 112 | 117, see below |
+| G read as a value (`const h = k`) | 127 | 122 | 127 |
+| H | 12 | 42 | 12 |
+| I | 25 | 55 | 55, see below |
+| I read as a value (`const g = k`) | 25 | 25 | 25 |
+| X | 12 | 42 | 12 |
+| Y2 | 41 | 44 | 41 |
+| Z | 31 | 14 | 31 |
+| AB1 | 23 | 21 | 21, see below |
+| B, B2, B3, E, Y3, Y5, AB2 | as node | as node | as node |
+
+The pinned fixed rows (A, C, D′, F, G as a value, H, X, Y2, Z) fail on the base on every lane (36 of 36); the
+kept rows pass on both.
+
+**Four rows keep a residual that needs no name clash, so they are not fixed here.** Each part this issue owns (the
+other module's live global) is gone; what remains reproduces without it, and fixing it would change bytes of the
+clash-free gates:
+
+- **D.** A direct call of a live function that compiles before any assignment to it stays a direct call: the call
+  path routes through the live global only once `closureMap` holds the name, which the assignment's compile sets.
+  The single-file form gives 303 for node's 304 on the base too. D′ pins the clash part.
+- **G.** A direct call of a renamed import (`k()`) of a reassigned function stays direct: the alias gets no closure
+  entry. With no clash at all (the `G0` mhash graph) the base already gives 110 for node's 120. G read as a value
+  is pinned.
+- **I.** The same alias call, and then the call-site inliner, keyed by bare name, inlines the third file's own `k`.
+  That is #7621's defect; once `k` is live in the entry the IR declines `main`, so it shows with the IR path on as
+  well (55 on the base too). Review condition f: I read as a value is pinned, on all four lanes.
+- **AB1.** A block function `f` in one module calls another module's top-level `f` (`funcMap` is keyed by bare
+  name and #4133's projection covers top-level functions only). Without any reassignment the base gives 11 for 13.
+
+These three defects (direct live call before the first assignment; direct call of a live import alias; a block
+function colliding with another module's top-level function) have no issue yet. New ids need
+`claim-issue.mjs --allocate`, which writes to the shared ref, so they are left to the lead to file.
+
+### Deviations from the plan
+
+- **The hiding rule is limited to sources that spell the name** (review condition e). Hiding every live name in
+  every module cost lodash-es +34 % compile time on gc and +35 % on standalone (46.9 s and 43.1 s against 34.9 s and
+  31.9 s, one run each). A source that never spells a name has no read of it. The identifier index this needs
+  already existed privately in `declarations/provenance-closed-arrays.ts`; it moved to
+  `src/shared/callee-name-index.ts`, beside the call-site index, and both users import it (no new module). The IR
+  keeps its own copy in `src/ir/closure-signature-flow.ts`, which this issue does not touch.
+- **The seed loop loses its `seededGlobals` dedupe.** It existed for import aliases sharing their target's global.
+  Aliases no longer join the list, and no two bindings share a global, so the set could never hit.
+- **Two more collect-time readers of the set ask the table.** `multi-prepared-module-init-census.ts` (the IR-on
+  pin rows failed with `parity-changed` until it did, because the census re-read the set under a view) and the
+  matching admission check in `multi-prepared-module-init.ts` read `liveFunctionBindings(ctx)`, as the Risks section
+  provides. `ir-overlay-preparation.ts` needed no change.
+- **`moduleNameState` finds a non-colliding live name's kind through the table's owner of the global**
+  (`moduleBindingOfGlobal`, a `byValue` map in the table), so a saved state keeps the `"assigned" | "eval"` union
+  (review condition a), including for an import alias shown in its importing file.
+- **`registerModuleGlobal` keeps a variable-only parameter type.** `ModuleBindingDeclaration` now includes
+  `ts.FunctionDeclaration`; the variable registration path and the Program ABI registry
+  (`IrModuleBindingDeclaration`) keep the narrower types.
+
+### Review conditions
+
+- **9.** Row Y cites #7627 under "Out of scope".
+- **a.** `ModuleNameState.liveFunction` is `LiveFunctionKind` (`source-binding-projection.ts`), the type of
+  `ModuleBinding.liveFunction` (`module-binding-table.ts`).
+- **b.** `registerAnnexBLiveBinding` marks `binding.liveFunction ?? "assigned"` and `markLiveFunctionBinding` never
+  downgrades, so an eval-only binding stays eval-only. **The corpus byte gate would not catch a break**: an
+  instrumented run over the eval/Annex B and reassign samples found 21 Annex B registrations, none on an existing
+  eval-only binding, and the kind is read only by `named-this-call.ts`, which no corpus file reaches. So the row is
+  pinned by behaviour instead: a Script with an eval-only `function f`, an Annex B block `f`, and
+  `if (!f.call(o)) throw …`. With the rule broken (marking `"assigned"`), both IR-on lanes of that test fail (the
+  receiver is dropped and the initializer throws). The same source with the check moved into a function compiles to
+  the base's bytes with the rule (gc `b0e7095b3064`) and to other bytes without it (`8768480f02c0`).
+  With the IR path off the receiver is dropped before and after this change, so the row runs IR on only.
+- **c.** The criterion now reads "no liveness name set"; why `annexBModuleBindings` and `globalObjectVarBindings`
+  stay is under the criterion.
+- **d.** `registerAnnexBLiveBinding(ctx, name, declarations)` attaches every block declaration to the one binding.
+- **e.** See the first deviation.
+- **f.** Pinned (row "I renamed import k …, read as a value").
+
+### Validation
+
+| check | result |
+| --- | --- |
+| byte gate: 389-file sample, eval/Annex B sample (113), reassign sample (553) × gc/standalone × IR on/off | 4,220 of 4,220 rows identical |
+| `mhash` (#7470's 5 graphs plus E, G0, E with a third file, Y3) × 4 lanes | 36 of 36 identical |
+| `tests/issue-7530-*` | 70 passed |
+| issue-7470, 7464, 2930, 2931, 4133 (2 files), 4182, 6880 (2 files) | all passed |
+| issue-3505 | 2 of 3 fail on base and after: `test262-fyi/data` submodule absent here |
+| lodash-es e2e, 6985, 3995 | 12 passed, 2 skipped in-file (`it.skip`, unchanged) |
+| lodash-es upstream suite | before and after: compiles, validates, 3,229,932 bytes; 0/62 run, both failing at instantiation on the absent `js2wasm:runtime-eval` provider |
+| `node scripts/equivalence-gate.mjs` | exit 0, no new regressions (2 baseline failures now pass) |
+| loc/func budget, coercion sites, oracle ratchet, dead exports, import cycles, compiler boundaries (`--base HEAD^1` and `origin/main`) | exit 0 |
+| `LOC_GATE_BASE=origin/main` loc budget | exit 1, on two files this change does not touch: `eval-inline.ts` and `ir/select.ts` are larger on this stacked branch than on main (2,216 vs 2,159 and 14,773 vs 14,748 lines). Merging main into the stack clears it |
+
+lodash-es `compileProject(lodash.js)`, three runs each, idle box:
+
+| target | bytes before | bytes after | compile before (ms) | compile after (ms) |
+| --- | --- | --- | --- | --- |
+| gc | 6,237,710 | 6,356,395 (+1.9 %) | 34,695 / 34,279 / 34,342 | 40,604 / 35,762 / 35,147 |
+| standalone | 6,113,303 | 6,232,698 (+2.0 %) | 33,948 / 30,522 / 29,949 | 33,702 / 33,279 / 31,933 |
+
+Both validate. The growth is in the closure dispatchers (`__dyn_call_*`, `__call_fn_method_*`): 97 names clash in
+lodash-es, and each module's own same-named function is now its own value instead of the last module's.
