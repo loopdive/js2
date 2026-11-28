@@ -6,8 +6,9 @@
 // every later module that declared the name, so a write in one module was read back by the other (and a number in
 // one with a string in the other trapped `illegal cast`). Each row compiles a small graph with `compileMulti` and
 // compares `main()` with node's answer for the same sources (recorded from node 22 on 2026-11-26), on gc and
-// standalone, with the IR path on and off. Every row except "third file never written" failed before the fix; that
-// one held by accident (the shared global happened to hold the right value) and broke under a partial fix.
+// standalone, with the IR path on and off. Every row failed before the fix except two. "Third file never written"
+// held by accident (the shared global happened to hold the right value) and broke under a partial fix. "Re-export
+// with rename to k" pins that a renamed name keeps working.
 
 import { describe, expect, it } from "vitest";
 
@@ -140,6 +141,72 @@ const ROWS: [name: string, node: number, files: Record<string, string>][] = [
       "entry.ts": `import { h } from "./c"; import d, { bump } from "./dep"; let g = 5; export function main(): number { bump(); return d * 100 + g * 10 + h(); }`,
       "dep.ts": `let g = 1; export { g as default }; export function bump(): void { g = 2; }`,
       "c.ts": c3,
+    },
+  ],
+  // A renamed export: the entry's `g` shows dep's `x`, while c's `g` is a separate binding. These crashed codegen
+  // (let) or threw a TDZ error (const) when c's statements of `__module_init` compiled under the entry's view.
+  [
+    "renamed export of a let, third file declares g",
+    23,
+    {
+      "entry.ts": `import { g, bump } from "./dep"; import { h } from "./c"; export function main(): number { bump(); return g * 10 + h(); }`,
+      "dep.ts": `let x = 1; export { x as g }; export function bump(): void { x = 2; }`,
+      "c.ts": c3,
+    },
+  ],
+  [
+    "renamed export of a const, third file declares g",
+    23,
+    {
+      "entry.ts": `import { g } from "./dep"; import { h } from "./c"; export function main(): number { return g * 10 + h(); }`,
+      "dep.ts": `const x = 2; export { x as g };`,
+      "c.ts": c3,
+    },
+  ],
+  [
+    "default export of a renamed let, imported as g",
+    23,
+    {
+      "entry.ts": `import g, { bump } from "./dep"; import { h } from "./c"; export function main(): number { bump(); return g * 10 + h(); }`,
+      "dep.ts": `let x = 1; export { x as default }; export function bump(): void { x = 2; }`,
+      "c.ts": c3,
+    },
+  ],
+  [
+    "re-export with rename to k",
+    23,
+    {
+      "entry.ts": `import { k, bump } from "./mid"; import { h } from "./c"; export function main(): number { bump(); return k * 10 + h(); }`,
+      "mid.ts": `export { g as k, bump } from "./dep";`,
+      "dep.ts": depLive,
+      "c.ts": c3,
+    },
+  ],
+  [
+    "re-export with rename to g",
+    23,
+    {
+      "entry.ts": `import { g, bump } from "./mid"; import { h } from "./c"; export function main(): number { bump(); return g * 10 + h(); }`,
+      "mid.ts": `export { x as g, bump } from "./dep";`,
+      "dep.ts": `export let x = 1; export function bump(): void { x = 2; }`,
+      "c.ts": c3,
+    },
+  ],
+  [
+    "imported function beside another module's same-named one is not inlined from it",
+    12,
+    {
+      "entry.ts": `import { f } from "./a"; import { k } from "./b"; export function main(): number { return f() * 10 + k(); }`,
+      "a.ts": `export function f(): number { return 1; }`,
+      "b.ts": `function f(): number { return 2; } export function k(): number { return f(); }`,
+    },
+  ],
+  [
+    "let here, class of the same name there",
+    63,
+    {
+      "entry.ts": `import { mk } from "./dep"; let g = 6; export function main(): number { return g * 10 + mk(); }`,
+      "dep.ts": `class g { v(): number { return 3; } } export function mk(): number { return new g().v(); }`,
     },
   ],
   [

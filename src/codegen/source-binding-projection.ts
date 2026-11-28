@@ -187,35 +187,73 @@ function projectGenerator(ctx: CodegenContext, name: string, info: NativeGenerat
   else ctx.nativeGenerators.delete(name);
 }
 
-/** Run `action` with `sourceFile`'s view applied, then restore every name it changed. */
-export function withSourceBindings<T>(ctx: CodegenContext, sourceFile: ts.SourceFile, action: () => T): T {
-  const view = viewsByContext.get(ctx)?.get(sourceFile);
-  if (view === undefined) return action();
-  const functions = new Map([...view.ownFunctions, ...view.importedFunctions]);
-  const savedFunctions = new Map<string, FunctionRef | undefined>();
-  for (const [name, ref] of functions) {
+/** What a view replaced, to put back when it is lifted. */
+interface SavedNames {
+  readonly functions: Map<string, FunctionRef | undefined>;
+  readonly generators: Map<string, NativeGeneratorInfo | undefined>;
+  readonly globals: Map<string, ModuleNameState>;
+}
+
+function applyView(ctx: CodegenContext, view: SourceBindingView): SavedNames {
+  const saved: SavedNames = { functions: new Map(), generators: new Map(), globals: new Map() };
+  for (const [name, ref] of [...view.ownFunctions, ...view.importedFunctions]) {
     const idx = ctx.funcMap.get(name);
-    savedFunctions.set(name, idx === undefined ? undefined : functionRef(ctx, idx));
+    saved.functions.set(name, idx === undefined ? undefined : functionRef(ctx, idx));
     projectFunction(ctx, name, ref);
+    // The inliner is keyed by bare name and does not record which function an entry is, so it may hold another
+    // module's tiny function of this name. This module's own body re-registers its version if it qualifies; an
+    // imported function is called rather than inlined.
+    ctx.inlinableFunctions.delete(name);
   }
-  const savedGenerators = new Map<string, NativeGeneratorInfo | undefined>();
   for (const [name, info] of view.generators) {
-    savedGenerators.set(name, ctx.nativeGenerators.get(name));
+    saved.generators.set(name, ctx.nativeGenerators.get(name));
     projectGenerator(ctx, name, info);
   }
-  // An earlier module's tiny function under a colliding name must not be inlined here; this module's own body
-  // re-registers its version if it qualifies.
-  for (const name of view.ownFunctions.keys()) ctx.inlinableFunctions.delete(name);
-  const savedGlobals = new Map<string, ModuleNameState>();
   for (const [name, binding] of view.globals) {
-    savedGlobals.set(name, moduleNameState(ctx, name));
+    saved.globals.set(name, moduleNameState(ctx, name));
     setModuleNameState(ctx, name, binding);
   }
+  return saved;
+}
+
+function liftView(ctx: CodegenContext, saved: SavedNames): void {
+  for (const [name, state] of saved.globals) setModuleNameState(ctx, name, state);
+  for (const [name, info] of saved.generators) projectGenerator(ctx, name, info);
+  for (const [name, ref] of saved.functions) projectFunction(ctx, name, ref);
+}
+
+/** The view applied now, and what it replaced. */
+interface AppliedView {
+  readonly sourceFile: ts.SourceFile;
+  readonly view: SourceBindingView;
+  saved: SavedNames;
+}
+
+const appliedByContext = new WeakMap<CodegenContext, AppliedView>();
+
+/**
+ * Run `action` with `sourceFile`'s view applied, then restore every name it changed. A view is relative to the
+ * collect-time names, so one requested while another module's view is applied (a statement of `__module_init`,
+ * which compiles once under the last module's view) first lifts that view and re-applies it after.
+ */
+export function withSourceBindings<T>(ctx: CodegenContext, sourceFile: ts.SourceFile, action: () => T): T {
+  const outer = appliedByContext.get(ctx);
+  if (outer?.sourceFile === sourceFile) return action();
+  const view = viewsByContext.get(ctx)?.get(sourceFile);
+  if (view === undefined && outer === undefined) return action();
+  if (outer) liftView(ctx, outer.saved);
+  const inner = view && { sourceFile, view, saved: applyView(ctx, view) };
+  if (inner) appliedByContext.set(ctx, inner);
+  else appliedByContext.delete(ctx);
   try {
     return action();
   } finally {
-    for (const [name, state] of savedGlobals) setModuleNameState(ctx, name, state);
-    for (const [name, info] of savedGenerators) projectGenerator(ctx, name, info);
-    for (const [name, ref] of savedFunctions) projectFunction(ctx, name, ref);
+    if (inner) liftView(ctx, inner.saved);
+    if (outer) {
+      outer.saved = applyView(ctx, outer.view);
+      appliedByContext.set(ctx, outer);
+    } else {
+      appliedByContext.delete(ctx);
+    }
   }
 }

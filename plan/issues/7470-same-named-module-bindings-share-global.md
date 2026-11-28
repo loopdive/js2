@@ -350,6 +350,41 @@ only), 88 cases. Each row is compared with node 22's answer for the same sources
   - standalone: 437 pass before and after, 0 status changes;
   - `TEST262_COMPILER_PATH=ir`: 176 pass before and after, 0 status changes.
 
+### Review fixes (2026-11-28)
+
+A review blocked the PR on a renamed export and found two older defects in the same code. Seven rows were added to
+the pin test, now 30 rows and 116 cases. All but the `as k` row failed before these fixes, on gc and standalone, with
+the IR path on and off:
+
+| shape | node | before | after |
+| --- | --- | --- | --- |
+| `let x; export { x as g }`, imported as `g`, third file declares `g` | 23 | CE: `module TDZ global g has no exact allocator object` | 23 |
+| the same with `const x` | 23 | throws (TDZ) | 23 |
+| `export { x as default }` imported as `g` | 23 | CE (same) | 23 |
+| `export { x as g } from "./dep"` re-export | 23 | CE (same) | 23 |
+| `export { g as k } from "./dep"` re-export | 23 | 23 | 23 |
+| entry imports `a`'s `f`; `b` declares its own `f` | 12 | 22 (inlined `b`'s `f`) | 12 |
+| `let g` here, `class g` in the other module | 63 | NaN (no global for `let g`) | 63 |
+
+- **Nested views.** `__module_init` compiles once, under the last module's view, and each of its statements runs
+  under its own module's view. A view was applied on top of the outer one, so a name the outer view projected and the
+  inner one did not (c's `g`, which collides with nothing) kept the entry's projection to dep's `x`. c's `let g = 3`
+  then wrote `x`. `withSourceBindings` now lifts the outer view before applying the inner one, and re-applies it after.
+- **TDZ registration under a view.** `registerModuleTdzGlobal` runs for every name in every module. Under a view
+  that shows `g` as dep's `x`, the bare TDZ entry is `x`'s flag; the module declares no `g`, so the call now leaves
+  the entries alone instead of rejecting or re-allocating them.
+- **Imported functions.** A view clears the inlinable entry of its imported functions as well as its own.
+- **Classes.** A top-level binding skips its global only when the same-named class is in its own module.
+- `export default <var>` resolution is one helper, `exportDeferredDefaultGlobals` (`global-export-fixup.ts`), used by
+  the single-file and multi-file paths. The duplicate `moduleGlobalAt` was folded into `global-space.ts`.
+- `source-binding-projection.ts` stays its own module: the table is storage, the projection is view handling. The
+  largest import SCC stays at 708 files.
+- Imported functions are no longer inlined into the importing module of a multi-file graph. The inliner records no
+  function identity, so a name's entry cannot be trusted under a view. Single-file output is unaffected.
+- Validation: single-file bytes identical against origin/main (389 files × gc/standalone, 0 differences); the
+  scoped standalone test262 run (731 verdicts) has 0 status changes against the previous run; the 48 related
+  `compileMulti` test files have no new failures (31 failures, all also in the previous run's 34).
+
 ## Acceptance criteria
 
 - Every row above, plus the imported-binding shapes (named, renamed, namespace, a third same-named file), answers

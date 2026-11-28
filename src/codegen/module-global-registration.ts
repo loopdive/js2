@@ -242,7 +242,7 @@ export function registerModuleGlobal(
   }
   let binding = scopedModuleBinding(ctx, name, declaration);
   if (binding === undefined) {
-    if (existingGlobal === undefined && ctx.classSet.has(name)) return;
+    if (existingGlobal === undefined && isClassOfScope(ctx, name, declaration)) return;
     // A bare entry no binding holds (an internal global of that name) is reused, as it always was; one another
     // module's binding holds stays that binding's.
     const heldElsewhere = moduleBindingsNamed(ctx, name).some((other) => other.value === existingGlobal);
@@ -256,6 +256,18 @@ export function registerModuleGlobal(
   }
   ctx.programAbiGlobals?.assertModuleBindingsOpen(name);
   attachModuleBindingDeclaration(ctx, declaration, binding);
+}
+
+/**
+ * `name` is a class of `declaration`'s scope, whose class singleton is that binding's storage. The class map is
+ * keyed by bare name too, so a same-named class of another module is another binding and needs no say (#7470).
+ */
+function isClassOfScope(ctx: CodegenContext, name: string, declaration: ModuleBindingDeclaration): boolean {
+  const classDeclaration = ctx.classSet.has(name) ? ctx.classDeclarationMap.get(name) : undefined;
+  return (
+    classDeclaration !== undefined &&
+    (!ctx.sourceIsModule || classDeclaration.getSourceFile() === declaration.getSourceFile())
+  );
 }
 
 /** Allocate `name`'s global and give it the bare-name entry. */
@@ -306,6 +318,17 @@ function allocateModuleTdzGlobal(ctx: CodegenContext, name: string): GlobalDef {
 }
 
 /**
+ * (#7470) `name` shows a binding other than the one that declares it: a source compiling under a view that points
+ * its renamed import (`export { x as name }`) at `x`. The bare entries then hold `x`'s global and flag, which this
+ * source reads, so it must neither check them as `name`'s flag nor allocate one under the view; a source that shows
+ * `name`'s own binding allocates that flag.
+ */
+function showsAnotherBinding(ctx: CodegenContext, name: string): boolean {
+  const owner = moduleBindingsNamed(ctx, name)[0];
+  return owner !== undefined && ctx.moduleGlobals.get(name) !== absoluteGlobalIdx(ctx, owner.value);
+}
+
+/**
  * Allocate one retained top-level TDZ flag and attach it to the binding `sourceFile` declares. A name with one
  * binding keeps one bare-name flag; a name several modules declare gets a flag per binding (#7470), each decided
  * by {@link prepareCollidingModuleTdz}.
@@ -319,6 +342,7 @@ export function registerModuleTdzGlobal(
   if (!ctx.moduleGlobals.has(name)) return;
   const declaration = exactDeclaration ?? findRuntimeTopLevelDeclaration(sourceFile, name);
   const binding = declaration && moduleBindingOf(ctx, declaration);
+  if (binding === undefined && showsAnotherBinding(ctx, name)) return;
   const existingGlobalIdx = ctx.tdzGlobals.get(name);
   let flag: GlobalDef | undefined;
   if (existingGlobalIdx !== undefined) {
