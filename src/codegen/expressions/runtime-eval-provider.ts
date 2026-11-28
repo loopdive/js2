@@ -65,6 +65,28 @@ export function runtimeEvalProviderLinkable(ctx: CodegenContext): boolean {
   return !ctx.wasi;
 }
 
+/**
+ * (#6651 A9) Only a unit that imports the provider can be handed its carrier.
+ * Neither the callback type nor `runtimeEvalCallableBoundaryEnabled` says so:
+ * the inventory also counts a type-position `Function` (`Record<string,
+ * Function>`), which flags benchmark drivers that link no provider at all.
+ */
+export function linksRuntimeEvalProvider(ctx: CodegenContext): boolean {
+  return ctx.mod.imports.some((imp) => imp.module === RUNTIME_EVAL_IMPORT_MODULE);
+}
+
+/**
+ * (#7643) This module is one side of the runtime-eval seam: it links the provider, or it defines the provider ABI.
+ * Both sides exchange the runtime value types, so their finality must agree. It keys on the actual import rather than
+ * `sharedRealmMayContainCanonicalValues`, which counts call sites that a folded or provider-absent consumer never links.
+ */
+export function sharesRuntimeEvalValueAbi(ctx: CodegenContext): boolean {
+  return (
+    linksRuntimeEvalProvider(ctx) ||
+    (ctx.runtimeEvalBoundaryPlan?.sites.some((site) => site.kind === "provider-definition") ?? false)
+  );
+}
+
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
 const RUNTIME_EVAL_PULL_VALUE = "__runtime_eval_pull_value";

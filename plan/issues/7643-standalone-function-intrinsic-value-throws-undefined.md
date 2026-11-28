@@ -1,7 +1,8 @@
 ---
 id: 7643
 title: "Standalone runtime eval: `Function` as a value, or a `new Function` source with a function expression, throws a bare `undefined`"
-status: in-progress
+status: done
+completed: 2026-11-28
 sprint: current
 created: 2026-11-28
 updated: 2026-11-28
@@ -209,6 +210,50 @@ PRV-7643 measured that all ten members open on both sides makes s1–s7 match th
 
 **Seen while probing, not this issue.** `(0, eval)(dyn("noSuchName"))` throws `ReferenceError:
 intrinsicErrorConstructor is not defined`, where the message should name `noSuchName`. It needs its own id.
+
+## Result (implementation, main 02f43e19 = a755911c + #7572)
+
+**Code.**
+- `sharesRuntimeEvalValueAbi` is exported from `src/codegen/expressions/runtime-eval-provider.ts`. It is true when
+  the module imports the provider, or when the boundary plan has a `provider-definition` site.
+- `linksRuntimeEvalProvider` moved there from `iterator-native.ts`, which imports it.
+- `finalizeLeafStructTypes` keeps every group member open on both sides. The comment on that rule was wrong: it said
+  the gc lane stays byte-identical. It now says what the rule covers.
+
+**Test.** `tests/issue-7643-runtime-eval-abi-finality.test.ts`, gc and standalone:
+- the consumer has every member open;
+- a provider-shaped build has every member open. Like the real provider, it subtypes `$__vec_externref` through
+  `arguments[0]`;
+- both sides have the same finality;
+- a no-seam control is unchanged.
+
+On main, 6 of 8 rows fail (all but the control); with the fix, 8/8 pass. Both sides are compiled in-test, so the
+both-sides check never depends on a cached provider (PRV-7643 note 1).
+
+**Runtime (interpreter tier, standalone).**
+
+| probe | main | fix |
+| ----- | ---- | --- |
+| e1, e2, e4–e7 | throw `undefined` | 1 |
+| e3 | `TypeError: boom` | `TypeError: boom` |
+| e8 | 1 | 1 |
+| rope (PRV-7643 s1 shape: `length`, `charCodeAt` and `slice` checks), no direct-eval site | throws `undefined` | 7 (all three checks pass) |
+| the same rope, with a direct-eval site | 7 | 7 |
+| provider string `"x" + "y"`, no direct-eval site | throws `undefined` | `"xy"` |
+
+**Bytes.**
+- 150 eval/`Function` test262 files, gc, standalone and Prepared: 33/150 differ as is and 32/150 with exports
+  appended. All 900 compiles succeed.
+- Sampled changed modules, including two with a direct-eval site, gc and standalone: once `sub final` → `sub` is
+  normalised, the diff is empty. The only change is `$__vec_externref`, `$__vec_f64`, `$ConsString` and
+  `$HashedString` becoming non-final.
+- Provider: the same size (7,154,870 bytes). Its `wasm-dis` diff is exactly types `$5`, `$44` and `$271`, from
+  `sub final` to `sub`, and empty once normalised. Its cache key changes once.
+- No test262 file declares a `__runtime_*` provider name (grep: 0 files), so no user program is classified as a
+  provider by accident (PRV-7643 note 2).
+
+**Pre-existing, unchanged.** Running the 2928 state-pool and #6651 files gives the same 24 failing rows on main and on
+the fix.
 
 ## Acceptance
 
