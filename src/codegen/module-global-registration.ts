@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { IrModuleBindingDeclaration } from "../ir/module-bindings.js";
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
@@ -154,7 +155,7 @@ function findRuntimeTopLevelDeclaration(sourceFile: ts.SourceFile, name: string)
 function functionIsFromAnotherSource(
   ctx: CodegenContext,
   fnIdx: number,
-  declaration: ts.VariableDeclaration | ts.BindingElement | undefined,
+  declaration: IrModuleBindingDeclaration | undefined,
 ): boolean {
   if (declaration === undefined) return false;
   const owner = ctx.sourceFunctionDeclarationByHandle.get(fnIdx);
@@ -208,7 +209,7 @@ export function registerModuleGlobal(
   ctx: CodegenContext,
   name: string,
   wasmType: ValType,
-  declaration?: ts.VariableDeclaration | ts.BindingElement,
+  declaration?: IrModuleBindingDeclaration,
 ): void {
   // Only a genuine user-defined function (a defined function whose index is
   // past the import prefix) shadows a module-level var. Imported host globals,
@@ -277,9 +278,8 @@ export function registerAnnexBLiveBinding(
   name: string,
   declarations: readonly ts.FunctionDeclaration[],
 ): ModuleBinding {
-  const [binding] = declarations.map((declaration) =>
-    bindModuleGlobal(ctx, name, LIVE_FUNCTION_GLOBAL_TYPE, declaration),
-  );
+  const binding = bindModuleGlobal(ctx, name, LIVE_FUNCTION_GLOBAL_TYPE, declarations[0]);
+  for (const declaration of declarations.slice(1)) bindModuleGlobal(ctx, name, LIVE_FUNCTION_GLOBAL_TYPE, declaration);
   // An eval-only binding stays eval-only, so its `.call` sites keep the named-this trampoline (#6880).
   markLiveFunctionBinding(ctx, binding, binding.liveFunction ?? "assigned");
   return binding;

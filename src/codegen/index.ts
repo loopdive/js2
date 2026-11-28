@@ -9199,7 +9199,8 @@ function registerReassignedFunctionGlobals(
       global.type = { kind: "externref" };
       global.init = [{ op: "ref.null.extern" }];
     }
-    for (const [name, declaration] of ctx.topLevelFunctionDeclarations) {
+    // Per source: `ctx.topLevelFunctionDeclarations` keeps one declaration per name across modules (#7530).
+    for (const [name, declaration] of sourceTopLevelFunctions(sourceFiles, functionDeclarationsByEnvironment)) {
       const canBeReboundByEval = !ctx.sourceIsModule || !hasExportModifier(declaration);
       // A fragment that only calls the declaration still needs it live: the
       // static eval splice reaches a top-level function only through its live
@@ -9225,6 +9226,20 @@ function registerReassignedFunctionGlobals(
     const funcIdx = ownSourceFunctionIdx(ctx, declaration.getSourceFile(), name) ?? ctx.funcMap.get(name);
     if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) continue;
     registerLiveFunctionGlobal(ctx, name, declaration, kind);
+  }
+}
+
+/** Each source's own top-level functions by name, in statement order: per name, the last declaration with a body. */
+function* sourceTopLevelFunctions(
+  sourceFiles: readonly ts.SourceFile[],
+  declarationsByEnvironment: ReadonlyMap<ts.Node, ReadonlyMap<string, readonly ts.FunctionDeclaration[]>>,
+): Generator<[string, ts.FunctionDeclaration]> {
+  for (const sourceFile of sourceFiles) {
+    const own = declarationsByEnvironment.get(sourceFile);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isFunctionDeclaration(statement) || !statement.name) continue;
+      if (own?.get(statement.name.text)?.at(-1) === statement) yield [statement.name.text, statement];
+    }
   }
 }
 

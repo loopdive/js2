@@ -18,6 +18,11 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  instantiateRuntimeEvalNamespace,
+  selectCachedRuntimeEvalProvider,
+} from "../scripts/runtime-eval-provider.mjs";
 import { compile, compileMulti } from "../src/index.js";
 import { buildCompiledImports, buildImports } from "../src/runtime.js";
 
@@ -233,3 +238,84 @@ for (const target of ["gc", "standalone"] as const) {
     });
   }
 }
+
+// Eval liveness is decided per source (RV-PR7569 finding 1). A module whose own `f` an eval may rebind keeps its own
+// live global even when another module declares an `f` too; the graph-wide name map used to give liveness to
+// whichever `f` registered last, so dep's eval rebound nothing (EV1 and EV3 answered 31). EV2 has no clash and EV4
+// imports the clashing file first; both were right before and are kept.
+const depEvalRebindsF = `function f(): number { return 3; } export function run(): number { eval("f = function () { return 4; }"); return f(); }`;
+const cOwnF = `function f(): number { return 1; } export function g(): number { return f(); }`;
+const EVAL_ROWS: [name: string, node: number, liveGlobals: number, files: Record<string, string>][] = [
+  [
+    "EV1 dep's eval rebinds its own f; entry has its own f",
+    41,
+    2,
+    {
+      "entry.ts": `import { run } from "./dep"; function f(): number { return 1; } export function main(): number { return run() * 10 + f(); }`,
+      "dep.ts": depEvalRebindsF,
+    },
+  ],
+  [
+    "EV2 dep's eval rebinds its own f; no clash",
+    40,
+    1,
+    {
+      "entry.ts": `import { run } from "./dep"; export function main(): number { return run() * 10; }`,
+      "dep.ts": depEvalRebindsF,
+    },
+  ],
+  [
+    "EV3 as EV1, with the other f in a third file imported after dep",
+    41,
+    2,
+    {
+      "entry.ts": `import { run } from "./dep"; import { g } from "./c"; export function main(): number { return run() * 10 + g(); }`,
+      "dep.ts": depEvalRebindsF,
+      "c.ts": cOwnF,
+    },
+  ],
+  [
+    "EV4 as EV3, with the third file imported before dep",
+    41,
+    2,
+    {
+      "entry.ts": `import { g } from "./c"; import { run } from "./dep"; export function main(): number { return run() * 10 + g(); }`,
+      "dep.ts": depEvalRebindsF,
+      "c.ts": cOwnF,
+    },
+  ],
+];
+
+describe("#7530 eval liveness per source", () => {
+  it.each(EVAL_ROWS)("%s: one live global per eval-rebindable f", async (_name, _node, liveGlobals, files) => {
+    for (const experimentalIR of [true, false]) {
+      const result = await compileMulti(files, "entry.ts", { target: "standalone", experimentalIR, emitWat: true });
+      expect(result.success, result.errors.map((e) => e.message).join(" | ")).toBe(true);
+      expect(result.wat.match(/\(global \$__mod_f /g)?.length ?? 0).toBe(liveGlobals);
+    }
+  });
+});
+
+// The answers need a real eval engine. Unit CI builds only the refusal provider, so this runs where QuickJS is built
+// (the standalone test262 lane, or a box with JS2WASM_QUICKJS_ARTIFACT_DIR set and the adapter built).
+let quickjs: ReturnType<typeof selectCachedRuntimeEvalProvider> | undefined;
+try {
+  const selection = selectCachedRuntimeEvalProvider();
+  if (selection.engine === "quickjs") quickjs = selection;
+} catch {
+  quickjs = undefined;
+}
+
+describe.skipIf(!quickjs)("#7530 eval liveness per source, run under QuickJS", () => {
+  it.each(EVAL_ROWS)("%s", async (_name, node, _liveGlobals, files) => {
+    for (const experimentalIR of [true, false]) {
+      const result = await compileMulti(files, "entry.ts", { target: "standalone", experimentalIR });
+      expect(result.success, result.errors.map((e) => e.message).join(" | ")).toBe(true);
+      const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), {
+        [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace(quickjs!.bundle),
+      } as WebAssembly.Imports);
+      (instance.exports as { _start?: () => void })._start?.();
+      expect((instance.exports.main as () => number)()).toBe(node);
+    }
+  });
+});

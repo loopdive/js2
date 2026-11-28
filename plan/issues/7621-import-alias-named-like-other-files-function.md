@@ -51,5 +51,7 @@ worktree); node 22 runs the transpiled sources.
 
 - I0 answers 15 on gc and standalone with the IR path on and off, pinned with a `compileMulti` test that fails on
   main.
-- #7530's row I (the same shape with `f` reassigned) then also runs with the IR path off.
+- #7530's row I (the same shape with `f` reassigned) then answers 25 on gc and standalone with the IR path on and
+  off. With the IR path on it fails today too (55): once `k` is live in the entry, the IR declines `main`, and the
+  legacy path inlines the third file's `k`. Add row I, direct call, to #7530's pin file on all four lanes.
 - Single-file output stays byte-identical.

@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7470, 7621, 7627, 7635, 7636]
+related: [7470, 7621, 7627, 7635, 7636, 7639, 7640]
 loc-budget-allow:
   # 2026-11-28 (#7530): +2 in withDirectRuntimeModuleBindings, which keeps the name's live-function kind across a namespace projection (plan step at declarations.ts:1748); the save/restore loop lives in that driver, so the line cannot move to a module
   - src/codegen/declarations.ts
@@ -66,7 +66,8 @@ scheme. The full plan is under "Implementation Plan" below.
     an Annex B B.3.3 binding, so `__module_init` evaluates its block declarations and seeds it `undefined`; it is a
     global-object property), not whether it is live, and moving them into the table is outside this issue.
   - (Review condition e) A live function name is hidden only in a source that spells it, so a module that never
-    names it compiles without the projection. lodash-es compile time before and after is under Results.
+    names it compiles without the projection. lodash-es compile time before and after is under Results. "Spells"
+    means an identifier in the source's AST: a name that appears only inside an eval string is not hidden there.
   - No new module, no branch for a state the table cannot reach. One budget grant: `loc-budget-allow` for
     `src/codegen/declarations.ts`, +2 lines in `withDirectRuntimeModuleBindings` (the namespace projection keeps a
     name's live-function kind, the plan's step at ~L1748). It was added on the merge with main, 2026-11-28; the
@@ -445,8 +446,8 @@ the residuals are separate defects:
   every module cost lodash-es +34 % compile time on gc and +35 % on standalone (46.9 s and 43.1 s against 34.9 s and
   31.9 s, one run each). A source that never spells a name has no read of it. The identifier index this needs
   already existed privately in `declarations/provenance-closed-arrays.ts`; it moved to
-  `src/shared/callee-name-index.ts`, beside the call-site index, and both users import it (no new module). The IR
-  keeps its own copy in `src/ir/closure-signature-flow.ts`, which this issue does not touch.
+  `src/shared/callee-name-index.ts`, beside the call-site index, and both users import it (no new module). The IR's
+  verbatim copy in `src/ir/closure-signature-flow.ts` now imports it too (review finding 2).
 - **The seed loop loses its `seededGlobals` dedupe.** It existed for import aliases sharing their target's global.
   Aliases no longer join the list, and no two bindings share a global, so the set could never hit.
 - **Two more collect-time readers of the set ask the table.** `multi-prepared-module-init-census.ts` (the IR-on
@@ -479,6 +480,42 @@ the residuals are separate defects:
 - **d.** `registerAnnexBLiveBinding(ctx, name, declarations)` attaches every block declaration to the one binding.
 - **e.** See the first deviation.
 - **f.** Pinned (row "I renamed import k …, read as a value").
+
+### Adversarial review (RV-PR7569, 2026-11-28)
+
+Verdict on 35db004b05: **block** on one finding; everything else checked out (2,184 byte rows identical, rows A, C,
+X and Z and the reviewer's extra probes match node, the residuals reproduce without a clash on main, the
+`declarations.ts` grant accepted). Fixed in the next push:
+
+1. **Block: eval liveness went through the graph-wide name map.** `registerReassignedFunctionGlobals` iterated
+   `ctx.topLevelFunctionDeclarations`, which keeps one declaration per name across the program (the last one
+   registered, `declarations.ts` ~2568). With a clash, only that module's `f` became eval-live, so a module whose
+   own eval rebinds its `f` lost its live binding. It now walks each source's own top-level functions
+   (`sourceTopLevelFunctions` in `index.ts`, built from the per-environment declaration map the function already
+   collects). Measured with the QuickJS provider, standalone, IR on and off:
+
+   | row | node | before | after |
+   | --- | --- | --- | --- |
+   | EV1 (dep's eval rebinds its own `f`; entry has its own `f`) | 41 | 31 | 41 |
+   | EV2 (EV1 without the clash) | 40 | 40 | 40 |
+   | EV3 (EV1's clash in a third file imported after dep) | 41 | 31 | 41 |
+   | EV4 (EV3 with that file imported first) | 41 | 41 | 41 |
+
+   Pinned twice in `tests/issue-7530-same-named-reassigned-functions.test.ts`: by structure on every run (one
+   `__mod_f` per eval-rebindable `f`; EV1, EV3 and EV4 fail without the fix), and by answer under QuickJS, which
+   skips where QuickJS is not built (unit CI builds only the refusal provider).
+2. Fold the IR's verbatim `identifierIndex` copy (`src/ir/closure-signature-flow.ts`) into
+   `src/shared/callee-name-index.ts`: done.
+3. (Nit) `registerAnnexBLiveBinding` used `map` for its side effects: now the first declaration's binding, then a
+   plain loop that joins the rest.
+4. (Nit) `module-global-registration.ts` and `ModuleBindingDeclaration` spell `ts.VariableDeclaration |
+   ts.BindingElement` as `IrModuleBindingDeclaration` (`src/ir/module-bindings.ts`).
+5. (8) Condition e now says a name that appears only inside an eval string is not hidden.
+
+Follow-ups filed, unclaimed: [#7639](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7639-eval-liveness-only-in-modules-with-direct-eval) (eval liveness only in modules that contain a direct eval, the
+lodash-es cost driver) and [#7640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7640-reassigned-let-and-function-of-same-name-in-two-modules) (VAR2: a reassigned `let f` in one module and a `function f` in
+another, wrong on main too). [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function)'s
+acceptance now names row I with the IR path on.
 
 ### Validation
 
