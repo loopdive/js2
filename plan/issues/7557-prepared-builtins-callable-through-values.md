@@ -108,7 +108,10 @@ are rows of the list. Without a source function no dispatcher exists and the sit
   TypeError for a wrong receiver), `Array.isArray.call(…)`, a static through `call` or passed on,
   `({ f: Object.defineProperty }).f(o, k, d)`, `o.myValueOf = Number.prototype.valueOf`, `n.isA = Array.isArray`.
 - A replaced `Function.prototype.call` (direct, through an alias, a parameter, `defineProperty`) is the program's: the
-  call goes by identity; the folded object tag aborts instead (`ProgramObjects.replacesCall`).
+  call goes by identity. The folded `Object.prototype.toString.call(v)` goes by identity too (`dynamicObjectTag`,
+  `throughRealmCall`): it reads `call` through [[Get]] off the method the root holds, or, where no program value is
+  that method, off Function.prototype, and answers the tag only where that `call` is the realm's; any other is the
+  run-time abort. No source rule decides it.
 - `new` of a held built-in without [[Construct]] throws the TypeError (`heldNonConstructors`; review r1).
 
 **What refuses or aborts** (each is a row of the test file):
@@ -139,7 +142,8 @@ are rows of the list. Without a source function no dispatcher exists and the sit
 can call through a value: it names a realm constructor, spells `call`, or spells a held prototype method other than as
 the `m` of `x.m(…)` (`ProgramObjects.methodValues`). `js.object.intrinsic` answers `Function.prototype` only where the
 realm seeds it. Eight Prepared programs, base → head: seven byte-identical; the `assert.js` + `sta.js` prelude (it
-spells `call`) 90,125 → 93,404 B (+3,279), median compile of 3 at load 5: 7.34 s → 7.88 s.
+spells `call`) 90,125 → 94,213 B (+4,088), median compile of 3, base and head interleaved at load 4–5: 7.96 s →
+8.22 s.
 
 **Measured** (base 565b217792 → head).
 
@@ -147,16 +151,43 @@ spells `call`) 90,125 → 93,404 B (+3,279), median compile of 3 at load 5: 7.34
   compiles and stops at the run-time abort at `bind`; without `bind` the same lines agree with node. The 12
   `Object/defineProperty` tests that include the harness: base all stop at `Function`; head none does (6
   `dyn.publish_argc` (#7562), 2 `null` under an f64 hint, 2 empty-array escapes, 1 `Math.pow`, 1 `JSON`).
-- Probes against node in a fresh realm: 93 (49 right with failing twins, 18 refused, 26 aborted, 0 wrong, 0 invalid,
-  0 exceptions out of `compile()`).
-- test262: `built-ins/Function/prototype/call/` (47 files) 0 → 9 pass; a 40-file sample of `built-ins/Function/`
-  0 → 0 pass (6 more compile and abort); the 87-row sample 19 → 21 pass. No pass lost; every failure on head is the
+- Probes against node in a fresh realm, first session: 93 (49 right with failing twins, 18 refused, 26 aborted). Second
+  session (2026-11-28, on the fixed-statics base), 97 new adversarial ones on the final head: 33 right with failing
+  twins, 33 refused, 31 aborted, 0 wrong, 0 invalid, 0 exceptions out of `compile()`; one was wrong before the fix
+  below.
+- test262 (base 49995cc518 → final head): `built-ins/Function/prototype/call/` (47 files) 0 → 9 pass; a 40-file
+  sample of `built-ins/Function/` 0 → 0 pass (6 more compile and abort); the 87-row sample 19 → 21 pass. No pass lost; every failure on head is the
   run-time abort.
 - Ordinary pipeline: 48 binaries (24 programs, two targets) byte-identical.
-- `src/ir/from-ast.ts` 17,393 → 17,388 lines. Source diff: 26 files, +917 / −174. No split.
+- `src/ir/from-ast.ts` 17,393 → 17,388 lines. Source diff: 27 files, +966 / −195. No split.
 - Mined from `claude/7354-a1b`: `realm-builtin-caller.ts` (43 lines) and `builtin-caller-bodies.ts` (114) unchanged,
   `dynamic-builtin-call.ts` (101 lines, 25 rewritten); `NATIVE_PROTOTYPE_METHODS` from PR 7480. The rest is new on the
   #7561 method-by-identity model.
+
+**Re-based on the fixed statics (2026-11-28, base 49995cc518).** The base deleted its source rule `replacedStatics`:
+the kernel aborts every write to `%Object%` (`NativeRealmIntrinsic.fixed`), so a folded `Object.m(…)` needs no proof.
+The merge left no use of a deleted function. This slice's own source rule, `ProgramObjects.replacesCall` (it decided
+whether the folded object tag might meet a replaced `call`), had a hole of the kind the base's rule had:
+
+```js
+var v = {}, k = "ca";
+Object.defineProperty(Object.prototype.toString, k + "ll", { value: function () { return "X"; } });
+Object.prototype.toString.call(v); // node: "X"; the fold answered "[object Object]" (also on the base)
+```
+
+The rule is deleted; the fold reads `call` by identity (above). `fixed` is not the mechanism for `call`: it fixes a
+whole bag, and Function.prototype must stay writable (`Function.prototype.x = 1; f.x`), as must every method's own
+properties; the lookup of `call` also passes two objects (the method, then Function.prototype), so one flag cannot
+pin it. A read through [[Get]] and one identity test cost less than a per-key flag in three kernel paths, and they
+see every route. Two things the change brought out:
+
+- Reading the method off the root in a program that cannot obtain the root made the realm hold
+  `Object.prototype.toString` there, and `String({})` then met a built-in the dispatcher cannot call (M2's "D35:
+  assert.js's formatSimpleValue" aborted). Where no value is the method, the fold reads Function.prototype's `call`.
+- An unread value `if` whose arms only answer or abort was dropped by dead-code elimination, because the abort's
+  effect facet is pure: `Function.prototype.call = g; Object.prototype.toString.call(v);` ran on without calling `g`.
+  `isSideEffecting` (`src/ir/analysis/effects.ts`) now keeps an instruction whose buffers hold the abort. It applies
+  to every legalized chain of the lane, not only this one.
 
 **Not done here.** `bind`, `apply` (#7560). A member access on a closure-typed local (`f.call` inside a function whose
 `f` is a local function expression) still refuses in the front end; it stops 2 of the 47 `call` files and is the next
