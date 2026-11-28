@@ -156,9 +156,9 @@ node.
 | standalone, IR off | 11 of 13 | 13/13, plus 2 expected failures |
 
 - The 2 expected failures per IR-off lane are `n4` (`ns.f()`) and the augmentation row (`d.f()`): a namespace
-  function call with the IR path off throws until #7622 lands. They run as `it.fails` with a comment naming #7622, so
-  they turn red when #7622 lands and must then become plain `it`.
-- The augmentation row already passed before (IR on). It guards the disjointness condition.
+  function call with the IR path off throws until #7622 lands. They first ran as `it.fails`; after the review they
+  assert the throw (see below).
+- The augmentation row already passed before (IR on).
 
 ### Bytes
 
@@ -198,8 +198,53 @@ node.
   `importsNodeBuiltin`) instead of moving into `moduleNamespaceSourceOf`. In `moduleNamespaceSourceOf` it would also
   stop the member-call and function-value receivers from taking the static path for a builtin specifier that resolves
   to a source file, which they do today.
-- **`aliasedSymbolAt`** (new, in `module-namespace-value.ts`) carries the getSymbolAtLocation + getAliasedSymbol
-  lookup that `canonicalRuntimeNamespaceSymbol`, `isRuntimeNamespaceReceiver` and
-  `runtimeNamespaceFunctionValueReceiver` each copied. `moduleNamespaceSourceOf` alone answers only their module half,
-  so this helper is what removes those copies.
-- The adversarial review is not run yet; it belongs to the PR.
+- **`aliasedSymbolAt`** carries the getSymbolAtLocation + getAliasedSymbol lookup that
+  `canonicalRuntimeNamespaceSymbol`, `isRuntimeNamespaceReceiver` and `runtimeNamespaceFunctionValueReceiver` each
+  copied. `moduleNamespaceSourceOf` alone answers only their module half, so this helper is what removes those copies.
+  After the review it lives in `src/shared/aliased-symbol.ts`.
+- The plan's module-augmentation guard was dropped after the review (finding 2 below).
+
+## Review fixes (2026-11-28)
+
+The fresh-context review returned pass-after-fixes. The fixes are in `00b2a83754`, on top of the merge of origin/main
+`4aa8ea4c46` (`d1f796c03c`). Every finding was fixed; none was rebutted.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | `aliasedSymbolAt` was a third copy of a private `aliasedSymbol` | One exported helper in `src/shared/aliased-symbol.ts` (classified in `compiler-boundaries.json`). `ir-fnctor-admission.ts` and `ir/fnctor-argument-projection.ts` lose their copies. |
+| 2 | The module-augmentation guard in `canonicalRuntimeNamespaceSymbol` guards a case that cannot occur (an augmentation is ambient, so no surface is built) | Guard dropped. The pin row is now `d.f() beside a module augmentation`, a regression guard for the static call. |
+| 3 | The #5330 builtin decline had no reachable test input | Kept, with a reachable row: a `compileProject` directory where `node_modules/events` is a package source file. With the decline the module imports `__node_events`; without it the namespace is synthesized and the import disappears (measured by disabling it: the gc binary changes from `ccef49ac50d2` to `b1d7fa3fdf4f`). `compileMulti` never resolves a bare builtin specifier to a source file (binary identical with and without the decline). The check is one shared `isNodeBuiltinSpecifier`, also used by `hostMemberOf` and `bindingIsNodeBuiltinNamedImport`. |
+| 4 | The `ImportClause` arm had no coverage | Rows for `import d from "./mid"` with `export { ns as default }` and with `export default ns`: a value read and an identity check against `import * as`. Node: 73 and 11. On origin/main all four fail except the `export default ns` read, which already answered 73 through its default-export cell. |
+| 5 | Unflagged behaviour change: an `export = ns` module namespace receiver is now claimed | Stated here and pinned. `import d from "./mid"` with mid `import * as ns from "./dep"; export = ns` now reads `d.g` (73, IR on and off) and calls `d.f()` (73 with IR on; IR off throws until #7622). On origin/main both rows fail in every lane. Node cannot run `export =`; its answer, 73, is for an ES entry importing the CommonJS emit of mid. An `export = N` of a TypeScript `namespace` is unchanged (it resolves to the namespace, not a module source file). |
+| 6 | Four disagreeing "executable namespace declaration" predicates | The two identical ones in `module-namespace-value.ts` are folded into `runtimeNamespaceBlockOf` (byte-neutral). The property-access and calls.ts variants claim different receivers, so folding them is not provably byte-neutral: filed as [#7649](7649-one-executable-namespace-declaration-predicate.md). |
+| 7 | `it.fails` hid any failure | The #7622 cells now assert that the compile succeeds and `main()` throws `WebAssembly.Exception`. |
+| 8 | `importsOwnNamespace` repeated the alias query | It asks `moduleNamespaceSourceOf`. |
+
+### Measured after the fixes (head `00b2a83754`)
+
+- **Pin test:** 21 rows × 4 lanes + the builtin-package row = 85 cases, all green. With the IR path off, 3 rows
+  (`n4`, the augmentation row and the `export = ns` member call) assert the #7622 throw.
+
+| lane | green on origin/main `4aa8ea4c46` | after |
+| --- | --- | --- |
+| gc, IR on | 4 of 21 (`n1`, `n5`, the augmentation row, the `export default ns` read) | 21/21 |
+| gc, IR off | 3 of 18 non-#7622 rows (`n1`, `n5`, the `export default ns` read); the 3 throw pins hold | 18/18 + 3 throw pins |
+| standalone, IR on | 4 of 21 | 21/21 |
+| standalone, IR off | 3 of 18; the 3 throw pins hold | 18/18 + 3 throw pins |
+
+The builtin-package row is green on main too: it pins the existing #5330 decline, which #7625 keeps.
+
+- **Bytes against the previous fix head `d1f796c03c`:** identical on the 390-file single-file corpus × gc/standalone and
+  on every multi-file pin graph (#7470 and #7625 rows) × 4 lanes. This round changes no output, so the scoped test262
+  run was not repeated; its result above stands.
+- **Bytes against origin/main `4aa8ea4c46`:** the single-file corpus and the 31 #7470 graphs are identical. Of the #7625
+  graphs, only the expected rows differ: every named or default import of a namespace, the identity rows, and the
+  `n4` / `export = ns` member calls with IR on. Unchanged: `n1`, `n5`, the augmentation row, the `export default ns`
+  read, and the #7622 cells with IR off.
+- **Equivalence gate:** exit 0; 4,856 pass, 20 fail, no new regressions.
+- **Tests:** the 61 `namespace`/`5330`/`7470`/`fnctor` test files fail the same 45 cases on `d1f796c03c` and on
+  `00b2a83754` (the 20 listed above plus 25 pre-existing `fnctor` failures, e.g. #6944 and #2660).
+- **Gates:** loc, func, coercion sites, oracle ratchet (`ctx.checker` −5 against main), dead exports and import cycles
+  pass; loc and func pass with `LOC_GATE_BASE=4aa8ea4c46`; compiler boundaries pass against `HEAD^1` and origin/main.
+- **Typecheck:** the same 279 errors as before, all from `@types/node` missing in this container; none in a changed
+  line.
