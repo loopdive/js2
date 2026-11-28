@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // #7350 B3b-0: the wrapper families' catalog data (constructors, prototypes, statics and methods), checked against the
-// host engine, and the gate that keeps all of it but B3a's identity rows out of every realm until B3b-1.
+// host engine; (#7561) each member held on its own, and the gate that keeps a constructor's statics out of every realm.
 import { describe, expect, it } from "vitest";
 import {
   NATIVE_REALM_CATALOG,
@@ -44,12 +44,12 @@ describe("#7350 B3b-0 wrapper catalog rows", () => {
       expect(prototype).toMatchObject({
         prototype: "%Object.prototype%",
         extensible: true,
-        heldWith: ctor.id,
+        heldWith: prototype.id,
         primitiveData: host[name].prototype.valueOf(),
       });
       expect(prototype.callable).toBeUndefined();
-      // `length` of String.prototype is StringCreate's own property (B3b-1), not a catalog row.
-      const keys = Object.getOwnPropertyNames(hostPrototype).filter((key) => key !== "length");
+      // (#7561) String.prototype's own `length` 0 is a catalog property.
+      const keys = Object.getOwnPropertyNames(hostPrototype);
       expect([...realmStringKeys(prototype.id)].sort()).toEqual(keys.sort());
       expect(prototype.properties.find(({ key }) => key.value === "constructor")).toMatchObject({
         value: { kind: "intrinsic", id: ctor.id },
@@ -68,7 +68,7 @@ describe("#7350 B3b-0 wrapper catalog rows", () => {
           if (property.key.value === "constructor" || property.key.value === "prototype") continue;
           const method = row(property.value.id),
             hostMethod = hostOwner[property.key.value] as (...args: unknown[]) => unknown;
-          expect(method.heldWith).toBe(ctor.id);
+          expect(method.heldWith).toBe(method.id);
           expect(method.prototype).toBe("%Function.prototype%");
           expect(method.constructible).toBe(false);
           expect(method.callable).toMatchObject({ initialName: hostMethod.name, length: hostMethod.length });
@@ -80,12 +80,17 @@ describe("#7350 B3b-0 wrapper catalog rows", () => {
         }
     });
 
-    it(`${name}: no member is native yet, and a realm models only the constructor's identity`, () => {
-      const family = NATIVE_REALM_CATALOG.intrinsics.filter((intrinsic) => intrinsic.heldWith === ctor.id);
-      expect(family.filter((intrinsic) => intrinsic.callable?.implementation === "native")).toEqual([ctor]);
-      expect(family.filter((intrinsic) => modelledRow(intrinsic) !== undefined)).toEqual([ctor]);
-      const modelled = modelledRow(ctor)!;
-      expect(modelled.properties.map(({ key }) => key.value)).toEqual(ctor.identityOnly);
+    it(`${name}: (#7561) only valueOf and toString are native, and a realm models the constructor's identity`, () => {
+      const members = [...ctor.properties, ...prototype.properties].flatMap((property) =>
+        property.kind === "data" && property.value.kind === "intrinsic" && property.key.value !== "constructor"
+          ? [row(property.value.id)]
+          : [],
+      );
+      expect(
+        members.filter((member) => member.callable?.implementation === "native").map((member) => member.id),
+      ).toEqual([`%${name}.prototype.toString%`, `%${name}.prototype.valueOf%`]);
+      expect(modelledRow(prototype)).toBe(prototype);
+      expect(modelledRow(ctor).properties.map(({ key }) => key.value)).toEqual(ctor.identityOnly);
     });
   }
 
@@ -119,9 +124,10 @@ describe("#7350 B3b-0 wrapper catalog rows", () => {
       "NaN",
       "NEGATIVE_INFINITY",
       "POSITIVE_INFINITY",
+      "prototype",
     ]);
-    expect(row("%String%").identityOnly).toEqual(["length", "name"]);
-    expect(row("%Boolean%").identityOnly).toEqual(["length", "name"]);
+    expect(row("%String%").identityOnly).toEqual(["length", "name", "prototype"]);
+    expect(row("%Boolean%").identityOnly).toEqual(["length", "name", "prototype"]);
   });
 
   it("String's Annex B members are legacy, and trimLeft / trimRight are trimStart / trimEnd", () => {
@@ -134,16 +140,16 @@ describe("#7350 B3b-0 wrapper catalog rows", () => {
     expect(property("trimStart").legacy).toBeUndefined();
   });
 
-  it("(criterion 9) each prototype's keys with Object.prototype's are the hand lists' union", () => {
-    const union = (...sets: ReadonlySet<string>[]) => [...new Set(sets.flatMap((set) => [...set]))].sort();
-    expect(union(realmStringKeys("%Number.prototype%"), OBJECT_PROTOTYPE_KEYS)).toEqual(
-      union(BUILTIN_REACHABLE_KEYS.number, OBJECT_PROTOTYPE_KEYS),
-    );
-    expect(union(realmStringKeys("%Boolean.prototype%"), OBJECT_PROTOTYPE_KEYS)).toEqual(
-      union(BUILTIN_REACHABLE_KEYS.boolean, OBJECT_PROTOTYPE_KEYS),
-    );
-    expect(union(realmStringKeys("%String.prototype%"), OBJECT_PROTOTYPE_KEYS, new Set(["length"]))).toEqual(
-      union(BUILTIN_REACHABLE_KEYS.string, OBJECT_PROTOTYPE_KEYS),
-    );
+  it("(criterion 9, #7561) a primitive's reachable keys are its prototype's and Object.prototype's, as the host's", () => {
+    const union = (...sets: Iterable<string>[]) => [...new Set(sets.flatMap((set) => [...set]))].sort();
+    const hostKeys = (value: object) => Object.getOwnPropertyNames(value);
+    for (const [kind, name] of [
+      ["number", "Number"],
+      ["boolean", "Boolean"],
+      ["string", "String"],
+    ] as const)
+      expect(union(BUILTIN_REACHABLE_KEYS[kind], OBJECT_PROTOTYPE_KEYS)).toEqual(
+        union(hostKeys(host[name].prototype), hostKeys(Object.prototype)),
+      );
   });
 });

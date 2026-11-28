@@ -47,15 +47,11 @@ import {
   dynamicInstanceOf,
 } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
-import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
+import { dynamicPrototypeMethodCall } from "./dynamic-prototype-methods.js";
 import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
 import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
-import {
-  realmCall,
-  realmConstructorOf,
-  realmIntrinsicOfHelper,
-  type RealmConstruction,
-} from "./dynamic-realm-calls.js";
+import { dynamicObjectTag } from "./dynamic-object-tag.js";
+import { realmConstructorOf, realmIntrinsicOfHelper, type RealmConstruction } from "./dynamic-realm-calls.js";
 import { GLOBAL_OBJECT_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
 import {
   CARRIER,
@@ -64,18 +60,15 @@ import {
   conversionBuilders,
   knownKinds,
   type AbortSite,
-  type ChainBuilders,
 } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
   IS_OBJECT,
   KINDS_OF_TYPEOF,
-  OBJECT_TAG,
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
   holdsFamily,
-  type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -130,14 +123,21 @@ export function legalizeDynamicValues(
   const { stringOf, toNumber } = conversions;
   const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3, #7471) What a member read, write or delete is written with (`dynamic-member-access.ts`).
-  const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
+  const memberAccess = {
+    ...builders,
+    carrier: CARRIER,
+    definitions,
+    kindsOf: kinds.kindsOf,
+    errors,
+    wrappers: program.objects.wrappers,
+  };
   // (#7354 C2) What `this`, `new`, `instanceof` and (#7562) the argument count are written with
   // (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
   // (#7354 O1, P1, G1) What a recognised `Object` static (`dynamic-object-statics.ts`), a call of a prototype method the
   // realm holds (`dynamic-prototype-methods.ts`) or of a realm constructor (`dynamic-error-constructors.ts`, (#7350
   // B3a) `dynamic-wrapper-constructors.ts`) is written with.
-  const objectStatics = { ...builders, stringOf, toNumber, errors };
+  const objectStatics = { ...builders, stringOf, toNumber, errors, program, definitions };
   const realmConstruction = (instr: RealmConstruction, ctor: RealmConstructor, args: readonly IrValueId[]) =>
     ctor.family === "error"
       ? dynamicErrorConstruction(objectStatics, instr, ctor, args)
@@ -230,15 +230,9 @@ export function legalizeDynamicValues(
       case "dyn.typeof":
         if (typeofs.consumed.has(instr.result!)) return [];
         return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
-      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts: a tag per kind `v` may hold.
+      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts (`dynamic-object-tag.ts`).
       case "dyn.object_tag":
-        return kindChain(
-          instr,
-          instr.value,
-          instr.result!,
-          (kind, result) => objectTag(builders, program, instr, kind, result),
-          kinds.kindsOf(instr.value),
-        );
+        return dynamicObjectTag(builders, program, instr);
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
@@ -295,8 +289,8 @@ export function legalizeDynamicValues(
         // (G1) a built-in's run-time abort.
         if (dispatched && !program.objects.functions)
           return gap(`${instr.target.name} in a program that creates no function value`);
-        const method = prototypeMethodOfCall(instr, definitions, errors);
-        if (method !== undefined) return dynamicPrototypeMethodCall(objectStatics, instr, method);
+        const method = dynamicPrototypeMethodCall(objectStatics, instr, definitions);
+        if (method !== undefined) return method;
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&
@@ -342,50 +336,6 @@ export function legalizeDynamicValues(
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
 }
-
-/**
- * (#7354 M1, B-tag) `Object.prototype.toString`'s answer for a value of `kind` (`OBJECT_TAG`) into `result`. (#7354 G1)
- * An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9). (#7609) The global object's tag is the host's
- * (node's has an own `@@toStringTag` "global"), which the realm does not know: where the program holds it, an object
- * that is it ends at the run-time abort.
- */
-function objectTag(
-  b: ChainBuilders,
-  program: LegalizationProgram,
-  instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
-  kind: CarrierKind,
-  result: IrValueId,
-): IrInstr[] {
-  if (kind === "object" && program.objects.namesSymbol)
-    gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-  if (kind !== "object") return [b.text(`[object ${OBJECT_TAG[kind]}]`, result)];
-  const ordinary = (r: IrValueId): IrInstr[] => {
-    if (!holdsFamily(program, "error")) return [b.text("[object Object]", r)];
-    const isError = b.fresh();
-    return [
-      realmCall("js.object.is-error", [instr.value], isError),
-      b.branch(
-        isError,
-        (s) => [b.text("[object Error]", s)],
-        (s) => [b.text("[object Object]", s)],
-        r,
-      ),
-    ];
-  };
-  if (!program.objects.globalObject) return ordinary(result);
-  const [global, isGlobal] = [b.fresh(), b.fresh()];
-  return [
-    ...b.realmIntrinsic(GLOBAL_OBJECT_ID, global),
-    b.intrinsic(instr, "js.value.strict_eq", [instr.value, global], isGlobal),
-    b.branch(
-      isGlobal,
-      (r) => b.abortText(instr, "Object.prototype.toString of the global object", r),
-      ordinary,
-      result,
-    ),
-  ];
-}
-
 /**
  * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that reads one,
  * every throw, in whichever function, must be a value of a {@link carrierKindOf}. Any other value refuses by name.
