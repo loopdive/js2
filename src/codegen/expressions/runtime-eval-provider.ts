@@ -65,6 +65,20 @@ export function runtimeEvalProviderLinkable(ctx: CodegenContext): boolean {
   return !ctx.wasi;
 }
 
+/** Does this module import the runtime-eval provider ABI (`js2wasm:runtime-eval`)? */
+export function linksRuntimeEvalProvider(ctx: CodegenContext): boolean {
+  return ctx.mod.imports.some((imp) => imp.module === RUNTIME_EVAL_IMPORT_MODULE);
+}
+
+/**
+ * (#7643) This module is one side of the runtime-eval seam: it links the provider, or it defines the provider ABI.
+ * Both sides exchange the runtime value types, so their finality must agree. It keys on the actual import rather than
+ * `sharedRealmMayContainCanonicalValues`, which counts call sites that a folded or provider-absent consumer never links.
+ */
+export function sharesRuntimeEvalValueAbi(ctx: CodegenContext): boolean {
+  return linksRuntimeEvalProvider(ctx) || ctx.runtimeEvalBoundaryPlan?.definesProvider === true;
+}
+
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
 const RUNTIME_EVAL_PULL_VALUE = "__runtime_eval_pull_value";

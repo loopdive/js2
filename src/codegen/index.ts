@@ -284,6 +284,7 @@ import {
   applyRuntimeEvalBoundaryPlan,
   runtimeEvalOwnsGlobalEval,
   settleRuntimeEvalGlobalBindings,
+  sharesRuntimeEvalValueAbi,
 } from "./expressions/runtime-eval-provider.js";
 import {
   auditIrSkippedClassMemberSlots,
@@ -5220,11 +5221,10 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // modules regardless of their content. Same principle as the funcref-wrapper
   // root above, applied to the whole frozen group.
   //
-  // Gated on `canonicalRuntimeRecGroup` being present, which `createCodegenContext`
-  // sets only for runtime providers / linked namespaces / explicit
-  // `canonicalRuntimeTypes` — so an unlinked standalone module and the entire
-  // JS-host (gc) lane are byte-identical to before.
-  if (ctx.mod.canonicalRuntimeRecGroup !== undefined) {
+  // Gated on the group (runtime providers / linked namespaces / explicit `canonicalRuntimeTypes`) or (#7643) on either
+  // side of the runtime-eval seam, which exchanges the same members without the group. Every other module, on either
+  // lane, keeps its leaf finality.
+  if (ctx.mod.canonicalRuntimeRecGroup !== undefined || sharesRuntimeEvalValueAbi(ctx)) {
     const abiRootNames = new Set(RUNTIME_RECGROUP_TYPE_NAMES);
     for (let i = 0; i < ctx.mod.types.length; i++) {
       const td = ctx.mod.types[i];

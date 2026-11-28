@@ -103,7 +103,7 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#6651 V3)
 import { fillForOfIteratorStep } from "./forof-iterator-step.js"; // (#6651 G4)
 import { buildLiveArrayIteratorValue } from "./array/live-array-iterator-value.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js"; // (#6651 A9)
-import { RUNTIME_EVAL_IMPORT_MODULE } from "./expressions/runtime-eval-provider.js"; // (#6651 A9)
+import { linksRuntimeEvalProvider } from "./expressions/runtime-eval-provider.js"; // (#6651 A9)
 import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. (#6651 IT3 exports it: `ta-dyn-proto-methods.ts` `struct.new`s a record, and a bare `3` there would desync on a renumber.) */
@@ -485,16 +485,6 @@ function readDecoder(
   paramCount: number,
 ): () => Instr[] {
   return () => (deps.decodeRead !== undefined && locals !== undefined ? deps.decodeRead(locals, paramCount) : []);
-}
-
-/**
- * (#6651 A9) Only a unit that imports the provider can be handed its carrier.
- * Neither the callback type nor `runtimeEvalCallableBoundaryEnabled` says so:
- * the inventory also counts a type-position `Function` (`Record<string,
- * Function>`), which flags benchmark drivers that link no provider at all.
- */
-function linksRuntimeEvalProvider(ctx: CodegenContext): boolean {
-  return ctx.mod.imports.some((imp) => imp.module === RUNTIME_EVAL_IMPORT_MODULE);
 }
 
 /** Build a fresh `$Object`/`$Proxy` carrier test for dynamic property reads. */
@@ -2865,7 +2855,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
       keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
       missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
-      decodeRead: linksRuntimeEvalProvider(ctx)
+      decodeRead: linksRuntimeEvalProvider(ctx) // (#6651 A9) only a linking unit gets a carrier; a type-position `Function` does not link
         ? (locals, paramCount) => buildRuntimeEvalValueUnwrap(ctx, locals, paramCount) // (#6651 A9)
         : undefined,
     };

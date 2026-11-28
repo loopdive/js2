@@ -53,6 +53,8 @@ export interface IrRuntimeEvalSite {
 export interface IrRuntimeEvalBoundaryPlan {
   readonly sites: readonly IrRuntimeEvalSite[];
   readonly providerMayExecute: boolean;
+  /** The program defines the provider ABI: a top-level `__runtime_*` entry (a `provider-definition` site). */
+  readonly definesProvider: boolean;
   readonly sharedRealmMayContainCanonicalValues: boolean;
   readonly callableBoundaryRequired: boolean;
   /** Some dynamic source is computed, or a literal one writes bindings no scan can name. */
@@ -519,11 +521,12 @@ export function buildIrRuntimeEvalBoundaryPlan(
   // that distinction explicit: providerMayExecute describes callers, while
   // sharedRealmMayContainCanonicalValues also covers the provider definition
   // side of the seam.
-  const sharedRealmMayContainCanonicalValues =
-    providerMayExecute || frozenSites.some((site) => site.kind === "provider-definition");
+  const definesProvider = frozenSites.some((site) => site.kind === "provider-definition");
+  const sharedRealmMayContainCanonicalValues = providerMayExecute || definesProvider;
   return Object.freeze({
     sites: frozenSites,
     providerMayExecute,
+    definesProvider,
     sharedRealmMayContainCanonicalValues,
     callableBoundaryRequired: frozenSites.length !== 0,
     unknownDynamicSource,
