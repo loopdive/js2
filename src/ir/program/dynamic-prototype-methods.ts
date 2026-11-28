@@ -15,7 +15,6 @@
  * receiver and takes the dispatcher.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrType } from "../core/types.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import { nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
 import {
@@ -26,16 +25,13 @@ import {
 } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, booleanConst, carried } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import { toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
-
-/** The Boolean the realm's tests answer, boxed into the call's carrier. */
-const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** The name `call` calls, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a constant key on its receiver. */
 function methodNameOfCall(call: Call, definitions: ReadonlyMap<IrValueId, IrInstr>): string | undefined {
@@ -56,9 +52,7 @@ function boxed(b: ObjectStaticBuilders, instr: Call, test: (value: IrValueId) =>
 }
 const constant =
   (answer: boolean) =>
-  (result: IrValueId): IrInstr[] => [
-    { kind: "const", value: { kind: "bool", value: answer }, result, resultType: BOOLEAN },
-  ];
+  (result: IrValueId): IrInstr[] => [booleanConst(answer, result)];
 
 /**
  * §20.1.3.2 / §20.1.3.4: ToPropertyKey(V) first, then ToObject(this value) and its own property `P` (enumerable too

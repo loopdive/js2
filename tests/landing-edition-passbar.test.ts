@@ -33,7 +33,8 @@ async function bootPage() {
   const dom = new JSDOM(html, {
     runScripts: "dangerously",
     pretendToBeVisual: true,
-    url: "https://js2wasm.test/",
+    // The legacy view: the IR view is the default since #7537.
+    url: "https://js2wasm.test/?ir=0",
     virtualConsole,
     beforeParse(window: any) {
       window.matchMedia = () => ({

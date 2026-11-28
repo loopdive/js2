@@ -13,7 +13,7 @@ import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
-import { CARRIER, carried } from "./dynamic-value-types.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { realmIntrinsicSelector } from "./builtin-prototype-keys.js";
@@ -29,12 +29,20 @@ import {
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 
-export { CARRIER, carried } from "./dynamic-value-types.js";
+export { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
+
+/** The constant Boolean `value` into `result`. */
+export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
 
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)

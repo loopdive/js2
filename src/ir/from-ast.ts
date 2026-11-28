@@ -70,6 +70,8 @@ import {
   binaryOperandsAdmissible,
   numericReaderOperandsBoxed,
   booleanReadAsNumber,
+  compoundRhsReadsToNumber,
+  laneReadsToNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isBigIntUnsafeDynamicOperator,
@@ -359,7 +361,7 @@ import {
   moduleInitContainsNestedVar,
   type ScriptVarModel,
 } from "../shared/var-declaration-lists.js";
-import { emitLogicalSelect } from "./logical-select.js";
+import { emitLogicalSelect, literalLogicalTruth } from "./logical-select.js";
 import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
@@ -685,7 +687,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | RegExpBuildCapability | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
+    capability:
+      | "number-to-string"
+      | "native-dynamic-to-number"
+      | RegExpBuildCapability
+      | IrAmbientGlobalFunctionCapability
+      | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -1070,10 +1077,17 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   ambientNamespaceConstant?(expr: ts.PropertyAccessExpression): number | undefined;
   /**
    * (#7106 propertyHelper) The runtime wrapper a dynamic `delete` at `site`
-   * calls (strict / sloppy, decided like legacy's `compileDeleteExpression`),
-   * or undefined where the dynamic carrier is not an externref.
+   * calls (strict / sloppy, decided like legacy's `compileDeleteExpression`;
+   * (#7471) on the Prepared path by its code strictness), or undefined where
+   * the dynamic carrier is not an externref.
    */
   dynamicDeleteSymbol?(site: ts.DeleteExpression): string | undefined;
+  /**
+   * (#7471) The delete boxes a raw externref receiver (a Prepared function-local object) onto the carrier, as a read
+   * and a write do. Only the Prepared native lane answers, so the ordinary pipeline's delete keeps the dynamic
+   * receivers its selector admits (PRV-7471 B3).
+   */
+  dynamicDeleteBoxesExternref?(): boolean;
   /**
    * (#7106) Does legacy route this `<value> instanceof <parameter>` through its
    * generic runtime operator? The same question the selector asked.
@@ -5345,13 +5359,13 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       );
     return lowerRegExpLiteral(expr, cx);
   }
-  // (#7106) `delete <expr>`: the selector refuses every form
-  // (`expr-delete-no-ir-lowering`) because the IR has no delete operation.
-  // Slice 11 (#1169n) used to answer a constant `true` here, which removed
-  // nothing and never threw. Fail closed if a delete ever reaches lowering.
+  // (#7106, #7471) `delete <expr>`: a declared binding or a non-reference
+  // answers a constant (`lowerReferencelessDelete`); a member of a dynamic
+  // receiver calls the resolver's delete helper (`lowerDynamicDelete`). Any
+  // other form demotes.
   if (ts.isDeleteExpression(expr)) {
-    const dynamicDelete = lowerDynamicDelete(expr, cx);
-    if (dynamicDelete !== null) return dynamicDelete;
+    const deleted = lowerReferencelessDelete(expr, cx) ?? lowerDynamicDelete(expr, cx);
+    if (deleted !== null) return deleted;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: delete has no IR lowering in ${cx.funcName}`);
   }
   // Preserve operand effects; dynamic consumers need canonical undefined,
@@ -8213,12 +8227,12 @@ function lowerClosureCall(
  * (#7106 propertyHelper) `delete <dyn>.name` / `delete <dyn>[key]` on a
  * dynamic receiver: the receiver and the (boxed) key as carriers, then the
  * site's runtime wrapper — legacy's generic externref delete arm
- * (`codegen/ir-dynamic-delete.ts`). Returns the delete's boolean, or null when
- * the operand is not that shape (the caller demotes).
+ * (`codegen/ir-dynamic-delete.ts`), or (#7471) on the Prepared path the
+ * realm's [[Delete]] (`dynamic-member-access.ts`). Returns the delete's
+ * boolean, or null when the operand is not that shape (the caller demotes).
  */
 function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
-  let operand: ts.Expression = expr.expression;
-  while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+  const operand = skipOuterExpressions(expr.expression);
   let receiverExpr: ts.Expression;
   let keyExpr: ts.Expression | undefined;
   let keyName: string | undefined;
@@ -8233,7 +8247,11 @@ function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId 
   }
   const symbol = cx.resolver?.dynamicDeleteSymbol?.(expr);
   if (symbol === undefined) return null;
-  const receiver = lowerExpr(receiverExpr, cx, irDynamic());
+  const lowered = lowerExpr(receiverExpr, cx, irDynamic());
+  const receiver =
+    cx.resolver?.dynamicDeleteBoxesExternref?.() === true && isRawExternrefReceiver(cx.builder.typeOf(lowered), cx)
+      ? cx.builder.emitBox(lowered, irDynamic())
+      : lowered;
   if (cx.builder.typeOf(receiver).kind !== "dynamic") return null;
   const key =
     keyName !== undefined
@@ -8245,6 +8263,36 @@ function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId 
     throw new Error(`ir/from-ast: dynamic delete produced no value in ${cx.funcName}`);
   }
   return result;
+}
+
+/**
+ * (#7471) `delete` of an operand that is no property reference (§13.5.1.2), reached only on the Prepared path (the
+ * ordinary selector refuses it, `expr-delete-no-ir-lowering`). A name a function or the script declares is a
+ * declarative binding, or a script `var` / function the global object holds non-configurable: `false`, the name
+ * unevaluated (steps 3–4; strict code rejects the form early). Any other expression is evaluated and answers `true`
+ * (step 2). A `with` binding (an object environment's, whose [[Delete]] can remove it) and a name only the global
+ * object holds refuse by name. Returns null for a property reference.
+ */
+function lowerReferencelessDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
+  const operand = skipOuterExpressions(expr.expression);
+  if (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) return null;
+  if (!ts.isIdentifier(operand)) {
+    lowerDiscardedExpression(expr.expression, cx);
+    return cx.builder.emitConst({ kind: "bool", value: true }, IR_BOOL);
+  }
+  const read = classifyIdentifierRead(operand, cx);
+  if (read.kind === "scope" && read.binding.kind === "withField")
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: delete of a with-scope binding in ${cx.funcName}`);
+  // An unshadowed `arguments` inside a non-arrow function is that function's own binding.
+  const ownArguments =
+    operand.text === "arguments" &&
+    ts.findAncestor(operand, (node) => ts.isFunctionLike(node) && !ts.isArrowFunction(node)) !== undefined;
+  if (read.kind !== "scope" && read.kind !== "module-binding" && read.kind !== "top-level-function" && !ownArguments)
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: delete of "${operand.text}", which names no binding this lowering resolves, in ${cx.funcName}`,
+    );
+  return cx.builder.emitConst({ kind: "bool", value: false }, IR_BOOL);
 }
 
 /**
@@ -10871,6 +10919,14 @@ function lowerDynamicMemberCompound(
   return true;
 }
 
+/** (#7375) An admitted compound RHS as the f64 its ToNumber reads. */
+function admittedCompoundRhsToF64(value: IrValueId, rhs: ts.Expression, cx: LowerCtx): IrValueId {
+  const numeric = numericReaderOperandToF64(value, rhs, cx);
+  // invariant (producer-promise): `compoundWriteAdmissible` admits only RHS families ToNumber reads — #7144.
+  if (numeric === null) throw new Error(`ir/from-ast: admitted compound RHS has no f64 (${cx.funcName})`);
+  return numeric;
+}
+
 /**
  * (#7354 O7) A dynamic compound's step after its read of `old` (a dynamic slot's or a member's): the RHS on the
  * carrier, admitted for the dynamic family, then the dynamic binary producer. `result` is the operator's value, and
@@ -10885,11 +10941,16 @@ function dynamicCompoundStep(
 ): { readonly result: IrValueId; readonly stored: IrValueId } {
   const rhsValue = lowerExpr(rhs, cx, irDynamic());
   const rhsType = cx.builder.typeOf(rhsValue);
-  if (!compoundWriteAdmissible(token, "dynamic", irOperandFamily(rhsType, rhs))) {
+  const rhsFamily = irOperandFamily(rhsType, rhs);
+  if (
+    !compoundWriteAdmissible(token, "dynamic", rhsFamily, laneReadsToNumber(cx.resolver?.supportsBackendCapability))
+  ) {
     const detail = `${ts.tokenToString(token)} of ${describeIrType(rhsType)} has no carrier (${cx.funcName})`;
     demoteToLegacy("compound-assign-unsupported", `ir/from-ast: dynamic compound ${detail}`);
   }
-  const result = lowerDynamicBinaryValues(compoundStepOperator(token), old, rhsValue, left, rhs, cx);
+  // (#7375) An admitted boolean or string RHS enters the step as its ToNumber, an f64 the step reads.
+  const operand = compoundRhsReadsToNumber(token, rhsFamily) ? admittedCompoundRhsToF64(rhsValue, rhs, cx) : rhsValue;
+  const result = lowerDynamicBinaryValues(compoundStepOperator(token), old, operand, left, rhs, cx);
   // invariant (producer-promise): `compoundWriteAdmissible` admits only operands the producer carries — #7144.
   if (result === null) throw new Error(`ir/from-ast: admitted dynamic compound has no lowering (${cx.funcName})`);
   return { result, stored: dynamicBinaryOnCarrier(result, cx) };
@@ -13457,6 +13518,7 @@ function lowerCompoundAssignment(
   // (#7144) Which slot / value families each operator writes is
   // `compoundWriteAdmissible`; the arms below are its producers.
   const slotFamily = irOperandFamily(logicalType, id);
+  const toNumber = laneReadsToNumber(cx.resolver?.supportsBackendCapability);
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "string") {
     const lhs =
       storage.kind === "moduleGlobal"
@@ -13503,7 +13565,7 @@ function lowerCompoundAssignment(
       typedValueEvidence(id, storage.type, storage.stringEncoding, cx, logicalType),
       typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx), cx),
     );
-    if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs)) || !proof) {
+    if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs), toNumber) || !proof) {
       throw new IrUnsupportedError(
         "string-evidence-unsupported",
         "build",
@@ -13534,7 +13596,7 @@ function lowerCompoundAssignment(
     else cx.builder.emitSlotWrite(storage.slotIndex, stored);
     return result;
   }
-  if (slotFamily === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
+  if (slotFamily === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number", toNumber)) {
     demoteToLegacy(
       "compound-assign-unsupported",
       `ir/from-ast: compound assign ${ts.tokenToString(compoundOp)} to "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
@@ -13551,7 +13613,7 @@ function lowerCompoundAssignment(
         : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
   const rhsValue = lowerExpr(rhs, cx, logicalType);
   const rhsType = cx.builder.typeOf(rhsValue);
-  if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
+  if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs), toNumber)) {
     // (#3565) DESIGNED demote: an RHS with no numeric carrier (e.g. an
     // externref value yielded by a generator in `s += v`) is a typed refusal,
     // not a producer contradiction, so legacy compiles it.
@@ -13561,8 +13623,8 @@ function lowerCompoundAssignment(
       `ir/from-ast: compound assign RHS has no numeric carrier (got ${describeIrType(rhsType)}) in ${cx.funcName}`,
     );
   }
-  // An f64 slot and an admitted (number or `void`) RHS are both f64 already.
-  const result = emitNumberBinary(binaryOp, lhs, rhsValue, id, rhs, cx);
+  // An f64 slot is f64 already; (#7375) an admitted boolean or string RHS is read with ToNumber.
+  const result = emitNumberBinary(binaryOp, lhs, admittedCompoundRhsToF64(rhsValue, rhs, cx), id, rhs, cx);
   if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
   else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
   else cx.builder.emitRefCellSet(storage.value, result);
@@ -14301,37 +14363,25 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       ? cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }))
       : lowerExpr(expr.operand, cx, irVal({ kind: "f64" }));
   switch (expr.operator) {
-    case ts.SyntaxKind.MinusToken: {
-      const randType = typeOfValue(rand, cx);
-      // #2949 S5.5 — unary `-` on a boxed-any carrier is ToNumber then negate
-      // (§13.5.5 Unary Minus): `dyn.to_number` (canonical `__any_to_f64` gc /
-      // `__unbox_number` host — D4) feeds the existing `f64.neg`. Byte-inert
-      // until the S5.P scan admits dynamic-unary bodies.
-      if (randType.kind === "dynamic") {
-        refuseBigIntDynamicOperand(cx, expr.operand);
-        const n = cx.builder.emitDynToNumber(rand);
-        return cx.builder.emitUnary("f64.neg", n, irVal({ kind: "f64" }));
-      }
-      // (#3168) `-x` is `-ToNumber(x)` (§13.5.5 →
-      // §7.1.4). ToNumber the operand to f64, then `f64.neg` — sign-correct for
-      // `-0` (`-"" === -0`), unlike `0 - x`. Mirrors legacy `expressions/unary.ts`.
-      const negToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (negToNumber === null) throwUnaryNotNumber(expr, "-", cx);
-      return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
-    }
+    case ts.SyntaxKind.MinusToken:
     case ts.SyntaxKind.PlusToken: {
-      const randType = typeOfValue(rand, cx);
-      // #2949 S5.5 — unary `+` on a boxed-any carrier IS ToNumber (§13.5.4
-      // Unary Plus is exactly `? ToNumber(value)`): a bare `dyn.to_number`.
-      if (randType.kind === "dynamic") {
+      const type = typeOfValue(rand, cx);
+      const minus = expr.operator === ts.SyntaxKind.MinusToken;
+      let number: IrValueId | null;
+      if (type.kind === "dynamic") {
         refuseBigIntDynamicOperand(cx, expr.operand);
-        return cx.builder.emitDynToNumber(rand);
+        number = cx.builder.emitDynToNumber(rand);
+      } else if (
+        (type.kind === "closure" || asVal(type)?.kind === "externref") &&
+        functionObjects.createsFunctionObjects(cx.resolver)
+      ) {
+        refuseBigIntDynamicOperand(cx, expr.operand);
+        number = realmToNumber(rand, expr.operand, functionObjectLoweringHost(cx));
+      } else {
+        number = emitUnaryToNumber(rand, type, cx, cx.stringNumericCoercion);
       }
-      // (#3168) `+x` IS `ToNumber(x)` (§13.5.4): boolean → 0/1, string →
-      // §7.1.4.1 StringToNumber, a branded f64's `undefined` marker → NaN.
-      const plusToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
-      if (plusToNumber === null) throwUnaryNotNumber(expr, "+", cx);
-      return plusToNumber;
+      if (number === null) throwUnaryNotNumber(expr, minus ? "-" : "+", cx);
+      return minus ? cx.builder.emitUnary("f64.neg", number, IR_F64) : number;
     }
     case ts.SyntaxKind.ExclamationToken: {
       const randType = typeOfValue(rand, cx);
@@ -15390,14 +15440,17 @@ function boxNumericReaderOperands(
     irOperandFamily(cx.builder.typeOf(operands[1]), expr.right),
   ] as const;
   if (!numericReaderOperandsBoxed(expr.operatorToken.kind, families[0], families[1])) return operands;
-  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId => {
-    if (family !== "boolean" && family !== "string") return value;
-    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
-    // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
-    if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
-    return boxed;
-  };
+  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId =>
+    family === "boolean" || family === "string" ? boxReaderOperand(value, family, source, cx) : value;
   return [box(operands[0], families[0], expr.left), box(operands[1], families[1], expr.right)];
+}
+
+/** Box a boolean / string operand into the dynamic carrier, for a numeric reader's ToNumber. */
+function boxReaderOperand(value: IrValueId, family: OperandFamily, source: ts.Expression, cx: LowerCtx): IrValueId {
+  const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
+  // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
+  if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
+  return boxed;
 }
 
 /**
@@ -15415,10 +15468,23 @@ function booleansReadAsNumbers(
   const leftFamily = irOperandFamily(typeOfValue(lhs, cx), expr.left);
   const rightFamily = irOperandFamily(typeOfValue(rhs, cx), expr.right);
   if (!booleanReadAsNumber(op, leftFamily, rightFamily)) return [lhs, rhs];
-  // Signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop.
   const toNumber = (value: IrValueId, family: OperandFamily): IrValueId =>
-    family === "boolean" ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64) : value;
+    family === "boolean" ? booleanToNumber(value, cx) : value;
   return [toNumber(lhs, leftFamily), toNumber(rhs, rightFamily)];
+}
+
+/** ToNumber of a boolean: signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop. */
+function booleanToNumber(value: IrValueId, cx: LowerCtx): IrValueId {
+  return cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
+}
+
+/** (#7375) ToNumber of a compound assignment's right-hand side, by the binary form's steps (above, `boxNumericReaderOperands`). */
+function numericReaderOperandToF64(value: IrValueId, source: ts.Expression, cx: LowerCtx): IrValueId | null {
+  const type = cx.builder.typeOf(value);
+  const family = irOperandFamily(type, source);
+  if (family === "boolean") return booleanToNumber(value, cx);
+  if (family !== "string") return relOperandToF64(value, type, cx);
+  return cx.builder.emitDynToNumber(boxReaderOperand(value, family, source, cx));
 }
 
 /**
@@ -15566,10 +15632,8 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
  *   - `a && b` → if `a` is truthy yield `b`, else yield `a` (the falsy value).
  *   - `a || b` → if `a` is truthy yield `a`, else yield `b`.
  *
- * We keep the existing IR scope (both operands `i32`/bool); anything else
- * throws clean fallback to legacy, exactly as the old `requireI32` did. The
- * right operand is lowered into its own body buffer (only the taken branch
- * runs it) and the two arms are combined with a structured `IrInstrIf`.
+ * Keep a common operand representation where possible. A mixed value join
+ * boxes its operands. The right operand runs only in its selected branch.
  */
 function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
@@ -15577,93 +15641,39 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
-  // (#7106 item 1) A nested logical operand (`a && a.x || b`) must keep its
-  // VALUE form outside a boolean position (the `i32` hint: an `if` condition, a
-  // boolean return): an `i32` hint would ToBoolean it and the outer selection
-  // would lose the carrier. (#7354) The same holds for the right operand.
   const booleanPosition = hint !== undefined && asVal(hint)?.kind === "i32";
-  const operandHint = (operand: ts.Expression): IrType => {
-    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
-    const nestedLogical =
-      ts.isBinaryExpression(operand) &&
-      (operand.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-        operand.operatorToken.kind === ts.SyntaxKind.BarBarToken);
-    return hint?.kind === "dynamic" || (nestedLogical && !booleanPosition) ? irDynamic() : irVal({ kind: "i32" });
-  };
-  const rawLhs = lowerExpr(expr.left, cx, operandHint(expr.left));
-  const lhsType = cx.builder.typeOf(rawLhs);
-  // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: §13.13.1 — evaluate the
-  // left carrier once, ToBoolean it, and select it or the (boxed) right
-  // operand. Only a boolean position keeps the ToBoolean'd `i32` form below.
-  // The selector admits only a dynamic-parameter left operand with a dynamic
-  // or boxable right operand.
-  if (lhsType.kind === "dynamic" && !booleanPosition) {
-    const cond = cx.builder.emitDynTruthy(rawLhs);
-    const skippedScope = new Map(cx.scope);
-    const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
-    let rhs!: IrValueId;
-    const rhsBody = cx.builder.collectBodyInstrs(() => {
-      rhs = logicalOperandCarrier(lowerExpr(expr.right, rhsCx, irDynamic()), expr.right, "right", opName, cx);
-    });
-    joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
-    return emitLogicalSelect(cx.builder, isAnd, { cond, lhs: rawLhs, rhsBody, rhs }, irDynamic());
-  }
-  const lhs =
-    lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
-  if (lhs === null) {
+  const truth = (value: IrValueId, operand: ts.Expression, ctx: LowerCtx): IrValueId =>
+    lowerToBooleanForCondition(value, operand, ctx) ??
     demoteToLegacy(
       "logical-value-unsupported",
-      `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
+      `ir/from-ast: operator '${opName}' cannot test this operand in ${cx.funcName}`,
     );
+  const constant = literalLogicalTruth(peelParensExpr(expr.left));
+  if (constant !== undefined) {
+    const arm = constant === isAnd ? expr.right : expr.left;
+    const value = lowerExpr(arm, cx, irDynamic());
+    return booleanPosition ? truth(value, arm, cx) : value;
   }
-
-  const resultType: IrType = irVal({ kind: "i32" });
-
-  // Lower the right operand into its own buffer so it executes only on the
-  // branch that needs it.
+  const lhs = lowerExpr(expr.left, cx, irDynamic());
+  const lhsType = cx.builder.typeOf(lhs);
+  const cond = truth(lhs, expr.left, cx);
   const skippedScope = new Map(cx.scope);
-  const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
+  const rhsCx = { ...cx, scope: new Map(skippedScope) };
   let rhs!: IrValueId;
+  let mixed = false;
   const rhsBody = cx.builder.collectBodyInstrs(() => {
-    const rawRhs = lowerExpr(expr.right, rhsCx, operandHint(expr.right));
-    const rhsType = cx.builder.typeOf(rawRhs);
-    if (rhsType.kind === "dynamic") {
-      // (#7354) As a VALUE, `bool && dyn` is the right operand itself, not its truth.
-      rhs = booleanPosition ? cx.builder.emitDynTruthy(rawRhs) : rawRhs;
-    } else if (asVal(rhsType)?.kind === "i32") {
-      rhs = rawRhs;
-    } else if (lhsType.kind === "dynamic" && boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx) !== null) {
-      // (#7106 S3b) `if (dyn || "")`: a boxable concrete right operand in a
-      // boolean position is ToBoolean'd through its dynamic carrier, exactly
-      // as the value form selects it.
-      rhs = cx.builder.emitDynTruthy(boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx)!);
-    } else {
-      demoteToLegacy(
-        "logical-value-unsupported",
-        `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
-      );
+    rhs = lowerExpr(expr.right, rhsCx, irDynamic());
+    const rhsType = cx.builder.typeOf(rhs);
+    if (booleanPosition) rhs = truth(rhs, expr.right, rhsCx);
+    else if (!irTypeEquals(lhsType, rhsType) || irTypeIsBoolean(lhsType) !== irTypeIsBoolean(rhsType)) {
+      mixed = true;
+      rhs = logicalOperandCarrier(rhs, expr.right, "right", opName, rhsCx);
     }
   });
   joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
-  // (#7354) `bool && dyn` as a VALUE: the left operand, when it decides, is
-  // yielded in the carrier too (only a boolean position reaches here with a
-  // dynamic left operand, so `lhs` is the typed left value).
-  if (cx.builder.typeOf(rhs).kind === "dynamic") {
-    const boxedLhs = logicalOperandCarrier(lhs, expr.left, "left", opName, cx);
-    return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs: boxedLhs, rhsBody, rhs }, irDynamic());
-  }
-  if (asVal(cx.builder.typeOf(rhs))?.kind !== "i32") {
-    demoteToLegacy(
-      "logical-value-unsupported",
-      `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
-    );
-  }
-
-  // A value join preserves the Boolean brand only when both actual operands
-  // carry it. Native integer operands retain the existing unbranded result.
-  const joinedType =
-    irTypeIsBoolean(cx.builder.typeOf(lhs)) && irTypeIsBoolean(cx.builder.typeOf(rhs)) ? irBool() : resultType;
-  return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs, rhsBody, rhs }, joinedType);
+  const selectedLhs = booleanPosition ? cond : mixed ? logicalOperandCarrier(lhs, expr.left, "left", opName, cx) : lhs;
+  const resultType = booleanPosition ? irBool() : mixed ? irDynamic() : lhsType;
+  return emitLogicalSelect(cx.builder, isAnd, { cond, lhs: selectedLhs, rhsBody, rhs }, resultType);
 }
 
 /** An `&&` / `||` operand in the dynamic carrier (boxed when typed), or a refusal by name. */

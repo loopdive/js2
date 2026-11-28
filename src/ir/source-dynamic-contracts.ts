@@ -59,6 +59,7 @@ import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { irDynamicDeleteHelperName } from "../shared/contracts/dynamic-delete-helper.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
@@ -337,6 +338,13 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicCompoundMemberWrites?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
+    /**
+     * (#7471) The helper a `delete` of a member calls: its enclosing code's strictness, the rule a dynamic PutValue's
+     * failure follows (unknown code is strict, as there).
+     */
+    readonly dynamicDeleteSymbol?: (site: ts.DeleteExpression) => string;
+    /** (#7471) A function-local object reaches a delete as the raw externref, which is the carrier's value. */
+    readonly dynamicDeleteBoxesExternref?: () => boolean;
     /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
     readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
   };
@@ -388,7 +396,7 @@ export function programDynamicContracts(
   input: {
     readonly checker: ts.TypeChecker;
     readonly policy: SourcePolicy;
-    readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+    readonly codeStrictness?: (node: ts.Node) => boolean;
   },
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
@@ -444,6 +452,8 @@ export function programDynamicContracts(
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
+          dynamicDeleteSymbol: (site) => irDynamicDeleteHelperName(input.codeStrictness?.(site) !== false),
+          dynamicDeleteBoxesExternref: () => true,
           dynamicForInPlan: () => FOR_IN_PLAN,
         }
       : {},

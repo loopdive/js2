@@ -142,9 +142,12 @@ export async function throwsAsNode(source: string): Promise<void> {
 }
 
 /** (#7354 U) The functions of `source`, which must compile, whose body is the run-time abort: `name: refusal`. */
-export async function abortBodies(source: string): Promise<string[]> {
+export async function abortBodies(
+  source: string,
+  options: Test262CompileOptions = preparedOptions(),
+): Promise<string[]> {
   await yieldToRpc();
-  const result = await compile(source, preparedOptions());
+  const result = await compile(source, options);
   expect(errors(result)).toEqual([]);
   return requiredPreparedAbortBodies(result)!.map((row) => `${row.name}: ${row.detail}`);
 }

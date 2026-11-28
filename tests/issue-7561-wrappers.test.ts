@@ -177,6 +177,7 @@ describe("#7561 — what the slice leaves out refuses by name or aborts", () => 
     ],
     ["loose equality with a wrapper", "var out = new Number(1) == 1;", "dyn.eq (loose)"],
     ["a static of a constructor read", "var p = String.fromCharCode;", "String.fromCharCode is not reachable"],
+    ["a constructor's prototype deleted", "var out = delete Number.prototype;", "member delete 'prototype' of Number"],
   ])("refuses %s", async (_label, source, expected) => {
     expect(await refusal(source + CALLS, runnerOptions())).toContain(expected);
   });
@@ -185,6 +186,7 @@ describe("#7561 — what the slice leaves out refuses by name or aborts", () => 
   const CHECK = `function check(f) { try { f(); } catch (e) { return "caught"; } return "none"; }\n`;
   it.each([
     ["a constant index read", 'var s = new String("ab"); return s["0"];'],
+    ["a constant index delete", 'var s = new String("ab"); return delete s["0"];'],
     ["an index own-property query", 'var s = new String("ab"); return s.hasOwnProperty("0");'],
     ["a computed index descriptor", 'var s = new String("ab"); return Object.getOwnPropertyDescriptor(s, "0" + "");'],
     ["an index definition", 'Object.defineProperty(new String("ab"), "0", {value: "x"});'],

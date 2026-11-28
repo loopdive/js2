@@ -390,3 +390,17 @@ Measurements (load 3–5 from other agents, so times are noisy):
 For the array slice (A1a): `holdsFamily` / `realmFamilies`, `ProgramObjects.wrappers`, the method-by-identity table,
 `WRAPPER_DATA` / `WRAPPER_OF_PRIMITIVE` in `builtin-prototype-keys.ts`, `dynamic-object-tag.ts`, and the extensible
 `$Object` root declared where a wrapper family is held.
+
+## Merge with main's member delete (#7471), 2026-11-28
+
+Main gained `dynamicMemberDelete` after this slice was reviewed. Two things in `src/ir/program/dynamic-member-access.ts`
+are new in the merge and were not part of either review:
+
+- `delete X.prototype` of a wrapper constructor refuses by name. The key passes `identityOnlyKeyRefusal` since this
+  slice, but the realm holds the prototype only where the program reads it, so OrdinaryDelete answered `true` where
+  node answers `false`.
+- the delete's object arm is the run-time abort for an array-index key where a String object may exist, as the read
+  and write arms already are (the realm would answer `true` for `delete new String("ab")["0"]`; node answers `false`).
+
+`BOOLEAN` moved to `dynamic-value-types.ts` (main exported one from `dynamic-value-chains.ts`, this slice kept one in
+`dynamic-builtin-methods.ts`, which the chains import).

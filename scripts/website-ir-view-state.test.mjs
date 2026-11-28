@@ -28,6 +28,10 @@ function page(query = "", hash = "") {
     reload() {
       reloads++;
     },
+    replace(next) {
+      url = new URL(next, url);
+      reloads++;
+    },
   };
   const window = {
     location,
@@ -52,48 +56,120 @@ function label() {
   return { hidden: true, style: { display: "none" }, querySelector: () => input, input, handlers };
 }
 
-describe("URL-gated website IR data selection", () => {
-  it("uses parameter presence for visibility, including bare and combined ?ir", () => {
-    for (const query of ["?ir", "?ir&mode=host", "?ir=0", "?ir=1"]) {
+const unavailableStatus = (reason) => async () => ({
+  ok: true,
+  json: async () => ({
+    schema: "test262-compiler-path-status-v1",
+    compilerPath: "ir",
+    state: "unavailable",
+    reason,
+  }),
+});
+
+describe("website IR data selection", () => {
+  it("opens on the IR view and keeps the legacy view reachable", () => {
+    for (const query of ["", "?ir=1", "?edition=ES2015"]) assert.equal(page(query).state.read().ir, true, query);
+    // A bare `?ir` is `?ir=` to URLSearchParams.
+    for (const query of ["?ir", "?ir=", "?ir=0", "?mode=host", "?mode=host&ir=1"])
+      assert.equal(page(query).state.read().ir, false, query);
+  });
+
+  it("shows the toggle on every URL, checked for the IR view", () => {
+    for (const query of ["", "?ir=0", "?mode=host&edition=ES2015", "?ir=1"]) {
       const view = page(query);
       const toggle = label();
       view.state.bindIrToggle(toggle);
       assert.equal(toggle.hidden, false);
-      assert.equal(toggle.input.checked, query === "?ir=1");
+      assert.equal(toggle.style.display, "");
+      assert.equal(toggle.input.checked, view.state.read().ir);
+      assert.equal(toggle.handlers.size, 1);
     }
-    const view = page("?mode=host&edition=ES2015");
-    const toggle = label();
-    view.state.bindIrToggle(toggle);
-    assert.equal(toggle.hidden, true);
-    assert.equal(toggle.style.display, "none");
-    assert.equal(toggle.handlers.size, 0);
+  });
+
+  it("writes only the legacy choice and round-trips both views", () => {
+    const view = page("?edition=ES2015");
+    view.state.write({ ir: false });
+    assert.equal(new URL(view.href()).searchParams.get("ir"), "0");
+    assert.equal(view.state.read().ir, false);
     view.state.write({ ir: true });
     assert.equal(new URL(view.href()).searchParams.has("ir"), false);
+    assert.equal(new URL(view.href()).searchParams.get("edition"), "ES2015");
+    assert.equal(view.state.read().ir, true);
   });
 
   it("keeps lane, edition, unrelated query and hash when toggling and reloading", () => {
-    const view = page("?ir&mode=host&edition=ES2015&keep=yes", "#language");
+    const view = page("?ir=0&edition=ES2015&keep=yes", "#language");
     const toggle = label();
     view.state.bindIrToggle(toggle);
     toggle.input.checked = true;
     toggle.handlers.get("change")();
     const selected = new URL(view.href());
-    assert.equal(selected.searchParams.get("ir"), "1");
-    assert.equal(selected.searchParams.get("mode"), "host");
+    assert.equal(selected.searchParams.has("ir"), false);
     assert.equal(selected.searchParams.get("edition"), "ES2015");
     assert.equal(selected.searchParams.get("keep"), "yes");
     assert.equal(selected.hash, "#language");
     assert.equal(view.reloads(), 1);
-    view.state.write({ ir: false });
-    assert.equal(new URL(view.href()).searchParams.has("ir"), true);
+    view.state.write({ mode: "host", ir: false });
+    assert.equal(new URL(view.href()).searchParams.get("ir"), "0");
+    assert.equal(new URL(view.href()).searchParams.get("mode"), "host");
     assert.equal(view.state.read().ir, false);
   });
 
+  it("reloads an IR document with an unavailable status as the legacy view", async () => {
+    const view = page("?edition=ES5");
+    // Even when replaceState is unavailable, the navigation itself carries ir=0,
+    // so the legacy document cannot reload back into the IR view.
+    view.window.history.replaceState = () => {
+      throw new Error("SecurityError");
+    };
+    view.window.fetch = unavailableStatus("Placeholder");
+    const node = { hidden: true, textContent: "" };
+    await view.state.applyIrStatus("./benchmarks/results", "standalone", node);
+    assert.equal(view.reloads(), 1);
+    assert.equal(new URL(view.href()).searchParams.get("ir"), "0");
+    assert.equal(new URL(view.href()).searchParams.get("edition"), "ES5");
+    assert.equal(view.state.read().ir, false);
+    assert.equal(node.hidden, true);
+  });
+
+  it("shows an unavailable status reason above the legacy numbers without reloading", async () => {
+    for (const query of ["?ir=0", "?mode=host"]) {
+      const view = page(query);
+      view.window.fetch = unavailableStatus("Placeholder");
+      const node = { hidden: true, textContent: "" };
+      await view.state.applyIrStatus("./benchmarks/results", "standalone", node);
+      assert.equal(view.reloads(), 0);
+      assert.equal(node.hidden, false);
+      assert.equal(node.textContent, "Placeholder");
+    }
+  });
+
+  it("keeps the IR document when the status reports a measurement", async () => {
+    const view = page("");
+    view.window.fetch = async () => ({ ok: true, json: async () => ({ compilerPath: "ir", state: "measured" }) });
+    const node = { hidden: true, textContent: "" };
+    await view.state.applyIrStatus("./benchmarks/results", "standalone", node);
+    assert.equal(view.reloads(), 0);
+    assert.equal(view.state.read().ir, true);
+    assert.equal(node.hidden, true);
+  });
+
+  it("ships placeholder statuses that name what replaces them", () => {
+    const results = resolve(import.meta.dirname, "../benchmarks/results");
+    const read = (name) => JSON.parse(readFileSync(resolve(results, name), "utf8"));
+    const standalone = read("test262-standalone-ir-status.json");
+    const host = read("test262-ir-status.json");
+    assert.equal(standalone.state, "unavailable");
+    assert.equal(host.state, "unavailable");
+    assert.equal(standalone.reason, "Placeholder: deploy-pages replaces it with the latest completed IR measurement.");
+    assert.equal(host.reason, "The JS-host lane is retired; it has no IR measurement.");
+  });
+
   it("round-trips IR and destination query/hash between the two surfaces", () => {
-    const view = page("?ir=1");
+    const view = page("?ir=0");
     const link = view.state.linkTo("./benchmarks/report.html?keep=yes#errors", { mode: "host", edition: "ES2020" });
     const next = new URL(link, view.href());
-    assert.equal(next.searchParams.get("ir"), "1");
+    assert.equal(next.searchParams.get("ir"), "0");
     assert.equal(next.searchParams.get("mode"), "host");
     assert.equal(next.searchParams.get("edition"), "ES2020");
     assert.equal(next.searchParams.get("keep"), "yes");
@@ -101,7 +177,7 @@ describe("URL-gated website IR data selection", () => {
   });
 
   it("leaves historical URLs and unlabelled payloads unchanged when IR is off", () => {
-    const view = page("?ir");
+    const view = page("?ir=0");
     const historical = [{ edition: "ES2015" }];
     assert.equal(
       view.state.dataUrl("./benchmarks/results/test262-report.json"),
@@ -110,7 +186,7 @@ describe("URL-gated website IR data selection", () => {
     assert.equal(view.state.readData(historical, "editions"), historical);
     assert.equal(
       view.state.linkTo("./benchmarks/report.html", { mode: "standalone", edition: "overall" }),
-      "./benchmarks/report.html?ir=",
+      "./benchmarks/report.html?ir=0",
     );
   });
 

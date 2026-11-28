@@ -560,9 +560,17 @@ test("IR merge keeps the site-facing reports to the full scope and gates the edi
     fetch,
     /FROM: \$\{\{ github\.event_name == 'merge_group' && github\.event\.merge_group\.base_sha \|\| 'HEAD\^' \}\}/,
   );
-  const report = step("Report the edition against that baseline (#7551)");
-  assert.match(report, /--baseline-dir ir-baseline/);
+  // (#7537) Report, re-check what it would act on, report again: one script.
+  const report = step("Report the edition against that baseline, re-checking what it would act on (#7551, #7537)");
+  assert.match(
+    report,
+    /scripts\/test262-edition-verdict\.sh ir-measurement\/results\.jsonl ir-measurement\/scope\.json current \\\s+ir-baseline ir-measurement\/prs\.json ir-measurement/,
+  );
   assert.match(report, /GITHUB_STEP_SUMMARY/);
+  // (#7537) The job that runs the measured code holds no write scope; the
+  // separate post-merge-alarm job labels PRs.
+  assert.doesNotMatch(merge, /pull-requests: write|issues: write/);
+  assert.match(merge, /persist-credentials: false/);
   // The failure comes after the upload, so a regressed commit still becomes the next baseline.
   const upload = merge.indexOf("      - uses: actions/upload-artifact@v6");
   const fail = merge.indexOf("      - name: Fail on an edition regression (#7551)");
@@ -785,7 +793,10 @@ test("IR shards keep the actual dynamic full-corpus harness and completion bound
   assert.match(measurement, /TEST262_ORACLE_MODE: honest/);
   assert.match(measurement, /TEST262_PATH_FILTER: ""/);
   assert.doesNotMatch(measurement, /Download compiled|Download selected|prewarm|--require-cache/);
-  assert.match(measurement, /--external:typescript7 --external:typescript7\/\*/);
+  // (#7537) The bundles come from the shared runner setup, without providers.
+  assert.match(measurement, /test262-runner-setup\n\s+with:\n\s+providers: "false"/);
+  const setup = fs.readFileSync(join(workflowRoot, ".github/actions/test262-runner-setup/action.yml"), "utf8");
+  assert.match(setup, /--external:typescript7 --external:typescript7\/\*/);
   for (const name of ["test262-canary.yml", "test262-differential.yml"]) {
     const retired = fs.readFileSync(join(workflowRoot, ".github/workflows", name), "utf8").split("jobs:\n")[1];
     const jobs = retired.match(/^  [\w-]+:\n    if: false # JS-host Test262 measurement retired/gm) || [];
