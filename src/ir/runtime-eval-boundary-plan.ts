@@ -457,6 +457,15 @@ function visitRuntimeEvalSites(root: ts.Node, oracle: TypeOracle | undefined, si
   visit(root);
 }
 
+/** The sources of `sourceFiles`, the list `plan` was built from, that hold a direct eval site. */
+export function directEvalSourceFiles(
+  plan: IrRuntimeEvalBoundaryPlan,
+  sourceFiles: readonly ts.SourceFile[],
+): Set<ts.SourceFile> {
+  const ids = new Set(plan.sites.filter((site) => site.kind === "direct-eval").map((site) => site.sourceId));
+  return new Set(sourceFiles.filter((sourceFile, index) => ids.has(stableSourceId(sourceFile, index))));
+}
+
 /** Build the single immutable runtime-eval routing authority for a program. */
 export function buildIrRuntimeEvalBoundaryPlan(
   sourceFiles: readonly ts.SourceFile[],

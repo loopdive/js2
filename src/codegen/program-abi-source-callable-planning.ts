@@ -160,6 +160,22 @@ export function sourceFunctionDeclarationForHandle(
   return ctx.sourceFunctionDeclarationByHandle.get(funcIdx);
 }
 
+/**
+ * The declaration behind the top-level function `name` at `funcIdx`: the handle's own source declaration, else the
+ * bare name's owner, else its top-level declaration.
+ */
+export function topLevelFunctionDeclarationFor(
+  ctx: CodegenContext,
+  name: string,
+  funcIdx: FuncHandle,
+): ts.FunctionDeclaration | undefined {
+  return (
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+    ctx.funcMapOwnerDecl.get(name) ??
+    ctx.topLevelFunctionDeclarations.get(name)
+  );
+}
+
 /** Resolve the defined-function handle owned by one exact source declaration. */
 export function sourceFunctionHandleForDeclaration(
   ctx: CodegenContext,

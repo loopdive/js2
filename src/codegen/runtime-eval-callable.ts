@@ -41,6 +41,8 @@ import {
   RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A,
   RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B,
   RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION,
+  RUNTIME_EVAL_PULL_GLOBALS,
+  RUNTIME_EVAL_PUSH_GLOBALS,
 } from "./runtime-eval-boundary.js";
 
 export interface RuntimeEvalAotCallableCarrier {
@@ -57,9 +59,6 @@ export interface RuntimeEvalAotCallableCarrier {
 export const RUNTIME_EVAL_WRAP_CALLABLE = "__runtime_eval_wrap_callable";
 /** Private `moduleGlobals` key for the one-entry carrier memo (see below). */
 const RUNTIME_EVAL_CARRIER_MEMO_GLOBAL = "\0runtime-eval-carrier-memo";
-
-const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
-const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
 
 function syncedTrampolineBody(
   ctx: CodegenContext,

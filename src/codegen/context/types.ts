@@ -31,6 +31,7 @@ import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
 import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
+import type { RuntimeEvalSourceTags } from "../runtime-eval-boundary.js";
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 import type * as BodyRouteAudit from "./body-route-audit.js";
 
@@ -2689,8 +2690,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Runtime-eval global-object push/pull helpers have been reserved; they are filled once the bindings are settled. */
   runtimeEvalGlobalSyncReserved?: boolean;
   runtimeEvalGlobalBindingsSettled?: boolean;
-  /** Runtime guard: 1 only while execution is crossing the linked provider. */
+  /** Runtime guard: non-zero only while execution is crossing the linked provider; its value is the source tag. */
   runtimeEvalProviderActiveGlobalIdx?: number;
+  /** (#7644) The tagged sources, decided once from the AST; undefined when no source is tagged. */
+  runtimeEvalSourceTags?: RuntimeEvalSourceTags;
   /** This unit consumes linked runtime eval and therefore needs mutable global
    * function bindings, not immutable direct-call indices. */
   runtimeEvalGlobalFunctionBindings?: boolean;

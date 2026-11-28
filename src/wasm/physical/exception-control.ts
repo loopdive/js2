@@ -147,6 +147,33 @@ export function buildStandardTryTable(blockType: BlockType, body: Instr[], handl
 }
 
 /**
+ * `body` protected so that a throw through it with the module's own exception tag `tagIdx` runs `restore` before it
+ * propagates. Not a rethrowing `catch_all`: that needs an exnref, which {@link StandardEhHandler} does not model.
+ * `unwindExnLocal` is an externref local holding the payload while `restore` runs.
+ */
+export function buildRestoreOnUnwind(
+  blockType: BlockType,
+  body: Instr[],
+  tagIdx: number,
+  unwindExnLocal: number,
+  restore: Instr[],
+): Instr {
+  return buildStandardTryTable(blockType, body, [
+    {
+      kind: "catch",
+      tagIdx,
+      payloadType: { kind: "externref" },
+      body: [
+        { op: "local.set", index: unwindExnLocal },
+        ...restore,
+        { op: "local.get", index: unwindExnLocal },
+        { op: "throw", tagIdx },
+      ],
+    },
+  ]);
+}
+
+/**
  * Lower tagged catch clauses (externref payload) to standardized EH. (#6979
  * S7-f) The `{ wasi, standalone }` target and its legacy `try` arm are gone:
  * every emitter is the native regime, which always takes `try_table`.

@@ -33,6 +33,35 @@ export function hasStaticModifier(node: ts.Node): boolean {
   return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Static) !== 0;
 }
 
+/**
+ * (#3419) The last declaration with a body of each function name among `statements`: of duplicate declarations only
+ * the last is instantiated (§16.1.7), an overload set's bodyless signatures are type-only, and a `declare` stub has
+ * no runtime callable.
+ */
+export function lastFunctionImplementations(statements: readonly ts.Statement[]): Map<string, ts.FunctionDeclaration> {
+  const implementations = new Map<string, ts.FunctionDeclaration>();
+  for (const statement of statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name && statement.body && !hasDeclareModifier(statement)) {
+      implementations.set(statement.name.text, statement);
+    }
+  }
+  return implementations;
+}
+
+/**
+ * (#1282, #3419/#4267) Is this top-level declaration the one its name registers as a runtime function? Not an
+ * ambient stub (`declare function`, or any declaration in a `.d.ts`), a shadowed body, or an overload signature.
+ * `implementations` is its source's {@link lastFunctionImplementations}.
+ */
+export function registersTopLevelFunction(
+  statement: ts.FunctionDeclaration,
+  implementations: ReadonlyMap<string, ts.FunctionDeclaration>,
+): boolean {
+  if (hasDeclareModifier(statement) || statement.getSourceFile().isDeclarationFile) return false;
+  const implementation = statement.name ? implementations.get(statement.name.text) : undefined;
+  return implementation === undefined || implementation === statement;
+}
+
 /** Check if a function declaration is a generator (function*) */
 export function isGeneratorFunction(node: ts.FunctionDeclaration): boolean {
   return node.asteriskToken !== undefined;
