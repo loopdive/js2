@@ -2050,6 +2050,22 @@
       "nextBoundary": "The discriminant a lowered switch dispatches on: the typed comparison, or the clause index by string or carrier dispatch (#7354 L0b); the TypeScript half moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/function-hoisting.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "The bindings a function body creates at entry on the Prepared lane (#7354 L0c, FunctionDeclarationInstantiation); pure AST questions that move with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/dense-array-plans.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "The dense-array fill and reduction shapes from-ast lowers without a growing array; pure AST questions that move with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/identifier-read.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
