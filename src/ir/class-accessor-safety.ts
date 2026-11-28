@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { exactKey, keyValues } from "./key-values.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
 import type { IrStructuralSelectorAccessorAbiEvidence } from "./select.js";
 
@@ -436,65 +437,9 @@ export function boundedPreparedNestedOrdinaryClassBindingName(
     : undefined;
 }
 
-type LiteralComputedKeyValue = string | number;
-
-function literalOnlyComputedKeyValue(expression: ts.Expression): LiteralComputedKeyValue | undefined {
-  let candidate = expression;
-  while (
-    ts.isParenthesizedExpression(candidate) ||
-    ts.isAsExpression(candidate) ||
-    ts.isTypeAssertionExpression(candidate) ||
-    ts.isSatisfiesExpression(candidate) ||
-    ts.isNonNullExpression(candidate)
-  ) {
-    candidate = candidate.expression;
-  }
-  if (ts.isStringLiteral(candidate) || ts.isNoSubstitutionTemplateLiteral(candidate)) return candidate.text;
-  if (ts.isNumericLiteral(candidate)) return Number(candidate.text);
-  if (ts.isPrefixUnaryExpression(candidate)) {
-    const operand = literalOnlyComputedKeyValue(candidate.operand);
-    if (typeof operand !== "number") return undefined;
-    if (candidate.operator === ts.SyntaxKind.PlusToken) return operand;
-    if (candidate.operator === ts.SyntaxKind.MinusToken) return -operand;
-    return undefined;
-  }
-  if (ts.isTemplateExpression(candidate)) {
-    let value = candidate.head.text;
-    for (const span of candidate.templateSpans) {
-      const substitution = literalOnlyComputedKeyValue(span.expression);
-      if (substitution === undefined) return undefined;
-      value += String(substitution) + span.literal.text;
-    }
-    return value;
-  }
-  if (!ts.isBinaryExpression(candidate)) return undefined;
-  const left = literalOnlyComputedKeyValue(candidate.left);
-  const right = literalOnlyComputedKeyValue(candidate.right);
-  if (left === undefined || right === undefined) return undefined;
-  if (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    return typeof left === "string" || typeof right === "string" ? String(left) + String(right) : left + right;
-  }
-  if (typeof left !== "number" || typeof right !== "number") return undefined;
-  switch (candidate.operatorToken.kind) {
-    case ts.SyntaxKind.MinusToken:
-      return left - right;
-    case ts.SyntaxKind.AsteriskToken:
-      return left * right;
-    case ts.SyntaxKind.SlashToken:
-      return right === 0 ? undefined : left / right;
-    case ts.SyntaxKind.PercentToken:
-      return right === 0 ? undefined : left % right;
-    case ts.SyntaxKind.AsteriskAsteriskToken:
-      return left ** right;
-    default:
-      return undefined;
-  }
-}
-
 /** Resolve a call-site key expression without evaluating or following bindings. */
 export function exactPreparedAccessorExpressionKey(expression: ts.Expression): string | undefined {
-  const value = literalOnlyComputedKeyValue(expression);
-  return value === undefined ? undefined : String(value);
+  return exactKey(keyValues(expression));
 }
 
 /** Resolve only literal/pure-literal computed names with exact JS stringification. */
