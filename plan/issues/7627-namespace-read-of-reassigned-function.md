@@ -1,6 +1,6 @@
 ---
 id: 7627
-title: "A namespace read of a reassigned function export (`d.f()` after `f = …`) returns the original body"
+title: "A call of a reassigned function reaches the original body: through a namespace (`d.f()`), and before the reassigning code compiles (shape Y)"
 status: blocked
 sprint: Backlog
 created: 2026-11-28
@@ -18,62 +18,216 @@ blocked_by: 7530
 related: [7620, 7530, 7622]
 ---
 
-# #7627 — namespace member read of a reassigned function
+# #7627 — calls of a reassigned function reach the original body
 
-Child A2 of #7620. It is **blocked on #7530**, and it is re-planned once #7530's plan is approved (PRV-7620 finding 17):
-the read below consumes #7530's API, whose final shape is not settled.
+Child A2 of #7620. PRV-7620 approved it as a blocked placeholder. This is the full plan, written against #7530's
+approved plan at `73c3b4070a` (branch `claude/7530-reassigned-functions`).
+
+The issue stays `blocked` until #7530 lands. SCHEMA.md allows one blocker label or id, so the frontmatter says
+`blocked_by: 7530` and lists both dependencies in `depends_on`.
 
 ## Problem
 
-dep is `export function f() { return 3; } export function swap() { f = function () { return 4; }; }`.
+A reassigned top-level function is a live binding: every call must invoke its current value. Two call paths instead
+bind the call to the declaration's original body.
 
-Measured on 2026-11-28 with node v22.23.5, on `ada18e6bb6` and on origin/main `01c9284f78`. Both bases and standalone
-and gc agree. Probe: `.tmp/p7620/cases10.mjs` in the c8-7620 worktree.
+- **A2-ns.** A call or read through a module namespace (`d.f()`, `const k = d.f`).
+- **A2-Y.** An ordinary identifier call `f()` compiled before the reassigning code has compiled. The lead moved this
+  shape here from #7530's out-of-scope list.
 
-| row | entry | node | IR on | IR off |
+### Measured
+
+Measured on 2026-11-28 with node v22.23.5 on `ada18e6bb6` (head of PR #7558). #7530's branch has no code yet: its
+head `73c3b4070a` and the two commits below it change only plan files. So nothing was measured on it.
+
+- `compileMulti` or `compile`, standalone and gc. `ir` is `experimentalIR` on, `off` is `experimentalIR: false`.
+- Probe: `.tmp/p7620/{y-cases.mjs,rows.mts,single.mts}` in the c8-7620 worktree.
+- Standalone and gc agree on every row.
+- `nsDep` is `export function f() { return 3; } export function swap() { f = function () { return 4; }; }`.
+
+**A2-ns.**
+
+| row | entry (dep is `nsDep` unless noted) | node | ir | off |
 | --- | --- | --- | --- | --- |
-| N0: no collision | `import * as d; d.swap(); return d.f();` | 4 | 3 | throws |
+| N0 | `import * as d; d.swap(); return d.f();` | 4 | 3 | throws |
+| N0, read before and after the swap | `const a = d.f(); d.swap(); return a * 10 + d.f();` | 34 | 33 | throws |
 | N(b): entry declares its own `f` (returns 1) | `d.swap(); return f() * 10 + d.f();` | 14 | 43 | throws |
-| N(a): a third file declares its own `f`; entry reads it through `c.h()` | `d.swap(); return h() * 10 + d.f();` | 14 | 43 | throws |
+| N(a): a third file `c` declares its own `f`, read through `c.h()` | `d.swap(); return h() * 10 + d.f();` | 14 | 43 | throws |
 | through a value | `d.swap(); const k = d.f; return k();` | 4 | throws | throws |
-| by name (guard) | `import { f, swap }; swap(); return f();` | 4 | 4 | 4 |
-| no reassignment (guard) | `swap` writes a `let k` that `f` returns | 4 | 4 | throws |
+| control: by name | `import { f, swap }; swap(); return f();` | 4 | 4 | 4 |
+| control: no reassignment | dep's `swap` writes `let k`, and `f` returns `k` | 4 | 4 | throws |
 
-- In N(a)/N(b), the "4" digit (the other module's own `f` returns 4) is #7530's shared `__mod_f`. The "3" digit
-  (`d.f()` is stale) is this issue.
-- The IR-off "throws" cells are #7622.
+- In N(a)/N(b), the "4" digit (the other module's own `f` returns 4) is #7530's row A shape: a shared `__mod_f`.
+  #7530 fixes it. The "3" digit is this issue.
+- All "throws" cells with IR off, and the no-reassignment row's IR-off cell, are #7622: without the identity
+  context, the namespace object declines.
 
-### Cause
+**A2-Y.**
 
-1. `tryRuntimeNamespaceMemberCall` (`src/codegen/expressions/calls.ts:2800`) lowers `d.f()` to a direct call of `f`'s
-   declaration and never asks `ctx.reassignedFunctionDeclarations`. `exactImportedTopLevelFunction`
-   (`identifiers.ts:878`) does ask, which is why the by-name row is right.
-2. `moduleSymbolNamespaceExports` (`module-namespace-value.ts:486-497`) declines the whole namespace object when an
-   export is a reassigned function, so `const k = d.f` throws.
+| row | program | node | ir | off |
+| --- | --- | --- | --- | --- |
+| Y (cyclic, no name clash) | entry: `import { g } from "./dep"; export function f() { return 1; } main: { const a = g(); f = function () { return 5; }; return a * 10 + g(); }`; dep: `import { f } from "./entry"; export function g() { return f(); }` | 15 | 11 | 11 |
+| Y, `g` not inlinable (loop around the call) | the same, `g` sums `f()` in a one-iteration loop | 15 | 11 | 11 |
+| Y through a namespace | dep reads `e.f()` from `import * as e from "./entry"` | 15 | 11 | throws |
+| Y3, the other cycle direction (control, #7530's row) | the reassigning module is the imported one | 12 | 12 | 12 |
+| Y5, acyclic (control, #7530's row) | lib reassigns `f`; dep calls lib's `f` | 15 | 15 | 15 |
+| Y-single, caller before the reassigner (one file) | `function f() {1}; function g() { return f() }; function swap() { f = …5 }; main: g(); swap(); g()` | 15 | 11 | 11 |
+| Y-single, reassigner before the caller | the same with `swap` declared before `g` | 15 | 15 | 15 |
+| Y-single, reassigning `main` first | `main` (reassigns) declared before `g` and `f` | 15 | 15 | 15 |
 
-## Direction, to be re-planned after #7530's plan is approved
+Y is **not specific to cycles**. A single file fails the same way whenever the caller's body compiles before the
+reassigning body. A cycle is just the only way, across files, to compile an importer before its exporter.
 
-- `tryRuntimeNamespaceMemberCall` declines for a reassigned declaration. That test moves into one predicate shared
-  with `exactImportedTopLevelFunction`, defined outside `identifiers.ts`, so that file does not grow.
-- `moduleSymbolNamespaceExports` gets a `live` arm for a reassigned function. It reads the function's live binding
-  record from #7470's table through #7530's API (`markLiveFunctionBinding` / `liveFunctionBindings`, read-only), in
-  the same shape as the `var`/`let` arm (`:468`).
-  - The getter reads the record's `GlobalDef` directly, never by name.
-  - **Coordination point with #7530:** `withDirectRuntimeModuleBindings` (`declarations.ts:1738`) hides liveness while
-    namespace bodies compile.
-- It builds on #7625's `moduleNamespaceSourceOf`, hence `depends_on: [7530, 7625]`.
+### Causes
+
+**A2-ns** (read from the code; the rows above match it).
+
+1. `tryRuntimeNamespaceMemberCall` (`src/codegen/expressions/calls.ts:2800`) lowers `d.f()` to a direct call of the
+   member's declaration (`runtimeNamespaceMemberImplementation`, then `withRuntimeModuleCallableBindings`). It never
+   asks whether that declaration is reassigned.
+   - The named-import read `exactImportedTopLevelFunction` (`identifiers.ts:878`) does ask
+     (`ctx.reassignedFunctionDeclarations`), which is why the by-name control answers 4.
+2. `moduleSymbolNamespaceExports` (`src/codegen/module-namespace-value.ts:486-497`) declines the whole namespace object
+   when any export is a reassigned function ("Mutable values require live-binding getters"). So `const k = d.f` throws,
+   and a dynamic fallback for (1) would find no object either.
+
+**A2-Y** (measured in the WAT; the trigger is partly a hypothesis).
+
+- In Y, dep's `g` compiles to `return_call` of entry's original `f` (`.tmp/p7620/Y.wat`).
+- In Y5, the same call reads the live global `__mod_f` and dispatches on it (`.tmp/p7620/Y5.wat`).
+- In Y-single, `g` and `f` are folded to `f64.const 1` inside `main` (`.tmp/p7620/ysf.wat`).
+- The graph-wide reassignment scan has already run before any body compiles:
+  `registerReassignedFunctionGlobals`, `index.ts:9053`, fills `ctx.reassignedFunctionDeclarations` and
+  `liveFuncBindingGlobals`. So the scan is not what is late.
+- What is late is the call site's routing. The identifier-call path (`call-identifier.ts:1536-1800`) takes the direct
+  `ctx.funcMap.get(funcName)` call (`:1777`) unless a live route already applies:
+  - `hasLiveFunctionBinding` (`:266`) covers only runtime-eval and Annex B bindings;
+  - otherwise the closure state the assignment's compilation creates.
+- Hypothesis, not instrumented: the closure state is registered when the `f = function …` assignment compiles, so a
+  call compiled earlier misses it.
+- The same direct call makes `g` inlinable (`registerInlinableFunction`, `function-body.ts:172`), which is how
+  Y-single folds to a constant.
+
+**Does Y share A2's root?** Partly.
+
+- **Shared:** the missing fact. Both call paths decide by compile-time state instead of asking whether the callee's
+  declaration is a live binding.
+- **Not shared:** the site. A2-ns's namespace path never asks. Y's identifier path asks only through state that
+  depends on compile order.
+- **The fix:** one liveness predicate consulted at both sites, plus the inliner. Y does not depend on #7625's
+  namespace work, and its cycle is incidental.
+
+## Implementation Plan
+
+### #7530's API, used read-only
+
+From `73c3b4070a`'s plan:
+
+- `ModuleBindingDeclaration` includes `ts.FunctionDeclaration`;
+- `ModuleBinding.liveFunction?: "assigned" | "eval"`;
+- `markLiveFunctionBinding(ctx, binding, kind)` and `liveFunctionBindings(ctx)` in `module-binding-table.ts`;
+- the same `liveFunction` union on `ModuleNameState`;
+- `withDirectRuntimeModuleBindings` (`declarations.ts:1748`) passes liveness through the namespace projection.
+
+This issue only reads `moduleBindingOf(ctx, declaration)?.liveFunction` and the binding's `value` global. It edits
+none of #7530's regions.
+
+### One predicate
+
+New `liveFunctionBindingOf(ctx, declaration): ModuleBinding | undefined` in `src/codegen/module-binding-liveness.ts`,
+a small leaf module next to `module-binding-table.ts`. It returns `moduleBindingOf(ctx, declaration)` when that
+binding has `liveFunction === "assigned"`.
+
+- **Why `"assigned"` only.** An `"eval"` binding (a function a dynamic `Function`/`eval` source may rebind) is already
+  routed by the runtime-eval arm (`hasLiveFunctionBinding`). lodash-es has about 475 of them (#7530's census).
+  Widening those calls would change lodash's bytes and speed with no measured gain. Eval-only calls keep their path.
+- **Users.**
+  - `exactImportedTopLevelFunction` (`identifiers.ts:878`) replaces its `ctx.reassignedFunctionDeclarations` test with
+    the predicate. That is a one-line swap, so `identifiers.ts` does not grow. Eval-only declarations keep declining
+    there too: the line becomes `liveFunctionBindingOf(…) || moduleBindingOf(…)?.liveFunction === "eval"`, or a second
+    exported `isLiveFunctionDeclaration`. The PR picks one, and there is no second copy.
+  - The three sites below.
+- **Why not the existing WeakSet.** `ctx.reassignedFunctionDeclarations` (`context/types.ts:3196`) already holds both
+  kinds. The predicate reads #7530's binding instead, so liveness has one source, as #7530 intends. Migrating the
+  WeakSet's other ten readers is out of scope; they are listed for a follow-up.
+
+### Site 1, A2-ns call (`calls.ts:2800`, `tryRuntimeNamespaceMemberCall`)
+
+- After resolving `memberDecl`, return `undefined` when `liveFunctionBindingOf(ctx, memberDecl)` answers. The call
+  then compiles as a member call on the namespace object, which site 2 makes exist.
+- `calls.ts` is over the threshold, so this is a condition on the existing `memberDecl === undefined` line: net zero.
+
+### Site 2, A2-ns object (`module-namespace-value.ts:486-497`, `moduleSymbolNamespaceExports`)
+
+- Before the function arm declines, a reassigned function export with a live binding pushes
+  `{ kind: "live", key, binding }`.
+- This is the same shape as the `var`/`let` arm at `:468`, and the same getter: `ensureLiveBindingGetters` reads
+  `binding.value` directly through `NamedGlobalRead`/`rebaseNamespaceGlobalReads`, never by name.
+- So the getter is independent of the name state that `withDirectRuntimeModuleBindings` sets. After #7530 that state
+  passes liveness through anyway, so there is no coordination edit.
+- A function export without a live binding keeps today's `function` arm.
+
+### Site 3, A2-Y identifier call (`call-identifier.ts`, regular identifier call, `:1536-1560`)
+
+- Next to `hasLiveFunctionBinding` (`:1554`): when the callee identifier's declaration has a live binding, call
+  through the live value. The declaration is `ctx.oracle.valueDeclarationOf`, through `ctx.importBindingTargets` for an
+  import alias, the same resolution `bindingIsImmutablePropertyCallableAlias` (`:326-331`) uses.
+- The live value is the same dynamic call `tryEmitInlineDynamicCall(ctx, fctx, expr, true)` the runtime-eval arm
+  uses, reading the binding's global. This extends that arm's condition; it is not a new arm.
+- `call-identifier.ts` is over the threshold. The condition joins `hasLiveFunctionBinding`'s existing call, and the
+  import-alias resolution is a call to the shared helper, so the edit is net zero.
+
+### Site 4, inliner (`function-body.ts:172`, `registerInlinableFunction`)
+
+A function whose declaration has a live binding is never registered as inlinable. This is a guard next to the existing
+rest-param and capture guards. Without it, a caller compiled before site 3 applies could still copy a direct call.
+
+**Pipeline.** Legacy codegen. The IR's imported-call planning already declines reassigned targets
+(`ir-imported-call-planning.ts:61/99`, `ir-prepared-free-functions.ts:522`), and the IR refuses the rows' units.
+
+### Order and dependencies
+
+- **Waits for #7530 to land.** The predicate reads `ModuleBinding.liveFunction`. Until then, a function has no
+  binding in #7470's table.
+- **Waits for #7558, transitively.** #7530 is stacked on #7558's table.
+- **A2-ns waits for #7625.** Site 2's object path relies on #7625 keying namespace objects by module symbol and on
+  its `moduleNamespaceSourceOf`. N0 itself does not need `export * as`, but the shared entry does.
+- **The IR-off cells wait for #7622.** Without the identity context, the namespace object declines before site 2.
+- **A2-Y could land without #7625.** It needs only #7530. It stays in this issue as its own commit, after #7530.
 
 ## Acceptance criteria
 
-- **Pin test (red → green).** A new `tests/issue-7627-*.test.ts` holds every row above, × standalone/gc ×
-  `experimentalIR` on/off, compared with node.
-  - It is red on the base for N0, N(a), N(b) and through-a-value, with IR on.
-  - The IR-off cells carry a comment naming #7622.
-  - The guard rows stay green.
+- **Pin test (red → green).** A new `tests/issue-7627-reassigned-function-calls.test.ts` holds every row of both
+  tables, × standalone/gc × `experimentalIR` on/off, compared with node.
+  - **Red on `ada18e6bb6`, green after:** N0, N0 before-and-after, N(a), N(b) and through-a-value (IR on); Y, Y
+    non-inlinable, Y-single caller-first (all lanes); Y through a namespace (IR on).
+  - **IR-off cells of the namespace rows:** red until #7622; each carries a comment naming #7622.
+  - **N(a)/N(b) "4" digit:** green once #7530 lands. This issue only asserts the full value after both.
+  - **Controls stay green:** by-name, no-reassignment (IR on), Y3, Y5, Y-single reassigner-first, Y-single
+    `main`-first.
 - **Code quality.**
-  - No edits to #7530's regions (`module-binding-table.ts`, `source-binding-projection.ts`, `registerModuleGlobal`'s
-    tail, `registerLiveFunctionGlobal`, `module-init-prologue.ts`'s seed loop).
-  - One shared immutable-function predicate.
-  - `identifiers.ts` does not grow.
+  - One liveness predicate (`liveFunctionBindingOf`), read from #7530's binding, used at all four sites and by
+    `exactImportedTopLevelFunction`. No duplicated liveness test, and no new name-keyed set.
+  - Each fix sits next to its sibling: site 1 on `tryRuntimeNamespaceMemberCall`'s decline line; site 2 beside the
+    `var`/`let` live arm; site 3 in `hasLiveFunctionBinding`'s condition; site 4 beside the inliner's existing guards.
+  - No edits to #7530's regions: `module-binding-table.ts`, `source-binding-projection.ts`, `registerModuleGlobal`'s
+    tail, `registerLiveFunctionGlobal`, `registerAnnexBLiveBinding`, `registerReassignedFunctionGlobals`,
+    `module-init-prologue.ts`'s seed loop, `annexb-global-live-binding.ts`, `named-this-call.ts:655-656`,
+    `declarations.ts:1748`.
+  - `identifiers.ts`, `calls.ts` and `call-identifier.ts` do not grow. The new leaf module is small.
+  - The budget gates pass with `LOC_GATE_BASE` set to the upstream main tip.
   - An adversarial review verdict goes in the PR body.
-- **No test262 regression** in the scoped `language/module-code|language/import|language/export` diff on standalone.
+- **Expected gc byte diffs.** Base is #7530's merge, against new.
+
+  | corpus | expected |
+  | --- | --- |
+  | the #7470 389-file sample | only the files that reach #7530's mint loop with an `"assigned"` binding: `language/module-code/instn-local-bndng-export-{fun,gen}.js` (#7530's census), and only where a call to the function precedes the reassignment or goes through a namespace |
+  | #7530's `reassign-sample.txt` (553 files; 18 mint a global) | changed: calls to an `"assigned"` function compiled before its reassignment (direct call or inline → live call), and namespace objects of modules that export one (previously declined, now built). The PR lists each file |
+  | #7530's `eval-sample.txt` (113 files) | identical: eval-only bindings are untouched |
+  | lodash-es (`compileProject(lodash.js)`) | identical, except call sites of an `"assigned"` function. #7530's census counts its live bindings as eval-only, so the expected diff is empty. A non-empty diff is listed and justified |
+  | #7470 / #7530 multi-file graphs (`.tmp/mhash.mts` + #7530's E, G-variant, E+3rd, Y3) | identical, except E/G when a call precedes the reassignment |
+
+  Any other changed function is a finding.
+- **No test262 regression.** Scoped per-test diff over `language/module-code|language/import|language/export` and
+  `language/statements/function`, on standalone, in the CI lane (`pnpm run test:262` with `TEST262_PATH_FILTER_FILE`):
+  no pass → fail.
