@@ -5432,15 +5432,10 @@ export function generateModule(
   inventoryOptions: BuildIrUnitInventoryOptions = {},
 ): GeneratedModule {
   const mod = createEmptyModule();
-  const irPlanningIdentityContext =
-    options?.experimentalIR || options?.trackIrOutcomes
-      ? buildIrPlanningIdentityContext(
-          buildIrUnitInventory([ast.sourceFile], { ...inventoryOptions, entrySource: ast.sourceFile }),
-        )
-      : undefined;
-  const programAbiSession = irPlanningIdentityContext
-    ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
-    : undefined;
+  const irPlanningIdentityContext = buildIrPlanningIdentityContext(
+    buildIrUnitInventory([ast.sourceFile], { ...inventoryOptions, entrySource: ast.sourceFile }),
+  );
+  const programAbiSession = new ProgramAbiSession(irPlanningIdentityContext.inventory, mod);
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = [ast.sourceFile];
   importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
@@ -5875,12 +5870,15 @@ export function generateModule(
     // #3522 R3: exact fields that reference a later local class are collected
     // provisionally as externref. Finalize their already-observed storage slot
     // in place before class-shape planning snapshots the Program ABI layout.
-    finalizeForwardClassFieldLayouts(ctx, ast.sourceFile);
-    // #3522 R3: callable slots with exact references to a later local class
-    // must receive their final struct ABI before prepared IR planning decides
-    // which direct bodies will never run. The direct body compiler retains its
-    // idempotent re-resolution as a temporary hybrid assertion.
-    finalizeForwardClassCallableAbis(ctx, ast.sourceFile);
+    // Callable slots with exact references to a later local class must receive
+    // their final struct ABI before prepared IR planning decides which direct
+    // bodies will never run. The direct body compiler retains its idempotent
+    // re-resolution as a temporary hybrid assertion. (#7622) Only prepared IR
+    // needs either, so IR off keeps the provisional externref ABI.
+    if (options?.experimentalIR) {
+      finalizeForwardClassFieldLayouts(ctx, ast.sourceFile);
+      finalizeForwardClassCallableAbis(ctx, ast.sourceFile);
+    }
     // #2847: declaration collection has now materialized the initial struct
     // field table. Brand proven boolean i32 slots before compiling bodies so
     // direct/dynamic reads preserve JS boolean identity at their use sites.
@@ -5916,7 +5914,7 @@ export function generateModule(
     // direct front-end's three mutable queues. The plan remains an observer for
     // generic module shapes, while the exact prepared lexical initializer below
     // consumes its gap/order/parity evidence before skipping the direct body.
-    if (irPlanningIdentityContext) {
+    if (options?.experimentalIR) {
       const plan = buildIrModuleInitPlan({
         sourceFile: ast.sourceFile,
         checker: ast.checker,
@@ -5983,7 +5981,7 @@ export function generateModule(
     let irSkipBodyUnitIds: ReadonlySet<IrUnitId> | undefined;
     let irPreserveBodyUnitIds: ReadonlySet<IrUnitId> | undefined;
     if (irFirst) {
-      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
+      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext, { enableCountedStringAppendProof: true });
       const routing = planIrFirstBodyRouting(ctx, ast.sourceFile, irPlan, moduleInitPlanning);
       requestedSkipProjection = routing.requestedSkipProjection;
       preparedFreeFunctions = routing.preparedFreeFunctions;
@@ -6118,7 +6116,7 @@ export function generateModule(
       // classShapes → overrideMap → safeSelection → new.target gate).
       const plan =
         irPlan ??
-        planIrOverlay(ctx, ast, irPlanningIdentityContext!, {
+        planIrOverlay(ctx, ast, irPlanningIdentityContext, {
           enableCountedStringAppendProof: true,
           fnctorArgumentProjectionRoute: {
             experimentalIR: true,
@@ -9766,18 +9764,10 @@ function compileMultiPreparedProgramOverlays(
  */
 export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOptions): GeneratedCodegenModule {
   const mod = createEmptyModule();
-  const irPlanningIdentityContext =
-    options?.experimentalIR || options?.trackIrOutcomes
-      ? buildIrPlanningIdentityContext(
-          buildIrUnitInventory(multiAst.sourceFiles, {
-            entrySource: multiAst.entryFile,
-            checker: multiAst.checker,
-          }),
-        )
-      : undefined;
-  const programAbiSession = irPlanningIdentityContext
-    ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
-    : undefined;
+  const irPlanningIdentityContext = buildIrPlanningIdentityContext(
+    buildIrUnitInventory(multiAst.sourceFiles, { entrySource: multiAst.entryFile, checker: multiAst.checker }),
+  );
+  const programAbiSession = new ProgramAbiSession(irPlanningIdentityContext.inventory, mod);
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = multiAst.sourceFiles;
   importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global

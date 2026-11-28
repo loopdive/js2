@@ -107,7 +107,6 @@ function replaceForwardParameters(
  * unrelated primitive/native/dynamic position stays byte-for-byte unchanged.
  */
 export function finalizeForwardClassCallableAbis(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (!ctx.irPlanningIdentityContext) return;
   for (const statement of sourceFile.statements) {
     if (!ts.isClassDeclaration(statement) || !statement.name) continue;
     const className = statement.name.text;

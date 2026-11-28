@@ -93,8 +93,8 @@ describe("#3520 authoritative production planning context", () => {
       experimentalIR: false,
     });
     expect(untracked.success, untracked.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(inventoryBuilds).not.toHaveBeenCalled();
-    expect(planningContextBuilds).not.toHaveBeenCalled();
+    // (#7622) The identity context is built whatever trackIrOutcomes says.
+    expectOneInventory("issue-3520-tracking-only.ts");
 
     inventoryBuilds.mockClear();
     planningContextBuilds.mockClear();

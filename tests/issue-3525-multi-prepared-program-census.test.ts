@@ -358,14 +358,17 @@ describe("#3525 whole-program Prepared ownership census", () => {
     ).toEqual([{ entryPoint: "compileFunctionBody", file: "entry.ts", count: 1 }]);
   });
 
-  it("pre-seals only telemetry-only mode and preserves the normal IR planner lifecycle", () => {
-    const telemetry = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
-    const telemetryOwner = createMultiPreparedProgramOwner(telemetry.ast, TRACK_ONLY_OPTIONS, telemetry.ctx);
-    expect(telemetryOwner?.state).toBe("body-boundary-sealed");
-    expect(telemetryOwner?.bodyPlan?.reservations).toEqual([]);
-    expect(telemetryOwner?.bodyPlan?.unreservedTerminalUnitIds).toEqual(
-      telemetry.inventory.terminalUnits.map((unit) => unit.id),
-    );
+  it("pre-seals whenever IR is off and preserves the normal IR planner lifecycle", () => {
+    // (#7622) IR off pre-seals with or without telemetry: the owner exists whatever trackIrOutcomes says.
+    for (const options of [TRACK_ONLY_OPTIONS, { ...TRACK_ONLY_OPTIONS, trackIrOutcomes: false }]) {
+      const telemetry = ownerFixture(EMPTY_FILES, options);
+      const telemetryOwner = createMultiPreparedProgramOwner(telemetry.ast, options, telemetry.ctx);
+      expect(telemetryOwner?.state).toBe("body-boundary-sealed");
+      expect(telemetryOwner?.bodyPlan?.reservations).toEqual([]);
+      expect(telemetryOwner?.bodyPlan?.unreservedTerminalUnitIds).toEqual(
+        telemetry.inventory.terminalUnits.map((unit) => unit.id),
+      );
+    }
 
     const ir = ownerFixture();
     const irOwner = createMultiPreparedProgramOwner(ir.ast, OPTIONS, ir.ctx);
@@ -377,7 +380,8 @@ describe("#3525 whole-program Prepared ownership census", () => {
       target: "standalone",
       trackIrOutcomes: false,
     });
-    expect(direct.multiPreparedProgramAudit).toBeUndefined();
+    expect(direct.multiPreparedProgramAudit?.bodyPlan.reservations).toEqual([]);
+    expect(direct.multiPreparedProgramAudit?.overlaySourceIds).toEqual([]);
   });
 
   it("fails closed on pre-seal visits and late telemetry-only planning or publication", () => {

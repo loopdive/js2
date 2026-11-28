@@ -83,7 +83,6 @@ function requireCommittedField(
  * route.
  */
 export function finalizeForwardClassFieldLayouts(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (!ctx.irPlanningIdentityContext) return;
   const declarations = sourceFile.statements.filter(
     (statement): statement is ts.ClassDeclaration => ts.isClassDeclaration(statement) && statement.name !== undefined,
   );

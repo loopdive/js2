@@ -463,7 +463,7 @@ export function createMultiPreparedProgramOwner<Plan extends MultiPreparedScalar
     ctx,
     overlayEnabled: !!options?.experimentalIR && !ctx.fast,
   });
-  if (options?.trackIrOutcomes === true && options.experimentalIR !== true) owner.sealBodyBoundary();
+  if (!options?.experimentalIR) owner.sealBodyBoundary(); // (#7622) IR on seals in early route planning, `fast` too
   return owner;
 }
 
