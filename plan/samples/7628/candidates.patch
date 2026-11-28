@@ -1,0 +1,287 @@
+--- base/src/ir/realm-member-writes.ts	2026-11-28 02:14:03.000000000 +0000
++++ cand/src/ir/realm-member-writes.ts	2026-11-28 02:49:16.313778086 +0000
+@@ -16,6 +16,8 @@
+ export interface MemberWrite {
+   readonly receiver: ts.Expression | undefined;
+   readonly key: string | undefined;
++  /** #7628 SCRATCH: a read by a key that is no literal: its key expression and, for an element access, the read. */
++  readonly keyRead?: { readonly key: ts.Expression; readonly read?: ts.Expression };
+ }
+ 
+ /** A write of every key on any object. */
+@@ -152,7 +154,16 @@
+  * (`var d = Object.defineProperty`, `o["assign"]`, `.call`), a `with` statement and a reference to `Reflect`.
+  */
+ export function memberWrites(node: ts.Node, write: (write: MemberWrite) => void): void {
+-  if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && occurrenceIsWriteTarget(node))
++  if (
++    ts.isElementAccessExpression(node) &&
++    !occurrenceIsWriteTarget(node) &&
++    literalKey(node.argumentExpression) === undefined
++  )
++    write({ receiver: node.expression, key: undefined, keyRead: { key: node.argumentExpression, read: node } });
++  else if (ts.isComputedPropertyName(node)) {
++    if (literalKey(node.expression) === undefined && isPatternKey(node))
++      write({ receiver: patternSource(node), key: undefined, keyRead: { key: node.expression } });
++  } else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && occurrenceIsWriteTarget(node))
+     write({
+       receiver: node.expression,
+       key: ts.isPropertyAccessExpression(node) ? node.name.text : literalKey(node.argumentExpression),
+@@ -175,6 +186,213 @@
+   }
+ }
+ 
++/** SCRATCH: `name`, a computed key, is read off a destructuring source. */
++function isPatternKey(name: ts.ComputedPropertyName): boolean {
++  const property = name.parent;
++  return (
++    ts.isBindingElement(property) ||
++    (ts.isPropertyAssignment(property) && property.name === name && occurrenceIsWriteTarget(property.parent))
++  );
++}
++
++/** SCRATCH (rule recv): the value a top-level pattern destructures: a declaration's initializer, an assignment's right. */
++function patternSource(name: ts.ComputedPropertyName): ts.Expression | undefined {
++  const pattern = name.parent.parent;
++  if (ts.isObjectBindingPattern(pattern)) {
++    const decl = pattern.parent;
++    return ts.isVariableDeclaration(decl) && decl.name === pattern ? decl.initializer : undefined;
++  }
++  let lit: ts.Node = pattern;
++  while (ts.isParenthesizedExpression(lit.parent)) lit = lit.parent;
++  const assign = lit.parent;
++  return ts.isBinaryExpression(assign) && assign.left === lit ? assign.right : undefined;
++}
++
++/** SCRATCH: one source of a name's value. */
++export type NameSource = ts.Expression | "number" | "any" | "assigned-any" | { readonly assigned: ts.Expression };
++type KeyValues = { readonly strings: ReadonlySet<string>; readonly number: boolean } | undefined;
++const RULE = process.env.RULE ?? "base";
++
++/** SCRATCH: every source of every name, by text. */
++export function nameSources(sourceFiles: readonly ts.SourceFile[]): Map<string, NameSource[]> {
++  const sources = new Map<string, NameSource[]>();
++  const add = (name: string, source: NameSource) => {
++    const list = sources.get(name) ?? [];
++    list.push(source);
++    sources.set(name, list);
++  };
++  const anyNames = (name: ts.BindingName): void => {
++    if (ts.isIdentifier(name)) add(name.text, "any");
++    else for (const e of name.elements) if (!ts.isOmittedExpression(e)) anyNames(e.name);
++  };
++  const targetAny = (target: ts.Expression): void => {
++    const t = skipOuterExpressions(target);
++    if (ts.isIdentifier(t)) add(t.text, "assigned-any");
++    else if (ts.isPropertyAccessExpression(t)) add(t.name.text, "assigned-any");
++    else if (ts.isArrayLiteralExpression(t)) t.elements.forEach((e) => targetAny(ts.isSpreadElement(e) ? e.expression : e));
++    else if (ts.isObjectLiteralExpression(t))
++      for (const p of t.properties) {
++        if (ts.isShorthandPropertyAssignment(p)) add(p.name.text, "assigned-any");
++        else if (ts.isPropertyAssignment(p)) targetAny(p.initializer);
++        else if (ts.isSpreadAssignment(p)) targetAny(p.expression);
++      }
++    else if (ts.isBinaryExpression(t) && t.operatorToken.kind === ts.SyntaxKind.EqualsToken) targetAny(t.left);
++  };
++  const visit = (node: ts.Node): void => {
++    if (ts.isVariableDeclaration(node)) {
++      if (ts.isIdentifier(node.name)) add(node.name.text, node.initializer ?? "any");
++      else anyNames(node.name);
++    } else if (ts.isParameter(node) || ts.isBindingElement(node)) {
++      if (!ts.isBindingElement(node) || !ts.isVariableDeclaration(node.parent.parent)) anyNames(node.name);
++      else anyNames(node.name);
++    } else if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name)
++      add(node.name.text, "any");
++    else if (ts.isCatchClause(node) && node.variableDeclaration) anyNames(node.variableDeclaration.name);
++    else if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
++      const left = skipOuterExpressions(node.left);
++      const op = node.operatorToken.kind;
++      if (ts.isIdentifier(left) && op === ts.SyntaxKind.EqualsToken) add(left.text, { assigned: node.right });
++      else if (ts.isIdentifier(left) && op !== ts.SyntaxKind.PlusEqualsToken && op !== ts.SyntaxKind.QuestionQuestionEqualsToken && op !== ts.SyntaxKind.BarBarEqualsToken && op !== ts.SyntaxKind.AmpersandAmpersandEqualsToken)
++        add(left.text, { assigned: node }); // arithmetic compound: a number
++      else if (ts.isIdentifier(left) && op === ts.SyntaxKind.PlusEqualsToken) add(left.text, { assigned: node });
++      else targetAny(node.left);
++    } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
++      const t = skipOuterExpressions(node.operand);
++      if (ts.isIdentifier(t)) add(t.text, { assigned: node });
++      else targetAny(node.operand);
++    } else if ((ts.isForInStatement(node) || ts.isForOfStatement(node))) {
++      if (ts.isVariableDeclarationList(node.initializer)) node.initializer.declarations.forEach((d) => anyNames(d.name));
++      else targetAny(node.initializer);
++      ts.forEachChild(node, (child) => { if (child !== node.initializer) visit(child); });
++      return;
++    } else if (ts.isDeleteExpression(node)) targetAny(node.expression);
++    ts.forEachChild(node, visit);
++  };
++  sourceFiles.forEach(visit);
++  return sources;
++}
++
++const CAP = 64;
++function concat(a: KeyValues, b: KeyValues): KeyValues {
++  if (!a || !b) return undefined;
++  if (a.number && b.number && a.strings.size === 0 && b.strings.size === 0) return { strings: new Set(), number: true };
++  if (a.number || b.number) return undefined;
++  if (a.strings.size * b.strings.size > CAP) return undefined;
++  const out = new Set<string>();
++  for (const x of a.strings) for (const y of b.strings) out.add(x + y);
++  return { strings: out, number: false };
++}
++function union(a: KeyValues, b: KeyValues): KeyValues {
++  if (!a || !b) return undefined;
++  const strings = new Set([...a.strings, ...b.strings]);
++  return strings.size > CAP ? undefined : { strings, number: a.number || b.number };
++}
++const NUMBER: KeyValues = { strings: new Set(), number: true };
++const ARITH = new Set([ts.SyntaxKind.MinusToken, ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken, ts.SyntaxKind.PercentToken, ts.SyntaxKind.AsteriskAsteriskToken, ts.SyntaxKind.LessThanLessThanToken, ts.SyntaxKind.GreaterThanGreaterThanToken, ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken, ts.SyntaxKind.AmpersandToken, ts.SyntaxKind.BarToken, ts.SyntaxKind.CaretToken,
++  ts.SyntaxKind.MinusEqualsToken, ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.SlashEqualsToken, ts.SyntaxKind.PercentEqualsToken, ts.SyntaxKind.AsteriskAsteriskEqualsToken, ts.SyntaxKind.LessThanLessThanEqualsToken, ts.SyntaxKind.GreaterThanGreaterThanEqualsToken, ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken, ts.SyntaxKind.AmpersandEqualsToken, ts.SyntaxKind.BarEqualsToken, ts.SyntaxKind.CaretEqualsToken]);
++
++function evalKey(expr: ts.Expression, env: ReadonlyMap<string, KeyValues>, numbers: boolean): KeyValues {
++  const e = skipOuterExpressions(expr);
++  if (ts.isStringLiteralLike(e)) return { strings: new Set([e.text]), number: false };
++  if (ts.isNumericLiteral(e)) return NUMBER;
++  if (ts.isTemplateExpression(e)) {
++    let acc: KeyValues = { strings: new Set([e.head.text]), number: false };
++    for (const span of e.templateSpans) {
++      const sub = evalKey(span.expression, env, numbers);
++      const subS = sub && sub.number ? undefined : sub;
++      acc = concat(concat(acc, subS), { strings: new Set([span.literal.text]), number: false });
++    }
++    return acc;
++  }
++  if (ts.isIdentifier(e)) return env.has(e.text) ? env.get(e.text) : undefined;
++  if (ts.isBinaryExpression(e)) {
++    const k = e.operatorToken.kind;
++    if (k === ts.SyntaxKind.PlusToken || k === ts.SyntaxKind.PlusEqualsToken) return concat(evalKey(e.left, env, numbers), evalKey(e.right, env, numbers));
++    if (k === ts.SyntaxKind.CommaToken) return evalKey(e.right, env, numbers);
++    if (numbers && ARITH.has(k)) return NUMBER;
++    return undefined;
++  }
++  if (numbers && (ts.isPrefixUnaryExpression(e) || ts.isPostfixUnaryExpression(e))) {
++    const op = e.operator;
++    if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken || op === ts.SyntaxKind.MinusToken || op === ts.SyntaxKind.PlusToken || op === ts.SyntaxKind.TildeToken) return NUMBER;
++  }
++  if (ts.isConditionalExpression(e)) return union(evalKey(e.whenTrue, env, numbers), evalKey(e.whenFalse, env, numbers));
++  return undefined;
++}
++
++/** SCRATCH: the key values of every name, a least fixed point; `dropped` names (written as keys) are any. */
++function nameValues(sources: ReadonlyMap<string, readonly NameSource[]>, dropped: ReadonlySet<string>, numbers: boolean): Map<string, KeyValues> {
++  const env = new Map<string, KeyValues>();
++  const live: string[] = [];
++  for (const [name, list] of sources) {
++    const bad = dropped.has(name) || list.some((s) => s === "any" || s === "assigned-any" || (!numbers && typeof s === "object" && "assigned" in s));
++    if (bad) continue; // absent from env: any
++    env.set(name, { strings: new Set(), number: false });
++    live.push(name);
++  }
++  for (let round = 0; round < 50; round++) {
++    let changed = false;
++    for (const name of live) {
++      if (!env.has(name)) continue;
++      let acc: KeyValues = { strings: new Set(), number: false };
++      for (const s of sources.get(name)!) {
++        const expr = typeof s === "object" && "assigned" in s ? s.assigned : (s as ts.Expression);
++        acc = union(acc, evalKey(expr, env, numbers));
++        if (!acc) break;
++      }
++      const old = env.get(name);
++      if (!acc) { env.delete(name); changed = true; continue; }
++      if (!old || acc.number !== old.number || acc.strings.size !== old.strings.size) { env.set(name, acc); changed = true; }
++    }
++    if (!changed) return env;
++  }
++  return new Map();
++}
++
++/** SCRATCH (rule use): the read's value cannot be called or escape: a strict comparison, typeof, `!`, `void`, a test. */
++function harmlessUse(read: ts.Expression): boolean {
++  let use: ts.Node = read;
++  while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
++  const parent = use.parent;
++  if (ts.isBinaryExpression(parent)) {
++    const k = parent.operatorToken.kind;
++    return k === ts.SyntaxKind.EqualsEqualsEqualsToken || k === ts.SyntaxKind.ExclamationEqualsEqualsToken;
++  }
++  if (ts.isTypeOfExpression(parent) || ts.isVoidExpression(parent) || ts.isExpressionStatement(parent)) return true;
++  if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
++  if (ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) return parent.expression === use;
++  if (ts.isForStatement(parent)) return parent.condition === use;
++  if (ts.isConditionalExpression(parent)) return parent.condition === use;
++  return false;
++}
++
++/** SCRATCH: whether the computed reads of a program write nothing, under RULE. */
++export function computedReadsWriteNothing(
++  reads: readonly MemberWrite[],
++  keys: ReadonlySet<string>,
++  sources: ReadonlyMap<string, readonly NameSource[]>,
++  holdsFresh: (receiver: ts.Expression) => boolean,
++): boolean {
++  if (RULE === "base") return true;
++  if (RULE === "naive") return reads.length === 0;
++  const numbers = RULE === "num" || RULE === "combo";
++  const env = RULE === "const" || numbers ? nameValues(sources, keys, numbers) : new Map();
++  const keySafe = (key: ts.Expression): boolean => {
++    const values = evalKey(key, env, numbers);
++    return values !== undefined && ![...values.strings].some((s) => KEY_WRITERS.has(s));
++  };
++  return reads.every(({ receiver, keyRead }) => {
++    const { key, read } = keyRead!;
++    switch (RULE) {
++      case "use": return read !== undefined && harmlessUse(read);
++      case "recv": return receiver !== undefined && holdsFresh(receiver);
++      case "const": case "num": return keySafe(key);
++      case "combo": return keySafe(key) || (read !== undefined && harmlessUse(read));
++      default: throw new Error("RULE " + RULE);
++    }
++  });
++}
++
+ /**
+  * The keys the writes of a program may write on a realm object, or `undefined` for every key. `freshNames` are the
+  * names every binding of which holds a fresh value and none of which is assigned, by freshness (`"created"` when a
+@@ -186,10 +404,13 @@
+  * created values) until none is written.
+  */
+ export function realmWrittenKeys(
+-  writes: readonly MemberWrite[],
++  allWrites: readonly MemberWrite[],
+   freshNames: ReadonlyMap<string, Freshness>,
+   createIsBuiltin: boolean,
++  sources: ReadonlyMap<string, readonly NameSource[]> = new Map(),
+ ): ReadonlySet<string> | undefined {
++  const writes = allWrites.filter((w) => !w.keyRead);
++  const reads = allWrites.filter((w) => w.keyRead);
+   const fresh = new Map(freshNames);
+   let created = createIsBuiltin;
+   const holdsFresh = (receiver: ts.Expression): boolean => {
+@@ -206,7 +427,8 @@
+     }
+     const rebound = [...fresh.keys()].filter((name) => keys.has(name));
+     const createWritten = created && keys.has("create");
+-    if (rebound.length === 0 && !createWritten) return keys;
++    if (rebound.length === 0 && !createWritten)
++      return computedReadsWriteNothing(reads, keys, sources, holdsFresh) ? keys : undefined;
+     rebound.forEach((name) => fresh.delete(name));
+     if (createWritten) created = false;
+   }
+--- base/src/ir/builtin-global-binding.ts	2026-11-28 02:14:03.000000000 +0000
++++ cand/src/ir/builtin-global-binding.ts	2026-11-28 02:49:16.314012044 +0000
+@@ -24,6 +24,7 @@
+   memberWrites,
+   objectCreateCallee,
+   realmWrittenKeys,
++  nameSources,
+   type Freshness,
+   type MemberWrite,
+ } from "./realm-member-writes.js";
+@@ -158,7 +159,7 @@
+   const pristine = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
+   // An `Object.create(…)` result is fresh while `create` folds: `Object` pristine and never escaping, `create` unwritten.
+   const createIsBuiltin = !escaped.has("Object") && createCallees.every(pristine);
+-  const writtenKeys = realmWrittenKeys(writes, freshNames, createIsBuiltin);
++  const writtenKeys = realmWrittenKeys(writes, freshNames, createIsBuiltin, process.env.RULE ? nameSources(sourceFiles) : undefined);
+   const facts: BuiltinGlobalFacts = {
+     pristine,
+     foldsBuiltinMember: (identifier) => {

@@ -65,255 +65,306 @@ folding. Lost rows:
   `-6`, `-7`, `-10`, `-11`, `-12`;
 - o411: its `Object.create` / `defineProperty` / `defineProperties` / `getOwnPropertyDescriptor` / `Math` rows.
 
-The patch and its 6 rows are kept in the slice 1 worktree's scratch (`.tmp/r2/rule-a.patch`), not in the repo.
+The naive rule is `RULE=naive` of `plan/samples/7628/candidates.patch`.
 
-## Implementation Plan (2026-11-28)
+## Implementation Plan (2026-11-28, revised after PRV-7628)
 
-Measured on PR #7549's head `b7cfc6257f` (#7350 slice 1 + #7354 O2). `origin/main` is `234cf4402a` (#7556 merged
-03:26Z). It does not yet contain slice 1: `realm-member-writes.ts` and the slice 1 test exist only on the PR branch, and
-main changes neither `builtin-global-binding.ts` nor `shared/binding-writes.ts` relative to the branch's merge base.
-#7556 makes a literal `Function(...)` text a program source (`<function:N>.js`, `src/ir/literal-dynamic-code.ts`).
-`bindingFacts` walks every program source, so those texts are scanned like any file and need no new handling.
-After main is merged, re-run the acceptance below on that head.
+Measured on PR #7549's head `b7cfc6257f` (#7350 slice 1 + #7354 O2). `origin/main` was `234cf4402a` (#7556 merged
+03:26Z). It does not yet contain slice 1: `realm-member-writes.ts` and the slice 1 test exist only on the PR branch.
+#7556 makes a literal `Function(...)` text a program source (`<function:N>.js`); `bindingFacts` walks every program
+source, so those texts need no new handling. After main is merged, re-run the acceptance below on that head.
 
-### Measured candidates
+Every number below is reproducible from `plan/samples/7628/` (patches, row probe, equivalence scan, commands).
 
-Every candidate is the same scratch arm: an element access that is no store target with a non-literal key, or a
-destructuring pattern's computed key (`var {[k]: d} = o`, `({[k]: d} = o)`). The candidates differ only in when that
-arm "writes every key on any object". All of them are in one patch, switched by `RULE`
-(`.tmp/7628/candidates.patch` in the #7628 worktree). The census is `prepared-census.mts --harness real --jobs 2`.
-The base is `b7cfc6257f` measured here: carriers 230, o411 84. (`e104f5a5a0` read 229 / 83; `b7cfc6257f` adds O2.)
+### Measured candidates (first round, `18be7b93d4`)
 
-| rule | the arm writes nothing when … | carriers | o411 | lost | rows closed |
-| --- | --- | ---: | ---: | --- | ---: |
-| base | (no arm) | 230 | 84 | — | 0 / 6 |
-| naive | never | 216 | 41 | 14 + 43 | 6 / 6 |
-| (1) use | its value goes only into `===` / `!==`, `typeof`, `!`, `void`, a statement or a test | 216 | 41 | 14 + 43 | 6 / 6 |
-| (2) receiver | its receiver is a fresh value or fresh name (the fixed point) | 216 | 41 | 14 + 43 | 6 / 6 |
-| (3) const key | its key's values (literals, `+`, templates, names bound once to such and never assigned) name no key writer | 216 | 41 | 14 + 43 | 6 / 6 |
-| (3n) key values | as (3), plus numbers: a numeric literal, arithmetic, `++` / `--`, and names assigned only such | **230** | **84** | **0** | 6 / 6 |
-| (4) (3n) or (1) | either | 230 | 84 | 0 | 6 / 6 |
+Each candidate is the same arm: a read by a key that is no literal (an element access that is no store target, or a
+destructuring pattern's computed key). They differ in when that arm writes nothing.
+`plan/samples/7628/candidates.patch` switches them by `RULE`. Census `--harness real` on carriers / o411, base
+`b7cfc6257f` = 230 / 84.
 
-- Under (3n) no census row changes at all, on either list (changed rows 0 of 1,977 and 0 of 411).
-- Rules (1), (2) and (3) each lose exactly the naive rule's 14 carriers and 43 o411 rows: the lost sets are
-  identical (`getOwnPropertyDescriptor/15.2.3.3-4-191`, `-194`, `-196` … `-201`, `defineProperty/15.2.3.6-3-5`, `-6`,
-  `-7`, `-10`, `-11`, `-12`), and each changes the same 192 carrier rows and 79 o411 rows.
-- The cause is `assert.js` line 171: `if (!assert._isSameValue(b[i], a[i]))`.
-  - The two reads are call **arguments**, not comparisons, so (1) cannot pass them: the value reaches a call.
-  - `a` and `b` are parameters, so (2) cannot pass them.
-  - `i` is assigned by `i++`, so (3) cannot pass it.
-  - Only a rule that knows `i` is a number keeps the harness folding.
-- Fact rows (`foldsBuiltinMember`, scratch probe `.tmp/7628/rows.mts` with `extra.json` / `extra2.json`; stop = fold false):
+| rule | the arm writes nothing when … | carriers | o411 |
+| --- | --- | ---: | ---: |
+| naive | never | 216 | 41 |
+| (1) use | its value goes only into `===`, `typeof`, `!`, `void`, a statement or a test | 216 | 41 |
+| (2) receiver | its receiver is a fresh value or a fresh name | 216 | 41 |
+| (3) const key | its key's values are strings that name no key writer | 216 | 41 |
+| (3n) key values | as (3), plus numbers (`i++` is a number) | **230** | **84** |
 
-  | program | (1) | (2) | (3) | (3n) | (4) |
-  | --- | --- | --- | --- | --- | --- |
-  | the six #7628 rows | stop | stop | stop | stop | stop |
-  | compareArray's shape (`same(b[i], a[i])` in an `i++` loop) | stop | stop | stop | **keep** | **keep** |
-  | `var x = a[i]` with `var i = 0` | stop | keep | keep | keep | keep |
-  | `s += arr[j]` in a `j++` loop | stop | keep | stop | keep | keep |
-  | `for (var k in o) if (o[k] !== 1) …` | keep | stop | stop | stop | keep |
-  | `var g = ({})["__define" + "Getter__"]; g.call((1).constructor, "isNaN", f)` | stop | **keep (unsound)** | stop | stop | stop |
-  | `var p = "Xyz"; this.p = "Property"; Object["define" + p](…)` (also `globalThis["p"] = …`, `defineProperty(this, "i", …)`, `Object.assign(this, {i: …})`) | stop | stop | stop | stop | stop |
-  | `p += "erty"`, `t += "define"; t += "Property"` | stop | stop | stop | stop | stop |
+- (1), (2) and (3) lose the same 14 + 43 rows. The cause is `assert.js` line 171, `assert._isSameValue(b[i], a[i])`:
+  the reads are call arguments (defeats 1), `a` and `b` are parameters (defeats 2), and `i` is assigned by `i++`
+  (defeats 3). Only a rule that knows `i` is a number keeps the harness folding.
+- (2) is also unsound: every object inherits `__defineGetter__`, and the writer writes on the `this` of the later call,
+  not on the object it was read from (`var g = ({})["__define" + "Getter__"]; g.call((1).constructor, …)`).
+- Destructuring reads its value from the outermost initializer only for a top-level pattern (not
+  `var [{[k]: d}] = [Object]`, a for-of head, a parameter default). A key-only rule needs no left-hand walk at all.
 
-### The left-hand walk hole (rows 2–4)
+### Chosen rule: a computed read writes nothing when its key's values are known and name no writer
 
-The review note is not written down anywhere in the repo. This is the reading I measured.
+**Statement.** A read by a key that is no literal counts as a mention of every writer name the key may evaluate to.
+As before for `o["assign"]`, a mention is a write of every key on any object. The writer names are the `KEY_WRITERS`
+names and `Reflect` (`WRITER_NAMES`).
 
-A receiver-based rule decides what a computed read hands out from its left-hand side. For an element access that is
-the receiver chain; for a pattern key it is the destructured source. That walk has a hole in each of rows 2–4.
+**`Reflect` (blocker 1).** Today only an identifier reference `Reflect` counts. `globalThis.Reflect`, `this["Reflect"]`
+and `globalThis["Ref" + "lect"]` reach it without one. The fix counts every spelling of `Reflect` (identifier in any
+position, string literal), as `KEY_WRITERS` names already are, and makes `Reflect` a writer name in the key domain.
 
-- **Row 3: a computed read off a constructor.**
-  - The receiver does not decide what the read hands out. Every object, fresh or not, inherits
-    `Object.prototype.__defineGetter__` / `__defineSetter__` (Annex B.2.2.2-3).
-  - The target of those writers is the `this` of the later call, not the object the writer was read from. So
-    `var g = ({})["__define" + "Getter__"]; g.call((1).constructor, "isNaN", f)` writes `isNaN` on `Number`, although
-    the receiver `({})` is fresh. Rule (2) keeps folding there: measured, it is unsound.
-- **Row 4: a computed binding-element key** (row 5, an assignment pattern, is the same).
-  - The destructured value is the declaration's initializer only for a top-level pattern.
-  - In a nested element (`var [{[k]: d}] = [Object]`), a for-in / for-of head (`for (var {[k]: d} of [Object])`) or a
-    parameter default (`function f({[k]: d} = {}) {} f(Object)`), the outermost source is a fresh literal, yet the
-    value actually read is `Object`.
-  - A walk that takes the outermost initializer as the receiver calls those fresh. The scratch walk took only a
-    top-level declaration's initializer and gave up otherwise, so its rows stop. It is still the walk any receiver
-    rule must get right.
-- **Row 2: a template key with a substitution.**
-  - The key's walk resolves `p` by its bindings. A top-level `var p` is a property of the global object.
-  - So `this.p = …`, `globalThis["p"] = …`, `Object.defineProperty(this, "p", …)` and `Object.assign(this, {p: …})`
-    rebind it without assigning the name `p`. A key walk that reads only `p`'s declarations and assignments misses
-    them.
+**The key domain** (`src/ir/key-values.ts`, below). A key's values are a set, or unknown (`undefined`). An element is
+an exact string, an exact number, `SOME_NUMBER` (any Number or BigInt) or `LONG_STRING` (any string longer than 25).
 
-**Why this must close before B3b-1.** B3b-1 makes `(1).constructor`, `X.prototype.constructor` and `({}).constructor`
-reachable. Until then these programs refuse or abort, so the hole is not observable.
+| expression | values |
+| --- | --- |
+| string or no-substitution template literal | its cooked `.text` (`"\x64efine"` is `define`) |
+| numeric literal | the exact number |
+| identifier | the caller's `nameValues` (default: unknown) |
+| template with substitutions | head, then each substitution and literal concatenated |
+| `a + b`, `x += b` | pairwise: string + string, number + number exact; `SOME_NUMBER` + number = `SOME_NUMBER`; a string or `LONG_STRING` with `SOME_NUMBER` = unknown; `LONG_STRING` with a string or exact number = `LONG_STRING` |
+| `-` `*` `/` `%` `**`, shifts, bitwise, their compound forms | exact for two exact numbers (`/ 0` and `% 0` give `SOME_NUMBER`), else `SOME_NUMBER` |
+| unary `-` / `+` | exact for an exact number, else `SOME_NUMBER` |
+| `~`, `++` / `--` | `SOME_NUMBER` |
+| anything else (`?:`, `,`, `=`, `!`, a call, a tagged template, an object) | unknown |
 
-**How the chosen rule closes it.**
+- A compound assignment evaluates only when its left side is an identifier (`1 += 1` is an early error, not 2).
+- `?:` and `,` are unknown on purpose: the accessor caller below must not drop a side effect of the key
+  (`[f(), "a"]`). The census needs neither (measured below).
+- Domain edges (item 8): `"k" + n` and `` `k${n}` `` with `n` a `SOME_NUMBER` are unknown; with an exact number they
+  are exact. Mixed sets are allowed (`{"a", SOME_NUMBER}`); only `+` with a string and `SOME_NUMBER` is unknown.
 
-- It needs no left-hand walk: a computed read is judged by its key alone. That covers rows 3–4.
-- For row 2, it drops a name from the key analysis when a reaching write names it as a key. This is the rule the
-  fresh-name fixed point already applies to its own names (the "rebound through the global object" stop row).
-- The hole programs above become stop rows, so a later receiver refinement cannot reopen the hole without a red test.
+**Bounds (blocker 3).**
 
-### Chosen rule: (3n), a computed key writes nothing when its values are known and name no key writer
+- The cap is 64 elements, checked as the pairwise product grows: the first insertion past 64 makes it unknown. So one
+  `+` combines at most 64 × 64 = 4,096 pairs.
+- Name values are widened when a name stores them: an exact number becomes `SOME_NUMBER`, a string longer than 25
+  becomes `LONG_STRING`. `getOwnPropertyDescriptors` is 25 characters, the longest writer name; concatenation only
+  grows a string, so `LONG_STRING` is never a writer.
+- So a name's value is a set of at most 64 elements from strings of at most 25 characters, `LONG_STRING` and
+  `SOME_NUMBER`. Its chain from the empty set is at most 64 insertions, then unknown: height 65 (66 levels).
+- The least fixed point over N names takes at most 65·N changing rounds plus one that changes nothing, ≤ 66·N.
+- Correction to the review's figure: a `+` of two name values concatenates strings of at most 25 characters; a literal
+  operand inside one key expression is exact and as long as its source text, so a `+` there concatenates strings no
+  longer than that expression's literal text plus 25 per name it reads. `LONG_STRING` is never materialised.
+- Without the cap, `s = s + "x"; s = s + "y"` overflows a `Set` (measured: `RangeError: Set maximum size exceeded`).
+  Without the length token, `s = s + "x"` in a loop goes past 64 and stops the fold; with it, it settles at 27
+  elements and folds.
 
-**Statement.** A read by a key that is no literal (an element access that is no store target, or a destructuring
-pattern's computed key) counts as a mention of every key writer the key may evaluate to. As before for `o["assign"]`,
-a mention is a write of every key on any object.
+**Names (blocker 2).** `bindingFacts` records every binding and assignment of a name, by text (`NameBinding`, below).
+A name is known only when it has at least one record and every record is an initializer or an assignment. It is
+unknown when:
 
-The key's values are a set of strings plus a "number" flag, or unknown. They come from:
+- it has no record: an undeclared or host global (`Object["define" + suffix]`);
+- some record is `any`: a parameter, a pattern element, a for-in / for-of head, a `catch` variable, a `var` without
+  initializer, an import (`ImportClause`, `ImportSpecifier`, namespace import, `import x =`), the implicit `arguments`
+  of every function that is no arrow function, a destructuring / `delete` / for-in target, a global alias's member
+  (`this.p = …`);
+- some record is `fresh`: a function or class name (declaration, named function or class expression);
+- or a write that reaches a realm object names it as a key (`realmWrittenKeys`' settled `keys`): the global-object
+  rebinding route (`globalThis["p"] = …`, `Object.defineProperty(this, "i", …)`, `Object.assign(this, {i: …})`).
 
-- a string or no-substitution template literal;
-- a numeric literal (number);
-- `+` (concatenation of two string sets; number + number is number; otherwise unknown);
-- a template expression with string substitutions;
-- the other arithmetic, bitwise and shift operators, unary `-` / `+` / `~`, `++` / `--` (number);
-- `?:` (union) and `,` (right side);
-- a name (the union over every binding and assignment of that name, by text, as a least fixed point).
+The value a record stores: `x = e` stores `e`, through a chain (`x = y = e` stores `e` for both); `x op= e` stores
+`x op e`; `x ||= e`, `&&=`, `??=` store `e` (or `x`'s old value, already in the set); `++` / `--` store a number.
 
-Anything else is unknown. The set is capped at 64 strings, beyond which it is unknown. A name is unknown when:
+**Hoisted values (item 7).** A `var` read before its initializer holds `undefined`, or, for a name the realm already
+has as a global property, that property (§16.1.7). The domain leaves this value out. That is sound: such a value
+stringifies to text containing `undefined`, `function`, `class` or `[object`, or is a number, no writer name contains
+any of these, and no operator of the domain removes text. The same holds for a class-expression name's class inside
+its body. Assumption: before the program runs, the global object has only the realm's own properties (standalone). A
+JavaScript environment's host globals (`window.name`) are not modelled, as `pristine` already trusts the lib.
 
-- some binding of it is a parameter, a pattern element, a for-in / for-of head, a catch variable, a function or class
-  name, a `var` without initializer, or another assignment target;
-- or a write that reaches a realm object names it as a key (`realmWrittenKeys`' `keys`), which is the global-object
-  rebinding route.
+**Why it is sound.** A writer's value sits only under its own name on a realm object (`Reflect`'s members behind a
+`Reflect` mention). Anywhere else it was put there by a route already counted as a write of every key: a spelled
+mention, a reader (`values`, `entries`, `getOwnPropertyDescriptor(s)`), or this arm with a writer-named or unknown
+key. A number key is never a writer name. Getters and Proxy traps that run during a read are program code, scanned on
+their own. `ToPropertyKey` of an object calls its `toString`: an object is unknown in the domain, and `arguments` is
+always `any`.
 
-The arm "writes nothing" when the values are known and contain no `KEY_WRITERS` name. Otherwise it writes every key.
-
-**Why it is sound.** A key writer's value sits only under its own name on a realm object (`Reflect`'s are counted by
-`Reflect`'s mention). Anywhere else, it is put there by a route the scan already counts as a write of every key:
-
-- a spelled mention (`[Object.defineProperty]`, `{d: Object.defineProperty}`);
-- a reader (`values`, `entries`, `getOwnPropertyDescriptor(s)`);
-- or this arm itself with a writer-named or unknown key.
-
-So a read by a key whose values name no writer hands out no writer that a counted write did not already make every
-key. Its index or string value may hold one, but only after such a write. A number key is never a writer name.
-Getters and Proxy traps that run during the read are program code, which is scanned on its own.
-
-**Why not the others.**
-
-- (1), (2) and (3) each lose the 14 + 43 rows, because the harness itself defeats them.
-- (2) is also unsound (inherited `__defineGetter__`).
-- (4) closes the same rows as (3n) and measures the same, since a key-value rule already costs nothing. Its use rule
-  only helps a `for (k in o) o[k] !== v` shape that no census row needs.
-- Per "measure before planning", add the use rule later only when a run shows its yield. It would be a second
-  predicate with no measured user.
+**Not counted (item 7).** Built-ins that write index keys, `length` or `lastIndex` on an object
+(`Array.prototype.push.call(X, v)`, `RegExp.prototype[Symbol.match].call(X, s)`): no folded member has such a name,
+and a constructor's `length` is not writable. Code the runtime-eval provider or a non-literal `Function` runs is not
+seen (#7503); a literal eval or `Function` text is a program source and is seen.
 
 ### Target structure
 
-**`src/ir/realm-member-writes.ts`** (no new src file; it stays in its current compiler-boundaries entry,
-`mixed-needs-split` → `frontend-ts`).
+**New `src/ir/key-values.ts` (blocker 4, the shared evaluator; about 110 lines).**
 
-- `MemberWrite` gains one variant, a computed read:
-  `{ readonly computedKey: ts.Expression }`, beside `{ receiver, key }`.
-  - `memberWrites` reports it from one new arm: an element access that is no store target
-    (`occurrenceIsWriteTarget`) whose key has no `literalKey`, or a `ComputedPropertyName` of a binding element or an
-    assignment pattern's property (`isPatternKey`, taken from `rule-a.patch`; it reuses `occurrenceIsWriteTarget`).
-  - The arm sits before the identifier / string arm, in the same `if / else` chain.
-- The key domain, private to the module, about 80 lines:
-  - `KeyValues` (strings + number, or `undefined` for unknown);
-  - `keyValues(expression, names)`, one `switch` on the node kind, reusing `skipOuterExpressions` and `literalKey`
-    for the literal case;
-  - `nameKeyValues(bindings, rebound)`, the least fixed point over names.
-  - No second set of literal predicates: `literalKey` stays the single literal reader.
-- `realmWrittenKeys(writes, bindings, createIsBuiltin)` keeps its loop.
-  - Once it settles on `keys`, each computed read either names no writer (with `rebound = keys`) or the answer is
-    `undefined`.
-  - Computed reads add no keys (all or nothing), so the existing fixed point is unchanged and is not re-run.
-- Docs to update:
-  - `KEY_WRITERS`' doc: names from `getOwnPropertyNames` / `keys` reach a value through a computed read, which is now
-    counted (its key is unknown).
-  - The module header gains one sentence for the computed read.
+- Exports `KeyValue`, `KeyValues`, `SOME_NUMBER`, `LONG_STRING`, `keyValues(expression, nameValues?)`,
+  `exactKey(values)` (the one exact value as a key string, or `undefined`) and `widen(values)`.
+- One `switch`-shaped walk, reusing `skipOuterExpressions`. One pairwise `product` helper with the cap; `+` and the
+  arithmetic operators are its two combine functions.
+- Compiler boundaries: a new entry, `unmigrated`, `mixed-needs-split`, destination `frontend-ts`, owner
+  `7354-prepared-path`, next boundary "moves with `realm-member-writes.ts` under frontend/ts". It reads TypeScript AST
+  only and imports `ts-api` and `shared/binding-writes` (`skipOuterExpressions`), like its two callers. No active
+  layer can hold it while `binding-writes.ts` is `mixed-needs-split`.
 
-**`src/ir/builtin-global-binding.ts`, `bindingFacts`.** One walk, and the duplicate it avoids.
+**`src/ir/class-accessor-safety.ts`: the single-value caller.**
 
-- The key analysis needs each name's bindings and assignments, which `bindingFacts`' visit already enumerates.
-- Instead of a second walk, the visit records them once, as `bindings: Map<string, NameBinding[]>`:
+- `literalOnlyComputedKeyValue` and `LiteralComputedKeyValue` are deleted (about 55 lines).
+- `exactPreparedAccessorExpressionKey(expression)` becomes `exactKey(keyValues(expression))`: no name resolver, so
+  names are unknown, and `exactKey` takes only a one-element set of an exact string or number.
+- The exact sub-grammar is exactly the old function's: literals, templates, unary `+` / `-`, and `+ - * / % **` over
+  exact operands, `/ 0` and `% 0` refused. Every other form is `SOME_NUMBER` or unknown, and both are refused.
+- Measured: the old and new function agree on all 4,756,986 expressions of the 53,869 test262 files
+  (`plan/samples/7628/accessor-equiv.mts`), 1,213,753 of them defined. The first draft disagreed on 5 (`1 += 1` and
+  its siblings in `compound-assignment/*-non-simple.js`); the identifier rule for compound assignments fixed them.
+
+**`src/ir/realm-member-writes.ts`.**
+
+- `MemberWrite` gains one variant, `{ readonly computedKey: ts.Expression }`, beside `{ receiver, key }`.
+- `memberWrites` gains one arm, first in its chain: an element access that is no store target
+  (`occurrenceIsWriteTarget`) with no `literalKey`, or a `ComputedPropertyName` of a binding element or an assignment
+  pattern's property (`isPatternKey`). `super[…]` and `o?.[…]` are element accesses and are covered.
+- The `Reflect` clause becomes "an identifier or string literal whose text is `Reflect`", which drops the
+  `isNonReferenceName` import.
+- `WRITER_NAMES`: `KEY_WRITERS`' names and `Reflect`, one predicate for the mention arm and the key check.
+- `NameBinding`, kind-tagged, with a named "any value" variant (item 9):
 
   ```ts
-  type NameBinding =
-    | { readonly fresh: Freshness }           // function / class declaration, named function expression
-    | { readonly initializer: ts.Expression }  // var / let / const x = e
-    | { readonly assigned: ts.Expression }     // x = e, x op= e, x++ / x-- (the expression whose value x then holds)
-    | undefined;                               // any value
+  export type NameBinding =
+    | { readonly kind: "fresh" }                                 // function / class name
+    | { readonly kind: "initializer"; readonly value: ts.Expression }
+    | { readonly kind: "assigned"; readonly value: ts.Expression } // the stored value, see "Names"
+    | { readonly kind: "any" };
   ```
 
-  The last case covers a parameter, a pattern element, a for-in / for-of head, catch, a `var` without initializer,
-  a `targetNames` target, and a global alias's member.
-- `freshNames` and `taken` are derived from it. A name is fresh when every binding is `fresh`, or an `initializer`
-  with a `freshnessOf`. This replaces `declared`, `mayHoldAny`, `created` and `assigned`: the "leave it better" fold.
-- `realmWrittenKeys` derives the key values from the same map.
-- Semantics of `taken` / `freshNames` are unchanged. The byte-identity gates below hold that.
-- `keyValues` evaluates an `assigned` expression as it reads: `x = e` is `e`; `x op= e` is `x op e`; `++` / `--` is a
-  number. So the record needs no operator field.
-- `foldsBuiltinMember`'s doc:
-  - "Not yet seen" loses the computed-key routes.
-  - The bullet list gains "a read by a key that is no literal, unless its key's values name no key writer".
-  - Code that the runtime-eval provider or a non-literal `Function` runs stays listed (#7503).
+- **Freshness has one owner (item 9): `realmWrittenKeys`.** It derives the fresh names from `bindings` (a name is
+  fresh when every record is `fresh` or an initializer with a `freshnessOf`). `freshNames` leaves `bindingFacts`'
+  result.
+- `nameKeyValues(bindings, rebound)`: the least fixed point, about 25 lines.
+- `realmWrittenKeys(writes, bindings, createIsBuiltin)` keeps its loop. Once `keys` settles, each computed read's key
+  is evaluated with `nameKeyValues(bindings, keys)`; unknown or a writer name answers `undefined`. Computed reads add
+  no keys (all or nothing), so the loop is not re-run.
+- Docs: the module header gains one sentence; `KEY_WRITERS`' doc says names from `getOwnPropertyNames` / `keys` reach
+  a value through a computed read, now counted (its key is unknown).
 
-**Not touched:** `src/shared/binding-writes.ts` (`isNonReferenceName`, `occurrenceIsWriteTarget` and
-`skipOuterExpressions` are reused as they are), the consumers of `foldsBuiltinMember`, and the stores' exact `key`.
-Constant-folding a computed **store** key would widen folds and could change bytes; it is a separate change, taken
-only when a run shows its yield.
+**`src/ir/builtin-global-binding.ts`, `bindingFacts`.**
 
-**Size.** `realm-member-writes.ts` grows from 213 to about 300 lines. No function goes near the 300-line function
-budget: `keyValues` is about 30 lines and `nameKeyValues` about 25. `bindingFacts` stays about its size: records
-replace sets. No budget grant is expected.
+- The visit records `bindings: Map<string, NameBinding[]>` once. It replaces `declared`, `assigned`, `mayHoldAny` and
+  `created`. `taken` is the set of recorded names.
+- `taken` grows by import names, class-expression names and `arguments`; freshness loses a name that is also imported
+  or `arguments`, and gains a class-expression name that has no other binding (the rule named function expressions
+  already follow; `taken` guards the global of that name the same way). All are conservative except the last.
+  The byte-identity gate inputs have 5 imports (`h`, `twice` ×3, `missing`), no class expression and one `arguments`,
+  none a realm global's name (`plan/samples/7628/README.md`), so the gates are expected to stay identical.
+- `foldsBuiltinMember`'s doc: "Not yet seen" loses the computed-key routes; the list gains "a read by a key that is no
+  literal, unless its key's values are known and name no writer"; eval / `Function` (#7503) stays.
+
+**Not touched:** `src/shared/binding-writes.ts`, the consumers of `foldsBuiltinMember`, and the stores' exact `key`
+(constant-folding a computed store key widens folds; separate, only with a measured yield).
+
+**Size.** `key-values.ts` about 110 lines; `realm-member-writes.ts` from 213 to about 300; `class-accessor-safety.ts`
+−55; `bindingFacts` about its size. No function near the budget; no grant expected.
+
+### The other two evaluators (blocker 4)
+
+| evaluator | where | grammar | names | fold into `keyValues`? |
+| --- | --- | --- | --- | --- |
+| `literalOnlyComputedKeyValue` | `src/ir/class-accessor-safety.ts` | exact literals, templates, arithmetic | none | **yes, in #7628** (measured identical) |
+| `foldConstantString` | `src/codegen/class-static-metadata.ts` | string literals and `+` | none | follow-up |
+| `staticConstStringValues` | `src/codegen/analysis/static-string-values.ts` | literals, `const` names by checker symbol, `const` array elements, `.split` | checker symbols | follow-up |
+
+- Both follow-ups are legacy codegen (`backend-wasmgc` destination), outside `src/ir/`, and must keep gc bytes
+  identical.
+  - `foldConstantString` is the string-only subset: `exactKey` restricted to a string answers it, but `"a" + 1` would
+    change from unknown to `"a1"`, a behaviour change to measure.
+  - `staticConstStringValues` resolves names by checker symbol and reads array elements and `.split`, which the key
+    domain has no use for.
+- Record as one follow-up issue, "fold the codegen constant-string evaluators into `key-values.ts`"; its id must come
+  from the lead (`claim-issue.mjs --allocate`).
 
 ### Test changes (`tests/issue-7350-slice1-expando-escape.test.ts`)
 
-**Now** (lead note a): the six `it.fails.each` rows become an ordinary `it.each`:
-`"#7628 (open): %s still folds"` asserting today's facts `{pristine: true, fold: true}`. A crash then fails the row
-instead of passing it. This ships with the plan's implementation PR's first commit, or in #7549 if the lead prefers.
+**Now** (lead note a): the six `it.fails.each` rows become an ordinary `it.each`, `"#7628 (open): %s still folds"`,
+asserting today's `{pristine: true, fold: true}`, so a crash fails the row. It ships in the implementation PR's
+first commit, or in #7549 if the lead prefers.
 
-**When the rule lands:**
+**When the rule lands**, the rows below, all measured in `plan/samples/7628/rows2.mts` (46 rows). On the base
+`b7cfc6257f` all 37 stop rows fold; on the v2 patch all 46 rows match.
 
-- The six rows move into the "stops the fold" table, asserting `{pristine: true, fold: false}`. Their comment block
-  states the rule in one sentence.
-- New stop rows, the holes above:
-  - a fresh receiver's inherited writer (`({})["__define" + "Getter__"]` held, then `.call`);
-  - a nested pattern key (`var [{[k]: d}] = [Object]`);
-  - a for-of head pattern key;
-  - a parameter default's pattern key;
-  - a key name rebound through the global object (`this.p = …`, `globalThis["p"] = …`,
-    `Object.defineProperty(this, "i", …)`, `Object.assign(this, {i: …})`);
-  - a key built by `+=` (`t += "define"; t += "Property"`);
-  - a name assigned a writer-name string by concatenation after a numeric init.
-- New keep rows, the twins:
-  - compareArray's exact shape (`function cmp(a, b) { for (var i = 0; i < a.length; i++) if (!same(b[i], a[i]))
-    return false; return true; }`);
-  - `var x = a[i]` and `[1][i + 1]` with `var i = 0`;
-  - `s += arr[j]` in a `j++` loop;
-  - a concatenated key that names no writer (`o["is" + "Finite"]` read, `Number.isNaN` still folds);
-  - and one row with the real prelude: `assert.js` + `sta.js` + `Number.isNaN(1)` folds. This pins the harness cost
-    directly.
-- **Mutation checks.** Each check must fail the rows listed with it:
-  - dropping the arm: the six rows and the hole rows;
-  - dropping the `rebound` names: the global-object rows;
-  - dropping the number arm: compareArray's twin and the prelude row.
+- Stop rows (fold false; ≈ is `(1).constructor, "isNaN", {value: 1}`). No row spells a writer name as a literal,
+  which would stop it by the mention arm instead of the rule:
+  - the six #7628 rows;
+  - `Reflect`: `globalThis.Reflect.set(…)`, `this["Reflect"].set(…)`, `globalThis["Ref" + "lect"].set(…)`;
+  - names: `import { q as p } from "./m.js"; Object["define" + p](≈)`; the same with `var p = "Xyz"` in `m.js`
+    (a by-text collision); `Object["define" + suffix](≈)` with `suffix` undeclared; a top-level
+    `var arguments = "Xyz"` beside a function whose `arguments.toString` returns `"define" + "Property"`;
+  - holes: a fresh receiver's inherited writer; a nested pattern key; a for-of head pattern key; a parameter default's
+    pattern key; `this.p = …`, `globalThis["p"] = …`, `Object.defineProperty(this, "i", …)`,
+    `Object.assign(this, {i: …})`; `t += "define"; t += "Property"`; `i = "define" + "Property"` after `var i = 0`;
+  - item 10: `super["define" + "Property"]` in `class C extends Object`; `Object?.["define" + "Property"]`; a for-in
+    head that is no declaration; `catch (p)`; `a = b = "define" + "Property"`; `(c ? "define" : "get") + "Property"`;
+  - item 8: `p ||= "define" + "Property"`; `"\x64efine" + "Property"` (cooked text);
+  - cost rows, stopping on purpose: `s = s + "x"; s = s + "y"` (past the cap); `p + p + p` over nine values of `p`
+    (cap during the product); `({})[c ? "a" : "b"]` (`?:` unknown); `"k" + n` and `` `k${n}` `` after `n++`
+    (string with `SOME_NUMBER`); compareArray's shape plus `function g(i) {}` anywhere (item 6).
+- Keep rows (fold true): compareArray's exact shape; `a[i]` and `[1][i + 1]` with `var i = 0`; `s += arr[j]` in a
+  `j++` loop; `({})["is" + "Finite"]`; `a = b = "is" + "Finite"`; `s = s + "x"` a hundred times (`LONG_STRING`); a
+  200-term literal concatenation; `({})["define" + p]; var p = "X";` (hoisted); and the real prelude, `assert.js` +
+  `sta.js` + `Number.isNaN(1)`.
+- **Mutation checks**, each measured on the v2 patch with the rows it fails:
+
+  | mutation | rows that fail |
+  | --- | --- |
+  | drop the computed-read arm | every stop row but `globalThis.Reflect` and `this["Reflect"]` (35 of 37) |
+  | record no import or `arguments` binding | import + by-text var, `arguments` |
+  | a name with no record holds no value | undeclared global |
+  | both of the last two | the import row too |
+  | drop the rebound names | `globalThis["p"]`, `defineProperty(this)`, `assign(this)` (`this.p` stops by its `any` record) |
+  | `++` / `--` is no number | compareArray, `s += arr[j]`, the real prelude |
+  | `Reflect` counted only as a reference | `globalThis.Reflect`, `this["Reflect"]` |
+  | `Reflect` no writer name in the key domain | `"Ref" + "lect"` |
+  | no `LONG_STRING` | the long chain |
+  | no cap | the two-letter growth (`RangeError`), the product row |
 
 ### Acceptance
 
-- `check:prepared-bytes` 804 / 804 identical and `prove-emit-identity` 60 / 60 identical. Run each against a `git
-  archive` copy of the base.
-- The ordinary-pipeline sample (slice 1's 180 files, `assert.js` + `sta.js`, default and standalone) is 360 / 360
+- `check:prepared-bytes` 804 / 804 and `prove-emit-identity` 60 / 60 identical, each against a `git archive` copy of
+  the base.
+- The ordinary-pipeline sample (slice 1's 180 files, `assert.js` + `sta.js`, default and standalone) 360 / 360
   identical.
-- Census (`--harness real`) against the base: carriers ≥ 230 and o411 ≥ 84. There must be 0 lost and 0 new crashes,
-  and every changed row must be named. The scratch rule changed none.
-- The six rows assert fold = false; the twins keep fold = true; the mutation checks fail as listed.
+- Census (`--harness real`) against the base: carriers ≥ 230, o411 ≥ 84, 0 lost, 0 new crashes, every changed row
+  named. The v2 scratch: carriers 230 / 230, o411 84 / 84, 0 changed rows of 1,977 and of 411, 0 lost, 0 new crashes (2026-11-28, about 12 min for both lists on 4 cores; the same as the first round's (3n), so dropping `?:` and `,` costs nothing).
+- The equivalence scan reads 0 mismatches.
+- The rows and mutation checks above hold.
 - **Quality.**
-  - There is one new arm in `memberWrites`, in its chain.
-  - The key domain is module-private, with no second literal reader and no second source walk. `bindingFacts`'
-    bindings record replaces its four sets.
-  - There is no use-of-result or receiver predicate (no measured user).
+  - One evaluator for key values (`key-values.ts`); `literalOnlyComputedKeyValue` is gone; no second literal reader.
+  - One new arm in `memberWrites`, in its chain; one source walk (`bindingFacts`), whose record replaces its four sets.
+  - Freshness is derived in one place (`realmWrittenKeys`).
+  - No use-of-result or receiver predicate; no `?:` / `,` arm (no measured user).
   - No `func-budget-allow` / `loc-budget-allow` grant.
-  - An adversarial review (fresh context, diff + this plan) finds no duplication between `keyValues` and
-    `literalKey` / `freshnessOf` and no narrating comments.
-- **Compiler boundaries.** No new src file. `realm-member-writes.ts` and `builtin-global-binding.ts` keep their
-  entries. `check-compiler-boundaries` passes with `--base HEAD^1` and `--base origin/main`.
+  - An adversarial review (fresh context, diff + this plan) finds no duplication between `keyValues`, `literalKey` and
+    `freshnessOf`, and no narrating comments.
+- **Compiler boundaries.** One new entry (`key-values.ts`); the others keep theirs. `check-compiler-boundaries`
+  passes with `--base HEAD^1` and `--base origin/main`.
 - The gates exit 0: loc, func (also with `LOC_GATE_BASE=<main tip>`), coercion sites, oracle ratchet, dead exports,
   typecheck and import cycles.
 
 ### Could not measure
 
 - The census skips negative tests, so these are census passes, not runner verdicts.
-- Rule (4)'s carriers run was resumed after an interruption (the census resumes per file); it reads 0 changed rows like (3n).
+- **Whole program by text (item 6).** A name's values are the union over every binding of that text in every source,
+  so `function g(i) {}` anywhere makes `i` unknown, and compareArray's `b[i]` then writes every key: no writable
+  member folds in that program. Pinned by the keep / stop pair above. On the two census lists it costs nothing (0
+  lost); beyond them it is not measured.
+- The byte gates were not run on the scratch patch; the binding-record change to `taken` is predicted neutral from
+  their inputs (see Target structure).
+- Found, not in scope: `pristine` does not see the global binding of a realm name rebound through the global object.
+  On the base, `Object.defineProperty(this, "Number", {value: {isNaN: f}})` and
+  `Object.assign(globalThis, {Number: …})` leave `Number` pristine and `Number.isNaN` folding
+  (`this["Num" + "ber"] = …` stops only because a computed store key writes every key). The fix is the rebound rule
+  above applied to `pristine`: a realm name some reaching write names as a key is not pristine. It changes `pristine`
+  for every consumer, so it is its own issue (id from the lead), and must close before B3b-1 like this one.
+
+## Changelog after PRV-7628
+
+| item | resolution |
+| --- | --- |
+| 1 Reflect spellings | Every spelling of `Reflect` counts (identifier anywhere, string literal), and `Reflect` is a writer name in the key domain. 3 stop rows; 2 mutations, each failing its rows. |
+| 2 name with no record | No record ⇒ unknown. Imports, `import x =` and every non-arrow function's `arguments` are recorded `any`; class-expression names `fresh`. 4 stop rows (import, import + by-text var, undeclared, `arguments`); mutations fail them as listed. |
+| 3 string length | Name values widen strings over 25 characters (`getOwnPropertyDescriptors`, verified 25) to `LONG_STRING`, numbers to `SOME_NUMBER`; the cap of 64 is checked during the product. Height 65 (66 levels) per name, ≤ 66·N rounds, ≤ 4,096 pairs per `+`. Corrected: only name-held strings are ≤ 25 characters; a literal operand is as long as its source. Keep rows: a 100-step chain and a 200-term literal; mutations show the cap (`RangeError`) and the token are load-bearing. |
+| 4 duplication | One evaluator, new `src/ir/key-values.ts`. `class-accessor-safety.ts` uses it with no names and `exactKey`; its own evaluator is deleted, measured identical on 4.76 M expressions. `?:` and `,` stay out (they would let the accessor drop a key's side effect). `foldConstantString` and `staticConstStringValues` are legacy codegen: one follow-up, id from the lead. |
+| 5 reproducibility | `plan/samples/7628/`: both patches, the row probe, the equivalence scan, the README with the census commands. |
+| 6 by-text fragility | Keep / stop pair (compareArray, and the same with `function g(i) {}`); listed under "Could not measure". |
+| 7 stated cases | Hoisted `var` (`undefined` or the realm's property; left out soundly; a keep row); index / `length` / `lastIndex` writers; eval / `Function` (#7503). |
+| 8 domain edges | Mixed `+` and a template with `SOME_NUMBER` are unknown (exact numbers stay exact); `x = y = e` stores `e`; `||=` / `&&=` / `??=` store `e`; cooked `.text`. Rows for each. |
+| 9 one owner | Freshness is derived in `realmWrittenKeys` from `bindings`; `NameBinding` is kind-tagged with `{ kind: "any" }`. |
+| 10 rows | `super[…]`, `Object?.[…]`, a for-in head that is no declaration, `catch (p)`, a chained assignment (stop and keep), a ternary split (stop, and a cost row). |
+| re-measure | Census on the v2 patch: carriers 230, o411 84, 0 changed rows on either list, 0 crashes. |
