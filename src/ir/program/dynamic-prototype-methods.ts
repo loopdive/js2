@@ -36,6 +36,7 @@ import {
   conversionMethodTests,
   identityTest,
   unlessUnheldOwnKey,
+  type BuiltinMethodTest,
 } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
@@ -146,22 +147,26 @@ export function dynamicPrototypeMethodCall(
   const method = name === undefined ? undefined : nativeObjectPrototypeMethod(name);
   const algorithm = (r: IrValueId): IrInstr[] =>
     method === "isPrototypeOf" ? prototypeOf(b, instr, r) : ownProperty(b, instr, method === "propertyIsEnumerable", r);
-  // A static reads no `this`: a call may be it where it is detached or names it.
-  const reads = (key: string): boolean => name === undefined || name === key;
+  // The statics the realm holds as values, each with its identity row. A static reads no `this`: a call may be it
+  // where it is detached or names it. `Array.isArray` is never folded (every call of it reads the member), and no
+  // program changes a static of `Object` (`NativeRealmIntrinsic.fixed`).
+  const statics: readonly (readonly [string, () => BuiltinMethodTest])[] = [
+    ...(holdsFamily(b.program, "array")
+      ? [["isArray", () => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))] as const]
+      : []),
+    ...[...b.program.objects.staticValues].flatMap((value) => {
+      const native = nativeObjectStatic(value)?.name;
+      return native === undefined
+        ? []
+        : [[native, () => objectStaticTest(b, instr, native, callee, instr.args.slice(2))] as const];
+    }),
+  ];
   const tests = [
     ...(method === undefined ? [] : [() => identityTest(b, instr, objectPrototypeMethodId(method), callee, algorithm)]),
     ...(name === undefined
       ? []
       : conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2)),
-    ...(holdsFamily(b.program, "array") && reads("isArray")
-      ? [() => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, instr, r))]
-      : []),
-    ...[...b.program.objects.staticValues].flatMap((value) => {
-      const native = nativeObjectStatic(value)?.name;
-      return native !== undefined && reads(native)
-        ? [() => objectStaticTest(b, instr, native, callee, instr.args.slice(2))]
-        : [];
-    }),
+    ...statics.flatMap(([key, test]) => (name === undefined || name === key ? [test] : [])),
   ];
   if (tests.length === 0) return undefined;
   const call = (r: IrValueId): IrInstr[] =>

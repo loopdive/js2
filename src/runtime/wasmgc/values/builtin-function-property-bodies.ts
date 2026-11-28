@@ -10,7 +10,7 @@ import {
   type BuiltinFunctionDefinition,
 } from "./builtin-function-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
-import { BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
+import { BUILTIN_FIXED_FLAG, BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionPropertyOperands extends BuiltinFunctionBodyOperands {
   readonly entryTypeIdx: number;
@@ -37,6 +37,24 @@ function entryField(d: BuiltinFunctionPropertyOperands, local: number, fieldIdx:
 /** (#7350 B3a) Whether the realm holds an entry the catalog models only as an identity. */
 const holdsIdentityOnly = (d: BuiltinFunctionPropertyOperands): boolean =>
   d.entries.some((entry) => entry.identityOnly);
+/** The abort where the bag `storage` pushes (a `$Object`) carries the mark `flag`. */
+const abortWhereMarked = (objectTypeIdx: number, storage: readonly Instr[], flag: number): Instr[] => [
+  ...storage,
+  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+  n(flag),
+  { op: "i32.and" },
+  { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
+];
+/**
+ * (#7580) The abort of a write about to take effect on a fixed bag (`BUILTIN_FIXED_FLAG`), which `storage` pushes: the
+ * IR answers its statics without reading them, so no define, [[Set]] or delete may change one, whatever route reached
+ * the object. Emitted only where the realm holds such an entry.
+ */
+export const abortWhereFixed = (
+  d: Pick<BuiltinFunctionPropertyOperands, "entries" | "objectTypeIdx">,
+  storage: readonly Instr[],
+): Instr[] =>
+  d.entries.some((entry) => entry.fixed) ? abortWhereMarked(d.objectTypeIdx, storage, BUILTIN_FIXED_FLAG) : [];
 /**
  * The own entry of `key` in the object's storage (a function's bag), or null. (#7350 B3a) A miss in an identity-only
  * bag (`BUILTIN_IDENTITY_ONLY_FLAG`) is unknown, so it aborts: every own query (the lookup of [[Get]], [[HasProperty]]
@@ -57,13 +75,7 @@ export function buildBuiltinFunctionFindOwn(d: BuiltinFunctionPropertyOperands):
       {
         op: "if",
         blockType: empty,
-        then: [
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(BUILTIN_IDENTITY_ONLY_FLAG),
-          { op: "i32.and" },
-          { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
-        ],
+        then: abortWhereMarked(d.objectTypeIdx, bag(d), BUILTIN_IDENTITY_ONLY_FLAG),
       },
       get(entry),
     ],
@@ -74,7 +86,8 @@ export function buildBuiltinFunctionHasOwn(d: BuiltinFunctionPropertyOperands): 
 }
 /**
  * Returns the logical target, never its implementation bag. (#7350 B3a) Where the realm holds an identity-only entry,
- * the key is first looked up among the target's own properties, so a define of a key such an entry misses aborts.
+ * the key is first looked up among the target's own properties, so a define of a key such an entry misses aborts;
+ * (#7580) any define on a fixed entry does.
  */
 export function buildBuiltinFunctionDefine(
   d: BuiltinFunctionPropertyOperands,
@@ -84,6 +97,7 @@ export function buildBuiltinFunctionDefine(
   return {
     locals: [],
     body: [
+      ...abortWhereFixed(d, bag(d)),
       ...(holdsIdentityOnly(d) ? [get(0), get(1), call(d.findOwn), { op: "drop" } as Instr] : []),
       get(0),
       call(d.bag),
@@ -220,6 +234,7 @@ export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands
       { op: "i32.eqz" },
       { op: "i32.or" },
       { op: "if", blockType: empty, then: [n(0), { op: "return" }] },
+      ...abortWhereFixed(d, bag(d)),
       ...nonnull(3),
       ...entryField(d, 3, 2),
       n(flags.tombstone),
@@ -305,6 +320,7 @@ export function buildBuiltinFunctionWriteOwn(d: BuiltinFunctionPropertyOperands)
       { op: "i32.and" },
       { op: "i32.or" },
       { op: "if", blockType: empty, then: [n(0), { op: "return" }] },
+      ...abortWhereFixed(d, bag(d)),
       ...nonnull(3),
       get(2),
       { op: "any.convert_extern" },

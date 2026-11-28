@@ -11,6 +11,11 @@ export const BUILTIN_FUNCTION_INITIAL_NAME_FIELD = 7;
  * below it are the object runtime's (`OBJ_FLAG_*`, codegen/object-runtime.ts).
  */
 export const BUILTIN_IDENTITY_ONLY_FLAG = 0x100;
+/**
+ * (#7580) The `$Object.flags` bit of a bag whose own properties never change after the realm is seeded: the IR answers
+ * the built-in's statics without reading them, so a write that would take effect aborts.
+ */
+export const BUILTIN_FIXED_FLAG = 0x200;
 
 /** Identity is the allocation, not an integer brand or a canonicalized type. */
 export function createBuiltinFunctionRealmType(name: string): StructTypeDef {

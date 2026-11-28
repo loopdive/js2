@@ -6,7 +6,7 @@
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags, ifArrayBrand } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
-import { buildAccessorCall, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
+import { abortWhereFixed, buildAccessorCall, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 import type { BuiltinFunctionPrototypeOperands } from "./builtin-function-prototype-bodies.js";
 
@@ -137,7 +137,8 @@ type SourceObjectSetOperands = Pick<
  * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
  * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
  * or a setter-less accessor answers `false`; (#7354 O2) an accessor's setter is called with the receiver and the
- * value (`buildAccessorCall`, the getter's call too), answering `true`. A non-extensible receiver is unreachable: no
+ * value (`buildAccessorCall`, the getter's call too), answering `true`. (#7580) A write about to take effect on a
+ * fixed bag aborts (`abortWhereFixed`). A non-extensible receiver is unreachable: no
  * Prepared program can make one yet (`Object.preventExtensions`, slice O3).
  */
 export function buildSourceObjectSetDefinition(
@@ -207,6 +208,11 @@ export function buildSourceObjectSetDefinition(
           ],
           ordinaryDefine(word),
         );
+  const storageObject: Instr[] = [
+    { op: "local.get", index: storage },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.objectTypeIdx },
+  ];
   return {
     locals: [
       { name: "status", type: { kind: "i32" } },
@@ -230,7 +236,7 @@ export function buildSourceObjectSetDefinition(
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [...requireWritable, ...define(flags.hasValue), { op: "return" }],
+        then: [...requireWritable, ...abortWhereFixed(d, storageObject), ...define(flags.hasValue), { op: "return" }],
       },
       { op: "local.get", index: 0 },
       { op: "local.get", index: 1 },

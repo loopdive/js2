@@ -21,8 +21,7 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { RealmConstructor } from "./builtin-prototype-keys.js";
-import type { IrType } from "../core/types.js";
-import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { CARRIER, carried } from "./dynamic-value-chains.js";
 import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
