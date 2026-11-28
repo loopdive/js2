@@ -1,10 +1,11 @@
 ---
 id: 7625
 title: "A named import of a module namespace (`export * as ns`) reads as null, and namespace objects have no identity"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-11-28
 updated: 2026-11-28
+completed: 2026-11-28
 priority: medium
 horizon: s
 feasibility: medium
@@ -136,3 +137,69 @@ a sibling module. No grant.
   one module's namespace is now built once instead of per import site.
 - **No test262 regression** in the scoped `language/module-code|language/import|language/export` per-test diff on
   standalone. The 8 `export * as` files are reported before and after (verdicts in #7620).
+
+## Results (2026-11-28)
+
+Measured on branch `claude/7625-named-import-namespace`, base origin/main `5e3c790785`, fix commit `0b8d799bb4`,
+node v22.23.5. Base runs swap the three changed files back to `5e3c790785` (file-copy A/B).
+
+### Pin test (`tests/issue-7625-module-namespace-import-binding.test.ts`)
+
+15 rows × gc/standalone × IR on/off = 60 cases. Node's answers were re-checked by running the transpiled sources in
+node.
+
+| lane | red on `5e3c790785` | after |
+| --- | --- | --- |
+| gc, IR on | 12 of 15 (guards `n1`, `n5` and the augmentation row green) | 15/15 |
+| gc, IR off | 11 of 13 non-#7622 rows (guards green) | 13/13, plus 2 expected failures |
+| standalone, IR on | 12 of 15 | 15/15 |
+| standalone, IR off | 11 of 13 | 13/13, plus 2 expected failures |
+
+- The 2 expected failures per IR-off lane are `n4` (`ns.f()`) and the augmentation row (`d.f()`): a namespace
+  function call with the IR path off throws until #7622 lands. They run as `it.fails` with a comment naming #7622, so
+  they turn red when #7622 lands and must then become plain `it`.
+- The augmentation row already passed before (IR on). It guards the disjointness condition.
+
+### Bytes
+
+- **Single-file corpus: identical.** 390 files × gc/standalone = 780 compiles, base vs fix, 0 differences. The
+  #7470 file lists were not available, so the corpus is rebuilt: the first 240 files of the ES5 sample
+  (`es5-sample.txt`) plus all 150 module-goal files (`flags: [module]`, with `import`/`export`, no `_FIXTURE`, not
+  negative) of `language/module-code`, `language/export` and `language/import`.
+- **Multi-file graphs.** The 31 #7470 pin graphs × gc/standalone × IR on/off (124 compiles) are identical. Of the
+  #7625 pin graphs, exactly the expected ones differ:
+  - every named-import row (`a_read`, `a_renamed_*`, `a_export_star_carries`, `a_as_value`, `a_keys`, `n2`, `n3`, and
+    `n4` with IR on): the namespace object is now built instead of `ref.null`;
+  - the three identity rows: one module's namespace is now built once instead of once per route.
+  - Unchanged: the guards `n1` and `n5`, the augmentation row, and `n4` with IR off (still #7622).
+
+### Other checks
+
+- **Scoped test262, standalone, CI lane** (`TEST262_TARGET=standalone`, `TEST262_PATH_FILTER_FILE` over the 731
+  `language/module-code|language/import|language/export` files, workspace runs): 437 pass on base, 439 after, 0
+  pass → non-pass. Fail → pass: `module-code/export-star-as-dflt.js` and `module-code/instn-star-equality.js`.
+  - The 8 `export * as` files of #7620: `export-star-as-dflt.js` fail → pass; the other 7 pass before and after.
+  - Against the CI standalone baseline (27.11.2026 03:47, 437 pass in scope), one baseline pass is non-pass in both
+    local runs (`export-expname-import-string-binding.js`), so this change does not cause it.
+- **Namespace and module tests** (the 26 `namespace`/`5330`/`7470` test files): the same 20 failures on base and
+  fix, all pre-existing (the #7623 "non-exact graph edge" error, missing FYI fixtures, host-lane environment).
+- **Equivalence gate:** exits 0; 4,856 pass, 20 fail, no new regressions (2 baseline failures now pass).
+- **Gates:** loc, func, coercion sites, oracle ratchet (`ctx.checker` −6) and dead exports pass; loc and func also
+  pass with `LOC_GATE_BASE=5e3c790785`; compiler boundaries pass against `HEAD^1` and origin/main.
+  - origin/main advanced to `4aa8ea4c46` during the work. With that tip as `LOC_GATE_BASE`, loc and func report
+    `src/codegen/index.ts` growth that main itself made (#7572). This branch does not touch `index.ts`, main does not
+    touch the changed files, and the merge is clean.
+- **Sizes:** `module-namespace-value.ts` 1,431 → 1,418, `calls.ts` 9,829 → 9,814, `property-access.ts`
+  6,209 → 6,200; `identifiers.ts` unchanged.
+
+### Deviations from the plan
+
+- **The #5330 builtin decline stays on the object path** (`tryEmitCompiledModuleNamespaceObject`, helper
+  `importsNodeBuiltin`) instead of moving into `moduleNamespaceSourceOf`. In `moduleNamespaceSourceOf` it would also
+  stop the member-call and function-value receivers from taking the static path for a builtin specifier that resolves
+  to a source file, which they do today.
+- **`aliasedSymbolAt`** (new, in `module-namespace-value.ts`) carries the getSymbolAtLocation + getAliasedSymbol
+  lookup that `canonicalRuntimeNamespaceSymbol`, `isRuntimeNamespaceReceiver` and
+  `runtimeNamespaceFunctionValueReceiver` each copied. `moduleNamespaceSourceOf` alone answers only their module half,
+  so this helper is what removes those copies.
+- The adversarial review is not run yet; it belongs to the PR.
