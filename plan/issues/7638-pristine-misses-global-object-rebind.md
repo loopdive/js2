@@ -1,7 +1,8 @@
 ---
 id: 7638
 title: "`pristine` misses a realm global rebound through the global object"
-status: backlog
+status: wont-fix
+duplicate_of: 7503
 sprint: Backlog
 created: 2026-11-28
 updated: 2026-11-28
@@ -18,6 +19,9 @@ related: [7350, 7628, 7503, 7609]
 
 # #7638 — `pristine` misses a realm global rebound through the global object
 
+Closed as a duplicate of #7503 (2026-11-28). Its delta (the computed-key judgement and the three repro rows) is in
+#7503, section "Delta from #7638".
+
 ## Problem
 
 `pristineBuiltinGlobal` (`src/ir/builtin-global-binding.ts`, #7350 slice 1) decides that a name such as `Number`
@@ -33,11 +37,12 @@ Object.assign(globalThis, {Number: {isNaN: function () { return 7; }}});
 this["Num" + "ber"] = {isNaN: function () { return 7; }};
 ```
 
-Repro: `plan/samples/7628/probe-global.mts` on the unmerged archive branch `claude/7628-samples-archive` (the same tree as `77cd8bb312`). Found while planning #7628.
+Repro: `plan/samples/7628/probe-global.mts` at commit `77cd8bb312` (#7628's plan revision). Found while planning
+#7628.
 
-**Blocks B3b-1 (#7561, PR #7535).** B3b-1 does not have an issue file on main yet, so there is no frontmatter link.
-Today a folded member and the native are the same algorithm on the Prepared path, so nothing observable goes wrong.
-Once B3b-1 holds the realm's members as objects, a fold under a rebound name answers wrongly.
+B3b-1 has landed as #7561. Today a folded member and the native are the same algorithm on the Prepared path, so
+nothing observable goes wrong; on main 2026-11-28 none of the three rows gives a wrong answer (#7503, "Delta from
+#7638").
 
 ## Direction (to plan)
 

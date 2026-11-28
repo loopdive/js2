@@ -4,7 +4,7 @@ title: "pristine-builtin-global proof misses escaped global-object writes; neede
 status: backlog
 sprint: Backlog
 created: 2026-11-26
-updated: 2026-11-26
+updated: 2026-11-28
 priority: high
 horizon: s
 feasibility: medium
@@ -13,7 +13,8 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 depends_on: []
-related: [7363, 7354]
+blocks: [7609]
+related: [7363, 7354, 7628, 7638]
 ---
 
 ## Problem
@@ -62,6 +63,37 @@ Before any change makes `globalThis` or script-level `this` lower to a value on 
 refuse a program where that value escapes. That means any use other than a static member read or a static member
 write the walk already sees. The proof must also refuse a program with dynamic code. #7363 A4's boundary test fails
 when either refusal label goes away and points here.
+
+## Delta from #7638 (2026-11-28)
+
+#7638 ("`pristine` misses a realm global rebound through the global object") is closed as a duplicate of this issue.
+What it adds:
+
+- **How to judge a computed key.** A write whose key is not a literal (`this["Num" + "ber"] = …`) names a realm
+  global when the key's possible values (#7628's `keyValues`, `src/ir/key-values.ts`) may include that name. The
+  writes are the ones the member-write scan already collects (`src/ir/realm-member-writes.ts`: stores, compound
+  writes, `delete`, destructuring and for-in / for-of targets, and the key writers `defineProperty`,
+  `defineProperties`, `assign`, `__defineGetter__`, `__defineSetter__`); the pristine proof asks that scan for writes
+  that may reach the global object. No second walk.
+- **Three repro rows**, each followed by `Number.isNaN(1)` (node answers 7):
+  - `Object.defineProperty(this, "Number", {value: {isNaN: function () { return 7; }}});`
+  - `Object.assign(globalThis, {Number: {isNaN: function () { return 7; }}});`
+  - `this["Num" + "ber"] = {isNaN: function () { return 7; }};`
+
+  Repro script: `plan/samples/7628/probe-global.mts` at commit `77cd8bb312`.
+
+**Measured on main `330caff2a8` (2026-11-28, Prepared entry, runner options): no row gives a wrong answer today.**
+
+| write | outcome |
+| --- | --- |
+| `Object.defineProperty(this, "Number", …)`, `Object.defineProperties(this, {Number: …})` | compile; abort at run time with `unreachable` (#7609's sealed global object) |
+| `this["Num" + "ber"] = …` | refused: "dynamic operation dyn.member_set with a computed key has no Prepared intrinsic" |
+| `Object.assign(globalThis, …)` | refused: `identifier "Object" is not in scope in <module-init>` |
+| `globalThis.Number = …` | refused: `identifier "globalThis" is not in scope in <module-init>` |
+| `Reflect.set(this, "Number", …)` | refused: `identifier "Reflect" is not in scope in <module-init>` |
+
+So the rows become reachable only when #7609 lowers a write through the global object (its slices B and C), or when
+`Object` / `globalThis` / `Reflect` lower as values. This issue lands first: `blocks: [7609]`.
 
 ## Acceptance criteria
 

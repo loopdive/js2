@@ -144,6 +144,7 @@ binding that exists. A stand-in ordinary object would do both wrongly.
   has one answer.
 - **H2:** `preparedBindingRewritten` counts a `this.N = v` write of a script binding, so a typed home sees it.
 - **Refused by name:** a write of a standard global, a compound write of an undeclared name, `delete this.N`.
+- **Precondition:** #7503 (pristine sees writes through the global object) lands before this slice lowers a write.
 
 ### Slice C — planned, not sized: bindings as properties
 
@@ -151,6 +152,8 @@ The global object as the object environment record, for a program that keys it d
 `for (k in this)`, `"x" in this`, descriptor reads and `Object.defineProperty(this, …)`, `delete`, and
 `fnGlobalObject()`. It decides per program (the global object escapes, or not), so programs that never observe it
 keep their typed homes. Owner decision before a plan is written (see #7608, open questions).
+
+Precondition: #7503 (pristine sees writes through the global object) lands before this slice lowers a write.
 
 ### Acceptance
 
