@@ -14444,15 +14444,14 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       throw new Error(detail);
     }
     case ts.SyntaxKind.TildeToken: {
-      const randType = typeOfValue(rand, cx);
-      if (asVal(randType)?.kind !== "f64") {
-        demoteToLegacy(
-          "operand-coercion-unsupported",
-          `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`,
-        );
+      const host = functionObjectLoweringHost(cx);
+      const number = host.createsFunctionObjects() ? realmToNumber(rand, expr.operand, host) : rand;
+      if (asVal(typeOfValue(number, cx))?.kind !== "f64") {
+        const detail = `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`;
+        demoteToLegacy("operand-coercion-unsupported", detail);
       }
-      const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, irVal({ kind: "f64" }));
-      return cx.builder.emitBinary("js.bitxor", rand, minusOne, irVal({ kind: "f64" }));
+      const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, IR_F64);
+      return cx.builder.emitBinary("js.bitxor", number, minusOne, IR_F64);
     }
     default:
       demoteToLegacy(
@@ -14879,40 +14878,19 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
   return result;
 }
 
-/**
- * (#3144) `value instanceof C` where `C` names a locally-declared class.
- * Class-typed LHS → `class.instanceof` (runtime `__tag` compare against C's
- * tag + descendant tags — exactly legacy `compileInstanceOf`'s non-null-ref
- * path). LHS representations that can never hold a user-class instance
- * (unboxed scalars, strings, plain-object structs, internal closures) fold to
- * constant false with the operand still evaluated for effects (legacy
- * parity: `drop; i32.const 0`). Everything else (boundary callables/externref,
- * dynamic, union, boxed, vec refs) demotes cleanly to legacy, which has the
- * full dynamic `__instanceof_dyn` path.
- */
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
-  if (!ts.isIdentifier(expr.right)) {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: instanceof RHS must be a class identifier (${cx.funcName})`,
-    );
-  }
+  const dynamicInstanceOf = () => functionObjects.lowerDynamicInstanceOf(expr, functionObjectLoweringHost(cx));
+  const withoutStaticTarget = (reason: string): IrValueId => {
+    if (functionObjects.createsFunctionObjects(cx.resolver)) return dynamicInstanceOf();
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: instanceof RHS ${reason} (${cx.funcName})`);
+  };
+  if (!ts.isIdentifier(expr.right)) return withoutStaticTarget("must be a class identifier");
   const className = expr.right.text;
-  // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
-  // legacy's generic runtime operator (`dyn.instanceof`).
-  // (#7354 C2) …or, on the Prepared lane, `<any> instanceof <a dynamic value>` (`bindingHoldsDynamic`).
   if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true || bindingHoldsDynamic(expr.right, cx))
-    return functionObjects.lowerDynamicInstanceOf(expr, functionObjectLoweringHost(cx));
-  if (cx.scope.get(className) !== undefined) {
-    // A local binding shadows the class name — the selector rejects this
-    // shape, so reaching here is only possible via drift; demote cleanly.
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`,
-    );
-  }
+    return dynamicInstanceOf();
+  if (cx.scope.has(className)) return withoutStaticTarget(`"${className}" is shadowed by a local`);
   // (#7106 S3c) `<dynamic> instanceof F` for a self-guarded constructor F: the
   // selector admitted it only behind F's function-object plan, whose exact
   // unit target names the per-function prototype the chain walk reads.
@@ -14977,12 +14955,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     );
   }
   const targetShape = cx.classShapes?.get(className);
-  if (!targetShape) {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: instanceof RHS class "${className}" has no projected shape (${cx.funcName})`,
-    );
-  }
+  if (!targetShape) return withoutStaticTarget(`class "${className}" has no projected shape`);
   const lhs = lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
   const lt = cx.builder.typeOf(lhs);
   if (lt.kind === "class") {
@@ -15152,15 +15125,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     return lowerLogicalAndOr(expr, op, cx, hint);
   }
 
-  // (#3144) `x instanceof C` with a LOCAL-class RHS — intercepted before the
-  // capability gate (like `??` / `&&` above): `instanceof` stays table-deferred
-  // for the general case, but the local-class form has an IR lowering
-  // (`class.instanceof`, a static tag check mirroring legacy
-  // `compileInstanceOf`). The selector accepts exactly this shape
-  // (identifier RHS ∈ localClasses, unshadowed), keeping select↔build parity.
-  if (op === ts.SyntaxKind.InstanceOfKeyword) {
-    return lowerInstanceOf(expr, cx);
-  }
+  if (op === ts.SyntaxKind.InstanceOfKeyword) return lowerInstanceOf(expr, cx);
 
   // (#5164 S1/S3) The comma operator and the bounded dynamic-lane `in`, both
   // intercepted before the capability gate for the same reason as the arms
