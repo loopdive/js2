@@ -380,16 +380,17 @@ function isLexicalList(node: ts.Node): boolean {
  * nothing, and lowers as one init chunk.
  */
 function textRunsAsScript(call: ts.CallExpression, text: string): boolean {
+  let names: ReturnType<typeof foldedEvalDeclarationNames> | undefined;
   const script = separateScript(
     [text],
     text,
-    (parsed) =>
-      foldedEvalStaticSyntaxError(call, true, parsed, foldedEvalDeclarationNames(parsed.sourceFile), undefined) !==
-      undefined,
+    (parsed) => {
+      names = foldedEvalDeclarationNames(parsed.sourceFile);
+      return foldedEvalStaticSyntaxError(call, true, parsed, names, undefined) !== undefined;
+    },
     () => undefined,
   );
-  if (script === undefined) return false;
-  const names = foldedEvalDeclarationNames(script.sourceFile);
+  if (script === undefined || names === undefined) return false;
   return (
     !ts.isExternalModule(script.sourceFile) &&
     names.varNames.size === 0 &&
