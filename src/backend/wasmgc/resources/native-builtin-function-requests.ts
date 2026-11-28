@@ -48,11 +48,17 @@ export interface NativeBuiltinProperty {
   readonly writable: boolean;
   readonly configurable: boolean;
 }
-/** (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one. */
+/**
+ * (#7354 G1) An ordinary object of a held family (a prototype object): its link, `object-prototype` or an earlier one;
+ * (#7561) a wrapper prototype's primitive data.
+ */
 export interface NativeBuiltinObject {
   readonly id: string;
   readonly prototype: string;
+  readonly primitiveData?: string | number | boolean;
   readonly properties: readonly NativeBuiltinProperty[];
+  /** (#7609) An object the catalog models only as an identity (`NativeRealmIntrinsic.identityOnly`). */
+  readonly identityOnly?: true;
 }
 export interface NativeBuiltinFunctionRequirement {
   readonly id: string;

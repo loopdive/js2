@@ -86,9 +86,16 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // requiring the enumerable attribute when `selector` is 1.
   "js.object.intrinsic": declaration("js.object.intrinsic", [I32], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, I32], [BOOLEAN]),
+  // (#7561) A new wrapper of the already converted primitive, for the wrapper constructor `selector` (its index in
+  // `NATIVE_WRAPPER_CONSTRUCTORS`); and what the realm answers of a wrapper (`WRAPPER_DATA`): an object's primitive
+  // data, or thisXValue where the method is a held wrapper prototype's `valueOf` / `toString`.
+  "js.object.create-wrapper": declaration("js.object.create-wrapper", [EXTERNAL, I32], [EXTERNAL]),
+  "js.object.wrapper-data": declaration("js.object.wrapper-data", [EXTERNAL, EXTERNAL, I32], [EXTERNAL]),
   // (#7354 O2) IsConstructor (§7.2.4) of a function object: false for one `init-function` made without [[Construct]]
   // (an accessor).
   "js.object.is-constructor": declaration("js.object.is-constructor", [EXTERNAL], [BOOLEAN]),
+  // (#7471) OrdinaryDelete (§10.1.10.1) of a canonical key on an ordinary or function object.
+  "js.object.delete": declaration("js.object.delete", [EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7377) EnumerateObjectProperties (§14.7.5.9) as a snapshot: a list of the string keys a for-in visits, empty
   // for `undefined` / `null`; the list's length, and its key at an index.
   "js.object.for-in-keys": declaration("js.object.for-in-keys", [EXTERNAL], [EXTERNAL]),

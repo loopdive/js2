@@ -28,6 +28,8 @@
  * `obj[k](h)`) is not attributed to its slot.
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { isNonReferenceName } from "../shared/binding-writes.js";
+import { identifierIndex } from "../shared/callee-name-index.js";
 import { closureSignatureEquals, irTypeEquals, type IrClosureSignature, type IrType } from "./nodes.js";
 
 export interface ClosureSignatureFlowHooks {
@@ -38,8 +40,6 @@ export interface ClosureSignatureFlowHooks {
 }
 
 type SlotOwner = ts.FunctionDeclaration | ts.MethodDeclaration | ts.ConstructorDeclaration;
-
-const identifierIndexCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly ts.Identifier[]>>();
 
 /**
  * True when the callable parameter `parameter` may be handed a function whose
@@ -157,34 +157,6 @@ function sameBinding(resolved: ts.Declaration, declaration: ts.Declaration): boo
   );
 }
 
-/** Declaration names, property names and labels named like the owner are not references to it. */
-function isNonReferenceName(id: ts.Identifier): boolean {
-  const parent = id.parent;
-  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return true;
-  if (ts.isQualifiedName(parent) && parent.right === id) return true;
-  if (
-    (ts.isPropertyAssignment(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent) ||
-      ts.isPropertySignature(parent) ||
-      ts.isMethodSignature(parent) ||
-      ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isVariableDeclaration(parent) ||
-      ts.isParameter(parent) ||
-      ts.isBindingElement(parent) ||
-      ts.isEnumMember(parent)) &&
-    parent.name === id
-  ) {
-    return true;
-  }
-  return ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent);
-}
-
 function isTypePosition(id: ts.Identifier): boolean {
   for (let node: ts.Node = id; node.parent; node = node.parent) {
     if (ts.isTypeNode(node.parent) && !ts.isExpressionWithTypeArguments(node.parent)) return true;
@@ -192,23 +164,6 @@ function isTypePosition(id: ts.Identifier): boolean {
     if (ts.isExpression(node.parent) || ts.isStatement(node.parent)) return false;
   }
   return false;
-}
-
-function identifierIndex(sourceFile: ts.SourceFile): ReadonlyMap<string, readonly ts.Identifier[]> {
-  const cached = identifierIndexCache.get(sourceFile);
-  if (cached) return cached;
-  const index = new Map<string, ts.Identifier[]>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      const bucket = index.get(node.text);
-      if (bucket) bucket.push(node);
-      else index.set(node.text, [node]);
-    }
-    forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  identifierIndexCache.set(sourceFile, index);
-  return index;
 }
 
 function valueHasExactSignature(

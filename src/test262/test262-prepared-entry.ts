@@ -1,15 +1,27 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
-import { analyzeMultiSource } from "../checker/index.js";
+import { analyzeMultiSource, type MultiTypedAST } from "../checker/index.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import { elideDeadBindings } from "./prepared-dead-bindings.js";
-import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
+import {
+  preparedFrontendRejectionObservation,
+  runPreparedIrPipelinePresentation,
+  sourceFailsCompileGates,
+} from "../compiler.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
+import {
+  type LiteralDynamicCodeSource,
+  type LiteralDynamicCodeText,
+  literalDynamicCodeTexts,
+  literalFunctionDeclaration,
+  pairLiteralDynamicCodeSources,
+  usesReservedDynamicFunctionPrefix,
+} from "../ir/literal-dynamic-code.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
 import { AbortBodies, type AbortBodyRow, type AbortSiteRow } from "../ir/abort-bodies.js";
@@ -367,6 +379,87 @@ function failed(
   results.set(result, { rows: observeResult(result), outcome: diagnostic, frontendFailure });
   return result;
 }
+/** A named refusal of the adapter itself, located at the entry's first line. */
+function adapterRefusal(entryFile: string, code: string, detail: string, message = detail): CompileResult {
+  return failed({ kind: "adapter-unsupported", detail }, [
+    { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
+  ]);
+}
+/** Compile a source graph with its analysis; `added` are the entry's literal dynamic-code texts it holds. */
+type GraphCompile = (
+  graph: Record<string, string>,
+  ast: MultiTypedAST,
+  added: readonly LiteralDynamicCodeText[],
+) => CompileResult;
+/**
+ * (#7363, #7487) The compile of `files` plus one script per qualifying literal dynamic-code site of the entry
+ * (`<eval:N>.js`, `<function:N>.js`) that succeeds, trying every text first and then the eval texts alone; otherwise
+ * the compile of `files` with `without`, its analysis, where every site keeps its refusal at select. The second try
+ * keeps a failing `Function` text from taking the eval texts with it: a program never fares worse than with its eval
+ * texts alone (#7363). A failure with texts falls back this way, whatever its cause: a text the IR cannot lower fails
+ * the program even where its site never runs, and so does (#7363 A4, #7487) a site refused at select for a global
+ * `eval` or `Function` that may not be pristine, which a site in dead code must not do either. When every try fails,
+ * the first failure with texts is the answer: it names the site's own refusal.
+ */
+function withLiteralDynamicCodeSources(
+  files: Record<string, string>,
+  without: MultiTypedAST,
+  texts: readonly LiteralDynamicCodeText[],
+  analyze: (graph: Record<string, string>) => MultiTypedAST,
+  options: Test262CompileOptions,
+  compileGraph: GraphCompile,
+): CompileResult {
+  const evalTexts = texts.filter(({ kind }) => kind === "eval");
+  const tries = evalTexts.length > 0 && evalTexts.length < texts.length ? [texts, evalTexts] : [texts];
+  const failures: CompileResult[] = [];
+  for (const added of tries.filter((tried) => tried.length > 0)) {
+    const joined = joinLiteralDynamicCodeSources(files, without, added, analyze, options, compileGraph);
+    if (joined?.success) return joined;
+    if (joined) failures.push(joined);
+  }
+  const alone = compileGraph(files, without, []);
+  return alone.success ? alone : (failures[0] ?? alone);
+}
+/**
+ * The compile of `files` plus the `added` texts' scripts, or undefined when they fail the compile's gates or change
+ * another source's diagnostics. A script fails the gates exactly as a JavaScript entry does: a syntax error outside
+ * the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a read of an
+ * undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member store in
+ * it declares a JS expando property of a caller binding; such a change names no text, so then none joins.
+ */
+function joinLiteralDynamicCodeSources(
+  files: Record<string, string>,
+  without: MultiTypedAST,
+  added: readonly LiteralDynamicCodeText[],
+  analyze: (graph: Record<string, string>) => MultiTypedAST,
+  options: Test262CompileOptions,
+  compileGraph: GraphCompile,
+): CompileResult | undefined {
+  const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
+  const codeNames = new Set(added.map(({ name }) => normalizeMultiFileName(name)));
+  const graph: Record<string, string> = Object.create(null);
+  Object.assign(graph, files);
+  for (const { kind, name, text } of added) {
+    if (supplied.has(normalizeMultiFileName(name)))
+      invalidRequest(`source name ${name} is reserved for a literal ${kind} source`);
+    Object.defineProperty(graph, name, { value: text, enumerable: true });
+  }
+  const ast = analyze(graph);
+  const isCodeSource = (file: ts.SourceFile | undefined) =>
+    file !== undefined && codeNames.has(normalizeMultiFileName(file.fileName));
+  const othersReport = (diagnostics: readonly ts.Diagnostic[]) =>
+    diagnostics
+      .filter((diagnostic) => !isCodeSource(diagnostic.file))
+      .map(({ file, start, code, messageText }) =>
+        [file?.fileName, start, code, ts.flattenDiagnosticMessageText(messageText, "\n")].join(":"),
+      )
+      .sort()
+      .join("\n");
+  const quiet =
+    !ast.sourceFiles.some((source) => isCodeSource(source) && sourceFailsCompileGates(source, ast, options)) &&
+    othersReport(ast.diagnostics) === othersReport(without.diagnostics);
+  return quiet ? compileGraph(graph, ast, added) : undefined;
+}
 function present(
   files: Record<string, string>,
   entryFile: string,
@@ -378,43 +471,20 @@ function present(
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
   if (options.backend !== undefined && options.backend !== profile.backend)
-    return failed({ kind: "adapter-unsupported", detail: "explicit backend contradicts resolved target" }, [
-      {
-        severity: "error",
-        code: "prepared-backend-target-mismatch",
-        message: "explicit backend contradicts resolved target",
-        file: entryFile,
-        line: 1,
-        column: 1,
-      },
-    ]);
+    return adapterRefusal(entryFile, "prepared-backend-target-mismatch", "explicit backend contradicts resolved target");
   if (options.runtimeEvalProvider === false)
-    return failed(
-      { kind: "adapter-unsupported", detail: "strict compilation cannot disable demanded runtime eval providers" },
-      [
-        {
-          severity: "error",
-          code: "prepared-runtime-eval-option-unsupported",
-          message: "runtimeEvalProvider:false cannot certify a strict prepared compile",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-runtime-eval-option-unsupported",
+      "strict compilation cannot disable demanded runtime eval providers",
+      "runtimeEvalProvider:false cannot certify a strict prepared compile",
     );
   if (options.define !== undefined)
-    return failed(
-      { kind: "adapter-unsupported", detail: "strict compilation does not rewrite source with define substitutions" },
-      [
-        {
-          severity: "error",
-          code: "prepared-input-transform-unsupported",
-          message: "strict compilation preserves exact source text",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-input-transform-unsupported",
+      "strict compilation does not rewrite source with define substitutions",
+      "strict compilation preserves exact source text",
     );
   const analyze = (graph: Record<string, string>) =>
     analyzeMultiSource(graph, entryFile, undefined, {
@@ -425,22 +495,81 @@ function present(
   // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
   const suppliedAst = analyze(exactFiles);
   const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
-  const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
-  if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
-    return failed(
-      { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },
-      [
-        {
-          severity: "error",
-          code: "prepared-source-graph-incomplete",
-          message: "frontend did not retain the complete supplied name/text graph",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+  const analyzedAst = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
+  // (#7363) The dynamic-code sources join after F0, which elides only a one-source graph and keeps every name a
+  // literal eval or Function text mentions; so the sites are the elided entry's.
+  const entryKey = Object.keys(analyzedFiles).find(
+    (key) => normalizeMultiFileName(key) === normalizeMultiFileName(entryFile),
+  )!;
+  // Module code is strict, so no direct eval in it runs as a sloppy Script, and a Script source beside a Module entry
+  // is a program shape this path does not take; a text is a JavaScript root, which only an allowJs program holds.
+  const codeTexts =
+    options.inferModuleStrictArguments === true || options.allowJs !== true
+      ? []
+      : literalDynamicCodeTexts(entryKey, analyzedFiles[entryKey]!);
+  // (#7487) A dynamic function's synthesized name must be no name the program's own code can spell.
+  if (
+    codeTexts.some(({ kind }) => kind === "function") &&
+    analyzedAst.sourceFiles.some(usesReservedDynamicFunctionPrefix)
+  )
+    return adapterRefusal(
+      entryFile,
+      "prepared-reserved-dynamic-function-prefix",
+      "identifier uses the reserved dynamic-function prefix",
     );
-  const supplied = new Map(Object.entries(exactFiles).map(([file, text]) => [normalizeMultiFileName(file), text]));
+  const request: PresentRequest = { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies };
+  return withLiteralDynamicCodeSources(analyzedFiles, analyzedAst, codeTexts, analyze, options, (graph, ast, added) =>
+    presentAnalyzed(request, graph, ast, added),
+  );
+}
+/** What `present` was asked, for each graph it compiles. */
+interface PresentRequest {
+  readonly exactFiles: Record<string, string>;
+  readonly entryFile: string;
+  readonly options: Test262CompileOptions;
+  readonly singleSource: boolean;
+  readonly profile: ReturnType<typeof resolveCompileTargetProfile>;
+  readonly unlowerableBodies: UnlowerableBodies;
+}
+/**
+ * (#7487) `ast` without TypeScript's TS2300 on a repeated parameter name of a `function` source: sloppy duplicate
+ * parameters are valid JavaScript (`Function("a,a", "return a")`), and a strict body's are no source at all.
+ */
+function withoutSloppyDuplicateParameters(ast: MultiTypedAST, rows: readonly LiteralDynamicCodeSource[]): MultiTypedAST {
+  const functionSources = new Set(rows.filter((row) => row.kind === "function").map((row) => row.source));
+  const duplicate = (diagnostic: ts.Diagnostic) =>
+    diagnostic.code === 2300 &&
+    diagnostic.file !== undefined &&
+    functionSources.has(diagnostic.file) &&
+    literalFunctionDeclaration(diagnostic.file).parameters.some(
+      (parameter) => parameter.name.getStart(diagnostic.file) === diagnostic.start,
+    );
+  return ast.diagnostics.some(duplicate) ? { ...ast, diagnostics: ast.diagnostics.filter((d) => !duplicate(d)) } : ast;
+}
+/** `present`'s compile of one analyzed graph, which holds the scripts of the entry's literal dynamic-code texts `added`. */
+function presentAnalyzed(
+  { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies }: PresentRequest,
+  graph: Record<string, string>,
+  analyzed: MultiTypedAST,
+  added: readonly LiteralDynamicCodeText[],
+): CompileResult {
+  if (!completeAnalyzedGraph(graph, entryFile, analyzed))
+    return adapterRefusal(
+      entryFile,
+      "prepared-source-graph-incomplete",
+      "frontend did not retain the complete supplied name/text graph",
+    );
+  const literalDynamicCodeSources =
+    added.length === 0 ? [] : pairLiteralDynamicCodeSources(analyzed.entryFile, analyzed.sourceFiles, added);
+  // (#7487) The one place a dynamic-code source's diagnostics enter the result.
+  const ast = withoutSloppyDuplicateParameters(analyzed, literalDynamicCodeSources);
+  // (#7363) A dynamic-code source's supplied text is its own; the entry's is the unelided one.
+  const supplied = new Map(
+    [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [
+      normalizeMultiFileName(file),
+      text,
+    ]),
+  );
   const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;
   // The public single-source compiler always applies its parser-syntax gate,
   // including allowJs. Multi-source calls retain their captured option policy.
@@ -469,6 +598,7 @@ function present(
     diagnosticAnchor: ast.entryFile,
     runEarlyErrorsOnAllowJs: singleSource || options.enforceJsEarlyErrors === true,
     options: pipelineOptions,
+    literalDynamicCodeSources,
     },
     abortBodies,
   );

@@ -1,0 +1,334 @@
+annexB/built-ins/Function/createdynfn-html-close-comment-body.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-16-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-9.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/function-code/10.4.3-1-15gs.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/global-code/if-decl-else-stmt-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/switch-dflt-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.3_A2_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/function/S13.2_A5.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/length/S15.3.5.1_A2_T1.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-11.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-8.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-10.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-13.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-4-593.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Number/S15.7.3_A7.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/expressions/instanceof/S15.3.5.3_A3_T2.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-case-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A3_T12.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T4.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-decl-a-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-3-139-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/S15.3.4_A1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T4.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A1_T11.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/String/S15.5.3_A2_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-block-decl-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-2-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+harness/fnGlobalObject.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T3.js	test	call-literal,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-8-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/15.3.5.4_2-95gs.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T6.js	test	call-computed,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T6.js	test	new-literal,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A3_T15.js	test	new-literal,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/length/S15.3.5.1_A1_T3.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/15.3.2.1-11-5.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-9.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-7.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A3_T10.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/15.3.5.4_2-9gs.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A6_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T2.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A3_T1.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-7.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3_A2_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/Function/createdynfn-html-open-comment-params.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T10.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A5_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A1_T1.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+language/statements/function/13.0-12-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T2.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-36.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T5.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-6.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.5_A1_T2.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/constructor/S15.3.4.1_A1_T1.js	test	value-member,value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-decl-a-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/block-decl-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-8-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-10.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A3_T9.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/length/S15.3.5.1_A2_T3.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T2.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/String/S15.5.3_A2_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.3_A1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/variable/12.2.1-5-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/S15.3.4_A4.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/15.3.5.4_2-10gs.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A3_T5.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-37.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T7.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-8.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/expressions/instanceof/S15.3.5.3_A2_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-8.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/directive-prologue/10.1.1-31-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3_A3_T3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3_A3_T5.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A12.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/S15.3.4.5_A3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/global-code/if-decl-else-stmt-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-no-else-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A2_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/block-decl-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/toString/S15.3.4.2_A11.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-13.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-6.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/length/S15.3.5.1_A1_T2.js	test	call-computed	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-13-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-65gs.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-2-2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/length/15.3.3.2-1.js	test	value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/variable/12.2.1-17-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/length/S15.3.5.1_A2_T2.js	test	call-computed	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T3.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A5_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T9.js	test	new-literal,value-instanceof	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/String/prototype/slice/S15.5.4.13_A1_T5.js	test	call-literal,value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/toString/S15.3.4.2_A9.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.5_A3_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A9.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-38.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/function/13.2-20-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.5.4_2-7gs.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-10.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-185.js	test	value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/toString/S15.3.4.2_A16.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-11.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.3_A2_T1.js	test	value-member,value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/global-code/if-decl-else-decl-b-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-decl-a-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-14-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A1_T2.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-4-417.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A1_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-16gs.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A1_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-5-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+language/statements/function/13.2-18-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A2_T5.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T1.js	test	call-literal,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.5_A1_T1.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/Function/createdynfn-html-open-comment-body.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T4.js	test	call-computed,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/switch-case-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-6-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Array/S15.4.3_A1.1_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-183.js	test	value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2_A1.js	test	new-literal,value-other	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/direct/global-block-decl-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A6_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/RegExp/S15.10.5_A2_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/global-code/switch-dflt-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-0-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/variable/12.2.1-6-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.5_A2_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-no-else-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A7_T5.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-3.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-stmt-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A5_T8.js	test	call-literal,new-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-15-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T3.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T3.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.0_4-17gs.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/global-code/switch-case-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3_A2_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3_A3_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A12.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A1_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-11.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/variable/12.2.1-16-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S11.8.6_A6_T4.js	test	value-instanceof	ir/from-ast: instanceof RHS class "Function" has no projected shape (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A3_T4.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S11.8.6_A6_T3.js	test	value-instanceof	ir/from-ast: instanceof RHS class "Function" has no projected shape (<module-init>)
+language/function-code/10.4.3-1-16-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Array/S15.4.3_A1.1_T3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-4.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-else-decl-b-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/RegExp/S15.10.5_A2_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/expressions/instanceof/S11.8.6_A7_T3.js	test	new-literal,value-compare,value-instanceof	ir/from-ast: unknown class "Function" in <module-init>
+annexB/built-ins/Function/createdynfn-html-close-comment-params.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-4-418.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A1_T13.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+language/expressions/instanceof/S15.3.5.3_A3_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-3-218-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A3_T8.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A3_T2.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/global-code/if-decl-else-decl-b-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3_A1.js	test	value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/global-code/switch-case-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-2-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T3.js	test	call-computed	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-4-594.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/expressions/this/S11.1.1_A4.1.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A3_T3.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Array/S15.4.3_A1.1_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T4.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A3_T4.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.3_A3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/global-code/block-decl-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-14.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/function/13.2-14-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+language/expressions/this/S11.1.1_A4.2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-187.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/directive-prologue/10.1.1-32-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-3-86-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-6-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A2_T6.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/15.3.2.1-11-7-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A3_T14.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.1_A1_T1.js	test	call-literal,new-literal,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/switch-dflt-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/property-accessors/S11.2.1_A4_T3.js	test	value-member,value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.5_A2_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+language/statements/function/13.2-10-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A3_T13.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-12.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/function-code/S10.2.1_A4_T1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-5.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-11-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A8_T5.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-switch-case-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A6_T3.js	test	call-computed	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-6.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/function-code/10.4.3-1-13gs.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-35.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Number/15.7.3-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-9-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A1_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/toString/S15.3.4.2_A6.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/function-code/10.4.3-1-64gs.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T8.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+annexB/built-ins/Function/createdynfn-no-line-terminator-html-close-comment-body.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/replace/S15.5.4.11_A1_T5.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-block-decl-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-4.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-3-248-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/function/13.2-12-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A3_T11.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-4.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-34.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/statements/function/13.2-13-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T4.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-9-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T8.js	test	call-literal,new-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/substring/S15.5.4.15_A1_T5.js	test	call-literal,value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A2_T2.js	test	call-literal,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3_A3_T6.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/15.3.2.1-11-9-s.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T12.js	test	new-computed,value-other	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3_A3_T4.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.2.1_A1_T8.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/function-code/10.4.3-1-14gs.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-17-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-non-enumerable-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-188.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.2-4-14.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.5_A3_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/15.3.2.1-11-1.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T8.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T3.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-15.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/S15.3.2.1_A2_T5.js	test	call-computed,value-instanceof	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/with/12.10.1-5-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.3_A2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-186.js	test	value-other	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/15.3.2.1-11-4-s.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/global-code/if-decl-no-else-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-case-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.5.4_2-8gs.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T6.js	test	call-literal	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-7.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Object/defineProperty/15.2.3.6-3-165-1.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+language/function-code/S10.2.1_A4_T2.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5-6-3.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+built-ins/Function/length/S15.3.5.1_A1_T1.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A2_T2.js	test	new-literal	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/prototype/bind/15.3.4.5.1-4-12.js	test	value-member	ir/from-ast: identifier "Function" is not in scope in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-update.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A6_T4.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+built-ins/Function/S15.3.2.1_A3_T6.js	test	new-computed	ir/from-ast: unknown class "Function" in <module-init>
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-init.js	harness:fnGlobalObject.js	fnGlobalObject-only	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>

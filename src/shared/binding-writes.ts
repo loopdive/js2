@@ -152,6 +152,40 @@ export function isBindingSiteName(node: ts.Identifier): boolean {
   );
 }
 
+/**
+ * `id` names no value: a member (`o.X`, `{ X: 1 }`, `get X() {}`), a declaration (`var X`, `function X() {}`), a
+ * qualified name's right side or a label (`X:`, `break X`). Every other identifier counts as a reference, including
+ * a shorthand property (`{ X }`), a binding element's key (`var { X: y } = o`) and an export specifier
+ * (`export { X }`): counting one too many is the safe side for every caller.
+ */
+export function isNonReferenceName(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  // A source parsed without parent pointers (a unit test's `createSourceFile`) has none.
+  if (parent === undefined) return false;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return true;
+  if (ts.isQualifiedName(parent) && parent.right === id) return true;
+  if (
+    (ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isEnumMember(parent)) &&
+    parent.name === id
+  )
+    return true;
+  return ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent);
+}
+
 /** A comma expression `a, b`: its value is its right side's. */
 export function isCommaExpression(expr: ts.Expression): expr is ts.BinaryExpression {
   return ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken;

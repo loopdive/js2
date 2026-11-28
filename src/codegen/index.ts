@@ -677,17 +677,17 @@ import {
 import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
-import { prepareModuleTdzGlobals } from "./module-global-registration.js";
-import { absoluteGlobalIdx } from "./global-space.js";
+import { prepareModuleTdzGlobals, registerLiveFunctionGlobal } from "./module-global-registration.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import { exportDeferredDefaultGlobals } from "./global-export-fixup.js";
-import { moduleBindingOf } from "./module-binding-table.js";
+import { type LiveFunctionKind, moduleBindingOf } from "./module-bindings/module-binding-table.js";
 import {
   noteImportedSourceFunction,
   ownSourceFunctionIdx,
   recordSourceModuleBindingView,
   snapshotSourceFunctionBindings,
   withSourceBindings,
-} from "./source-binding-projection.js";
+} from "./module-bindings/source-binding-projection.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import { optionalFieldFlag } from "./object-model/struct-optional-widen.js"; // (#6867)
@@ -9041,11 +9041,12 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
  * "auto-allocate a throwaway local", losing the write entirely.
  *
  * This pass (run after `collectDeclarations`, before bodies compile) statically
- * detects reassigned function-declaration names, backs each with a MUTABLE
- * `externref` module global (which the write-path then targets via `global.set`),
- * and records the name in `ctx.liveFuncBindingGlobals` so the identifier read-path
- * reads through the global (`global.get`). `__module_init` seeds each global with
- * the function's closure so a read *before* any reassignment still yields the
+ * detects reassigned function declarations and backs each declaration's binding
+ * with a MUTABLE `externref` module global (which the write-path then targets via
+ * `global.set`), marked live so the identifier read-path reads through the global
+ * (`global.get`). A binding belongs to its module (#7530), so a same-named
+ * function of another module keeps its static index. `__module_init` seeds each
+ * global with the function's closure so a read *before* any reassignment still yields the
  * function (see `compileModuleInitBody`). Reassigning a function declaration is a
  * rare pattern, so `liveFuncBindingGlobals` is empty for virtually every program
  * and this is a no-op there.
@@ -9055,8 +9056,8 @@ function registerReassignedFunctionGlobals(
   sourceFiles: readonly ts.SourceFile[],
   runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
 ): void {
-  const reassigned = new Set<string>();
-  const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
+  // Insertion order is registration order, which `__module_init` seeds in.
+  const reassignedDeclarations = new Map<ts.FunctionDeclaration, LiveFunctionKind>();
   const runtimeEvalConsumer =
     ctx.runtimeEvalProviderAbsent !== true && runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
@@ -9118,10 +9119,7 @@ function registerReassignedFunctionGlobals(
         if (candidates?.length === 1) decl = candidates[0];
       }
     }
-    if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
-      reassigned.add(decl.name.text);
-      reassignedDeclarations.add(decl);
-    }
+    if (decl && ts.isFunctionDeclaration(decl) && decl.name) reassignedDeclarations.set(decl, "assigned");
   };
   const recordTarget = (target: ts.Node): void => {
     if (ts.isIdentifier(target)) {
@@ -9201,41 +9199,47 @@ function registerReassignedFunctionGlobals(
       global.type = { kind: "externref" };
       global.init = [{ op: "ref.null.extern" }];
     }
-    for (const name of ctx.topLevelFunctionNames) {
-      const declaration = ctx.topLevelFunctionDeclarations.get(name);
-      const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
+    // Per source: `ctx.topLevelFunctionDeclarations` keeps one declaration per name across modules (#7530).
+    for (const [name, declaration] of sourceTopLevelFunctions(sourceFiles, functionDeclarationsByEnvironment)) {
+      const canBeReboundByEval = !ctx.sourceIsModule || !hasExportModifier(declaration);
       // A fragment that only calls the declaration still needs it live: the
       // static eval splice reaches a top-level function only through its live
       // binding, and without one drops the call (`eval("f()")`, 15.3.5.4_2-57gs).
       const namedByDynamicSource =
         runtimeEvalPlan.dynamicSourceWrites.has(name) || runtimeEvalPlan.dynamicSourceReferences.has(name);
-      if (canBeReboundByEval && (hasUnknownDynamicSource || namedByDynamicSource)) {
-        if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
-        reassigned.add(name);
-        if (declaration) reassignedDeclarations.add(declaration);
+      if (
+        canBeReboundByEval &&
+        (hasUnknownDynamicSource || namedByDynamicSource) &&
+        !reassignedDeclarations.has(declaration)
+      ) {
+        reassignedDeclarations.set(declaration, "eval");
       }
     }
   }
-  if (reassigned.size === 0) return;
+  if (reassignedDeclarations.size === 0) return;
 
   const exactDeclarations = (ctx.reassignedFunctionDeclarations ??= new WeakSet<ts.FunctionDeclaration>());
-  for (const declaration of reassignedDeclarations) exactDeclarations.add(declaration);
-
-  const set = (ctx.liveFuncBindingGlobals ??= new Set<string>());
-  for (const name of reassigned) {
-    const funcIdx = ctx.funcMap.get(name);
+  for (const [declaration, kind] of reassignedDeclarations) {
+    exactDeclarations.add(declaration);
+    const name = declaration.name!.text;
     // Only defined user functions (not host imports) have an in-module body.
+    const funcIdx = ownSourceFunctionIdx(ctx, declaration.getSourceFile(), name) ?? ctx.funcMap.get(name);
     if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) continue;
-    if (ctx.moduleGlobals.has(name)) continue; // already a global — nothing to do
-    const globalIdx = nextModuleGlobalIdx(ctx);
-    ctx.mod.globals.push({
-      name: `__mod_${name}`,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.moduleGlobals.set(name, globalIdx);
-    set.add(name);
+    registerLiveFunctionGlobal(ctx, name, declaration, kind);
+  }
+}
+
+/** Each source's own top-level functions by name, in statement order: per name, the last declaration with a body. */
+function* sourceTopLevelFunctions(
+  sourceFiles: readonly ts.SourceFile[],
+  declarationsByEnvironment: ReadonlyMap<ts.Node, ReadonlyMap<string, readonly ts.FunctionDeclaration[]>>,
+): Generator<[string, ts.FunctionDeclaration]> {
+  for (const sourceFile of sourceFiles) {
+    const own = declarationsByEnvironment.get(sourceFile);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isFunctionDeclaration(statement) || !statement.name) continue;
+      if (own?.get(statement.name.text)?.at(-1) === statement) yield [statement.name.text, statement];
+    }
   }
 }
 
@@ -9601,10 +9605,6 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     }
     const restInfo = ctx.funcRestParams.get(targetName);
     if (restInfo !== undefined && !ctx.funcRestParams.has(localName)) ctx.funcRestParams.set(localName, restInfo);
-    // (#2931) If the target is a reassigned function backed by a live-binding
-    // global, propagate membership so the aliased local name reads through the
-    // (copied) module global too.
-    if (ctx.liveFuncBindingGlobals?.has(targetName)) ctx.liveFuncBindingGlobals.add(localName);
   };
 
   for (const sf of sourceFiles) {
@@ -14237,13 +14237,7 @@ export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 // (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
-export {
-  ensureIrDynamicDeleteHelper,
-  IR_DYN_DELETE_SLOPPY_HELPER,
-  IR_DYN_DELETE_STRICT_HELPER,
-  irDeleteSiteIsStrict,
-  irDynamicDeleteHelperName,
-} from "./ir-dynamic-delete.js";
+export { ensureIrDynamicDeleteHelper, irDeleteSiteIsStrict } from "./ir-dynamic-delete.js";
 // (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
 export {
   ensureIrDynamicInstanceOfHelper,

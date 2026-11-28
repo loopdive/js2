@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// (#7551) The newest GREEN FULL test262 run on main: the weekly schedule run,
+// (#7551) The newest GREEN FULL test262 run on main: the daily schedule run,
 // or a `workflow_dispatch` with `full_run=true` (e.g. before a release). A run
 // counts as full only when both of its full-run producers succeeded — the
 // legacy baseline promotion and the full-corpus IR measurement — so a plain
@@ -8,7 +8,7 @@
 //
 // Prints `<sha> <url> <created_at>` of that run, or nothing when none is found
 // among the newest successful runs. Used by test262-sharded.yml (the commit
-// range a failed weekly run names) and baseline-floor-staleness-alert.yml.
+// range a failed daily run names) and baseline-floor-staleness-alert.yml.
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 

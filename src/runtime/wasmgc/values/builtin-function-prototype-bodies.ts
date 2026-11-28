@@ -7,7 +7,9 @@ import {
   type BuiltinFunctionDefinition,
 } from "./builtin-function-bodies.js";
 import {
+  abortIfUnmodelled,
   buildBuiltinFunctionEntryGet,
+  findInStorage,
   type BuiltinFunctionPropertyOperands,
 } from "./builtin-function-property-bodies.js";
 import { BUILTIN_FUNCTION_PROTOTYPE_FIELD } from "./builtin-function-layouts.js";
@@ -28,6 +30,13 @@ const object = (d: BuiltinFunctionPrototypeOperands, local: number): Instr[] => 
   { op: "any.convert_extern" },
   { op: "ref.cast", typeIdx: d.objectTypeIdx },
 ];
+/** The [[Prototype]] link of the ordinary object in `cursor`. (#7609) An identity-only object's is unknown. */
+const parentLink = (d: BuiltinFunctionPrototypeOperands, cursor: number): Instr[] => [
+  ...abortIfUnmodelled(d, object(d, cursor)),
+  ...object(d, cursor),
+  { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },
+  { op: "extern.convert_any" },
+];
 /** Returns actual parent, or an explicit gap. Null on the incomplete anchor is not public absence. */
 export function ordinaryParent(
   d: BuiltinFunctionPrototypeOperands,
@@ -36,9 +45,7 @@ export function ordinaryParent(
   gap: Instr[],
 ): Instr[] {
   return [
-    ...object(d, cursor),
-    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },
-    { op: "extern.convert_any" },
+    ...parentLink(d, cursor),
     { op: "local.tee", index: next },
     { op: "ref.is_null" },
     {
@@ -99,9 +106,7 @@ export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands):
               { op: "ref.test", typeIdx: d.objectTypeIdx },
               { op: "i32.eqz" },
               { op: "if", blockType: empty, then: missing(3) },
-              ...object(d, 2),
-              get(1),
-              call(d.findOrdinary),
+              ...findInStorage(d, [get(2)], get(1)),
               set(3),
               // Do not follow a parent or report its incompleteness until the own entry misses.
               get(3),
@@ -173,9 +178,7 @@ export function buildBuiltinFunctionParentStep(
         { op: "if", blockType: empty, then: structuredClone([...unknown]) },
         // Prototype population is irrelevant to the walk; the actual Object.prototype null link is known, while an
         // implicit parent is unresolved.
-        ...object(d, cursor),
-        { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },
-        { op: "extern.convert_any" },
+        ...parentLink(d, cursor),
         { op: "local.tee", index: next },
         { op: "ref.is_null" },
         {

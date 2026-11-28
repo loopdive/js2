@@ -567,6 +567,10 @@ Other decisions:
 
 ## Delta review fixes, Part B — weekly full run (2026-11-26)
 
+> **Superseded 2026-11-27 (owner decision):** the full run is daily again
+> (#7537: `17 21 * * *`), and the site also shows the merge queue's edition
+> measurement (#7616). "Weekly" below records the decision of 2026-11-26.
+
 - **Weekly, not daily (owner decision).** `test262-sharded.yml` schedule
   `23 2 * * 0` (Sunday 02:23 UTC, the lowest-traffic slot for the queue)
   runs the full legacy matrix, the full-corpus IR run and promotion.
@@ -666,3 +670,17 @@ the same number of shards the legacy matrix used.
   and the merge job's expected count), so nothing else changes.
 - During the weekly full run (80 runners busy) the gate's shards run in waves.
 - The numbers above for 8 shards in this file are the record of the first cut.
+
+## Amendment (2026-11-27, owner decisions, implemented in #7537)
+
+- **Compile timeouts:** B3's "gate all" no longer holds. A first pass →
+  `compile_timeout` is listed and watched (`timeoutWatch` in the edition
+  artifact), not gated. A repeat in the next measurement is re-checked once
+  under a 60 s compile timeout; a confirmed repeat labels the PRs where the
+  timeout first appeared and never parks a later group. Every other regression
+  is re-checked once before it gates. See
+  [#7537](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7537-ci-test262-current-edition-scope)
+  and `scripts/lib/test262-timeout-watch.mjs`.
+- **Cadence:** the full run is daily (`17 21 * * *`), not weekly; the staleness
+  threshold is 48 h. Push to main also runs the legacy lane's completed
+  editions (label and alarm only).

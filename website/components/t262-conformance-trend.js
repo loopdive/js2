@@ -97,6 +97,46 @@ const fetchRuns = (url) => {
 };
 
 /**
+ * The point extractor for one lane's editions index at an edition scope. An
+ * edition scope is CUMULATIVE (#3458): the selected edition plus every earlier
+ * one, matching the js-host <t262-edition-bars> accumulation and the landing
+ * page's standalone summary. Proposals / Unclassified buckets carry no rank and
+ * never contribute.
+ *
+ * An edition-only entry (#7616, `scope: "edition"`: the merge queue measures
+ * the current edition alone) holds that one edition, so it is a point only
+ * where that edition is the whole cumulative sum: at its own scope, when no
+ * full entry of the lane has an earlier edition.
+ */
+export function t262EditionScopeExtract(scope, runs) {
+  const rankOf = (label) => T262_EDITION_SCOPE_RANK.get(t262NormalizeEditionLabel(label));
+  const selectedRank = rankOf(scope);
+  const through = (run, maxRank) => {
+    let pass = 0;
+    let total = 0;
+    for (const entry of run.editions) {
+      const raw = String(entry?.edition || "");
+      if (!t262IsEditionScope(raw)) continue;
+      const rank = rankOf(raw);
+      if (typeof rank !== "number" || rank > maxRank) continue;
+      pass += Number(entry.pass || 0);
+      total += Number(entry.total || 0);
+    }
+    return { pass, total };
+  };
+  const editionAlone = (runs ?? []).every(
+    (run) => run?.scope === "edition" || !Array.isArray(run?.editions) || through(run, selectedRank - 1).total === 0,
+  );
+  return (run) => {
+    if (typeof selectedRank !== "number" || !Array.isArray(run?.editions)) return null;
+    if (run.scope === "edition" && !(editionAlone && rankOf(run.edition) === selectedRank)) return null;
+    const { pass, total } = through(run, selectedRank);
+    if (total <= 0) return null;
+    return { pass, total, timestampRaw: run.timestamp };
+  };
+}
+
+/**
  * Turn a runs[] history array into chart points. `extract(run)` returns
  * `{ pass, total, timestampRaw }` or null to skip the run — that indirection is
  * what lets the same gap-filling / stale-endpoint / sparse-run handling serve
@@ -359,36 +399,18 @@ class T262ConformanceTrend extends HTMLElement {
     ]);
     if (token !== this._renderToken) return;
 
-    // An edition scope is CUMULATIVE (#3458): the selected edition plus every
-    // earlier one, matching the js-host <t262-edition-bars> accumulation and
-    // the landing page's standalone summary. Proposals / Unclassified buckets
-    // carry no rank and never contribute.
-    const selectedRank = T262_EDITION_SCOPE_RANK.get(t262NormalizeEditionLabel(scope));
-    const extract = isOverallScope
-      ? // An IR history row is its report's metadata, so its counts sit under `summary`.
-        (run) => ({
-          pass: run?.pass ?? run?.summary?.pass,
-          total: run?.total ?? run?.summary?.total,
-          timestampRaw: run?.timestamp,
-        })
-      : (run) => {
-          if (typeof selectedRank !== "number" || !Array.isArray(run?.editions)) return null;
-          let pass = 0;
-          let total = 0;
-          for (const entry of run.editions) {
-            const raw = String(entry?.edition || "");
-            if (!t262IsEditionScope(raw)) continue;
-            const rank = T262_EDITION_SCOPE_RANK.get(t262NormalizeEditionLabel(raw));
-            if (typeof rank !== "number" || rank > selectedRank) continue;
-            pass += Number(entry.pass || 0);
-            total += Number(entry.total || 0);
-          }
-          if (total <= 0) return null;
-          return { pass, total, timestampRaw: run.timestamp };
-        };
+    const extract = (runs) =>
+      isOverallScope
+        ? // An IR history row is its report's metadata, so its counts sit under `summary`.
+          (run) => ({
+            pass: run?.pass ?? run?.summary?.pass,
+            total: run?.total ?? run?.summary?.total,
+            timestampRaw: run?.timestamp,
+          })
+        : t262EditionScopeExtract(scope, runs);
 
-    const hostPoints = t262ClipLaneAt(t262BuildHistoryPoints(hostRuns, extract), T262_HOST_LANE_RETIRED_AT);
-    const standalonePoints = t262BuildHistoryPoints(standaloneRuns, extract);
+    const hostPoints = t262ClipLaneAt(t262BuildHistoryPoints(hostRuns, extract(hostRuns)), T262_HOST_LANE_RETIRED_AT);
+    const standalonePoints = t262BuildHistoryPoints(standaloneRuns, extract(standaloneRuns));
     // Only the overall standalone history records `ir_only_pass`.
     const irOnlyPoints = isOverallScope
       ? t262BuildHistoryPoints(

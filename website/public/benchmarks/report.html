@@ -674,6 +674,7 @@
       <input type="checkbox" />
       <span>IR</span>
     </label>
+    <p id="conformance-ir-status" role="status" hidden></p>
     <p id="conformance-ir-provenance" role="status" hidden></p>
     <a id="conformance-overview-link" href="../../#goals" hidden>Conformance overview</a>
     <div id="app"><div class="no-data">Loading report data…</div></div>
@@ -714,11 +715,10 @@
       const IR_SELECTED = initialViewState.ir === true;
       window.t262ViewState.bindIrToggle(document.getElementById("conformance-ir-toggle"));
       const irProvenance = document.getElementById("conformance-ir-provenance");
+      const irStatusNode = document.getElementById("conformance-ir-status");
       const overviewLink = document.getElementById("conformance-overview-link");
-      if (initialViewState.irAvailable) {
-        overviewLink.hidden = false;
-        overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, initialViewState);
-      }
+      overviewLink.hidden = false;
+      overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, initialViewState);
       if (IR_SELECTED) {
         irProvenance.hidden = false;
         irProvenance.textContent = "IR conformance is unmeasured until a completed IR measurement is available.";
@@ -732,9 +732,6 @@
         );
         container.appendChild(message);
         irProvenance.textContent = `IR · ${mode} · unmeasured`;
-        window.t262ViewState.irStatus("results", mode).then((reason) => {
-          if (reason) message.textContent = `IR ${mode} conformance is unmeasured. ${reason}`;
-        });
       };
 
       function assetPath(path) {
@@ -2614,6 +2611,9 @@
               : activeMode === "standalone" && standaloneView
                 ? standaloneView
                 : hostView;
+            // Per render, because the lane switch below re-renders without a reload.
+            irStatusNode.hidden = true;
+            window.t262ViewState.applyIrStatus("results", activeMode, irStatusNode);
             if (!IR_SELECTED) {
               irProvenance.hidden = activeMode !== "host";
               if (activeMode === "host")
@@ -2630,8 +2630,11 @@
                 return;
               }
               const filename = activeMode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-              irProvenance.textContent =
-                window.t262ViewState.irMeasurementLabel(view.report, activeMode) + ` · results/${filename}`;
+              window.t262ViewState.showIrProvenance(
+                irProvenance,
+                window.t262ViewState.irMeasurementLabel(view.report, activeMode) + ` · results/${filename}`,
+                view.editionsSrc,
+              );
             }
             renderConformance(view, conformanceHost, preservedState);
           };

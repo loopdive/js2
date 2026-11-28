@@ -4,6 +4,7 @@ import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import vm from "node:vm";
 import test from "node:test";
+import { IR_ARTIFACTS, publishIrMeasurements } from "./test262-ir-site-measurements.mjs";
 
 // Execute the actual deployment boundary with real temporary input/output files.
 // These synthetic metadata fixtures do not represent compiler execution or scores.
@@ -232,6 +233,30 @@ test("IR provenance separates request, measurement, proof, source and date", () 
   assert.match(label, /source-revision.*2026-10-19/);
 });
 
+test("IR provenance adds a newer current-edition measurement with its own commit and date, and nothing else", async () => {
+  const provenance = async (envelope) => {
+    const node = { textContent: "" };
+    view("?ir=1", envelope).showIrProvenance(node, "full run", "./benchmarks/results/test262-standalone-editions.json");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return node.textContent;
+  };
+  const currentEdition = {
+    edition: "ES5",
+    pass: 2017,
+    total: 9029,
+    pct: 22,
+    sourceSha: "f00dcafe",
+    measuredAt: "2026-11-27T12:00:00Z",
+  };
+  const label = await provenance({ ...allCompileErrors, editions: rawEditions, currentEdition });
+  assert.ok(label.startsWith("full run"));
+  for (const value of ["ES5", "2017", "9029", "22%", "f00dcafe", "2026-11-27T12:00:00Z"])
+    assert.ok(label.includes(value), value);
+  assert.equal(await provenance({ ...allCompileErrors, editions: rawEditions }), "full run");
+  // An editions file that is not a measured IR envelope adds nothing.
+  assert.equal(await provenance({ editions: rawEditions, currentEdition }), "full run");
+});
+
 test("historical Host caption keeps the actual frozen date and revision", () => {
   assert.equal(
     view("?mode=host").historicalHostLabel({ baseline_sha: "old-revision", baseline_generated_at: "2026-09-01" }),
@@ -293,7 +318,7 @@ async function planMeasurement(event, day, inputs = {}) {
   assert.equal(outputs.run, String(selected.run));
   return { selected, outputs };
 }
-test("every scheduled (weekly) run has exactly the full IR standalone cell and never Host", async () => {
+test("every scheduled (daily) run has exactly the full IR standalone cell and never Host", async () => {
   const full = {
     run: true,
     cells: [{ compilerPath: "ir", target: "standalone", scope: "full", edition: "", chunks: 102 }],
@@ -306,7 +331,7 @@ test("every scheduled (weekly) run has exactly the full IR standalone cell and n
     JSON.parse(outputs.matrix),
     Array.from({ length: 102 }, (_, i) => i + 1),
   );
-  // The weekly full run is throttled so the merge queue keeps runners.
+  // The daily full run is throttled so the merge queue keeps runners.
   assert.equal(outputs.max_parallel, "40");
 });
 test("every merge to main measures only the configured current edition, under its own artifact name", async () => {
@@ -320,9 +345,9 @@ test("every merge to main measures only the configured current edition, under it
     JSON.parse(outputs.matrix),
     Array.from({ length: chunks }, (_, i) => i + 1),
   );
-  // The site lists artifacts by the full name; an edition run must never carry it.
-  assert.equal(outputs.artifact, "test262-ir-standalone-edition-measurement");
-  assert.match(pagesWorkflow, /artifacts\?name=test262-ir-standalone-measurement&/);
+  // The site reads an edition run only under the edition name, never as the full corpus.
+  assert.equal(outputs.artifact, IR_ARTIFACTS.edition);
+  assert.notEqual(outputs.artifact, IR_ARTIFACTS.full);
   // The edition run is on the merge queue's critical path: never throttled below its chunk count.
   assert.ok(Number(outputs.max_parallel) >= chunks, `max_parallel ${outputs.max_parallel} < ${chunks} chunks`);
 });
@@ -363,7 +388,7 @@ test("the merge queue measures the current edition; the push after it reuses tha
   assert.match(plan, /ART_NAME: test262-ir-standalone-edition-measurement\n/);
   assert.match(plan, /QUEUE_MEASURED: \$\{\{ steps\.probe\.outputs\.measured \}\}/);
 });
-test("one full_run dispatch runs what the weekly schedule runs (#7551)", async () => {
+test("one full_run dispatch runs what the daily schedule runs (#7551)", async () => {
   const dispatch = { COMPILER_PATH: "ir", MEASUREMENT_TARGET: "standalone" };
   // The IR half: the same full cell the schedule selects.
   assert.deepEqual(
@@ -560,9 +585,17 @@ test("IR merge keeps the site-facing reports to the full scope and gates the edi
     fetch,
     /FROM: \$\{\{ github\.event_name == 'merge_group' && github\.event\.merge_group\.base_sha \|\| 'HEAD\^' \}\}/,
   );
-  const report = step("Report the edition against that baseline (#7551)");
-  assert.match(report, /--baseline-dir ir-baseline/);
+  // (#7537) Report, re-check what it would act on, report again: one script.
+  const report = step("Report the edition against that baseline, re-checking what it would act on (#7551, #7537)");
+  assert.match(
+    report,
+    /scripts\/test262-edition-verdict\.sh ir-measurement\/results\.jsonl ir-measurement\/scope\.json current \\\s+ir-baseline ir-measurement\/prs\.json ir-measurement/,
+  );
   assert.match(report, /GITHUB_STEP_SUMMARY/);
+  // (#7537) The job that runs the measured code holds no write scope; the
+  // separate post-merge-alarm job labels PRs.
+  assert.doesNotMatch(merge, /pull-requests: write|issues: write/);
+  assert.match(merge, /persist-credentials: false/);
   // The failure comes after the upload, so a regressed commit still becomes the next baseline.
   const upload = merge.indexOf("      - uses: actions/upload-artifact@v6");
   const fail = merge.indexOf("      - name: Fail on an edition regression (#7551)");
@@ -603,31 +636,82 @@ test("IR shards take their partition from the plan and filter to the edition onl
   assert.match(select, /TEST262_PATH_FILTER_FILE=/);
   assert.ok(shard.indexOf("Select the current edition's tests") < shard.indexOf("      - name: Run shard"));
 });
+// main's first-parent line, newest first: "head" landed after the full run's "source", "older" before it.
+const MAIN_LINE = ["head", "source", "older"];
+const producerJob = { name: "merge complete IR standalone measurement", status: "completed", conclusion: "success" };
+// A run id encodes its commit: run 42 measured "source"; an edition run `${sha}-run` measured `sha`.
+const runSha = (runId) => (runId === "42" ? "source" : runId.replace(/-run$/, ""));
+const editionArtifact = (id, sha, created_at = "2026-11-27T12:00:00Z") => ({
+  id,
+  expired: false,
+  created_at,
+  workflow_run: { id: `${sha}-run`, head_branch: `gh-readonly-queue/main/pr-1-${sha}`, head_sha: sha },
+});
+// What merge-ir-measurement writes for an edition run: rows of the edition, scope.json, the report.
+function editionRunFiles(sha, { scope = {}, report = {}, rows } = {}) {
+  const results = rows ?? [
+    { file: "test/a.js", status: "pass" },
+    { file: "test/b.js", status: "pass" },
+    { file: "test/c.js", status: "compile_timeout" },
+    { file: "test/d.js", status: "fail" },
+  ];
+  return {
+    "scope.json": {
+      compilerPath: "ir",
+      target: "standalone",
+      scope: "edition",
+      edition: "ES5",
+      sourceSha: sha,
+      ...scope,
+    },
+    "edition-report.json": { edition: "ES5", sourceSha: sha, counts: { pass: 2, total: results.length }, ...report },
+    "results.jsonl": results.map((row) => JSON.stringify(row)).join("\n") + "\n",
+  };
+}
+const mainArtifact = (id) => ({
+  id,
+  expired: false,
+  workflow_run: { id: "42", head_branch: "main", head_sha: "source" },
+});
 function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}) {
   const fixture = memoryFiles();
   const commands = [];
-  const execFileSync = (exe, args) => {
-    commands.push([exe, ...args]);
-    assert.equal(exe, "gh");
+  const warnings = [];
+  const gitCommands = [];
+  const gh = (args) => {
+    commands.push(["gh", ...args]);
     if (args[0] === "api") {
-      if (args[1].includes("/actions/artifacts?")) return JSON.stringify({ artifacts });
-      if (args[1].includes("/jobs?"))
+      const [path, query] = args[1].split("?");
+      if (path.endsWith("/actions/artifacts"))
         return JSON.stringify({
-          jobs: options.jobs ?? [
-            { name: "merge complete IR standalone measurement", status: "completed", conclusion: "success" },
-          ],
+          artifacts:
+            new URLSearchParams(query).get("name") === IR_ARTIFACTS.full ? artifacts : (options.editionArtifacts ?? []),
         });
+      if (path.endsWith("/jobs")) {
+        const runId = path.split("/").at(-2);
+        return JSON.stringify({ jobs: options.jobsOf?.(runId) ?? options.jobs ?? [producerJob] });
+      }
+      const runId = path.split("/").at(-1);
+      if (options.editionRunLookupFails && runId.endsWith("-run")) throw new Error("HTTP 404: Not Found");
       return JSON.stringify({
-        id: 42,
+        id: runId,
         name: "Test262 Sharded",
         status: "completed",
         conclusion: options.conclusion || "success",
-        head_sha: "source",
+        head_sha: runSha(runId),
         head_repository: { full_name: "owner/repo" },
       });
     }
     assert.deepEqual(Array.from(args.slice(0, 2)), ["run", "download"]);
     const dir = args.at(-1);
+    if (args[args.indexOf("--name") + 1] === IR_ARTIFACTS.edition) {
+      const sha = runSha(args[2]);
+      if (options.editionDownloadFails) throw new Error("HTTP 410: artifact has expired");
+      for (const [file, payload] of Object.entries(options.editionRun?.(sha) ?? editionRunFiles(sha)))
+        if (payload !== undefined)
+          fixture.files.set(`${dir}/${file}`, typeof payload === "string" ? payload : JSON.stringify(payload));
+      return "";
+    }
     fixture.files.set(
       `${dir}/test262-standalone-ir-status.json`,
       JSON.stringify(
@@ -652,24 +736,29 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
       fixture.files.set(`${dir}/ir/${file}`, JSON.stringify({ ...report, baseline_sha: "source", ...payload }));
     return "";
   };
-  const snippet = program(pagesWorkflow, "IR_MEASUREMENT_FETCH")
-    .replace(
-      "import { ghWithRetry } from './scripts/lib/gh-api-retry.mjs';",
-      "const ghWithRetry = (args) => commands.execFileSync('gh', args);",
-    )
-    .replace(
-      "import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';",
-      "const { readFileSync, writeFileSync, mkdirSync, rmSync } = fs;",
-    );
-  vm.runInNewContext(snippet, {
+  const git = (args) => {
+    gitCommands.push(args);
+    if (args[0] === "rev-list") return MAIN_LINE.join("\n") + "\n";
+    // A commit before #7616 lacks the publisher script (and the scope.json that names compilerPath).
+    if (args[0] === "cat-file") {
+      assert.match(args[2], /:scripts\/test262-ir-site-measurements\.mjs$/);
+      if ((options.predating ?? []).includes(args[2].split(":")[0])) throw new Error("fatal: path does not exist");
+      return "";
+    }
+    assert.equal(args[0], "show");
+    return JSON.stringify({ edition: options.configuredEdition ?? "ES5", chunks: 102 });
+  };
+  publishIrMeasurements({
+    repository: "owner/repo",
+    gh,
+    git,
     fs: fixture.fs,
-    commands: { execFileSync },
-    process: { env: { GITHUB_REPOSITORY: "owner/repo" } },
+    warn: (message) => warnings.push(message),
   });
-  return { ...fixture, commands };
+  return { ...fixture, commands, warnings, gitCommands };
 }
 test("Pages actual artifact bridge serves V0 all-fail IR and never mutates Git or dispatches", () => {
-  const result = retrieveMeasurements([{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }]);
+  const result = retrieveMeasurements([mainArtifact(100)]);
   assert.equal(
     JSON.parse(result.files.get("benchmarks/results/test262-standalone-ir-report.json")).compileErrorCases,
     3,
@@ -680,7 +769,6 @@ test("Pages actual artifact bridge serves V0 all-fail IR and never mutates Git o
   );
   assert.ok(!result.files.has("benchmarks/results/test262-report.json"));
 });
-const mainArtifact = (id) => ({ id, expired: false, workflow_run: { id: 42, head_branch: "main" } });
 const publishedEditionFiles = [
   "test262-standalone-editions.json",
   "test262-category-editions.json",
@@ -761,9 +849,7 @@ test("Pages missing/expired/fork measurement stays unavailable without legacy fa
   assert.ok(!result.commands.some((command) => command[1] === "run"));
 });
 test("Pages bridge rejects a Host report in the standalone artifact", () => {
-  assert.throws(() =>
-    retrieveMeasurements([{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }], measured),
-  );
+  assert.throws(() => retrieveMeasurements([mainArtifact(100)], measured));
 });
 
 test("explicit unavailable status suppresses an older IR score instead of serving fallback", () =>
@@ -785,7 +871,10 @@ test("IR shards keep the actual dynamic full-corpus harness and completion bound
   assert.match(measurement, /TEST262_ORACLE_MODE: honest/);
   assert.match(measurement, /TEST262_PATH_FILTER: ""/);
   assert.doesNotMatch(measurement, /Download compiled|Download selected|prewarm|--require-cache/);
-  assert.match(measurement, /--external:typescript7 --external:typescript7\/\*/);
+  // (#7537) The bundles come from the shared runner setup, without providers.
+  assert.match(measurement, /test262-runner-setup\n\s+with:\n\s+providers: "false"/);
+  const setup = fs.readFileSync(join(workflowRoot, ".github/actions/test262-runner-setup/action.yml"), "utf8");
+  assert.match(setup, /--external:typescript7 --external:typescript7\/\*/);
   for (const name of ["test262-canary.yml", "test262-differential.yml"]) {
     const retired = fs.readFileSync(join(workflowRoot, ".github/workflows", name), "utf8").split("jobs:\n")[1];
     const jobs = retired.match(/^  [\w-]+:\n    if: false # JS-host Test262 measurement retired/gm) || [];
@@ -796,7 +885,7 @@ test("IR shards keep the actual dynamic full-corpus harness and completion bound
 test("IR merge validates each shard manifest as its own --manifest", () => {
   // 2026-10-26: the merge wrote all 102 manifests into one JSON array and passed
   // that file once; the validator read it as a single malformed manifest
-  // ("Expected 102 shard manifests but found 1") and the weekly measurement
+  // ("Expected 102 shard manifests but found 1") and the scheduled measurement
   // never published. Pass the per-shard files, as the other lanes do.
   const merge = workflow.slice(workflow.indexOf("  merge-ir-measurement:"));
   const validate = merge.slice(0, merge.indexOf("      - name: Build requested IR report"));
@@ -807,11 +896,7 @@ test("IR merge validates each shard manifest as its own --manifest", () => {
 });
 
 test("complete IR producer publishes even when an unrelated workflow job failed", () => {
-  const result = retrieveMeasurements(
-    [{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }],
-    allCompileErrors,
-    { conclusion: "failure" },
-  );
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, { conclusion: "failure" });
   assert.equal(
     JSON.parse(result.files.get("benchmarks/results/test262-standalone-ir-report.json")).compileErrorCases,
     3,
@@ -822,11 +907,7 @@ test("a failed or missing IR producer cannot publish an artifact as a complete m
     [],
     [{ name: "merge complete IR standalone measurement", status: "completed", conclusion: "failure" }],
   ]) {
-    const result = retrieveMeasurements(
-      [{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }],
-      allCompileErrors,
-      { jobs },
-    );
+    const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, { jobs });
     assert.equal(
       JSON.parse(result.files.get("benchmarks/results/test262-standalone-ir-status.json")).state,
       "unavailable",
@@ -860,7 +941,7 @@ test("actual unavailable artifact keeps the original transport reason without a 
   assert.deepEqual(JSON.parse(fixture.files.get("ir-measurement/test262-standalone-ir-report.json")), report);
 });
 test("Pages publishes an explicit unavailable status, not an unavailable score or history", () => {
-  const result = retrieveMeasurements([{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }], {
+  const result = retrieveMeasurements([mainArtifact(100)], {
     ...allCompileErrors,
     measurementState: "unavailable",
     attemptedCases: 0,
@@ -874,10 +955,220 @@ test("Pages publishes an explicit unavailable status, not an unavailable score o
 });
 test("Pages refuses an unavailable status whose actual result was measured", () => {
   assert.throws(() =>
-    retrieveMeasurements(
-      [{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }],
-      allCompileErrors,
-      { status: { ...allCompileErrors, baseline_sha: "source", state: "unavailable", reason: "contradiction" } },
-    ),
+    retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+      status: { ...allCompileErrors, baseline_sha: "source", state: "unavailable", reason: "contradiction" },
+    }),
   );
+});
+// #7616: the merge queue's current-edition measurement on the site.
+const fullWithEditions = (dir) => ({
+  "test262-standalone-editions.json": { editions: rawEditions },
+  "runs/standalone-editions-index.json": {
+    runs: [{ timestamp: dir, editions: [] }],
+  },
+});
+const publishedEditions = (result) =>
+  JSON.parse(result.files.get("benchmarks/results/ir/test262-standalone-editions.json"));
+const publishedHistory = (result) =>
+  JSON.parse(result.files.get("benchmarks/results/ir/runs/standalone-editions-index.json")).runs;
+const editionPoints = (result) => publishedHistory(result).filter((run) => run.scope === "edition");
+test("a landed merge newer than the full run is published beside the full run's rows, with its own commit and date", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "head")],
+  });
+  const published = publishedEditions(result);
+  // Counted as generate-editions counts: compile_timeout is a compile error.
+  assert.deepEqual(published.currentEdition, {
+    edition: "ES5",
+    pass: 2,
+    fail: 1,
+    ce: 1,
+    skip: 0,
+    total: 4,
+    pct: 50,
+    sourceSha: "head",
+    measuredAt: "2026-11-27T12:00:00Z",
+    runId: "head-run",
+  });
+  // Every row the pages draw, sum or scale stays the full run's, under the full run's identity.
+  assert.deepEqual(published.editions, rawEditions);
+  assert.equal(published.baseline_sha, "source");
+  assert.equal(
+    JSON.parse(result.files.get("benchmarks/results/test262-standalone-ir-report.json")).baseline_sha,
+    "source",
+  );
+  const [point] = editionPoints(result);
+  assert.deepEqual(point.editions, [{ edition: "ES5", pass: 2, total: 4 }]);
+  assert.equal(point.sourceSha, "head");
+});
+test("a queue group that never landed on main is not shown, and not even downloaded", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "ejected")],
+  });
+  assert.equal(publishedEditions(result).currentEdition, undefined);
+  assert.deepEqual(editionPoints(result), []);
+  assert.ok(!result.commands.some((command) => command.includes("ejected-run")));
+});
+test("an edition measurement older than the full run is not current, but stays in the history", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "older", "2026-11-28T12:00:00Z")],
+  });
+  assert.equal(publishedEditions(result).currentEdition, undefined);
+  assert.deepEqual(
+    editionPoints(result).map((run) => run.sourceSha),
+    ["older"],
+  );
+});
+test("the newest landed commit wins, whatever the upload order", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    // The group of "head" uploaded first; a run of the earlier commit uploaded later the same day.
+    editionArtifacts: [editionArtifact(600, "older"), editionArtifact(500, "head")],
+  });
+  assert.equal(publishedEditions(result).currentEdition.sourceSha, "head");
+});
+test("a wrong, unreadable or inconsistent edition artifact is refused with a warning, never failing the deploy", () => {
+  const missing = (file) => () => ({
+    ...editionRunFiles("head"),
+    [file]: undefined,
+  });
+  for (const [label, options] of [
+    ["edition configured at that commit", { configuredEdition: "ES2015" }],
+    [
+      "scope edition",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { edition: "ES2015" } }),
+      },
+    ],
+    [
+      "scope commit",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { sourceSha: "source" } }),
+      },
+    ],
+    [
+      "report commit",
+      {
+        editionRun: () => editionRunFiles("head", { report: { sourceSha: "older" } }),
+      },
+    ],
+    [
+      "report edition",
+      {
+        editionRun: () => editionRunFiles("head", { report: { edition: "ES2015" } }),
+      },
+    ],
+    [
+      "compiler path",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { compilerPath: "legacy" } }),
+      },
+    ],
+    [
+      "target",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { target: "gc" } }),
+      },
+    ],
+    [
+      "no compilerPath",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { compilerPath: undefined } }),
+      },
+    ],
+    [
+      "full-scope measurement",
+      {
+        editionRun: () => editionRunFiles("head", { scope: { scope: "full" } }),
+      },
+    ],
+    [
+      "row count",
+      {
+        editionRun: () =>
+          editionRunFiles("head", {
+            report: { counts: { pass: 2, total: 9 } },
+          }),
+      },
+    ],
+    ["no scope.json", { editionRun: missing("scope.json") }],
+    ["no edition report", { editionRun: missing("edition-report.json") }],
+    ["no results", { editionRun: missing("results.jsonl") }],
+    [
+      "unparsable results",
+      {
+        editionRun: () => ({
+          ...editionRunFiles("head"),
+          "results.jsonl": "{not json\n",
+        }),
+      },
+    ],
+    ["failed download", { editionDownloadFails: true }],
+    ["failed run lookup", { editionRunLookupFails: true }],
+  ]) {
+    const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+      editionFiles: fullWithEditions,
+      editionArtifacts: [editionArtifact(500, "head")],
+      ...options,
+    });
+    assert.equal(publishedEditions(result).currentEdition, undefined, label);
+    assert.deepEqual(editionPoints(result), [], label);
+    assert.equal(result.warnings.length, 1, label);
+  }
+});
+test("an artifact that is not an IR edition measurement is refused before its commit's edition config is read", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "head")],
+    editionRun: () => editionRunFiles("head", { scope: { compilerPath: undefined } }),
+  });
+  assert.ok(!result.gitCommands.some((args) => args[0] === "show"));
+});
+test("an edition run of a commit before #7616 is not even downloaded", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "head")],
+    predating: ["head"],
+  });
+  assert.ok(!result.commands.some((command) => command.includes("head-run")));
+  assert.equal(publishedEditions(result).currentEdition, undefined);
+  assert.deepEqual(result.warnings, []);
+});
+test("an edition run whose producer job failed (a regression) is not shown", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [editionArtifact(500, "head")],
+    jobsOf: (runId) => (runId === "head-run" ? [{ ...producerJob, conclusion: "failure" }] : undefined),
+  });
+  assert.equal(publishedEditions(result).currentEdition, undefined);
+});
+test("an edition run is never published without a measured full run", () => {
+  const result = retrieveMeasurements([], allCompileErrors, {
+    editionArtifacts: [editionArtifact(500, "head")],
+  });
+  assert.equal(
+    JSON.parse(result.files.get("benchmarks/results/test262-standalone-ir-status.json")).state,
+    "unavailable",
+  );
+  assert.ok(!result.files.has("benchmarks/results/test262-standalone-ir-report.json"));
+  assert.ok(!result.files.has("benchmarks/results/ir/test262-standalone-editions.json"));
+});
+test("the edition history keeps the newest edition measurement of each day", () => {
+  const result = retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+    editionFiles: fullWithEditions,
+    editionArtifacts: [
+      editionArtifact(500, "head", "2026-11-27T10:00:00Z"),
+      editionArtifact(400, "older", "2026-11-27T09:00:00Z"),
+    ],
+  });
+  assert.deepEqual(
+    editionPoints(result).map((run) => run.sourceSha),
+    ["head"],
+  );
+});
+test("the deploy publishes through the measurement script", () => {
+  assert.match(pagesWorkflow, /run: node scripts\/test262-ir-site-measurements\.mjs\n/);
 });

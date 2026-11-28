@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { IrModuleBindingDeclaration } from "../ir/module-bindings.js";
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
@@ -9,12 +10,16 @@ import {
   addModuleBinding,
   attachModuleBindingDeclaration,
   isCollidingModuleName,
+  type LiveFunctionKind,
+  markLiveFunctionBinding,
+  type ModuleBinding,
   type ModuleBindingDeclaration,
   moduleBindingOf,
+  moduleBindingOfGlobal,
   moduleBindingsNamed,
   scopedModuleBinding,
-} from "./module-binding-table.js";
-import { absoluteGlobalIdx } from "./global-space.js";
+} from "./module-bindings/module-binding-table.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 
 const TOP_LEVEL_LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
@@ -150,7 +155,7 @@ function findRuntimeTopLevelDeclaration(sourceFile: ts.SourceFile, name: string)
 function functionIsFromAnotherSource(
   ctx: CodegenContext,
   fnIdx: number,
-  declaration: ts.VariableDeclaration | ts.BindingElement | undefined,
+  declaration: IrModuleBindingDeclaration | undefined,
 ): boolean {
   if (declaration === undefined) return false;
   const owner = ctx.sourceFunctionDeclarationByHandle.get(fnIdx);
@@ -204,7 +209,7 @@ export function registerModuleGlobal(
   ctx: CodegenContext,
   name: string,
   wasmType: ValType,
-  declaration?: ModuleBindingDeclaration,
+  declaration?: IrModuleBindingDeclaration,
 ): void {
   // Only a genuine user-defined function (a defined function whose index is
   // past the import prefix) shadows a module-level var. Imported host globals,
@@ -230,32 +235,94 @@ export function registerModuleGlobal(
   ) {
     return;
   }
-  const existingGlobalIdx = ctx.moduleGlobals.get(name);
-  const existingGlobal =
-    existingGlobalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, existingGlobalIdx)];
-  if (existingGlobalIdx !== undefined && !existingGlobal) {
-    throw new TypeError(`module global ${name} has no allocator object at index ${existingGlobalIdx}`);
-  }
+  const existingGlobal = bareModuleGlobal(ctx, name);
   if (declaration === undefined) {
     if (existingGlobal === undefined && !ctx.classSet.has(name)) mintBareModuleGlobal(ctx, name, wasmType);
     return;
   }
+  if (
+    existingGlobal === undefined &&
+    scopedModuleBinding(ctx, name, declaration) === undefined &&
+    isClassOfScope(ctx, name, declaration)
+  ) {
+    return;
+  }
+  bindModuleGlobal(ctx, name, wasmType, declaration);
+}
+
+/**
+ * (#7530) Give a live function declaration — reassigned, or rebindable by eval — its binding's `externref` global.
+ * Two names keep the function's static index as before: one whose scope already binds it as a variable (a script's
+ * `var f` beside `function f`), and one whose bare entry is a global no binding holds.
+ */
+export function registerLiveFunctionGlobal(
+  ctx: CodegenContext,
+  name: string,
+  declaration: ts.FunctionDeclaration,
+  kind: LiveFunctionKind,
+): void {
+  const scoped = scopedModuleBinding(ctx, name, declaration);
+  const existingGlobal = bareModuleGlobal(ctx, name);
+  if (scoped ? scoped.liveFunction === undefined : existingGlobal && !moduleBindingOfGlobal(ctx, existingGlobal)) {
+    return;
+  }
+  markLiveFunctionBinding(ctx, bindModuleGlobal(ctx, name, LIVE_FUNCTION_GLOBAL_TYPE, declaration), kind);
+}
+
+/**
+ * (#4182) Back a script's Annex B block function `name` with a live binding: the scope's existing one (a `var`, or a
+ * reassigned top-level function), or a new `externref` global. Every block declaration of the name joins it.
+ */
+export function registerAnnexBLiveBinding(
+  ctx: CodegenContext,
+  name: string,
+  declarations: readonly ts.FunctionDeclaration[],
+): ModuleBinding {
+  const binding = bindModuleGlobal(ctx, name, LIVE_FUNCTION_GLOBAL_TYPE, declarations[0]);
+  for (const declaration of declarations.slice(1)) bindModuleGlobal(ctx, name, LIVE_FUNCTION_GLOBAL_TYPE, declaration);
+  // An eval-only binding stays eval-only, so its `.call` sites keep the named-this trampoline (#6880).
+  markLiveFunctionBinding(ctx, binding, binding.liveFunction ?? "assigned");
+  return binding;
+}
+
+const LIVE_FUNCTION_GLOBAL_TYPE: ValType = { kind: "externref" };
+
+/** The global the bare name `name` shows now, if any. */
+function bareModuleGlobal(ctx: CodegenContext, name: string): GlobalDef | undefined {
+  const existingGlobalIdx = ctx.moduleGlobals.get(name);
+  if (existingGlobalIdx === undefined) return undefined;
+  const existingGlobal = ctx.mod.globals[localGlobalIdx(ctx, existingGlobalIdx)];
+  if (!existingGlobal) {
+    throw new TypeError(`module global ${name} has no allocator object at index ${existingGlobalIdx}`);
+  }
+  return existingGlobal;
+}
+
+/**
+ * Attach `declaration` to its scope's binding of `name`, first recording one if the scope has none. A new binding
+ * reuses a bare entry no binding holds (an internal global of that name), as it always did; an entry another
+ * module's binding holds stays that binding's, and the new one gets its own `__mod_<name>`.
+ */
+function bindModuleGlobal(
+  ctx: CodegenContext,
+  name: string,
+  wasmType: ValType,
+  declaration: ModuleBindingDeclaration,
+): ModuleBinding {
   let binding = scopedModuleBinding(ctx, name, declaration);
   if (binding === undefined) {
-    if (existingGlobal === undefined && isClassOfScope(ctx, name, declaration)) return;
-    // A bare entry no binding holds (an internal global of that name) is reused, as it always was; one another
-    // module's binding holds stays that binding's.
-    const heldElsewhere = moduleBindingsNamed(ctx, name).some((other) => other.value === existingGlobal);
+    const existingGlobal = bareModuleGlobal(ctx, name);
     const value =
       existingGlobal === undefined
         ? mintBareModuleGlobal(ctx, name, wasmType)
-        : heldElsewhere
+        : moduleBindingOfGlobal(ctx, existingGlobal)
           ? allocateModuleGlobal(ctx, name, wasmType)
           : existingGlobal;
     binding = addModuleBinding(ctx, name, declaration, value);
   }
   ctx.programAbiGlobals?.assertModuleBindingsOpen(name);
   attachModuleBindingDeclaration(ctx, declaration, binding);
+  return binding;
 }
 
 /**

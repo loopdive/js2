@@ -6,7 +6,7 @@
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
-import { buildAccessorCall, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
+import { buildAccessorCall, findInStorage, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 import type { BuiltinFunctionPrototypeOperands } from "./builtin-function-prototype-bodies.js";
 
@@ -125,7 +125,7 @@ export const CREATE_DATA_PROPERTY =
 /** The kernel operands OrdinarySet reads: its walk, its define, and (#7354 O2) the accessor call. */
 type SourceObjectSetOperands = Pick<
   BuiltinFunctionPrototypeOperands,
-  "lookup" | "findOrdinary" | "defineData" | "bag" | "entryTypeIdx" | "objectTypeIdx"
+  "lookup" | "findOrdinary" | "findOwn" | "objects" | "defineData" | "bag" | "entryTypeIdx" | "objectTypeIdx"
 > &
   AccessorCallOperands;
 /**
@@ -193,13 +193,15 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     ],
     body: [
       // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.
-      { op: "local.get", index: 3 },
-      { op: "call", funcIdx: d.bag },
-      { op: "local.tee", index: storage },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.objectTypeIdx },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: d.findOrdinary },
+      ...findInStorage(
+        d,
+        [
+          { op: "local.get", index: 3 },
+          { op: "call", funcIdx: d.bag },
+          { op: "local.tee", index: storage },
+        ],
+        { op: "local.get", index: 1 },
+      ),
       { op: "local.tee", index: entry },
       { op: "ref.is_null" },
       { op: "i32.eqz" },
@@ -254,21 +256,22 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
 }
 
 /**
- * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the built-in function object `selector` names
- * (`NATIVE_VALUE_INTRINSICS`), through its entry's getter (which initializes the realm first). `getters` holds the
- * entries the realm has; the caller passes only selectors whose entry the realm holds (it holds what is named).
+ * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the realm value `selector` names
+ * (`NATIVE_VALUE_INTRINSICS`), read once the realm is initialized: a built-in function object through its entry's
+ * getter, (#7561) a prototype object and (#7609) the global object from its global. `values` holds what the realm has;
+ * the caller passes only selectors the realm holds (it holds what is named).
  */
 export function buildSourceObjectIntrinsicDefinition(d: {
-  readonly getters: readonly { readonly selector: number; readonly getter: FuncHandle }[];
+  readonly values: readonly { readonly selector: number; readonly value: readonly Instr[] }[];
 }): SourceObjectDefinition {
   return {
     locals: [],
     body: [
-      ...d.getters.flatMap(({ getter, selector }): Instr[] => [
+      ...d.values.flatMap(({ value, selector }): Instr[] => [
         { op: "local.get", index: 0 },
         { op: "i32.const", value: selector },
         { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "call", funcIdx: getter }, { op: "return" }] },
+        { op: "if", blockType: { kind: "empty" }, then: [...value, { op: "return" }] },
       ]),
       { op: "unreachable" },
     ],

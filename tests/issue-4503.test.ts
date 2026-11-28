@@ -23,10 +23,11 @@
 // runtime assertion reconstructs the string through `.length` / `.charCodeAt`
 // INSIDE wasm (same convention as tests/issue-4467.test.ts).
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
 import { irBool, irTypeIsBoolean } from "../src/ir/boolean-brand.js";
 import { irTypeEquals, irVal } from "../src/ir/nodes.js";
+import { agreesWithNode, runnerOptions } from "./helpers/prepared-node-agreement.js";
 import { buildImports } from "../src/runtime.js";
 
 type LaneOptions = Record<string, unknown>;
@@ -86,6 +87,14 @@ export function fcode(x: number, i: number): number { return fmt(x > 0).charCode
 `;
 
 describe("#4503 IR boolean brand", () => {
+  it("preserves booleans when a relational operand needs runtime numeric conversion", async ({ onTestFinished }) => {
+    onTestFinished(() => vi.restoreAllMocks());
+    const body =
+      "var calls = 0; var x = { valueOf: function () { calls = calls + 1; return 7; } };" +
+      "var out = String(x < 8) + ':' + String(7 > x) + ':' + String(x <= 7) + ':' + String(8 >= x) + ':' + calls;";
+    await agreesWithNode(body, true, runnerOptions());
+  }, 180_000);
+
   describe("the brand itself", () => {
     it("marks a boolean-carrying i32 and nothing else", () => {
       expect(irTypeIsBoolean(irBool())).toBe(true);
