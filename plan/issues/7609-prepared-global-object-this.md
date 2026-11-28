@@ -277,3 +277,20 @@ for-in, `hasOwnProperty`, `defineProperty(this)`, `getOwnPropertyDescriptor(this
 Bytes: Prepared programs without script-level `this` (6, prelude included) and ordinary (30 × gc/standalone)
 identical to the merge base. `var g = this; var out = 'x';` 23,357 B; `var g = this` versus `var g = {}`: +113 B.
 New test file `tests/issue-7609-a1-kernel-seal.test.ts` (8 tests, 10 compiles).
+
+## Review r2 (2026-11-28)
+
+Met, with one latent gap closed before the PR: the kernel routines beside the own find and the own-key list.
+
+- `deleteOwn` aborts on a miss in an identity-only bag (the own find's rule, same `abortIfIdentityOnly`) instead
+  of answering `true`; it keeps the storage's find, because the kernel's bodies are emitted in every realm and a
+  call of `findOwn` would cost each program a byte. `js.object.set`'s first find on the receiver and `lookup`'s
+  ordinary arm share one helper (`findInStorage`): the kernel's find where the realm holds an identity-only object,
+  the storage's elsewhere (same bytes as before).
+- `isExtensible` / `preventExtensions`, the own-key list and the kernel's two [[Prototype]]-link reads
+  (`ordinaryParent`, `buildBuiltinFunctionParentStep`, now one `parentLink`) abort for an identity-only object
+  through one helper (`abortIfUnmodelled`). The kernel has no freeze / seal / isFrozen / isSealed routine; its
+  `getPrototypeOf` and `setPrototypeOf` refuse every ordinary object as their target.
+- Left open on purpose: `js.object.inherits` (`instanceof`, `isPrototypeOf`) walks from the global object's link to
+  Object.prototype. That answers as node does for every prototype a program can hold while no routine hands out
+  the global object's own [[Prototype]], and both tests assert it.

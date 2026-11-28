@@ -220,9 +220,9 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
  * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), (#7609) the global object (an
  * object), the dynamic value itself, a native string (its own payload), a number (an f64 or `js.number.box`), (#7354
  * O2) the ordinary object `js.object.create-default` answered (whatever its tag: a function-local object's member
- * access boxes the externref it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
- * tag a declaration's home holds), or, through a coercion or the function-value projection, its operand's kind. Any
- * other value has none.
+ * access boxes the externref it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the
+ * dynamic value under the Function tag a declaration's home holds), or, through a coercion or the function-value
+ * projection, its operand's kind. Any other value has none.
  */
 export function carrierKindOf(
   value: IrValueId,

@@ -47,8 +47,8 @@ const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
  * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, (#7609) a
- * read of the global object an object, and the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
- * (`learn`). Any other value may hold every admitted kind.
+ * read of the global object an object, and the legalization records a concatenation's result as a string and (F2) a
+ * ToPrimitive's result as a primitive (`learn`). Any other value may hold every admitted kind.
  */
 export function knownKinds(
   fn: IrFunction,

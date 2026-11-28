@@ -6,7 +6,7 @@
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
-import { buildAccessorCall, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
+import { buildAccessorCall, findInStorage, type AccessorCallOperands } from "./builtin-function-property-bodies.js";
 import { kernelGetInto } from "./kernel-get-body.js";
 import type { BuiltinFunctionPrototypeOperands } from "./builtin-function-prototype-bodies.js";
 
@@ -125,7 +125,7 @@ export const CREATE_DATA_PROPERTY =
 /** The kernel operands OrdinarySet reads: its walk, its define, and (#7354 O2) the accessor call. */
 type SourceObjectSetOperands = Pick<
   BuiltinFunctionPrototypeOperands,
-  "lookup" | "findOrdinary" | "defineData" | "bag" | "entryTypeIdx" | "objectTypeIdx"
+  "lookup" | "findOrdinary" | "findOwn" | "objects" | "defineData" | "bag" | "entryTypeIdx" | "objectTypeIdx"
 > &
   AccessorCallOperands;
 /**
@@ -193,13 +193,15 @@ export function buildSourceObjectSetDefinition(d: SourceObjectSetOperands): Sour
     ],
     body: [
       // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.
-      { op: "local.get", index: 3 },
-      { op: "call", funcIdx: d.bag },
-      { op: "local.tee", index: storage },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.objectTypeIdx },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: d.findOrdinary },
+      ...findInStorage(
+        d,
+        [
+          { op: "local.get", index: 3 },
+          { op: "call", funcIdx: d.bag },
+          { op: "local.tee", index: storage },
+        ],
+        { op: "local.get", index: 1 },
+      ),
       { op: "local.tee", index: entry },
       { op: "ref.is_null" },
       { op: "i32.eqz" },

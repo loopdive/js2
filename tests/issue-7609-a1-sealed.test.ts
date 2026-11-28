@@ -2,8 +2,8 @@
 //
 // #7609 A1 — the global object is sealed on the strict Prepared entry: each route by which a program could read,
 // write, convert or enumerate its properties ends at the run-time abort (the realm kernel's own-property find),
-// never in a value. The twin shows every route answers node's
-// value on an ordinary object (and with a wrong answer throws), so the abort is the global object's alone.
+// never in a value. The twin shows every route answers node's value on an ordinary object (and with a wrong answer
+// throws), so the abort is the global object's alone.
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, it, vi } from "vitest";
 import { abortsAtRunTime, agreesWithNode, freshRealmOut, runnerOptions } from "./helpers/prepared-node-agreement.js";

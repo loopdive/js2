@@ -34,17 +34,17 @@ function bag(d: BuiltinFunctionPropertyOperands): Instr[] {
 function entryField(d: BuiltinFunctionPropertyOperands, local: number, fieldIdx: number): Instr[] {
   return [...nonnull(local), { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx }];
 }
-/**
- * (#7609) Whether the realm holds an ordinary object the catalog models only as an identity (the global object): then
- * an ordinary object's own queries go through {@link buildBuiltinFunctionFindOwn} too, and its own keys are unknown.
- */
-export const holdsIdentityOnlyObject = (d: Pick<BuiltinFunctionPropertyOperands, "objects">): boolean =>
+/** (#7609) Whether the realm holds an ordinary object the catalog models only as an identity (the global object). */
+const holdsIdentityOnlyObject = (d: Pick<BuiltinFunctionPropertyOperands, "objects">): boolean =>
   d.objects.some((object) => object.identityOnly);
 /** (#7350 B3a) Whether the realm holds an entry or (#7609) an object the catalog models only as an identity. */
 const holdsIdentityOnly = (d: BuiltinFunctionPropertyOperands): boolean =>
   d.entries.some((entry) => entry.identityOnly) || holdsIdentityOnlyObject(d);
 /** The run-time abort where the object `object` leaves is identity-only (`BUILTIN_IDENTITY_ONLY_FLAG`). */
-function abortIfIdentityOnly(d: BuiltinFunctionPropertyOperands, object: readonly Instr[]): Instr[] {
+function abortIfIdentityOnly(
+  d: Pick<BuiltinFunctionPropertyOperands, "objectTypeIdx">,
+  object: readonly Instr[],
+): Instr[] {
   return [
     ...object,
     { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
@@ -52,6 +52,36 @@ function abortIfIdentityOnly(d: BuiltinFunctionPropertyOperands, object: readonl
     { op: "i32.and" },
     { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
   ];
+}
+/**
+ * (#7609) The seal of what the realm does not model of the ordinary object `object` leaves, beyond its own
+ * properties: its own keys, its extensibility and its [[Prototype]] link. Emitted only where the realm holds an
+ * identity-only object.
+ */
+export function abortIfUnmodelled(
+  d: Pick<BuiltinFunctionPropertyOperands, "objects" | "objectTypeIdx">,
+  object: readonly Instr[],
+): Instr[] {
+  return holdsIdentityOnlyObject(d) ? abortIfIdentityOnly(d, object) : [];
+}
+/**
+ * The own entry of `key` in the ordinary object (a function's bag, or an object) the externref `storage` leaves.
+ * (#7609) Where the realm holds an identity-only object this is the kernel's own find, so a miss in one aborts.
+ */
+export function findInStorage(
+  d: Pick<BuiltinFunctionPropertyOperands, "objects" | "objectTypeIdx" | "findOwn" | "findOrdinary">,
+  storage: readonly Instr[],
+  key: Instr,
+): Instr[] {
+  return holdsIdentityOnlyObject(d)
+    ? [...storage, key, call(d.findOwn)]
+    : [
+        ...storage,
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: d.objectTypeIdx },
+        key,
+        call(d.findOrdinary),
+      ];
 }
 /**
  * The own entry of `key` in the object's storage (a function's bag), or null. (#7350 B3a) A miss in an identity-only
@@ -201,7 +231,9 @@ export function buildBuiltinFunctionOwnDescriptor(d: BuiltinFunctionPropertyOper
     ],
   };
 }
+/** (#7609) A miss in an identity-only bag is unknown here as in {@link buildBuiltinFunctionFindOwn}: the abort. */
 export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
+  const unknownMiss = holdsIdentityOnly(d) ? abortIfIdentityOnly(d, nonnull(2)) : [];
   return {
     locals: [
       { name: "bag", type: { kind: "ref_null", typeIdx: d.objectTypeIdx } },
@@ -215,7 +247,7 @@ export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands
       call(d.findOrdinary),
       { op: "local.tee", index: 3 },
       { op: "ref.is_null" },
-      { op: "if", blockType: empty, then: [n(1), { op: "return" }] },
+      { op: "if", blockType: empty, then: [...unknownMiss, n(1), { op: "return" }] },
       ...nonnull(2),
       { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
       n(flags.sealed),
@@ -252,30 +284,29 @@ export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands
     ],
   };
 }
+/** (#7609) An identity-only object's extensibility is unknown: the run-time abort. */
 export function buildBuiltinFunctionExtensibility(
   d: BuiltinFunctionPropertyOperands,
   prevent: boolean,
 ): BuiltinFunctionDefinition {
-  return {
-    locals: [],
-    body: prevent
-      ? [
-          ...bag(d),
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(flags.nonExtensible),
-          { op: "i32.or" },
-          { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(1),
-        ]
-      : [
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(flags.nonExtensible),
-          { op: "i32.and" },
-          { op: "i32.eqz" },
-        ],
-  };
+  const body: Instr[] = prevent
+    ? [
+        ...bag(d),
+        ...bag(d),
+        { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        n(flags.nonExtensible),
+        { op: "i32.or" },
+        { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        n(1),
+      ]
+    : [
+        ...bag(d),
+        { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        n(flags.nonExtensible),
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+      ];
+  return { locals: [], body: [...abortIfUnmodelled(d, bag(d)), ...body] };
 }
 /** Own data assignment only: 2 needs prototype [[Set]], 3 needs accessor invocation. */
 export function buildBuiltinFunctionWriteOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
@@ -350,7 +381,7 @@ export function buildBuiltinFunctionOwnKeys(d: BuiltinFunctionPropertyOperands):
       { name: "result", type: { kind: "externref" } },
     ],
     body: [
-      ...(holdsIdentityOnlyObject(d) ? abortIfIdentityOnly(d, bag(d)) : []),
+      ...abortIfUnmodelled(d, bag(d)),
       ...bag(d),
       { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 1 },
       set(1),
