@@ -18,7 +18,7 @@ import {
 } from "../core/closure-invocation-callables.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { BOOLEAN, CARRIER, I32, boolean, carried, type ChainBuilders } from "./dynamic-value-chains.js";
+import { BOOLEAN, CARRIER, I32, booleanConst, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
   article,
@@ -189,7 +189,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   if (b.program.objects.namesSymbol) gap("instanceof in a program that names 'Symbol'");
   const { value, target } = instr;
   const result = instr.result!;
-  const unread = (r: IrValueId) => boolean(false, r);
+  const unread = (r: IrValueId) => booleanConst(false, r);
   const hasInstance = (r: IrValueId): IrInstr[] => {
     const valueObjects = b.kinds.kindsOf(value).filter((kind) => IS_OBJECT[kind]);
     const prototype = b.fresh();

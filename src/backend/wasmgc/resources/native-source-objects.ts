@@ -284,6 +284,7 @@ const ROWS = {
         findOwn: kernel.functions.findOwn.handle,
       }),
   },
+  "js.object.delete": { binds: ({ kernel }) => kernel.functions.deleteOwn },
   "js.object.for-in-keys": {
     signature: { params: [EXTERNREF], results: [EXTERNREF] },
     body: ({ kernel }, tx) =>

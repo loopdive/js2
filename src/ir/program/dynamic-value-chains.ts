@@ -31,6 +31,17 @@ import {
 /** The dynamic value's carrier, the native externref. */
 export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
+/** The Boolean the realm's tests and `delete` answer (the chains' `TEST_RESULT` is unbranded). */
+export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+
+/** The constant Boolean `value` into `result`. */
+export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
+
 /** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
 export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
   kind: "coerce.to_externref",
@@ -43,14 +54,6 @@ const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
-/** (#7354 C2) The Boolean that `instanceof`, a comparison and the realm's tests answer (`TEST_RESULT` is unbranded). */
-export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-export const boolean = (value: boolean, result: IrValueId): IrInstr => ({
-  kind: "const",
-  value: { kind: "bool", value },
-  result,
-  resultType: BOOLEAN,
-});
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
@@ -182,7 +185,7 @@ export function chainBuilders(
     const cond = fresh();
     const tested = held.filter((kind) => of.includes(kind));
     const known = tested.length === held.length ? true : tested.length === 0 ? false : undefined;
-    const instrs = known === undefined ? anyKind(instr, tested, value, cond) : [boolean(known, cond)];
+    const instrs = known === undefined ? anyKind(instr, tested, value, cond) : [booleanConst(known, cond)];
     return { instrs, cond, known };
   };
   const text = (value: string, result: IrValueId): IrInstr => ({
