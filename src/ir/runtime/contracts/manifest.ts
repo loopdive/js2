@@ -139,6 +139,7 @@ export const DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.value.to_boolean",
   "native.js.value.undefined",
   "native.js.value.unsupported",
+  "native.js.value.unsupported_at",
 ] as const);
 
 export type DynamicValueRuntimeProviderId = (typeof DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS)[number];
@@ -442,6 +443,7 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.intrinsic",
   "js.object.has-own",
   "js.object.is-constructor",
+  "js.object.delete",
   "js.object.for-in-keys",
   "js.object.key-list-length",
   "js.object.key-list-get",
@@ -469,6 +471,7 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.intrinsic",
   "native.js.object.has-own",
   "native.js.object.is-constructor",
+  "native.js.object.delete",
   "native.js.object.for-in-keys",
   "native.js.object.key-list-length",
   "native.js.object.key-list-get",

@@ -4,6 +4,7 @@ import { closureInvocationKind } from "../../../ir/core/closure-invocation-calla
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import type { NativeNumberFormatStringLayoutPlan } from "./native-number-format.js";
 import { preparedStringLenProvider } from "../../../ir/runtime/intrinsic-preparation.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
@@ -101,7 +102,9 @@ import {
   reserveNativeDynamicValueResources,
   fillNativeDynamicValueResources,
   requireCompletedNativeDynamicValues,
+  publishNativeDynamicValues,
   selectNativeDynamicValues,
+  UNSUPPORTED_SITE,
   type NativeDynamicValueSelection,
   type NativeDynamicValueReservations,
 } from "../resources/native-dynamic-values.js";
@@ -626,7 +629,8 @@ export function reserveNativeStringValueResources(
       fn(number.booleans.isBoolean);
       fn(number.booleans.unboxBoolean);
     }
-    if (number.dynamicValues) Object.values(number.dynamicValues).forEach(fn);
+    if (number.dynamicValues)
+      Object.values(number.dynamicValues).forEach((token) => (token.kind === "global" ? global(token) : fn(token)));
   }
   if (output) {
     for (const row of nativeStringOutputReservationInventory(tx, output, input.plan.output!)) {
@@ -693,6 +697,18 @@ export function publishNativeStringValueOutput(
 ): void {
   requireCompletedNativeStringValues(tx, pack);
   if (pack.output) publishNativeStringOutput(tx, pack.output);
+  if (pack.number?.dynamicValues) publishNativeDynamicValues(tx, pack.number.dynamicValues);
+}
+/** The exports {@link publishNativeStringValueOutput} defines for `setup`; the formatter's layout publishes none. */
+export function nativePublishedExportNames(
+  setup: { readonly resources: NativeStringValuePhysicalPlan | NativeNumberFormatStringLayoutPlan } | undefined,
+): readonly string[] {
+  const plan = setup?.resources;
+  if (plan === undefined || plan.mode === "formatter-layout") return [];
+  return [
+    ...(plan.output?.stdout ? ["__stdout_prepare", "__stdout_char"] : []),
+    ...(plan.dynamicValues?.unsupportedAt ? [UNSUPPORTED_SITE] : []),
+  ];
 }
 export function requireCompletedNativeStringValues(
   tx: PhysicalModuleReservations,

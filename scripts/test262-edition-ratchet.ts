@@ -62,11 +62,18 @@
  *   npx tsx scripts/test262-edition-ratchet.ts --results <run.jsonl> --compare <base.jsonl>
  *   npx tsx scripts/test262-edition-ratchet.ts --results <run.jsonl> --update
  *   npx tsx scripts/test262-edition-ratchet.ts --host-lane --results <host.jsonl> --compare <host-base.jsonl>
+ *   npx tsx scripts/test262-edition-ratchet.ts --results <run.jsonl> --listed-timeouts <edition-report.json>
+ *
+ * `--listed-timeouts` (#7537, owner 2026-11-27): the rows a
+ * `test262-edition-scope.ts report` listed as a FIRST pass -> compile_timeout
+ * (`diff.timeouts`) are not gated by any check here; they are printed instead.
+ * A repeat is no longer on that list, so it fails like any other row.
  *
  * Exit codes: 0 clean · 1 regression · 2 usage / refused input.
  */
 
 import { execFileSync } from "node:child_process";
+import { isListedTimeout } from "./lib/test262-timeout-watch.mjs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -177,6 +184,24 @@ function editionOf(relFile: string): number {
   const ed = classifyTest262File(TEST262_ROOT, relFile);
   editionCache.set(relFile, ed);
   return ed;
+}
+
+/**
+ * Rows the edition report listed as a first pass -> compile_timeout count as
+ * passing for every check below (they are watched, not gated, #7537). Only a
+ * row that still IS compile_timeout is excused: anything else it became is
+ * judged normally.
+ */
+function withListedTimeouts(rows: Row[], reportPath: string | undefined): Row[] {
+  if (!reportPath) return rows;
+  const listed = new Set<string>(JSON.parse(readFileSync(reportPath, "utf-8")).diff?.timeouts ?? []);
+  const excused = rows.filter((r) => listed.has(r.file) && r.status === "compile_timeout");
+  if (excused.length > 0) {
+    console.log(`\nNOT gated — first pass -> compile_timeout, watched (#7537): ${excused.length}`);
+    for (const r of excused.slice(0, 50)) console.log(`  ${r.file}`);
+  }
+  const ids = new Set(excused.map((r) => r.file));
+  return rows.map((r) => (ids.has(r.file) && r.status === "compile_timeout" ? { ...r, status: "pass" } : r));
 }
 
 function readRows(path: string): Row[] {
@@ -291,7 +316,12 @@ function main(): void {
     });
   }
 
-  const rows = readRows(resultsPath);
+  const listedPath = getArg(args, "--listed-timeouts");
+  if (listedPath && update) {
+    console.error("REFUSED: --update with --listed-timeouts — a listed timeout is not a pass and must not be banked.");
+    process.exit(2);
+  }
+  const rows = withListedTimeouts(readRows(resultsPath), listedPath);
   const cur = tally(rows);
   console.log(`test262-edition-ratchet: ${rows.length} rows from ${resultsPath} (target ${target})`);
 
@@ -640,7 +670,7 @@ function runHostLane(o: {
     if (cur === "pass") continue;
     const row = { file, now: cur };
     if (quarantine.has(file)) t.quarantined.push(row);
-    else if (cur === "compile_timeout") t.timeouts.push(row);
+    else if (isListedTimeout(status, cur)) t.timeouts.push(row);
     else if (excepted.has(file)) t.excepted.push(row);
     else t.flips.push(row);
   }

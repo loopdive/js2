@@ -112,6 +112,13 @@ const NULLARY_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze(
   result: Object.freeze({ kind: "string" as const }),
 });
 
+/** (#7486) `(i32) -> string` — the run-time abort that names its site, by the program-wide id it records. */
+const I32_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([I32_TYPE]),
+  result: Object.freeze({ kind: "string" as const }),
+});
+
 /**
  * `(externref, externref) -> i32` — the exact ABI of the string relational
  * compare helper, shared by the `env.string_compare` host import and the
@@ -247,6 +254,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.value.to_boolean": definition("js.value.to_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.undefined": definition("js.value.undefined", NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.value.unsupported": definition("js.value.unsupported", NULLARY_TO_STRING_INTRINSIC_SIGNATURE),
+  "js.value.unsupported_at": definition("js.value.unsupported_at", I32_TO_STRING_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),
@@ -283,6 +291,15 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
 });
 
 const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(INTRINSIC_IDS);
+
+/**
+ * (#7354 C2, #7486) The Prepared run-time abort, plain and (in a build that records its sites) naming its site: pure,
+ * but never dropped as dead code (`effects.ts`).
+ */
+export const RUN_TIME_ABORT_INTRINSICS: ReadonlySet<IntrinsicId> = new Set([
+  "js.value.unsupported",
+  "js.value.unsupported_at",
+]);
 
 export function isIntrinsicId(value: string): value is IntrinsicId {
   return INTRINSIC_ID_SET.has(value);

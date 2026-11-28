@@ -150,6 +150,7 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
     canonicalRow("js.value.to_boolean", "to-boolean", true),
     canonicalRow("js.value.undefined", "undefined-value", true),
     canonicalRow("js.value.unsupported", "unsupported", true),
+    canonicalRow("js.value.unsupported_at", "unsupported-at", true),
   ];
 }
 

@@ -331,6 +331,69 @@ describe("test262 per-edition ratchet — a COMPLETED (100 %) edition allows no 
   });
 });
 
+describe("test262 per-edition ratchet — a first compile_timeout is listed, not gated (#7537)", () => {
+  // Owner decision 2026-11-27: a first pass -> compile_timeout is watched, not a
+  // regression. The edition report decides which rows are first sightings
+  // (diff.timeouts); the ratchet excuses exactly those, and only while they
+  // still are compile_timeout.
+  const report = (timeouts: string[], name: string) => {
+    const p = join(dir, name);
+    writeFileSync(p, JSON.stringify({ diff: { timeouts } }));
+    return p;
+  };
+
+  it("excuses a listed first timeout in a completed edition", () => {
+    const baseline = join(dir, "listed-ok.json");
+    run(["--results", jsonl(allPass(), "lo-seed.jsonl"), "--baseline", baseline, "--update"]);
+    const timedOut = allPass();
+    timedOut[0].status = "compile_timeout";
+    const results = jsonl(timedOut, "lo-run.jsonl");
+    expect(run(["--results", results, "--baseline", baseline]).code).toBe(1);
+    const r = run([
+      "--results",
+      results,
+      "--baseline",
+      baseline,
+      "--listed-timeouts",
+      report([ES5_PASS[0]], "lo.json"),
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("NOT gated — first pass -> compile_timeout");
+  });
+
+  it("still FAILS a repeat (not listed) and a listed row that became something else", () => {
+    const baseline = join(dir, "listed-bad.json");
+    run(["--results", jsonl(allPass(), "lb-seed.jsonl"), "--baseline", baseline, "--update"]);
+    const rows = allPass();
+    rows[0].status = "compile_timeout";
+    rows[1].status = "fail";
+    const r = run([
+      "--results",
+      jsonl(rows, "lb-run.jsonl"),
+      "--baseline",
+      baseline,
+      "--listed-timeouts",
+      report([ES5_PASS[1]], "lb.json"),
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(ES5_PASS[0]);
+    expect(r.out).toContain(ES5_PASS[1]);
+  });
+
+  it("REFUSES to bank with listed timeouts", () => {
+    const r = run([
+      "--results",
+      jsonl(allPass(), "lu-run.jsonl"),
+      "--baseline",
+      join(dir, "lu.json"),
+      "--update",
+      "--listed-timeouts",
+      report([], "lu-report.json"),
+    ]);
+    expect(r.code).toBe(2);
+  });
+});
+
 describe("test262 per-edition ratchet — refuses to run blind", () => {
   it("REFUSES (exit 2) when there is no test262 checkout to classify rows", () => {
     // Without test262 every row classifies as "Unclassified (legacy)", every

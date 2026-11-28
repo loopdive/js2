@@ -22,6 +22,7 @@ import type { IrUnitId, IrBindingId } from "../shared/contracts/ir-identity.js";
 import type { ValType, TypeDef, Instr, ExportSignature } from "../ir/types.js";
 import type { PhysicalSetupPlan, PhysicalSignatureType } from "../ir/program-physical-plan.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
+import { runsAtStartup } from "../ir/module-init-plan.js";
 import type { WasmModule } from "../ir/types.js";
 import type { IrType } from "../ir/core/types.js";
 import { runIrProgramDriver } from "./ir-program-driver.js";
@@ -30,6 +31,7 @@ import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
 import { callableCarried, runtimeCensus, unjoinedSupport, type NativeSetupSlots } from "./prepared-provider-census.js";
 import { physicalCallableMatches } from "./prepared-physical-signature.js";
+import { nativePublishedExportNames } from "../backend/wasmgc/program/native-string-values.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -453,7 +455,7 @@ function checkAbiExports(
   const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
-  const joinedExports = new Set<string>();
+  const joinedExports = new Set<string>(nativePublishedExportNames(emittedPhysicalSetupPlan(emission).nativeStrings));
   // (#7354 D1, H, Str) Internal callables and unexported globals may carry the dynamic externref; callables a string.
   const native = nativeDynamicLane(capture.backend);
   const dynamic = (type: IrType | undefined) => native && type?.kind === "val" && type.val.kind === "externref";
@@ -718,7 +720,7 @@ function joinStartup(
   gap: GapRecorder,
 ): IrProgramPresentationStartup {
   const mod = emission.module;
-  const executable = program.startup.filter((row) => row.executable);
+  const executable = program.startup.filter(runsAtStartup);
   if (
     program.startup.length !== program.inventory.sources.length ||
     program.startup.some(
@@ -878,8 +880,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   const physicalExportNames = new Set<string>();
   for (const row of mod.exports) {
     if (row.desc.kind !== "func" && row.desc.kind !== "global") continue;
-    const duplicate = physicalExportNames.has(row.name);
-    physicalExportNames.add(row.name);
+    const duplicate = physicalExportNames.size === physicalExportNames.add(row.name).size;
     if (
       duplicate ||
       (!joinedExports.has(row.name) &&

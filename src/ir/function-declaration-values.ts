@@ -7,10 +7,12 @@
  * Every read of the name is that home's read, so two reads are the same value. The closure's function is a
  * trampoline that calls the declaration's unit with its own arguments and puts the result into the carrier.
  *
- * The script must be the program's only source, whose module-init runs before any code that could read the home (a
- * script that runs first would read the home before its value is stored). (#7354 H2) The binding is writable
- * (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this path), the
- * home is mutable and untagged, and a call of the name reads it: the call planner plans no direct call of a
+ * The script must be the program's only startup source, whose module-init runs before any code that could read the
+ * home (a script that runs first would read the home before its value is stored). (#7363 A3) A called eval source
+ * runs only from its site, after that prologue, declares no function and stores into no identifier: a text that does
+ * is no site (`eval-literal.ts`), since the write walk below sees only the declaring file. (#7354 H2) The binding is
+ * writable (§9.1.1.4.18): where an identifier writes it (`preparedBindingRewritten`, which sees every write on this
+ * path), the home is mutable and untagged, and a call of the name reads it: the call planner plans no direct call of a
  * reassigned declaration (`imported-functions.ts`).
  */
 import { ts } from "../ts-api.js";
@@ -55,17 +57,18 @@ export function enclosingFunctionBody(node: ts.Node): ts.Node | undefined {
 }
 
 /**
- * The top-level function declarations of a single-source program that some identifier reads as a value, or that an
- * Annex B block function writes, in source order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
- * is one: [[Construct]] takes the function object, its `prototype` included.
+ * The top-level function declarations of a program with one startup source that some identifier of that source reads
+ * as a value, or that an Annex B block function writes, in source order. A call's callee is no value read: a call
+ * stays the declaration's direct call. (#7354 C2) `new`'s constructor is one: [[Construct]] takes the function object,
+ * its `prototype` included.
  */
 export function functionDeclarationsReadAsValues(
   checker: ts.TypeChecker,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
 ): readonly ts.FunctionDeclaration[] {
-  const source = sourceFiles[0]!;
+  const source = startupSources[0]!;
   // An ES module's declarations are no global bindings; an export names the unit (the export join's question).
-  if (sourceFiles.length !== 1 || ts.isExternalModule(source)) return [];
+  if (startupSources.length !== 1 || ts.isExternalModule(source)) return [];
   const read = new Set<ts.Declaration>();
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && readsValue(node)) {

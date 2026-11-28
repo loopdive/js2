@@ -93,8 +93,10 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(workflow).toContain("uses: actions/download-artifact@v7");
     expect(workflow).toContain("TEST262_FULL_RUNTIME_EVAL:");
     // Two standalone shard jobs + (#6706) the native-first measurement lane
-    // + (#6723 P2) the dispatch-only standalone linked shadow lane.
-    expect(workflow.match(/--require-full-cache/g)).toHaveLength(4);
+    // + (#6723 P2) the dispatch-only standalone linked shadow lane. (#7537)
+    // `test262-shard`'s copy moved into the shared runner-setup action.
+    const setup = readFileSync(join(process.cwd(), ".github/actions/test262-runner-setup/action.yml"), "utf8");
+    expect((workflow + setup).match(/--require-full-cache/g)).toHaveLength(4);
     expect(workflow).not.toContain("Prebuild refusal runtime-eval provider (#2928)");
   });
 

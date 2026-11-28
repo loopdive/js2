@@ -16,11 +16,8 @@ import { allocLocal } from "../context/locals.js";
 import { getOrRegisterRefCellType } from "../registry/types.js";
 import { isStrictContext } from "../../shared/is-strict-function.js";
 // Late-bound: a direct import of late-imports/eval-inline would close an import cycle (#6797).
-import {
-  emitUndefined,
-  foldedEvalDeclarationNames,
-  resolveConstantString,
-} from "../registry/expression-helper-delegates.js";
+import { emitUndefined, resolveConstantString } from "../registry/expression-helper-delegates.js";
+import { foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
 
 function nearestFunction(node: ts.Node): ts.Node | undefined {
   let current = node.parent;

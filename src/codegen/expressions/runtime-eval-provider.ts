@@ -34,12 +34,11 @@ import {
 } from "../runtime-eval-callable.js";
 import { buildRuntimeEvalValueUnwrap, ensureRuntimeEvalProviderActiveGlobal } from "../runtime-eval-boundary.js";
 import { coerceType, compileExpression } from "../shared.js";
-import {
-  ensureRuntimeEvalCallableCarrier,
-  foldedEvalDeclarationNames,
-} from "../registry/expression-helper-delegates.js";
+import { ensureRuntimeEvalCallableCarrier } from "../registry/expression-helper-delegates.js";
+import { foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
 import { exactGlobalEvalStatement } from "../../eval-call-shape.js";
-import { foldedEvalStaticSyntaxError, parseEvalScript, providerOwnsEvalDeclarations } from "./eval-script.js";
+import { foldedEvalStaticSyntaxError } from "../../frontend/eval/script.js";
+import { parseEvalScript, providerOwnsEvalDeclarations } from "./eval-script.js";
 import { isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 

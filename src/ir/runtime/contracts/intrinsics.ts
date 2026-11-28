@@ -73,6 +73,7 @@ export const DYNAMIC_VALUE_RUNTIME_FEATURES = Object.freeze([
   "js.value.to_boolean",
   "js.value.undefined",
   "js.value.unsupported",
+  "js.value.unsupported_at",
 ] as const);
 
 export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([

@@ -14,7 +14,7 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { RELATIONAL_OPERATORS, type RelationalOperator } from "../../shared/contracts/dynamic-operator-helpers.js";
-import { I32, boolean, type ChainBuilders, type conversionBuilders } from "./dynamic-value-chains.js";
+import { I32, booleanConst, type ChainBuilders, type conversionBuilders } from "./dynamic-value-chains.js";
 import { IS_OBJECT, type CarrierKind } from "./dynamic-value-kinds.js";
 
 /** The relational operator the front-end helper `symbol` stands for, if it is one. */
@@ -131,7 +131,7 @@ export function comparisonBuilders(
    */
   const looseEquality = (instr: IrInstr, operands: Pair, result: IrValueId): IrInstr[] => {
     const type = instr.resultType!;
-    const answer = (value: boolean) => (r: IrValueId) => [boolean(value, r)];
+    const answer = (value: boolean) => (r: IrValueId) => [booleanConst(value, r)];
     const bothNullish = (r: IrValueId): IrInstr[] =>
       choose(operandsHold(instr, "every", operands, NULLISH), answer(true), answer(false), r, type);
     const objects = admitted.filter((kind) => IS_OBJECT[kind]);

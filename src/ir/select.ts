@@ -54,6 +54,7 @@
 //     before the IR runs (allocated by `collectClassDeclaration`). The
 //     `localClasses` set drives that exemption.
 
+import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { someReturnedValue } from "./function-returns.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { switchCaseTests } from "./switch-case-tests.js";
@@ -264,6 +265,7 @@ import {
   nativeI32OperandsAdmissible,
   type OperandFamily,
   compoundWriteAdmissible,
+  laneReadsToNumber,
 } from "./analysis/operand-admissibility.js";
 import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
 import { someBigIntOperand } from "./bigint-operand-refusal.js";
@@ -938,37 +940,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * An explicit false prevents an ambient Date snapshot from being claimed
    * even if its checker shape is otherwise exact.
    */
-  readonly supportsBackendCapability?: (
-    capability:
-      | "host-date-snapshot"
-      | "host-regexp-constructor"
-      | "standalone-function-prototype-call"
-      | "native-regexp"
-      | "native-function-methods"
-      | "standalone-wrapper-instanceof"
-      | "primitive-wrapper-to-primitive"
-      | "legacy-numeric-array-global"
-      | "number-to-string"
-      | "native-json-codec"
-      | "native-object-tostring-tag"
-      | "native-dynamic-construct"
-      | "native-string-carrier-coercion"
-      | "native-arguments-length"
-      | "native-current-this"
-      | "native-own-property-test"
-      | "host-dynamic-method-call"
-      | "native-own-property-introspection"
-      | "native-array-is-array"
-      | "native-number-conversion"
-      | "prepared-dynamic-helper-abi"
-      | "native-dynamic-member-read"
-      | "planned-closure-direct-call"
-      | "native-dynamic-loose-equality"
-      | "dynamic-method-call-wrapper"
-      | "native-global-function-call"
-      | "native-object-statics"
-      | "native-string-uses",
-  ) => boolean;
+  readonly supportsBackendCapability?: (capability: IrBackendTargetCapability) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
    * declaration-file-only ambient predicate because allowJs programs can be
@@ -7706,6 +7678,7 @@ function isPhase1ClosureLiteral(
     additiveLane: additiveLane(),
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
+    nativeDynamicToNumber: laneReadsToNumber(currentSelectionOptions?.supportsBackendCapability),
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
     wrappedMethodCall: dynamicMethodCallTakesWrapper,
     functionObjectReadLocals: closureFunctionObjectReadLocals(plan),
@@ -9819,11 +9792,12 @@ function isSelectableNumberCompound(
   // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
   // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
   // the generic binary arm would then judge `n + 1` and refuse it.
+  const toNumber = laneReadsToNumber(currentSelectionOptions?.supportsBackendCapability);
   const rhsFamily = readsDynamicScriptVar(expr.right)
     ? "dynamic"
     : binaryOperandFamily(expr.right, scope, localClasses);
   const carrierHome = ts.isIdentifier(expr.left) && holdsCarrier(expr.left);
-  if (carrierHome && !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)) {
+  if (carrierHome && !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily, toNumber)) {
     return shapeNo("compound-dynamic-module-operand", expr.right);
   }
   // (#7330) `+=` into a string slot concatenates, so only a string value has a lowering.
@@ -9833,6 +9807,7 @@ function isSelectableNumberCompound(
       expr.operatorToken.kind,
       "string",
       holdsString(expr.right, scope, localClasses) ? "string" : rhsFamily,
+      toNumber,
     )
   ) {
     return shapeNo("compound-string-operand", expr.right);

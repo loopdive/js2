@@ -31,6 +31,17 @@ import {
 /** The dynamic value's carrier, the native externref. */
 export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
+/** The Boolean the realm's tests and `delete` answer (the chains' `TEST_RESULT` is unbranded). */
+export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+
+/** The constant Boolean `value` into `result`. */
+export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
+
 /** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
 export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
   kind: "coerce.to_externref",
@@ -43,14 +54,6 @@ const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
-/** (#7354 C2) The Boolean that `instanceof`, a comparison and the realm's tests answer (`TEST_RESULT` is unbranded). */
-export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
-export const boolean = (value: boolean, result: IrValueId): IrInstr => ({
-  kind: "const",
-  value: { kind: "bool", value },
-  result,
-  resultType: BOOLEAN,
-});
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
@@ -86,6 +89,9 @@ export function knownKinds(
 }
 export type KnownKinds = ReturnType<typeof knownKinds>;
 
+/** (#7486) The program-wide id of a run-time abort site with `reason`, where the build records its sites. */
+export type AbortSite = (reason: string) => number | undefined;
+
 /**
  * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic calls,
  * kind tests, and the per-kind chains (`kindChain`) that ToString, `typeof`, `+` and (#7354 O4, O3) member access
@@ -96,6 +102,7 @@ export function chainBuilders(
   allocations: AllocSiteRegistry,
   kinds: KnownKinds,
   admitted: readonly CarrierKind[],
+  abortSite: AbortSite,
 ) {
   let valueCount = fn.valueCount;
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
@@ -178,7 +185,7 @@ export function chainBuilders(
     const cond = fresh();
     const tested = held.filter((kind) => of.includes(kind));
     const known = tested.length === held.length ? true : tested.length === 0 ? false : undefined;
-    const instrs = known === undefined ? anyKind(instr, tested, value, cond) : [boolean(known, cond)];
+    const instrs = known === undefined ? anyKind(instr, tested, value, cond) : [booleanConst(known, cond)];
     return { instrs, cond, known };
   };
   const text = (value: string, result: IrValueId): IrInstr => ({
@@ -218,13 +225,29 @@ export function chainBuilders(
     alloc: allocations.fresh("string", STRING),
     concatMode: "immutable",
   });
+  const i32 = (value: number, result: IrValueId): IrInstr => ({
+    kind: "const",
+    value: { kind: "i32", value },
+    result,
+    resultType: I32,
+  });
   /**
-   * (#7354 C2) The run-time abort `js.value.unsupported` as a carrier answer into `result`: its text is the answer, as
-   * an intrinsic is pure and an abort whose result nothing used would be dropped as dead code.
+   * (#7354 C2) The run-time abort into `result`, a string. (#7486) Where the build records its sites, the abort names
+   * its site's id (`js.value.unsupported_at`), so a trap there maps to `reason`.
    */
-  const abort = (instr: IrInstr, result: IrValueId): IrInstr[] => {
+  const abortText = (instr: IrInstr, reason: string, result: IrValueId): IrInstr[] => {
+    const site = abortSite(reason);
+    if (site === undefined) return [intrinsic(instr, "js.value.unsupported", [], result)];
+    const id = fresh();
+    return [i32(site, id), intrinsic(instr, "js.value.unsupported_at", [id], result)];
+  };
+  /**
+   * (#7354 C2) The run-time abort as a carrier answer into `result`: its text is the answer, as an intrinsic is pure and
+   * an abort whose result nothing used would be dropped as dead code.
+   */
+  const abort = (instr: IrInstr, reason: string, result: IrValueId): IrInstr[] => {
     const text = fresh();
-    return [intrinsic(instr, "js.value.unsupported", [], text), carried(text, result)];
+    return [...abortText(instr, reason, text), carried(text, result)];
   };
   /** The realm's `feature` on `args` and, last, the constant `selector`, into `result`. */
   const selectorCall = (
@@ -234,10 +257,7 @@ export function chainBuilders(
     result: IrValueId,
   ): IrInstr[] => {
     const value = fresh();
-    return [
-      { kind: "const", value: { kind: "i32", value: selector }, result: value, resultType: I32 },
-      realmCall(feature, [...args, value], result),
-    ];
+    return [i32(selector, value), realmCall(feature, [...args, value], result)];
   };
   /** (#7354 P1, G1) The realm's built-in function object `id` (`NATIVE_VALUE_INTRINSICS`) into `result`. */
   const realmIntrinsic = (id: string, result: IrValueId): IrInstr[] =>
@@ -279,6 +299,7 @@ export function chainBuilders(
     text,
     branch,
     concat,
+    abortText,
     abort,
     selectorCall,
     realmIntrinsic,
@@ -287,6 +308,11 @@ export function chainBuilders(
   };
 }
 export type ChainBuilders = ReturnType<typeof chainBuilders>;
+
+/** (#7486) The reasons of the conversions' run-time aborts. */
+const BUILTIN_ONLY = "ToPrimitive of an object whose method is a built-in, in a program that creates no function value";
+const sourceText = (operation: string) =>
+  `${operation} of a function: its source text, which the closure does not carry`;
 
 /** Which of OrdinaryToPrimitive's two receivers a `to-primitive` kind is. */
 const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "function" ? "function" : "object");
@@ -298,8 +324,7 @@ const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "fu
  * finishes in its own way (`ToPrimitiveAnswer`).
  */
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
-  const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, kindChain } = builders;
-  const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
+  const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, kindChain, abortText } = builders;
   const nan = (r: IrValueId): IrInstr => ({
     kind: "const",
     value: { kind: "f64", value: NaN },
@@ -337,7 +362,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
       ...(holdsFamily(program, "error") ? { errorToString: errorToString(instr) } : {}),
-      ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, r) }),
+      ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, BUILTIN_ONLY, r) }),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
   };
@@ -371,7 +396,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       case "to-primitive":
         return toPrimitive(instr, value, "string", result, kind, {
           type: STRING,
-          text: (source, r) => [source === undefined ? unsupported(instr, r) : text(source, r)],
+          text: (source, r) => (source === undefined ? abortText(instr, sourceText("ToString"), r) : [text(source, r)]),
           primitive: (primitive, r) => stringOf(instr, primitive, r, primitives),
         });
     }
@@ -408,8 +433,9 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     const answer: ToPrimitiveAnswer = {
       type: CARRIER,
       text: (source, r) => {
+        if (source === undefined) return builders.abort(instr, sourceText("+"), r);
         const string = fresh();
-        return [source === undefined ? unsupported(instr, string) : text(source, string), carried(string, r)];
+        return [text(source, string), carried(string, r)];
       },
       primitive: (primitive, r) => [carried(primitive, r)],
     };

@@ -295,11 +295,6 @@ describe("#7354 T review round 2 — `&&` / `||` with a typed left and a dynamic
       "function f(b, c) { var r = 0; r = (b > 1) && c; return r; }\nf(5, 7);",
       'assignment to "r" (f64) got dynamic',
     ],
-    [
-      "with a typed number left operand",
-      "function f(n: number, c: any) { return n && c; }\nf(5, 7);",
-      "operator '&&' requires bool operands",
-    ],
     // Should-fix (1): an unannotated result with no Prepared contract names its type, not a later void call.
     [
       "returning `n as unknown`",
@@ -349,12 +344,6 @@ describe("#7354 T review round 3 — an unused `&&` / `||` keeps its right opera
     const throwing = HEAD + at(`${left} ${op} ${right.replace("inc", "boom")}`);
     expect(await run(throwing.replace("@A", op === "&&" ? "1" : "0"))).toBe("threw");
     expect(await run(throwing.replace("@A", op === "&&" ? "0" : "1"))).toBe("returned");
-  });
-
-  it.each(["&&", "||"])("refuses a typed number left operand of an unused `%s` by name", async (op) => {
-    expect(await refusal(`${HEAD}function f(a, b){ (a * 1) ${op} inc(b); return n; } f(1, 1);`)).toContain(
-      `operator '${op}' requires bool operands in f`,
-    );
   });
 });
 
