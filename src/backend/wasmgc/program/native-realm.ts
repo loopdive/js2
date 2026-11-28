@@ -298,6 +298,14 @@ function beginRealm(
   );
   const catalog = requirements.description.catalog,
     held = heldCatalogRows(requirements.description);
+  // (#7489) The realm's entry or object for a catalog id: a bootstrap function's entry is named by its behavior.
+  const entryOf = (id: string): string | undefined => {
+    if (catalog.bootstrap.includes(id))
+      return catalog.intrinsics.find((row) => row.id === id)?.callable?.implementation;
+    return requirements.description.intrinsics.includes(id) || held.some((row) => row.id === id && !row.callable)
+      ? id
+      : undefined;
+  };
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
   const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
     const row = held.find((row) => row.id === id),
@@ -314,6 +322,7 @@ function beginRealm(
         : call?.implementation === "native";
     if (!row || !call || !supported) fail("catalog row lacks its supported canonical behavior");
     const entry = behavior as NativeBuiltinFunctionBehavior;
+    const properties = familyProperties(row, entryOf, requirements.description.restrictedFunctionAccessors);
     return {
       id: index < catalog.bootstrap.length ? entry : id,
       behavior: entry,
@@ -330,13 +339,13 @@ function beginRealm(
             : row.prototype!,
       constructible: row.constructible,
       aliases: row.aliases,
-      ...(entry === "native" ? { properties: familyProperties(row) } : {}),
+      ...(properties.length > 0 ? { properties } : {}),
       ...(row.identityOnly ? { identityOnly: true as const } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, ...familyObjects(held) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(held, entryOf) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,

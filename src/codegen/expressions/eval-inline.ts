@@ -37,12 +37,9 @@ import { emitThrowJsError } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../../shared/is-strict-function.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
+import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import { addFoldedEvalBindingNames, foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
-import {
-  EVAL_SOURCE_FILENAME,
-  evalBodyHasUseStrictDirective,
-  foldedEvalStaticSyntaxError,
-} from "../../frontend/eval/script.js";
+import { evalBodyHasUseStrictDirective, foldedEvalStaticSyntaxError } from "../../frontend/eval/script.js";
 import { parseEvalScript, providerOwnsEvalDeclarations } from "./eval-script.js";
 import {
   ensureRuntimeEvalGlobalCall,

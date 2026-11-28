@@ -1,18 +1,23 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
-import { analyzeMultiSource } from "../checker/index.js";
+import { analyzeMultiSource, type MultiTypedAST } from "../checker/index.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import { elideDeadBindings } from "./prepared-dead-bindings.js";
-import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
+import {
+  preparedFrontendRejectionObservation,
+  runPreparedIrPipelinePresentation,
+  sourceFailsCompileGates,
+} from "../compiler.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
+import { literalEvalFileName, literalEvalTexts, pairLiteralEvalSources } from "../ir/eval-literal.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
-import { AbortBodies, type AbortBodyRow } from "../ir/abort-bodies.js";
+import { AbortBodies, type AbortBodyRow, type AbortSiteRow } from "../ir/abort-bodies.js";
 
 type DeadBindingElision = typeof elideDeadBindings;
 type UnlowerableBodies = "abort" | "refuse";
@@ -279,6 +284,7 @@ interface ResultRecord {
   readonly adapterManifest?: JavaScriptAdapterManifestV1;
   readonly hostImportInventory?: NonNullable<CompileResult["hostImportInventory"]>;
   readonly abortBodies?: readonly AbortBodyRow[];
+  readonly abortSites?: readonly AbortSiteRow[];
 }
 const results = new WeakMap<CompileResult, ResultRecord>();
 function current(result: CompileResult): ResultRecord | undefined {
@@ -326,6 +332,13 @@ export function requiredPreparedFailure(result: CompileResult): RequiredPrepared
 export function requiredPreparedAbortBodies(result: CompileResult): readonly AbortBodyRow[] | undefined {
   return current(result)?.abortBodies;
 }
+/**
+ * (#7486) The run-time abort sites of a compiled program, by id. A trap that left an id in the exported global
+ * `__js_value_unsupported_site` is that site's abort.
+ */
+export function requiredPreparedAbortSites(result: CompileResult): readonly AbortSiteRow[] | undefined {
+  return current(result)?.abortSites;
+}
 /** Only the shared compiler's real syntax/early branch can supply this observation. */
 export function requiredPreparedFrontendFailure(result: CompileResult): RequiredPreparedFrontendFailure | undefined {
   return current(result)?.frontendFailure;
@@ -365,6 +378,60 @@ function adapterRefusal(entryFile: string, code: string, detail: string, message
     { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
   ]);
 }
+/** Compile a source graph with its analysis; `added` of its scripts are the entry's literal eval texts, in order. */
+type GraphCompile = (graph: Record<string, string>, ast: MultiTypedAST, added: number) => CompileResult;
+/**
+ * (#7363) The compile of `files` plus one `<eval:N>.js` script per qualifying literal eval site of the entry, when the
+ * scripts add nothing that fails the compile's gates and change no other source's diagnostics, and that compile
+ * succeeds; otherwise the compile of `files` with `without`, its analysis, where every site keeps its slice-1 refusal
+ * at select. A script fails the gates exactly as a JavaScript entry does: a syntax error outside the tolerated list, a
+ * hard type error or an ES early error. Any other diagnostic of a text, such as a read of an undeclared global, is
+ * tolerated as in an entry. A text reaches another source's diagnostics when a member store in it declares a JS
+ * expando property of a caller binding; such a change names no text, so then none joins. A failure with the texts
+ * falls back to the program without them, which is main's: a text the IR cannot lower fails the program even where its
+ * site never runs, and so does (A4) a site refused at select for a global `eval` that may not be pristine, which a site
+ * in dead code must not do either. When that fails too, the failure with the texts is the answer: it names the site's
+ * own refusal.
+ */
+function withLiteralEvalSources(
+  files: Record<string, string>,
+  without: MultiTypedAST,
+  texts: readonly string[],
+  analyze: (graph: Record<string, string>) => MultiTypedAST,
+  options: Test262CompileOptions,
+  compileGraph: GraphCompile,
+): CompileResult {
+  if (texts.length === 0) return compileGraph(files, without, 0);
+  const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
+  const evalNames = new Set(texts.map((_, index) => normalizeMultiFileName(literalEvalFileName(index))));
+  const graph: Record<string, string> = Object.create(null);
+  Object.assign(graph, files);
+  texts.forEach((text, index) => {
+    const name = literalEvalFileName(index);
+    if (supplied.has(normalizeMultiFileName(name)))
+      invalidRequest(`source name ${name} is reserved for a literal eval source`);
+    Object.defineProperty(graph, name, { value: text, enumerable: true });
+  });
+  const ast = analyze(graph);
+  const isEvalSource = (file: ts.SourceFile | undefined) =>
+    file !== undefined && evalNames.has(normalizeMultiFileName(file.fileName));
+  const othersReport = (diagnostics: readonly ts.Diagnostic[]) =>
+    diagnostics
+      .filter((diagnostic) => !isEvalSource(diagnostic.file))
+      .map(({ file, start, code, messageText }) =>
+        [file?.fileName, start, code, ts.flattenDiagnosticMessageText(messageText, "\n")].join(":"),
+      )
+      .sort()
+      .join("\n");
+  const quiet =
+    !ast.sourceFiles.some((source) => isEvalSource(source) && sourceFailsCompileGates(source, ast, options)) &&
+    othersReport(ast.diagnostics) === othersReport(without.diagnostics);
+  if (!quiet) return compileGraph(files, without, 0);
+  const joined = compileGraph(graph, ast, texts.length);
+  if (joined.success) return joined;
+  const alone = compileGraph(files, without, 0);
+  return alone.success ? alone : joined;
+}
 function present(
   files: Record<string, string>,
   entryFile: string,
@@ -400,14 +467,53 @@ function present(
   // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
   const suppliedAst = analyze(exactFiles);
   const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
-  const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
-  if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
+  const analyzedAst = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
+  // (#7363) The eval sources join after F0, which elides only a one-source graph and keeps every name a literal eval
+  // text mentions; so the sites are the elided entry's.
+  const entryKey = Object.keys(analyzedFiles).find(
+    (key) => normalizeMultiFileName(key) === normalizeMultiFileName(entryFile),
+  )!;
+  // Module code is strict, so no direct eval in it runs as a sloppy Script; and a text is a JavaScript root, which
+  // only an allowJs program holds.
+  const evalTexts =
+    options.inferModuleStrictArguments === true || options.allowJs !== true
+      ? []
+      : literalEvalTexts(entryKey, analyzedFiles[entryKey]!);
+  const request: PresentRequest = { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies };
+  return withLiteralEvalSources(analyzedFiles, analyzedAst, evalTexts, analyze, options, (graph, ast, added) =>
+    presentAnalyzed(request, graph, ast, added),
+  );
+}
+/** What `present` was asked, for each graph it compiles. */
+interface PresentRequest {
+  readonly exactFiles: Record<string, string>;
+  readonly entryFile: string;
+  readonly options: Test262CompileOptions;
+  readonly singleSource: boolean;
+  readonly profile: ReturnType<typeof resolveCompileTargetProfile>;
+  readonly unlowerableBodies: UnlowerableBodies;
+}
+/** `present`'s compile of one analyzed graph, whose last `added` scripts are the entry's literal eval texts. */
+function presentAnalyzed(
+  { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies }: PresentRequest,
+  graph: Record<string, string>,
+  ast: MultiTypedAST,
+  added: number,
+): CompileResult {
+  if (!completeAnalyzedGraph(graph, entryFile, ast))
     return adapterRefusal(
       entryFile,
       "prepared-source-graph-incomplete",
       "frontend did not retain the complete supplied name/text graph",
     );
-  const supplied = new Map(Object.entries(exactFiles).map(([file, text]) => [normalizeMultiFileName(file), text]));
+  const literalEvalSources = added === 0 ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, added);
+  // (#7363) An eval source's supplied text is its own; the entry's is the unelided one.
+  const supplied = new Map(
+    [...Object.entries(graph), ...Object.entries(exactFiles)].map(([file, text]) => [
+      normalizeMultiFileName(file),
+      text,
+    ]),
+  );
   const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;
   // The public single-source compiler always applies its parser-syntax gate,
   // including allowJs. Multi-source calls retain their captured option policy.
@@ -436,6 +542,7 @@ function present(
     diagnosticAnchor: ast.entryFile,
     runEarlyErrorsOnAllowJs: singleSource || options.enforceJsEarlyErrors === true,
     options: pipelineOptions,
+    literalEvalSources,
     },
     abortBodies,
   );
@@ -518,7 +625,12 @@ function present(
     hostImportInventory: freezePreparedIrValue(result.hostImportInventory) as NonNullable<
       CompileResult["hostImportInventory"]
     >,
-    ...(abortBodies ? { abortBodies: freezePreparedIrValue(abortBodies.rows()) as readonly AbortBodyRow[] } : {}),
+    ...(abortBodies
+      ? {
+          abortBodies: freezePreparedIrValue(abortBodies.rows()) as readonly AbortBodyRow[],
+          abortSites: freezePreparedIrValue(abortBodies.sites()) as readonly AbortSiteRow[],
+        }
+      : {}),
   });
   return result;
 }
