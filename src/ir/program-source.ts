@@ -38,7 +38,6 @@ import type { IrProgramCallableBindingRecord } from "./program/callable-bindings
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import { literalDynamicCodeSiteRefusal, verifyLiteralDynamicCodeSources } from "./literal-dynamic-code.js";
-import type { LiteralDynamicCodeSource } from "./literal-dynamic-code.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
@@ -869,7 +868,7 @@ export interface IrProgramSourceInput {
   /** Independent string-only console intents; no async family or runtime availability is implied. */
   readonly nativeStringOutputProjection?: "standalone-native";
   /** (#7363, #7487) Each literal dynamic-code site, its kind and the script holding its text; absent: none. */
-  readonly literalDynamicCodeSources?: readonly LiteralDynamicCodeSource[];
+  readonly literalDynamicCodeSources?: readonly import("./literal-dynamic-code.js").LiteralDynamicCodeSource[];
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -1589,9 +1588,8 @@ export function prepareIrProgramSources(
       identityContext: identity,
     });
     const startupSources = sourceFiles.filter((source) => !code.sources.has(source));
-    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources, {
-      literalFunctionSites: code.functionSites.size > 0,
-    });
+    const contractOptions = { literalFunctionSites: code.functionSites.size > 0 };
+    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources, contractOptions);
     // (#7363 A4; #7487) A site that does not lower refuses the program at select, owned by the entry's init.
     const refusal = literalDynamicCodeSiteRefusal(code, dynamicContracts);
     if (refusal) {
