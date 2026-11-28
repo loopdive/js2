@@ -1,7 +1,7 @@
 ---
 id: 7627
 title: "A call of a reassigned function reaches the original body: through a namespace (`d.f()`), and before the reassigning code compiles (shape Y)"
-status: blocked
+status: ready
 sprint: Backlog
 created: 2026-11-28
 updated: 2026-11-28
@@ -14,7 +14,6 @@ area: codegen
 goal: core-semantics
 parent: 7620
 depends_on: [7530, 7625]
-blocked_by: 7530
 related: [7620, 7530, 7622, 7630]
 ---
 
@@ -144,7 +143,7 @@ none of #7530's regions.
 
 ### One predicate
 
-Two exports in `src/codegen/module-binding-liveness.ts`, a small new leaf module next to `module-binding-table.ts`:
+Two exports in `src/codegen/module-bindings/module-binding-liveness.ts`, a small new leaf module next to `module-binding-table.ts`:
 
 - `liveFunctionBindingOf(ctx, declaration): ModuleBinding | undefined` returns `moduleBindingOf(ctx, declaration)`
   when that binding has `liveFunction === "assigned"`. Sites 1–4 use it.
