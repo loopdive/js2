@@ -45,26 +45,50 @@ for (const strict of [false, true])
 
 it("keeps dynamic exponentiation outside this ES5 admission", () => {
   for (const rhs of ["number", "dynamic", "undefined"] as const)
-    expect(compoundWriteAdmissible(ts.SyntaxKind.AsteriskAsteriskEqualsToken, "dynamic", rhs)).toBe(false);
+    expect(compoundWriteAdmissible(ts.SyntaxKind.AsteriskAsteriskEqualsToken, "dynamic", rhs, true)).toBe(false);
 });
 
-// The selector asks the builder's operand rule, so an RHS with no numeric carrier
-// is refused at selection instead of claimed and withdrawn.
+const REFUSAL_PRELUDE = 'function fs() { return "2"; } var n; n = 3; var y; y = 1;';
+
+// (#7375) A boolean or string RHS is read with ToNumber on standalone (`native-dynamic-to-number`): claimed,
+// lowered and run with node's answer.
 for (const [op, rhs] of [
   ["-=", '"2"'],
   ["*=", "true"],
-  ["-=", "null"],
   ["-=", "fs()"],
   ["<<=", "fs()"],
   ["-=", '"a" + "b"'],
   ["<<=", '"a" + "b"'],
+] as const)
+  it(`lowers script dynamic ${op} ${rhs} with ToNumber`, async () => {
+    const program = `${REFUSAL_PRELUDE} y ${op} ${rhs};`;
+    const expected = new Function(`${program} return y;`)() as number;
+    const check = Number.isNaN(expected) ? "y === y" : `y !== ${expected}`;
+    const result = await compile(`${program} if (${check}) throw "wrong result";`, {
+      fileName: "compound-refusal.js",
+      allowJs: true,
+      target: "standalone",
+      trackIrOutcomes: true,
+      deferTopLevelInit: true,
+    });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(result.irPostClaimErrors).toEqual([]);
+    expect(result.irOutcomes?.find((o) => o.displayName === "<module-init>")?.irBodyEmitted).toBe(true);
+    const instance = await WebAssembly.instantiate(await WebAssembly.compile(result.binary), {});
+    (instance.exports.__module_init as () => void)();
+  });
+
+// The selector asks the builder's operand rule, so an RHS with no numeric carrier
+// is refused at selection instead of claimed and withdrawn.
+for (const [op, rhs] of [
+  ["-=", "null"],
   ["-=", '(0, "2")'],
   ["-=", '"ab".charAt(0)'],
   ["<<=", '"ab".charAt(0)'],
   ["-=", "String(n)"],
 ] as const)
   it(`refuses script dynamic ${op} ${rhs} at selection`, async () => {
-    const result = await compile(`function fs() { return "2"; } var n; n = 3; var y; y = 1; y ${op} ${rhs};`, {
+    const result = await compile(`${REFUSAL_PRELUDE} y ${op} ${rhs};`, {
       fileName: "compound-refusal.js",
       allowJs: true,
       target: "standalone",

@@ -41,6 +41,12 @@ export interface NativeRealmDescription {
    * (#7609) the global object where the program reads it. All but the global object are function values.
    */
   readonly intrinsics: readonly string[];
+  /**
+   * (#7489) Whether the realm seeds %Function.prototype%'s `caller` / `arguments` accessors: where some [[Get]],
+   * [[Set]] or HasProperty use can name one (its key, or a key not known at compile time). No other read reaches
+   * them: no Prepared program obtains %Function.prototype% itself.
+   */
+  readonly restrictedFunctionAccessors: boolean;
   readonly numberUses: readonly {
     readonly occurrence: number;
     readonly semanticOccurrence: number;
@@ -125,6 +131,11 @@ const readsPrototypeMethod = (use: Use): boolean =>
   METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
   (use.feature === "js.object.get" &&
     (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly (string | undefined)[]).includes(use.constantKey));
+/** (#7489) The keys of %Function.prototype%'s restricted accessors, and the uses whose key can name one. */
+const RESTRICTED_FUNCTION_KEYS: readonly (string | undefined)[] = ["caller", "arguments", undefined];
+const CHAIN_FEATURES: ReadonlySet<string> = new Set(["js.object.get", "js.object.set", "js.object.has"]);
+const readsRestrictedFunctionKey = (use: Use): boolean =>
+  CHAIN_FEATURES.has(use.feature) && RESTRICTED_FUNCTION_KEYS.includes(use.constantKey);
 /** Whether some function of `program` binds a caught value: the one way a thrown error becomes a program value. */
 function bindsCaughtValue(program: PreparedIrProgram): boolean {
   let binds = false;
@@ -220,6 +231,7 @@ function calculate(
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
     intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => (methods && METHOD_IDS.includes(id)) || families.has(id)),
+    restrictedFunctionAccessors: access.uses.some(readsRestrictedFunctionKey),
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

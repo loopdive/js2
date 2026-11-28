@@ -56,6 +56,7 @@ import {
   reserveNativeBooleanBoxResources,
   fillNativeBooleanBoxResources,
 } from "../../src/backend/wasmgc/resources/native-booleans.js";
+import { preparedCodeStrictness } from "../../src/compiler/prepared-code-strictness.js";
 
 export const GETTER_SOURCE = `export function run(seed: number): number {
   const captured = seed;
@@ -79,6 +80,8 @@ export function prepareGetterProgram(
       entrySource: source.entryFile,
       checker: source.checker,
       deferTopLevelInit: false,
+      // (#7489) The compiler's strictness, as `compiler.ts` passes it: a function object's own `caller` reads it.
+      codeStrictness: preparedCodeStrictness(undefined),
       policy: {
         target: "standalone",
         backend: "wasmgc",

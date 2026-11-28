@@ -33,13 +33,15 @@ export type NativeBuiltinFunctionBehavior =
   | "native";
 /**
  * (#7354 G1) A property value the kernel seeds: a string, (#7350 B3a) a number, or the realm's entry or object with
- * that catalog id.
+ * that catalog id; (#7489) or an accessor whose getter and setter are realm entries (`writable` is then false and
+ * unread).
  */
 export type NativeBuiltinPropertyValue =
   | { readonly kind: "string"; readonly value: string }
   | { readonly kind: "number"; readonly value: number }
-  | { readonly kind: "intrinsic"; readonly id: string };
-/** (#7354 G1) A non-enumerable data property the kernel seeds on an entry's bag or on a realm object. */
+  | { readonly kind: "intrinsic"; readonly id: string }
+  | { readonly kind: "accessor"; readonly get: string; readonly set: string };
+/** (#7354 G1) A non-enumerable property the kernel seeds on an entry's bag or on a realm object. */
 export interface NativeBuiltinProperty {
   readonly key: string;
   readonly value: NativeBuiltinPropertyValue;

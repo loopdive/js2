@@ -59,6 +59,7 @@ import {
   chainBuilders,
   conversionBuilders,
   knownKinds,
+  type AbortSite,
   type ChainBuilders,
 } from "./dynamic-value-chains.js";
 import {
@@ -104,19 +105,21 @@ function unadmittedValue(
 
 /**
  * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
- * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
+ * registry: (#7354 Str2) ToString's literal arms are string allocation sites. (#7486) `abortSite` mints the id of each
+ * run-time abort site, where the build records them.
  */
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
   program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
+  abortSite: AbortSite = () => undefined,
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
   const definitions = valueDefinitions(fn);
   const admitted = admittedKinds(program);
   const kinds = knownKinds(fn, types, definitions, admitted);
-  const builders = chainBuilders(fn, allocations, kinds, admitted);
+  const builders = chainBuilders(fn, allocations, kinds, admitted, abortSite);
   const { intrinsic, fresh, kindTest, anyKind, text, kindChain } = builders;
   const errors = holdsFamily(program, "error");
   const conversions = conversionBuilders(builders, program);
@@ -368,7 +371,12 @@ function objectTag(
   return [
     ...b.realmIntrinsic(GLOBAL_OBJECT_ID, global),
     b.intrinsic(instr, "js.value.strict_eq", [instr.value, global], isGlobal),
-    b.branch(isGlobal, (r) => [b.intrinsic(instr, "js.value.unsupported", [], r)], ordinary, result),
+    b.branch(
+      isGlobal,
+      (r) => b.abortText(instr, "Object.prototype.toString of the global object", r),
+      ordinary,
+      result,
+    ),
   ];
 }
 

@@ -51,7 +51,7 @@ describe("#7609 A1 — script-level this is the global object", () => {
     ["a for-in over it", "var o = {}; var n = 0; for (var k in this) n++;"],
   ])(
     "ends %s at the run-time abort",
-    (_label, source) => abortsAtRunTime(source, runnerOptions(), (body) => runInNewContext(body, {})),
+    (_label, source) => abortsAtRunTime(source, runnerOptions(), undefined, (body) => runInNewContext(body, {})),
     SLOW,
   );
 });

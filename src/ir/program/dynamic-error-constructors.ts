@@ -58,6 +58,9 @@ export function dynamicErrorConstruction(
   ];
 }
 
+/** (#7486) The reason of the walk's run-time abort. */
+const ERROR_WALK = "a function's [[Prototype]] walk for %Error%";
+
 /**
  * The answer of a walk over a function's [[Prototype]] chain for `prototype` (OrdinaryHasInstance's step 6,
  * isPrototypeOf's step 3): `no` (false), but where `errors` and `prototype` is `%Error%` the run-time abort, which ends
@@ -77,6 +80,6 @@ export function functionChainAnswer(
   return [
     ...b.realmIntrinsic(ERROR_ID, error),
     b.intrinsic(instr, "js.value.strict_eq", [prototype, error], same),
-    b.branch(same, (s) => [...b.abort(instr, b.fresh()), ...no(s)], no, r, resultType),
+    b.branch(same, (s) => [...b.abort(instr, ERROR_WALK, b.fresh()), ...no(s)], no, r, resultType),
   ];
 }

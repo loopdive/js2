@@ -12,9 +12,11 @@ import { instantiatePreparedArtifact } from "../../src/test262/test262-prepared-
 import {
   compile,
   requiredPreparedAbortBodies,
+  requiredPreparedAbortSites,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../../src/test262/test262-prepared-entry.js";
+import { abortSiteOf } from "../../scripts/lib/wasm-exn-render.mjs";
 
 export const preparedOptions = (): Test262CompileOptions =>
   ({
@@ -81,13 +83,16 @@ export async function runPrepared(
 }
 
 /**
- * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns
- * (`node`: (#7609) a script in a fresh realm, for a program that writes the global object). The realm's RuntimeError
- * class is not this vitest context's, so the trap is matched by its class name.
+ * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns. The
+ * realm's RuntimeError class is not this vitest context's, so the trap is matched by its class name. (#7486) With
+ * `reason`, the abort is the site with that reason, read as the census reads it (`abortSiteOf`): the options must
+ * defer the top-level code, so the instance exists when it traps. `node`: (#7609) a script in a fresh realm, for a
+ * program that reads the global object.
  */
 export async function abortsAtRunTime(
   source: string,
   options: Test262CompileOptions = preparedOptions(),
+  reason?: string,
   node: (source: string) => unknown = (body) => new Function(body)(),
 ): Promise<void> {
   expect(() => node(source)).not.toThrow();
@@ -95,15 +100,17 @@ export async function abortsAtRunTime(
   const result = await compile(source, options);
   expect(errors(result)).toEqual([]);
   expect(WebAssembly.validate(result.binary)).toBe(true);
+  let instance: WebAssembly.Instance | undefined;
   let trap: unknown;
   try {
-    const exports = instantiatePreparedArtifact(result).instance.exports;
-    (exports.__module_init as (() => void) | undefined)?.();
+    instance = instantiatePreparedArtifact(result).instance;
+    (instance.exports.__module_init as (() => void) | undefined)?.();
   } catch (error) {
     trap = error;
   }
   expect((trap as Error | undefined)?.constructor.name).toBe("RuntimeError");
   expect((trap as Error).message).toBe("unreachable");
+  if (reason !== undefined) expect(abortSiteOf(instance, requiredPreparedAbortSites(result))?.detail).toBe(reason);
 }
 
 /** node's `out` for `body` (a script that assigns the string `out`). */

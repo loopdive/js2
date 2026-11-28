@@ -42,7 +42,7 @@ describe("#7609 A1 — the sealed global object", () => {
     ["Object.prototype.toString of it (its tag is the host's)", "var v = Object.prototype.toString.call(this);"],
   ])(
     "ends %s at the run-time abort",
-    (_label, source) => abortsAtRunTime(source, runnerOptions(), (body) => runInNewContext(body, {})),
+    (_label, source) => abortsAtRunTime(source, runnerOptions(), undefined, (body) => runInNewContext(body, {})),
     SLOW,
   );
 });

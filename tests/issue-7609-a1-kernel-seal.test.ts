@@ -63,7 +63,7 @@ describe("#7609 A1 — the global object passed to the realm kernel as data", ()
   ])(
     "ends %s at the run-time abort",
     (_label, source) =>
-      abortsAtRunTime(`${LIVE_FUNCTIONS} ${source}`, runnerOptions(), (body) => runInNewContext(body, {})),
+      abortsAtRunTime(`${LIVE_FUNCTIONS} ${source}`, runnerOptions(), undefined, (body) => runInNewContext(body, {})),
     SLOW,
   );
 });

@@ -1456,7 +1456,7 @@ function materializePhysicalProgram(
   fillStartupAdapter(startAdapter, plan, slots, reservations);
   publishPhysicalExports(plan, abi, reconciliation);
 
-  if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
+  if (nativePack) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
   if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
   if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);

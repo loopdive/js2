@@ -186,10 +186,18 @@ const accessorKeys = (...intrinsicIds: readonly string[]): ReadonlySet<string> =
 export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%");
 
 /**
- * (#7354 G1) The accessor keys `Function.prototype` adds on a function's chain: `caller` and `arguments`, whose
- * setter is %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties).
+ * (#7354 G1, #7489) The accessor keys `Function.prototype` adds on a function's chain, `caller` and `arguments`, whose
+ * getter and setter are %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties). The realm's Function.prototype
+ * holds both, and a sloppy plain function owns a `caller` (`null`, `js.object.init-function`).
  */
-export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
+const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
+
+/**
+ * (#7489) What an access of a function's `arguments` lacks: a sloppy function's own `arguments` is V8's live arguments
+ * object, which no Prepared function owns, so the realm's accessor would answer a sloppy function with a TypeError.
+ */
+export const functionOwnKeyGap = (name: string): string | undefined =>
+  name === "arguments" ? "a sloppy function's own arguments object" : undefined;
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [
@@ -249,12 +257,13 @@ const UNPOPULATED_OBJECT_PROTOTYPE_KEYS = new Set(
 );
 
 /**
- * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype: every key the
- * catalog gives them but `length` and `name`, which every function value owns from its creation.
+ * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype that the realm
+ * does not hold: every key the catalog gives them but `length` and `name`, which every function value owns from its
+ * creation, and (#7489) Function.prototype's accessors, which the realm holds.
  */
 const FUNCTION_REACHABLE_KEYS = new Set(
   [...realmStringKeys("%Function.prototype%"), ...UNPOPULATED_OBJECT_PROTOTYPE_KEYS].filter(
-    (key) => key !== "length" && key !== "name",
+    (key) => key !== "length" && key !== "name" && !FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(key),
   ),
 );
 
