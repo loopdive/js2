@@ -1,0 +1,595 @@
+--- base/src/ir/realm-member-writes.ts
++++ v3/src/ir/realm-member-writes.ts
+@@ -10,13 +10,20 @@
+  * list; such a read counts as a write of every key on its operand.
+  */
+ import { ts } from "../ts-api.js";
+-import { isNonReferenceName, occurrenceIsWriteTarget, skipOuterExpressions } from "../shared/binding-writes.js";
++import { occurrenceIsWriteTarget, skipOuterExpressions } from "../shared/binding-writes.js";
++import { KEY_VALUES_CAP, keyValues, widen, type KeyValue, type KeyValues } from "./key-values.js";
+ 
+ /** One store or definition: its receiver and its key, each `undefined` where the source does not spell it. */
+-export interface MemberWrite {
+-  readonly receiver: ts.Expression | undefined;
+-  readonly key: string | undefined;
+-}
++export type MemberWrite =
++  | { readonly receiver: ts.Expression | undefined; readonly key: string | undefined }
++  | { readonly computedKey: ts.Expression };
++
++/** SCRATCH v3: one binding or assignment of a name. */
++export type NameBinding =
++  | { readonly kind: "fresh" }
++  | { readonly kind: "initializer"; readonly value: ts.Expression }
++  | { readonly kind: "assigned"; readonly value: ts.Expression }
++  | { readonly kind: "any" };
+ 
+ /** A write of every key on any object. */
+ const EVERY_KEY: MemberWrite = { receiver: undefined, key: undefined };
+@@ -152,12 +159,16 @@
+  * (`var d = Object.defineProperty`, `o["assign"]`, `.call`), a `with` statement and a reference to `Reflect`.
+  */
+ export function memberWrites(node: ts.Node, write: (write: MemberWrite) => void): void {
+-  if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && occurrenceIsWriteTarget(node))
++  if (ts.isElementAccessExpression(node) && !occurrenceIsWriteTarget(node) && literalKey(node.argumentExpression) === undefined)
++    write({ computedKey: node.argumentExpression });
++  else if (ts.isComputedPropertyName(node)) {
++    if (literalKey(node.expression) === undefined && isPatternKey(node)) write({ computedKey: node.expression });
++  } else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && occurrenceIsWriteTarget(node))
+     write({
+       receiver: node.expression,
+       key: ts.isPropertyAccessExpression(node) ? node.name.text : literalKey(node.argumentExpression),
+     });
+-  else if (ts.isWithStatement(node) || (ts.isIdentifier(node) && node.text === "Reflect" && !isNonReferenceName(node)))
++  else if (ts.isWithStatement(node) || ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === "Reflect"))
+     write(EVERY_KEY);
+   else if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+     const writer = KEY_WRITERS.get(node.text);
+@@ -175,6 +186,78 @@
+   }
+ }
+ 
++function isPatternKey(name: ts.ComputedPropertyName): boolean {
++  const property = name.parent;
++  return (
++    ts.isBindingElement(property) ||
++    (ts.isPropertyAssignment(property) && property.name === name && occurrenceIsWriteTarget(property.parent))
++  );
++}
++
++const namesWriter = (value: KeyValue): boolean =>
++  typeof value === "string" && (value === "Reflect" || KEY_WRITERS.has(value));
++
++/**
++ * SCRATCH v3: the least fixed point of the names' key values, by a dependency-indexed worklist. A name is a candidate
++ * when it is not rebound and every record stores a value; any other name is unknown. Evaluating a name's records
++ * notes every name the evaluation looks up; when a name's set grows (or becomes unknown), only the names whose last
++ * evaluation looked it up are queued again.
++ */
++function nameKeyValues(
++  bindings: ReadonlyMap<string, readonly NameBinding[]>,
++  rebound: ReadonlySet<string>,
++): (name: ts.Identifier) => KeyValues {
++  const stored = new Map<string, ts.Expression[]>();
++  for (const [name, list] of bindings) {
++    if (rebound.has(name)) continue;
++    const values: ts.Expression[] = [];
++    for (const binding of list)
++      if (binding.kind === "initializer" || binding.kind === "assigned") values.push(binding.value);
++    if (values.length === list.length) stored.set(name, values);
++  }
++  const env = new Map<string, KeyValues>([...stored.keys()].map((name) => [name, new Set<KeyValue>()]));
++  const readers = new Map<string, Set<string>>();
++  const queue = new Set(stored.keys());
++  for (const name of queue) {
++    queue.delete(name);
++    const old = env.get(name);
++    if (old === undefined) continue;
++    const lookup = (id: ts.Identifier): KeyValues => {
++      const set = readers.get(id.text) ?? new Set<string>();
++      readers.set(id.text, set.add(name));
++      return env.has(id.text) ? env.get(id.text) : undefined;
++    };
++    let next: KeyValues = new Set<KeyValue>();
++    for (const value of stored.get(name)!) {
++      const values = widen(keyValues(value, lookup));
++      next = values && next ? new Set([...next, ...values]) : undefined;
++      if (next === undefined || next.size > KEY_VALUES_CAP) {
++        next = undefined;
++        break;
++      }
++    }
++    if (next !== undefined && next.size === old.size) continue;
++    env.set(name, next);
++    readers.get(name)?.forEach((reader) => queue.add(reader));
++  }
++  return (id) => (env.has(id.text) ? env.get(id.text) : undefined);
++}
++
++function freshNamesOf(bindings: ReadonlyMap<string, readonly NameBinding[]>): Map<string, Freshness> {
++  const fresh = new Map<string, Freshness>();
++  for (const [name, list] of bindings) {
++    let created = false, ok = true;
++    for (const b of list) {
++      if (b.kind === "fresh") continue;
++      const f = b.kind === "initializer" ? freshnessOf(b.value) : undefined;
++      if (f === undefined) { ok = false; break; }
++      if (f === "created") created = true;
++    }
++    if (ok) fresh.set(name, created ? "created" : "fresh");
++  }
++  return fresh;
++}
++
+ /**
+  * The keys the writes of a program may write on a realm object, or `undefined` for every key. `freshNames` are the
+  * names every binding of which holds a fresh value and none of which is assigned, by freshness (`"created"` when a
+@@ -186,11 +269,13 @@
+  * created values) until none is written.
+  */
+ export function realmWrittenKeys(
+-  writes: readonly MemberWrite[],
+-  freshNames: ReadonlyMap<string, Freshness>,
++  allWrites: readonly MemberWrite[],
++  bindings: ReadonlyMap<string, readonly NameBinding[]>,
+   createIsBuiltin: boolean,
+ ): ReadonlySet<string> | undefined {
+-  const fresh = new Map(freshNames);
++  const writes = allWrites.filter((w): w is Extract<MemberWrite, { receiver: unknown }> => "receiver" in w);
++  const reads = allWrites.flatMap((w) => ("computedKey" in w ? [w.computedKey] : []));
++  const fresh = freshNamesOf(bindings);
+   let created = createIsBuiltin;
+   const holdsFresh = (receiver: ts.Expression): boolean => {
+     const node = skipOuterExpressions(receiver);
+@@ -206,7 +291,11 @@
+     }
+     const rebound = [...fresh.keys()].filter((name) => keys.has(name));
+     const createWritten = created && keys.has("create");
+-    if (rebound.length === 0 && !createWritten) return keys;
++    if (rebound.length === 0 && !createWritten) {
++      if (process.env.RULE === "base") return keys;
++      const names = nameKeyValues(bindings, keys);
++      return reads.every((key) => { const v = keyValues(key, names); return v !== undefined && ![...v].some(namesWriter); }) ? keys : undefined;
++    }
+     rebound.forEach((name) => fresh.delete(name));
+     if (createWritten) created = false;
+   }
+--- base/src/ir/builtin-global-binding.ts
++++ v3/src/ir/builtin-global-binding.ts
+@@ -20,12 +20,11 @@
+   skipOuterExpressions,
+ } from "../shared/binding-writes.js";
+ import {
+-  freshnessOf,
+   memberWrites,
+   objectCreateCallee,
+   realmWrittenKeys,
+-  type Freshness,
+   type MemberWrite,
++  type NameBinding,
+ } from "./realm-member-writes.js";
+ import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
+ 
+@@ -56,10 +55,73 @@
+     targetNames(target.left, into);
+ }
+ 
+-/** The names a binding pattern or name declares. */
+-function boundNames(name: ts.BindingName, bind: (name: string) => void): void {
+-  if (ts.isIdentifier(name)) bind(name.text);
+-  else for (const element of name.elements) if (!ts.isOmittedExpression(element)) boundNames(element.name, bind);
++const FRESH: NameBinding = { kind: "fresh" };
++const ANY: NameBinding = { kind: "any" };
++
++/** The declarations whose `name` binds no value: a member key, a type, an export name, a meta property. */
++const BINDS_NO_VALUE: ReadonlySet<ts.SyntaxKind> = new Set([
++  ts.SyntaxKind.PropertyAssignment,
++  ts.SyntaxKind.ShorthandPropertyAssignment,
++  ts.SyntaxKind.PropertyDeclaration,
++  ts.SyntaxKind.MethodDeclaration,
++  ts.SyntaxKind.GetAccessor,
++  ts.SyntaxKind.SetAccessor,
++  ts.SyntaxKind.PropertySignature,
++  ts.SyntaxKind.MethodSignature,
++  ts.SyntaxKind.EnumMember,
++  ts.SyntaxKind.InterfaceDeclaration,
++  ts.SyntaxKind.TypeAliasDeclaration,
++  ts.SyntaxKind.TypeParameter,
++  ts.SyntaxKind.PropertyAccessExpression,
++  ts.SyntaxKind.ExportSpecifier,
++  ts.SyntaxKind.NamespaceExport,
++  ts.SyntaxKind.MetaProperty,
++  ts.SyntaxKind.JsxAttribute,
++  ts.SyntaxKind.ImportAttribute,
++]);
++
++/** A variable of a for-in / for-of head: it holds the loop's values, whatever its (Annex B) initializer. */
++function isLoopHeadVariable(declaration: ts.VariableDeclaration): boolean {
++  const list = declaration.parent;
++  return (ts.isForInStatement(list.parent) || ts.isForOfStatement(list.parent)) && list.parent.initializer === list;
++}
++
++/**
++ * The binding `name` declares, or `undefined` when it declares none. A function or class name is `fresh`, a variable
++ * with an initializer outside a loop head stores it, and every other declaration (a parameter, a pattern element, a
++ * `catch` variable, an import, an enum, a namespace, …) may hold any value.
++ */
++function declaredBinding(name: ts.Identifier): NameBinding | undefined {
++  const declaration = name.parent;
++  if ((declaration as { readonly name?: ts.Node }).name !== name || BINDS_NO_VALUE.has(declaration.kind)) return undefined;
++  if (
++    ts.isFunctionDeclaration(declaration) ||
++    ts.isFunctionExpression(declaration) ||
++    ts.isClassDeclaration(declaration) ||
++    ts.isClassExpression(declaration)
++  )
++    return FRESH;
++  if (ts.isVariableDeclaration(declaration) && declaration.initializer && !isLoopHeadVariable(declaration))
++    return { kind: "initializer", value: declaration.initializer };
++  return ANY;
++}
++
++/** The value an assignment `x op= e` stores in `x`: `e` through a chain of `=`, `e` for a logical assignment. */
++function assignedValue(assignment: ts.BinaryExpression): ts.Expression {
++  switch (assignment.operatorToken.kind) {
++    case ts.SyntaxKind.EqualsToken: {
++      const right = skipOuterExpressions(assignment.right);
++      return ts.isBinaryExpression(right) && right.operatorToken.kind === ts.SyntaxKind.EqualsToken
++        ? assignedValue(right)
++        : assignment.right;
++    }
++    case ts.SyntaxKind.BarBarEqualsToken:
++    case ts.SyntaxKind.AmpersandAmpersandEqualsToken:
++    case ts.SyntaxKind.QuestionQuestionEqualsToken:
++      return assignment.right;
++    default:
++      return assignment;
++  }
+ }
+ 
+ /**
+@@ -79,63 +141,63 @@
+ }
+ 
+ /**
+- * One walk over `sourceFiles`: `taken`, every name they declare (at any level) or assign; (#7350) `escaped`, every
+- * name some reference of which lets its value escape ({@link keepsValue}); `writes`, the stores and definitions they
+- * make (`memberWrites`); `freshNames`, the names only ever bound to a fresh value, by freshness; `createCallees`, the
+- * `Object` of every `Object.create(…)` call.
++ * One walk over `sourceFiles`: `bindings`, every binding and assignment of a name, by text ({@link declaredBinding},
++ * the implicit `arguments` of every function that is no arrow function, assignments, `++` / `--`, `delete` and for-in /
++ * for-of targets); (#7350) `escaped`, every name some reference of which lets its value escape ({@link keepsValue});
++ * `writes`, the stores and definitions they make (`memberWrites`); `createCallees`, the `Object` of every
++ * `Object.create(…)` call.
+  */
+ function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
+-  readonly taken: ReadonlySet<string>;
++  readonly bindings: ReadonlyMap<string, readonly NameBinding[]>;
+   readonly escaped: ReadonlySet<string>;
+   readonly writes: readonly MemberWrite[];
+-  readonly freshNames: ReadonlyMap<string, Freshness>;
+   readonly createCallees: readonly ts.Identifier[];
+ } {
+-  const declared = new Set<string>();
+-  const assigned = new Set<string>();
+-  const mayHoldAny = new Set<string>();
+-  const created = new Set<string>();
++  const bindings = new Map<string, NameBinding[]>();
+   const escaped = new Set<string>();
+   const writes: MemberWrite[] = [];
+   const createCallees: ts.Identifier[] = [];
+-  const declare = (name: string, freshness: Freshness | undefined): void => {
+-    declared.add(name);
+-    if (freshness === undefined) mayHoldAny.add(name);
+-    else if (freshness === "created") created.add(name);
++  const bind = (name: string, binding: NameBinding): void => {
++    const list = bindings.get(name);
++    if (list) list.push(binding);
++    else bindings.set(name, [binding]);
++  };
++  const targetsAny = (target: ts.Expression): void => {
++    const names = new Set<string>();
++    targetNames(target, names);
++    names.forEach((name) => bind(name, ANY));
++  };
++  const assigns = (target: ts.Expression, value: ts.Expression): void => {
++    const name = skipOuterExpressions(target);
++    if (ts.isIdentifier(name)) bind(name.text, { kind: "assigned", value });
++    else targetsAny(target);
+   };
+-  const declareAny = (name: string): void => declare(name, undefined);
+   const visit = (node: ts.Node): void => {
+     // A type names no value; `extends X` is an expression and is visited.
+     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
+-    if (ts.isIdentifier(node) && !isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
++    if (ts.isIdentifier(node)) {
++      const binding = declaredBinding(node);
++      if (binding) bind(node.text, binding);
++      if (!isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
++    }
+     memberWrites(node, (write) => writes.push(write));
+     const createCallee = ts.isCallExpression(node) ? objectCreateCallee(node) : undefined;
+     if (createCallee) createCallees.push(createCallee);
+-    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isFunctionExpression(node)) && node.name)
+-      declare(node.name.text, "fresh");
+-    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name))
+-      declare(node.name.text, node.initializer && freshnessOf(node.initializer));
+-    else if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
+-      boundNames(node.name, declareAny);
+-    else if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) targetNames(node.left, assigned);
++    if (ts.isFunctionLike(node) && !ts.isArrowFunction(node) && (node as { readonly body?: ts.Node }).body)
++      bind("arguments", ANY);
++    if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) assigns(node.left, assignedValue(node));
+     else if (
+       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+     )
+-      targetNames(node.operand, assigned);
+-    else if (ts.isDeleteExpression(node)) targetNames(node.expression, assigned);
+-    else if (
+-      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+-      !ts.isVariableDeclarationList(node.initializer)
+-    )
+-      targetNames(node.initializer, assigned);
++      assigns(node.operand, node);
++    else if (ts.isDeleteExpression(node)) targetsAny(node.expression);
++    else if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && !ts.isVariableDeclarationList(node.initializer))
++      targetsAny(node.initializer);
+     ts.forEachChild(node, visit);
+   };
+   sourceFiles.forEach(visit);
+-  const freshNames = new Map<string, Freshness>();
+-  for (const name of declared)
+-    if (!mayHoldAny.has(name) && !assigned.has(name)) freshNames.set(name, created.has(name) ? "created" : "fresh");
+-  return { taken: new Set([...declared, ...assigned]), escaped, writes, freshNames, createCallees };
++  return { bindings, escaped, writes, createCallees };
+ }
+ 
+ interface BuiltinGlobalFacts {
+@@ -154,11 +216,11 @@
+   const known = programFacts.get(sourceFiles);
+   if (known) return known;
+   const libOnly = makeIrAmbientBindingPredicate(checker, "every-but-expando");
+-  const { taken, escaped, writes, freshNames, createCallees } = bindingFacts(sourceFiles);
+-  const pristine = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
++  const { bindings, escaped, writes, createCallees } = bindingFacts(sourceFiles);
++  const pristine = (identifier: ts.Identifier) => !bindings.has(identifier.text) && libOnly(identifier);
+   // An `Object.create(…)` result is fresh while `create` folds: `Object` pristine and never escaping, `create` unwritten.
+   const createIsBuiltin = !escaped.has("Object") && createCallees.every(pristine);
+-  const writtenKeys = realmWrittenKeys(writes, freshNames, createIsBuiltin);
++  const writtenKeys = realmWrittenKeys(writes, bindings, createIsBuiltin);
+   const facts: BuiltinGlobalFacts = {
+     pristine,
+     foldsBuiltinMember: (identifier) => {
+--- base/src/ir/class-accessor-safety.ts
++++ v3/src/ir/class-accessor-safety.ts
+@@ -1,6 +1,7 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ 
+ import { ts } from "../ts-api.js";
++import { exactKey, keyValues } from "./key-values.js";
+ import type { IrClassMethodDescriptor } from "./nodes.js";
+ import type { IrStructuralSelectorAccessorAbiEvidence } from "./select.js";
+ 
+@@ -436,65 +437,9 @@
+     : undefined;
+ }
+ 
+-type LiteralComputedKeyValue = string | number;
+-
+-function literalOnlyComputedKeyValue(expression: ts.Expression): LiteralComputedKeyValue | undefined {
+-  let candidate = expression;
+-  while (
+-    ts.isParenthesizedExpression(candidate) ||
+-    ts.isAsExpression(candidate) ||
+-    ts.isTypeAssertionExpression(candidate) ||
+-    ts.isSatisfiesExpression(candidate) ||
+-    ts.isNonNullExpression(candidate)
+-  ) {
+-    candidate = candidate.expression;
+-  }
+-  if (ts.isStringLiteral(candidate) || ts.isNoSubstitutionTemplateLiteral(candidate)) return candidate.text;
+-  if (ts.isNumericLiteral(candidate)) return Number(candidate.text);
+-  if (ts.isPrefixUnaryExpression(candidate)) {
+-    const operand = literalOnlyComputedKeyValue(candidate.operand);
+-    if (typeof operand !== "number") return undefined;
+-    if (candidate.operator === ts.SyntaxKind.PlusToken) return operand;
+-    if (candidate.operator === ts.SyntaxKind.MinusToken) return -operand;
+-    return undefined;
+-  }
+-  if (ts.isTemplateExpression(candidate)) {
+-    let value = candidate.head.text;
+-    for (const span of candidate.templateSpans) {
+-      const substitution = literalOnlyComputedKeyValue(span.expression);
+-      if (substitution === undefined) return undefined;
+-      value += String(substitution) + span.literal.text;
+-    }
+-    return value;
+-  }
+-  if (!ts.isBinaryExpression(candidate)) return undefined;
+-  const left = literalOnlyComputedKeyValue(candidate.left);
+-  const right = literalOnlyComputedKeyValue(candidate.right);
+-  if (left === undefined || right === undefined) return undefined;
+-  if (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+-    return typeof left === "string" || typeof right === "string" ? String(left) + String(right) : left + right;
+-  }
+-  if (typeof left !== "number" || typeof right !== "number") return undefined;
+-  switch (candidate.operatorToken.kind) {
+-    case ts.SyntaxKind.MinusToken:
+-      return left - right;
+-    case ts.SyntaxKind.AsteriskToken:
+-      return left * right;
+-    case ts.SyntaxKind.SlashToken:
+-      return right === 0 ? undefined : left / right;
+-    case ts.SyntaxKind.PercentToken:
+-      return right === 0 ? undefined : left % right;
+-    case ts.SyntaxKind.AsteriskAsteriskToken:
+-      return left ** right;
+-    default:
+-      return undefined;
+-  }
+-}
+-
+ /** Resolve a call-site key expression without evaluating or following bindings. */
+ export function exactPreparedAccessorExpressionKey(expression: ts.Expression): string | undefined {
+-  const value = literalOnlyComputedKeyValue(expression);
+-  return value === undefined ? undefined : String(value);
++  return exactKey(keyValues(expression));
+ }
+ 
+ /** Resolve only literal/pure-literal computed names with exact JS stringification. */
+--- /dev/null
++++ v3/src/ir/key-values.ts
+@@ -0,0 +1,152 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/**
++ * #7628 SCRATCH v3: the values a key expression may evaluate to. One evaluator for the realm write scan (a set, names
++ * resolved by the caller) and the Prepared accessor key (one exact value, no names).
++ */
++import { ts } from "../ts-api.js";
++import { skipOuterExpressions } from "../shared/binding-writes.js";
++
++/** Any number or BigInt. */
++export const SOME_NUMBER = Symbol("some number");
++/** Any string longer than the longest key writer name. */
++export const LONG_STRING = Symbol("long string");
++export type KeyValue = string | number | typeof SOME_NUMBER | typeof LONG_STRING;
++/** The values, or `undefined` for any value. */
++export type KeyValues = ReadonlySet<KeyValue> | undefined;
++
++export const KEY_VALUES_CAP = 64;
++/** "getOwnPropertyDescriptors".length */
++export const LONGEST_WRITER_NAME = 25;
++
++const ARITHMETIC = new Set<ts.SyntaxKind>([
++  ts.SyntaxKind.MinusToken,
++  ts.SyntaxKind.AsteriskToken,
++  ts.SyntaxKind.SlashToken,
++  ts.SyntaxKind.PercentToken,
++  ts.SyntaxKind.AsteriskAsteriskToken,
++  ts.SyntaxKind.LessThanLessThanToken,
++  ts.SyntaxKind.GreaterThanGreaterThanToken,
++  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
++  ts.SyntaxKind.AmpersandToken,
++  ts.SyntaxKind.BarToken,
++  ts.SyntaxKind.CaretToken,
++]);
++const COMPOUND = new Map<ts.SyntaxKind, ts.SyntaxKind>([
++  [ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.PlusToken],
++  [ts.SyntaxKind.MinusEqualsToken, ts.SyntaxKind.MinusToken],
++  [ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.AsteriskToken],
++  [ts.SyntaxKind.SlashEqualsToken, ts.SyntaxKind.SlashToken],
++  [ts.SyntaxKind.PercentEqualsToken, ts.SyntaxKind.PercentToken],
++  [ts.SyntaxKind.AsteriskAsteriskEqualsToken, ts.SyntaxKind.AsteriskAsteriskToken],
++  [ts.SyntaxKind.LessThanLessThanEqualsToken, ts.SyntaxKind.LessThanLessThanToken],
++  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken, ts.SyntaxKind.GreaterThanGreaterThanToken],
++  [ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken, ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken],
++  [ts.SyntaxKind.AmpersandEqualsToken, ts.SyntaxKind.AmpersandToken],
++  [ts.SyntaxKind.BarEqualsToken, ts.SyntaxKind.BarToken],
++  [ts.SyntaxKind.CaretEqualsToken, ts.SyntaxKind.CaretToken],
++]);
++
++const isNumber = (value: KeyValue): boolean => typeof value === "number" || value === SOME_NUMBER;
++
++/** `+` of one pair; `undefined` when a string meets `SOME_NUMBER`. */
++function plusOne(left: KeyValue, right: KeyValue): KeyValue | undefined {
++  if (typeof left === "number" && typeof right === "number") return left + right;
++  if (isNumber(left) && isNumber(right)) return SOME_NUMBER;
++  if (left === SOME_NUMBER || right === SOME_NUMBER) return undefined;
++  if (left === LONG_STRING || right === LONG_STRING) return LONG_STRING;
++  return String(left) + String(right);
++}
++
++/** The pairwise `combine` of two sets, unknown past the cap (checked as the product grows). */
++function product(
++  left: KeyValues,
++  right: KeyValues,
++  combine: (left: KeyValue, right: KeyValue) => KeyValue | undefined,
++): KeyValues {
++  if (!left || !right) return undefined;
++  const out = new Set<KeyValue>();
++  for (const a of left)
++    for (const b of right) {
++      const value = combine(a, b);
++      if (value === undefined) return undefined;
++      out.add(value);
++      if (out.size > KEY_VALUES_CAP) return undefined;
++    }
++  return out;
++}
++
++function arithmeticOne(operator: ts.SyntaxKind, left: KeyValue, right: KeyValue): KeyValue {
++  if (typeof left !== "number" || typeof right !== "number") return SOME_NUMBER;
++  switch (operator) {
++    case ts.SyntaxKind.MinusToken:
++      return left - right;
++    case ts.SyntaxKind.AsteriskToken:
++      return left * right;
++    case ts.SyntaxKind.SlashToken:
++      return right === 0 ? SOME_NUMBER : left / right;
++    case ts.SyntaxKind.PercentToken:
++      return right === 0 ? SOME_NUMBER : left % right;
++    case ts.SyntaxKind.AsteriskAsteriskToken:
++      return left ** right;
++    default:
++      return SOME_NUMBER;
++  }
++}
++
++const ONE_SOME_NUMBER: KeyValues = new Set([SOME_NUMBER]);
++
++/** The values of `expression`; `nameValues` answers a name (by default: any value). */
++export function keyValues(
++  expression: ts.Expression,
++  nameValues: (name: ts.Identifier) => KeyValues = () => undefined,
++): KeyValues {
++  const node = skipOuterExpressions(expression);
++  const values = (operand: ts.Expression) => keyValues(operand, nameValues);
++  if (ts.isStringLiteralLike(node)) return new Set([node.text]);
++  if (ts.isNumericLiteral(node)) return new Set([Number(node.text)]);
++  if (ts.isIdentifier(node)) return nameValues(node);
++  if (ts.isTemplateExpression(node)) {
++    let acc: KeyValues = new Set([node.head.text]);
++    for (const span of node.templateSpans)
++      acc = product(product(acc, values(span.expression), plusOne), new Set([span.literal.text]), plusOne);
++    return acc;
++  }
++  if (ts.isPostfixUnaryExpression(node)) return ONE_SOME_NUMBER;
++  if (ts.isPrefixUnaryExpression(node)) {
++    if (node.operator === ts.SyntaxKind.ExclamationToken) return undefined;
++    const operand = node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.PlusToken
++      ? values(node.operand)
++      : undefined;
++    const sign = node.operator === ts.SyntaxKind.MinusToken ? -1 : 1;
++    return operand
++      ? new Set([...operand].map((v) => (typeof v === "number" ? sign * v : SOME_NUMBER)))
++      : ONE_SOME_NUMBER;
++  }
++  if (!ts.isBinaryExpression(node)) return undefined;
++  const compound = COMPOUND.get(node.operatorToken.kind);
++  // A compound assignment stores into a reference: `1 += 1` is an early error, not 2.
++  if (compound !== undefined && !ts.isIdentifier(skipOuterExpressions(node.left))) return undefined;
++  const operator = compound ?? node.operatorToken.kind;
++  if (operator === ts.SyntaxKind.PlusToken) return product(values(node.left), values(node.right), plusOne);
++  if (!ARITHMETIC.has(operator)) return undefined;
++  const left = values(node.left) ?? ONE_SOME_NUMBER;
++  const right = values(node.right) ?? ONE_SOME_NUMBER;
++  return product(left, right, (a, b) => arithmeticOne(operator, a, b));
++}
++
++/** The one exact value of `values` as a key, or `undefined`. */
++export function exactKey(values: KeyValues): string | undefined {
++  if (values?.size !== 1) return undefined;
++  const [value] = values;
++  return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
++}
++
++/** `values` as a name holds them: a long string is `LONG_STRING`, a number `SOME_NUMBER`. */
++export function widen(values: KeyValues): KeyValues {
++  if (!values) return undefined;
++  return new Set(
++    [...values].map((v) =>
++      typeof v === "number" ? SOME_NUMBER : typeof v === "string" && v.length > LONGEST_WRITER_NAME ? LONG_STRING : v,
++    ),
++  );
++}

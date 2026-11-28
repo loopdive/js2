@@ -67,7 +67,7 @@ folding. Lost rows:
 
 The naive rule is `RULE=naive` of `plan/samples/7628/candidates.patch`.
 
-## Implementation Plan (2026-11-28, revised after PRV-7628)
+## Implementation Plan (2026-11-28, revised after PRV-7628 rounds 1 and 2)
 
 Measured on PR #7549's head `b7cfc6257f` (#7350 slice 1 + #7354 O2). `origin/main` was `234cf4402a` (#7556 merged
 03:26Z). It does not yet contain slice 1: `realm-member-writes.ts` and the slice 1 test exist only on the PR branch.
@@ -147,18 +147,46 @@ an exact string, an exact number, `SOME_NUMBER` (any Number or BigInt) or `LONG_
   Without the length token, `s = s + "x"` in a loop goes past 64 and stops the fold; with it, it settles at 27
   elements and folds.
 
-**Names (blocker 2).** `bindingFacts` records every binding and assignment of a name, by text (`NameBinding`, below).
-A name is known only when it has at least one record and every record is an initializer or an assignment. It is
-unknown when:
+**Names (blocker 2; PRV-7628 round 2, N1 and N2).** `bindingFacts` records every binding and assignment of a name,
+by text (`NameBinding`, below). A name is known only when it has at least one record and every record is an
+initializer or an assignment. It is unknown when:
 
 - it has no record: an undeclared or host global (`Object["define" + suffix]`);
-- some record is `any`: a parameter, a pattern element, a for-in / for-of head, a `catch` variable, a `var` without
-  initializer, an import (`ImportClause`, `ImportSpecifier`, namespace import, `import x =`), the implicit `arguments`
-  of every function that is no arrow function, a destructuring / `delete` / for-in target, a global alias's member
-  (`this.p = …`);
+- some record is `any`;
 - some record is `fresh`: a function or class name (declaration, named function or class expression);
 - or a write that reaches a realm object names it as a key (`realmWrittenKeys`' settled `keys`): the global-object
   rebinding route (`globalThis["p"] = …`, `Object.defineProperty(this, "i", …)`, `Object.assign(this, {i: …})`).
+
+**The declaration rule is inverted (N2): `any` is the default.** Every identifier that is the `name` of its parent
+records one binding, unless the parent is a kind whose name binds no value. So a declaration kind the record does not
+model is `any` without being listed, and "every binding is recorded" holds by construction:
+
+| the name of … | records |
+| --- | --- |
+| a function or class (declaration or expression) | `fresh` |
+| a `var` / `let` / `const` with an initializer, outside a for-in / for-of head | `initializer` |
+| a member key or a type (`BINDS_NO_VALUE`: property assignment, shorthand, property / method / accessor declaration, property / method signature, enum member, interface, type alias, type parameter, property access name, export specifier, `export * as`, meta property, JSX attribute, import attribute) | nothing |
+| **anything else**: a parameter, a pattern element, a `catch` variable, a variable without initializer, **any variable of a for-in / for-of head (N1)**, an import (`import x`, `{ x }`, `* as x`, `import x =`), **an enum, a namespace / module, `export as namespace`**, and every kind not named here | `any` |
+
+- Beside the declarations: the implicit `arguments` of every function that is no arrow function (`any`); an
+  assignment or `++` / `--` of an identifier (`assigned`, its stored value); any other target of an assignment,
+  `delete` or a for-in / for-of head that is no declaration (`any` for every name `targetNames` finds, a global
+  alias's member `this.p = …` included).
+- **N1, the Annex B for-in initializer.** `for (var p = "Xyz" in {Property: 0})` assigns every enumerated key to `p`
+  after the initializer. A variable of a for-in or for-of head is `any`, with or without an initializer.
+- **N2, TS declarations.** `namespace p {…}` and `enum q {…}` bind an object whose `toString` the program can define
+  (`namespace p { export function toString() {…} }`, `(q as any).toString = …`), so `"define" + p` is any text. They
+  are `any` by the default. `export =` binds no name in its module: its value reaches another module only through an
+  import, which is `any`.
+- The `BINDS_NO_VALUE` list only ever loses precision when it misses a kind (that name becomes `any`), never
+  soundness. Omitting a value-binding kind from it is the only unsound edit, and the CTL mutation below shows the list
+  is what keeps a type name from blocking a fold.
+- `taken` is the set of recorded names. Besides the imports, class-expression names and `arguments` already planned,
+  it gains enum, namespace and `export as namespace` names, all conservative. The byte-identity gate inputs have none
+  of them and no loop-head initializer (one `ExportAssignment`, `export default u`, which binds no name;
+  `plan/samples/7628/scan-fixture.mts`).
+- Freshness follows: on the base `for (var o = {} in X)` made `o` a fresh name; it is now `any`. Conservative only:
+  for-in assigns strings, whose stores reach no object.
 
 The value a record stores: `x = e` stores `e`, through a chain (`x = y = e` stores `e` for both); `x op= e` stores
 `x op e`; `x ||= e`, `&&=`, `??=` store `e` (or `x`'s old value, already in the set); `++` / `--` store a number.
@@ -190,10 +218,34 @@ seen (#7503); a literal eval or `Function` text is a program source and is seen.
   `exactKey(values)` (the one exact value as a key string, or `undefined`) and `widen(values)`.
 - One `switch`-shaped walk, reusing `skipOuterExpressions`. One pairwise `product` helper with the cap; `+` and the
   arithmetic operators are its two combine functions.
-- Compiler boundaries: a new entry, `unmigrated`, `mixed-needs-split`, destination `frontend-ts`, owner
-  `7354-prepared-path`, next boundary "moves with `realm-member-writes.ts` under frontend/ts". It reads TypeScript AST
-  only and imports `ts-api` and `shared/binding-writes` (`skipOuterExpressions`), like its two callers. No active
-  layer can hold it while `binding-writes.ts` is `mixed-needs-split`.
+- Compiler boundaries: a new entry. It reads TypeScript AST only and imports `ts-api` and `shared/binding-writes`
+  (`skipOuterExpressions`), like its two callers. No active layer can hold it while `binding-writes.ts` is
+  `mixed-needs-split`.
+- **Boundary debt (Q1).** `class-accessor-safety.ts` has destination `ir-core`, and `ir-core` may not import
+  `frontend-ts`. Its new import of `key-values.ts` is allowed today only because both files are
+  `mixed-needs-split`. The debt is written into both entries' `nextBoundary`, so whoever moves either file sees it.
+  The planned `scripts/compiler-boundaries.json` entries:
+
+  ```json
+  {
+    "path": "src/ir/key-values.ts",
+    "state": "unmigrated",
+    "layer": "mixed-needs-split",
+    "destination": "frontend-ts",
+    "owner": "7354-prepared-path",
+    "nextBoundary": "One evaluator of a key expression's values (#7628); moves with realm-member-writes.ts under frontend/ts. Debt: class-accessor-safety.ts (destination ir-core) imports it for exactPreparedAccessorExpressionKey; ir-core may not import frontend-ts, so that caller's key reading moves to the frontend with it."
+  },
+  {
+    "path": "src/ir/class-accessor-safety.ts",
+    "state": "unmigrated",
+    "layer": "mixed-needs-split",
+    "destination": "ir-core",
+    "owner": "3518-coordinator",
+    "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies. Debt (#7628): exactPreparedAccessorExpressionKey imports key-values.ts (destination frontend-ts); it leaves ir-core with the frontend half, and ir-core receives the exact key as a string."
+  }
+  ```
+
+  The `class-accessor-safety.ts` entry changes only its `nextBoundary`; its owner, layer and destination stay.
 
 **`src/ir/class-accessor-safety.ts`: the single-value caller.**
 
@@ -228,7 +280,27 @@ seen (#7503); a literal eval or `Function` text is a program source and is seen.
 - **Freshness has one owner (item 9): `realmWrittenKeys`.** It derives the fresh names from `bindings` (a name is
   fresh when every record is `fresh` or an initializer with a `freshnessOf`). `freshNames` leaves `bindingFacts`'
   result.
-- `nameKeyValues(bindings, rebound)`: the least fixed point, about 25 lines.
+- `nameKeyValues(bindings, rebound)`: the least fixed point, by a dependency-indexed worklist (item 5, the lead's
+  choice; about 35 lines, measured in `v3.patch`):
+  - **Candidates.** A name not in `rebound` whose every record is an `initializer` or `assigned` record; its stored
+    values are collected once, narrowed on `kind`. Every other name answers unknown. Each candidate starts at ∅.
+  - **Queue.** An insertion-ordered set, initially every candidate. A name in the queue is not added again.
+  - **Evaluating `n`.** The union of `widen(keyValues(v, lookup))` over `n`'s stored values, with the cap; the first
+    unknown or the 65th element makes `n` unknown and stops the loop over its values. `lookup(m)` answers `m`'s
+    current set and adds `n` to `readers(m)`.
+  - **On growth.** When `n`'s set changes (it gains an element or becomes unknown), every name in `readers(n)` is
+    queued again: exactly the candidates one of whose stored values consults `n`. Names that never read `n` are not
+    re-evaluated. A self-reader (`s = s + "x"`, `i++`) re-queues itself.
+  - **Why dynamic readers.** `readers` is filled by the evaluation itself, so no second walk duplicates
+    `keyValues`' traversal. An evaluation consults every identifier it needs; it skips one only where the answer does
+    not depend on it (`~x` is a number, a non-arithmetic operator is unknown before its operands), or after `n` has
+    become unknown, which is final.
+  - **Bound.** A set only grows (the evaluation is monotone in the environment), so each name changes at most 65
+    times. Each change queues at most `|readers(n)|` names. Evaluations ≤ N + 65·E, where N is the number of
+    candidates and E the number of (reader, read name) pairs, at most the identifier occurrences in stored values.
+    Each evaluation costs at most 4,096 pairs per `+` it performs. The round-robin of `v2.patch` was ≤ 66·N rounds of N
+    evaluations each (66·N²).
+  - **Mutation.** Not re-queueing readers fails the two self-dependent rows (two-letter growth, `t += …`).
 - `realmWrittenKeys(writes, bindings, createIsBuiltin)` keeps its loop. Once `keys` settles, each computed read's key
   is evaluated with `nameKeyValues(bindings, keys)`; unknown or a writer name answers `undefined`. Computed reads add
   no keys (all or nothing), so the loop is not re-run.
@@ -237,21 +309,34 @@ seen (#7503); a literal eval or `Function` text is a program source and is seen.
 
 **`src/ir/builtin-global-binding.ts`, `bindingFacts`.**
 
-- The visit records `bindings: Map<string, NameBinding[]>` once. It replaces `declared`, `assigned`, `mayHoldAny` and
-  `created`. `taken` is the set of recorded names.
-- `taken` grows by import names, class-expression names and `arguments`; freshness loses a name that is also imported
-  or `arguments`, and gains a class-expression name that has no other binding (the rule named function expressions
-  already follow; `taken` guards the global of that name the same way). All are conservative except the last.
-  The byte-identity gate inputs have 5 imports (`h`, `twice` ×3, `missing`), no class expression and one `arguments`,
-  none a realm global's name (`plan/samples/7628/README.md`), so the gates are expected to stay identical.
+- The visit records `bindings: Map<string, NameBinding[]>` once. It replaces `declared`, `assigned`, `mayHoldAny`,
+  `created` and `freshNames`; `bindingFacts` returns `{ bindings, escaped, writes, createCallees }`, and `pristine`
+  reads `bindings.has` (`taken` is the set of recorded names). `boundNames` goes: pattern names are found as the
+  `name` of their binding element.
+- Helpers beside it, one concern each (`v3.patch`):
+  - `declaredBinding(name)`: the table under "Names" (`BINDS_NO_VALUE`, `FRESH`, `ANY`);
+  - `isLoopHeadVariable(declaration)`: N1;
+  - `assignedValue(assignment)`: the stored value of `=` (through a chain), `||=` / `&&=` / `??=`, and the other
+    compound forms.
+- The escape check (`escaped`) is unchanged and independent of the binding record: a declared name that
+  `isNonReferenceName` does not cover (an import, an enum) counts as escaping exactly as on the base.
+- `taken` grows by import names, class-expression names, `arguments`, and (round 2) enum, namespace and
+  `export as namespace` names; freshness loses a name that is also imported, `arguments` or a loop-head variable, and
+  gains a class-expression name that has no other binding (the rule named function expressions already follow;
+  `taken` guards the global of that name the same way). All are conservative except the last (item 7, accepted).
+  The byte-identity gate inputs have 5 imports (`h`, `twice` ×3, `missing`), no class expression, one `arguments`, no
+  enum or namespace and no loop-head initializer, none a realm global's name (`plan/samples/7628/README.md`), so the
+  gates are expected to stay identical.
 - `foldsBuiltinMember`'s doc: "Not yet seen" loses the computed-key routes; the list gains "a read by a key that is no
   literal, unless its key's values are known and name no writer"; eval / `Function` (#7503) stays.
 
 **Not touched:** `src/shared/binding-writes.ts`, the consumers of `foldsBuiltinMember`, and the stores' exact `key`
 (constant-folding a computed store key widens folds; separate, only with a measured yield).
 
-**Size.** `key-values.ts` about 110 lines; `realm-member-writes.ts` from 213 to about 300; `class-accessor-safety.ts`
-−55; `bindingFacts` about its size. No function near the budget; no grant expected.
+**Size** (measured on `v3.patch`, scratch formatting). `key-values.ts` 152 lines; `realm-member-writes.ts` from 213 to
+302; `builtin-global-binding.ts` from 244 to 306 (the `declaredBinding` table and its two helpers, about 70 lines;
+`bindingFacts` shrinks to about 45); `class-accessor-safety.ts` −55. Every file stays far under 1,500 lines and every
+function under 300; no grant expected.
 
 ### The other two evaluators (blocker 4)
 
@@ -276,8 +361,9 @@ seen (#7503); a literal eval or `Function` text is a program source and is seen.
 asserting today's `{pristine: true, fold: true}`, so a crash fails the row. It ships in the implementation PR's
 first commit, or in #7549 if the lead prefers.
 
-**When the rule lands**, the rows below, all measured in `plan/samples/7628/rows2.mts` (46 rows). On the base
-`b7cfc6257f` all 37 stop rows fold; on the v2 patch all 46 rows match.
+**When the rule lands**, the rows below, all measured in `plan/samples/7628/rows3.mts` (56 rows: 43 stop, 13 keep).
+On the base `b7cfc6257f` all 43 stop rows fold; on `v2.patch` 4 rows differ (the two N1 and the two N2 rows below);
+on `v3.patch` all 56 rows match.
 
 - Stop rows (fold false; ≈ is `(1).constructor, "isNaN", {value: 1}`). No row spells a writer name as a literal,
   which would stop it by the mention arm instead of the rule:
@@ -294,25 +380,48 @@ first commit, or in #7549 if the lead prefers.
   - item 8: `p ||= "define" + "Property"`; `"\x64efine" + "Property"` (cooked text);
   - cost rows, stopping on purpose: `s = s + "x"; s = s + "y"` (past the cap); `p + p + p` over nine values of `p`
     (cap during the product); `({})[c ? "a" : "b"]` (`?:` unknown); `"k" + n` and `` `k${n}` `` after `n++`
-    (string with `SOME_NUMBER`); compareArray's shape plus `function g(i) {}` anywhere (item 6).
+    (string with `SOME_NUMBER`); compareArray's shape plus `function g(i) {}` anywhere (item 6);
+  - round 2, N1: `for (var p = "Xyz" in {Property: 0}) Object["define" + p](≈)`; the computed-key variant
+    `for (var k = "Xyz" in {["define" + "Property"]: 0}) Object[k](≈)`; `for (var k of ["define" + "Property"])`
+    (stopped on v2 already, kept as the for-of guard);
+  - round 2, N2 (sources `.ts`): `namespace p { export function toString() { return "Property"; } }` with
+    `(Object as any)["define" + p](≈)` and `var p = "Xyz"`; `enum q { A }` with
+    `(q as any).toString = function () { return "Property"; }`, `(Object as any)["define" + q](≈)` and `var q = "Xyz"`;
+    `import p = require("./m")` with `export = { toString() { return "Property"; } }; var p = "Xyz";` in `m.ts`.
 - Keep rows (fold true): compareArray's exact shape; `a[i]` and `[1][i + 1]` with `var i = 0`; `s += arr[j]` in a
   `j++` loop; `({})["is" + "Finite"]`; `a = b = "is" + "Finite"`; `s = s + "x"` a hundred times (`LONG_STRING`); a
   200-term literal concatenation; `({})["define" + p]; var p = "X";` (hoisted); and the real prelude, `assert.js` +
   `sta.js` + `Number.isNaN(1)`.
-- **Mutation checks**, each measured on the v2 patch with the rows it fails:
+- CTL rows (keep; round 2), so the N1 / N2 stops are the declaration's doing and not the program's:
+  `for (var p = "Xyz"; false; ) Object["define" + p](≈)` (an initializer outside a loop head still stores);
+  `var p = "Xyz"; (Object as any)["define" + p](≈)` in a `.ts` source; `interface p {…}` and `type q = …` beside
+  `var p = "Xyz", q = "Abc"` (type names record nothing); `enum E { A }` beside `var p = "Xyz"` (an enum blocks only
+  its own name).
+- **Mutation checks**, measured on `v2.patch` (round 1) and re-run on `v3.patch` where `v3` changed the code under
+  them; `plan/samples/7628/mutate3.py` applies each to a v3 tree and lists the rows it fails:
 
   | mutation | rows that fail |
   | --- | --- |
-  | drop the computed-read arm | every stop row but `globalThis.Reflect` and `this["Reflect"]` (35 of 37) |
-  | record no import or `arguments` binding | import + by-text var, `arguments` |
-  | a name with no record holds no value | undeclared global |
-  | both of the last two | the import row too |
-  | drop the rebound names | `globalThis["p"]`, `defineProperty(this)`, `assign(this)` (`this.p` stops by its `any` record) |
-  | `++` / `--` is no number | compareArray, `s += arr[j]`, the real prelude |
-  | `Reflect` counted only as a reference | `globalThis.Reflect`, `this["Reflect"]` |
-  | `Reflect` no writer name in the key domain | `"Ref" + "lect"` |
-  | no `LONG_STRING` | the long chain |
-  | no cap | the two-letter growth (`RangeError`), the product row |
+  | drop the computed-read arm (`RULE=base`, v3) | every stop row but `globalThis.Reflect` and `this["Reflect"]` (41 of 43) |
+  | N1: a loop-head variable stores its initializer (v3) | the two N1 for-in rows |
+  | N2: `EnumDeclaration` in `BINDS_NO_VALUE` (v3) | the enum row |
+  | N2: `ModuleDeclaration` in `BINDS_NO_VALUE` (v3) | the namespace row |
+  | N2: `ImportEqualsDeclaration` in `BINDS_NO_VALUE` (v3) | the `import p = require` row |
+  | CTL: interface and type alias names record `any` (v3) | the interface + type CTL row |
+  | worklist: a change re-queues no reader (v3) | two-letter growth, `t += …` |
+  | every import kind in `BINDS_NO_VALUE` (v3) | import + by-text var, `import =` + by-text var |
+  | no implicit `arguments` (v3) | `arguments` |
+  | a name with no record holds no value (v3) | undeclared global |
+  | both of the last two (v3: imports and no record) | the two import rows, `import =` + by-text var, undeclared global |
+  | drop the rebound names (v3) | `globalThis["p"]`, `defineProperty(this)`, `assign(this)` (`this.p` stops by its `any` record) |
+  | postfix `++` / `--` is no number (v3) | compareArray, `s += arr[j]`, the real prelude |
+  | `Reflect` counted only as a reference (v2) | `globalThis.Reflect`, `this["Reflect"]` |
+  | `Reflect` no writer name in the key domain (v2) | `"Ref" + "lect"` |
+  | no `LONG_STRING` (v2) | the long chain |
+  | no cap (v2) | the two-letter growth (`RangeError`), the product row |
+
+  The four rows marked v2 test `key-values.ts` and the `memberWrites` arm, which `v3.patch` leaves as `v2.patch` had
+  them.
 
 ### Acceptance
 
@@ -321,19 +430,29 @@ first commit, or in #7549 if the lead prefers.
 - The ordinary-pipeline sample (slice 1's 180 files, `assert.js` + `sta.js`, default and standalone) 360 / 360
   identical.
 - Census (`--harness real`) against the base: carriers ≥ 230, o411 ≥ 84, 0 lost, 0 new crashes, every changed row
-  named. The v2 scratch: carriers 230 / 230, o411 84 / 84, 0 changed rows of 1,977 and of 411, 0 lost, 0 new crashes (2026-11-28, about 12 min for both lists on 4 cores; the same as the first round's (3n), so dropping `?:` and `,` costs nothing).
+  named. The v2 scratch: carriers 230 / 230, o411 84 / 84, 0 changed rows of 1,977 and of 411, 0 lost, 0 new crashes (2026-11-28, about 12 min for both lists on 4 cores; the same as the first round's (3n), so dropping `?:` and `,` costs nothing). The v3 scratch (round 2: `any` by default, loop-head variables `any`, `taken` from the record): the same, carriers 230 / 230, o411 84 / 84, 0 changed rows, 0 lost, 0 new crashes (2026-11-28).
 - The equivalence scan reads 0 mismatches.
 - The rows and mutation checks above hold.
 - **Quality.**
   - One evaluator for key values (`key-values.ts`); `literalOnlyComputedKeyValue` is gone; no second literal reader.
   - One new arm in `memberWrites`, in its chain; one source walk (`bindingFacts`), whose record replaces its four sets.
+  - The binding record is total by construction: one `declaredBinding` decides every declared name, `any` by
+    default; there is no positive list of declaration kinds that record `any`.
   - Freshness is derived in one place (`realmWrittenKeys`).
+  - `nameKeyValues` is the dependency-indexed worklist above, not a round-robin over every name.
   - No use-of-result or receiver predicate; no `?:` / `,` arm (no measured user).
   - No `func-budget-allow` / `loc-budget-allow` grant.
   - An adversarial review (fresh context, diff + this plan) finds no duplication between `keyValues`, `literalKey` and
     `freshnessOf`, and no narrating comments.
-- **Compiler boundaries.** One new entry (`key-values.ts`); the others keep theirs. `check-compiler-boundaries`
-  passes with `--base HEAD^1` and `--base origin/main`.
+  - **Scratch that must not ship** (item 6; all present in `v2.patch` / `v3.patch`, none in the PR):
+    - the `process.env.RULE` switch in `realmWrittenKeys`;
+    - every "SCRATCH v2" / "SCRATCH v3" comment;
+    - the `(b as { value: ts.Expression })` cast (`v2.patch`); narrow on `kind` instead, as `v3.patch` does;
+    - `declared`, `assigned`, `mayHoldAny`, `created` and `freshNames` beside `bindings` (`v2.patch` kept them;
+      `v3.patch` drops them).
+- **Compiler boundaries.** One new entry (`key-values.ts`) and one changed `nextBoundary`
+  (`class-accessor-safety.ts`), both as written under "Target structure", recording the ir-core → frontend-ts debt.
+  The others keep theirs. `check-compiler-boundaries` passes with `--base HEAD^1` and `--base origin/main`.
 - The gates exit 0: loc, func (also with `LOC_GATE_BASE=<main tip>`), coercion sites, oracle ratchet, dead exports,
   typecheck and import cycles.
 
@@ -368,3 +487,19 @@ first commit, or in #7549 if the lead prefers.
 | 9 one owner | Freshness is derived in `realmWrittenKeys` from `bindings`; `NameBinding` is kind-tagged with `{ kind: "any" }`. |
 | 10 rows | `super[…]`, `Object?.[…]`, a for-in head that is no declaration, `catch (p)`, a chained assignment (stop and keep), a ternary split (stop, and a cost row). |
 | re-measure | Census on the v2 patch: carriers 230, o411 84, 0 changed rows on either list, 0 crashes. |
+
+## Changelog after PRV-7628 round 2
+
+Review of `e7ff362d7f`. Measured on `plan/samples/7628/v3.patch` (base `b7cfc6257f`), rows in `rows3.mts`, mutations
+in `mutate3.py`.
+
+| item | resolution |
+| --- | --- |
+| N1 Annex B for-in initializer | A variable of a for-in / for-of head is `any`, with or without an initializer (`isLoopHeadVariable`). 2 stop rows (`for (var p = "Xyz" in {Property: 0})`, the computed-key variant) fold on base and v2 and stop on v3; a for-of guard row; a CTL row (`for (var p = "Xyz"; …;)` keeps). The mutation "a loop-head variable stores its initializer" fails exactly the 2 rows. |
+| N2 TS declarations | The rule is inverted: every declared name records `any` unless it is a function or class (`fresh`), a variable with an initializer outside a loop head, or a kind whose name binds no value (`BINDS_NO_VALUE`: member keys, types, export names). Enum, namespace / module, `export as namespace` and any unmodelled kind are `any` without being listed; `export =` binds no name and reaches a module only through an import (`any`). Stop rows: namespace, enum, `import p = require` with a by-text `var p`; the namespace and enum rows fold on base and v2. One mutation per kind (`EnumDeclaration` / `ModuleDeclaration` / `ImportEqualsDeclaration` added to `BINDS_NO_VALUE`), each failing its row. CTL rows: a `.ts` source with only `var p`, `interface p` + `type q`, an enum of another name; the mutation "types record `any`" fails the interface + type row, so the exclusion list is load-bearing for precision. |
+| Q1 boundaries | Debt recorded: `class-accessor-safety.ts` (destination `ir-core`) imports `key-values.ts` (destination `frontend-ts`). Both planned `compiler-boundaries.json` entries are written out, each naming the debt in its `nextBoundary`. |
+| Q2 accessor behaviour | Unchanged: `key-values.ts` and `class-accessor-safety.ts` are byte-identical between `v2.patch` and `v3.patch` (only the scratch tag in one comment differs), so the 4,756,986-expression equivalence stands. |
+| 5 `nameKeyValues` | Dependency-indexed worklist: readers are recorded by the lookup during evaluation; a change of `n` re-queues exactly `readers(n)`. Evaluations ≤ N + 65·E (E = reader / read-name pairs), against 66·N² for the round-robin. The mutation "re-queue no reader" fails the two self-dependent rows. |
+| 6 must not ship | Listed under Acceptance → Quality: the `RULE` switch, the SCRATCH comments, the `(b as {value})` cast (v3 narrows on `kind`), and the old sets beside `bindings` (v3 drops `declared`, `assigned`, `mayHoldAny`, `created`, `freshNames` and `boundNames`). |
+| 7 class-expression freshness | Kept as planned: a class-expression name is `fresh` (accepted widening). |
+| re-measure | Rows: base 43 / 56 differ, v2 4 / 56, v3 0 / 56. Census on v3: carriers 230, o411 84, 0 changed rows, 0 lost, 0 new crashes, so the broader `any` rule costs no yield on either list. Gate inputs hold no enum, namespace or loop-head initializer (`scan-fixture.mts`). |

@@ -1,4 +1,5 @@
-// #7628 v2 fact rows: `node rows2.mts` from a tree root (base or v2). stop = fold false.
+// #7628 v3 fact rows: `npx tsx rows3.mts` from a tree root (base, v2 or v3). stop = fold false.
+// A row is a source, or a map of sources whose entry is the `./entry.*` key (`.ts` for TS-only declarations).
 import { readFileSync } from "node:fs";
 import { analyzeMultiSource } from "../../src/checker/index.js";
 import { foldsBuiltinMember } from "../../src/ir/builtin-global-binding.js";
@@ -53,11 +54,24 @@ const ROWS: Row[] = [
   ["R8 cooked text", "stop", `Object["\\x64efine" + "Property"](${D});`],
   ["R7 hoisted var undefined", "keep", '({})["define" + p]; var p = "X";'],
   ["keep real prelude", "keep", ["assert.js", "sta.js"].map((f) => readFileSync(`test262/harness/${f}`, "utf8")).join("\n")],
+  // PRV-7628 round 2, N1: a for-in / for-of head declaration holds the loop's values, initializer or not.
+  ["N1 for-in initializer", "stop", `for (var p = "Xyz" in {Property: 0}) Object["define" + p](${D});`],
+  ["N1 for-in initializer computed", "stop", `for (var k = "Xyz" in {["define" + "Property"]: 0}) Object[k](${D});`],
+  ["N1 for-of declaration", "stop", `for (var k of ["define" + "Property"]) Object[k](${D});`],
+  ["N1 CTL for(;;) initializer", "keep", `for (var p = "Xyz"; false; ) Object["define" + p](${D});`],
+  // N2: a declaration kind the record does not model binds any value.
+  ["N2 namespace", "stop", { "./entry.ts": `namespace p { export function toString() { return "Property"; } } (Object as any)["define" + p](${D}); var p = "Xyz";` }],
+  ["N2 enum", "stop", { "./entry.ts": `enum q { A } (q as any).toString = function () { return "Property"; }; (Object as any)["define" + q](${D}); var q = "Xyz";` }],
+  ["N2 import = + by-text var", "stop", { "./entry.ts": `import p = require("./m"); (Object as any)["define" + p](${D});`, "./m.ts": `export = { toString() { return "Property"; } }; var p = "Xyz";` }],
+  ["N2 CTL var only (ts)", "keep", { "./entry.ts": `var p = "Xyz"; (Object as any)["define" + p](${D});` }],
+  ["N2 CTL interface + type", "keep", { "./entry.ts": `interface p { a: 1 } type q = string; var p = "Xyz", q = "Abc"; (Object as any)["define" + p + q](${D});` }],
+  ["N2 CTL enum of another name", "keep", { "./entry.ts": `enum E { A } var p = "Xyz"; (Object as any)["define" + p](${D}); E.A;` }],
 ];
 function fold(src: string | Record<string, string>): boolean {
-  const files = typeof src === "string" ? { "./entry.js": src } : { ...src };
-  files["./entry.js"] += "\nNumber.isNaN(1);";
-  const ast = analyzeMultiSource(files, "./entry.js", undefined, { allowJs: true });
+  const files: Record<string, string> = typeof src === "string" ? { "./entry.js": src } : { ...src };
+  const entry = Object.keys(files).find((name) => name.startsWith("./entry."))!;
+  files[entry] += "\nNumber.isNaN(1);";
+  const ast = analyzeMultiSource(files, entry, undefined, { allowJs: true });
   const last = ast.entryFile.statements.at(-1) as ts.ExpressionStatement;
   const id = ((last.expression as ts.CallExpression).expression as ts.PropertyAccessExpression).expression as ts.Identifier;
   return foldsBuiltinMember(ast.checker, ast.sourceFiles)(id);
