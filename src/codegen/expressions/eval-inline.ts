@@ -56,7 +56,7 @@ import {
 } from "../direct-eval-environment.js";
 import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 import { emitRefusedDynamicFunction, isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
-import { fitsFunctionSourceText, functionSourceText } from "../../interp/function-source-text.js";
+import { fitsFunctionSourceText, functionSourceText } from "../../shared/contracts/function-source-text.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**

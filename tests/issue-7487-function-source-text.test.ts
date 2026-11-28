@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import ts from "typescript";
 import { compileDynamicFunctionMeta, dynamicFunctionSource } from "../src/interp/dynamic-function.js";
-import { fitsFunctionSourceText, functionSourceText } from "../src/interp/function-source-text.js";
+import { fitsFunctionSourceText, functionSourceText } from "../src/shared/contracts/function-source-text.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./equivalence/helpers.js";
 
 describe("#7487 functionSourceText", () => {

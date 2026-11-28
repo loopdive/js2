@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7487) The source text the Function constructor parses (§20.2.1.1.1 CreateDynamicFunction), shared by the
- * interpreter and the compile-time fold of a literal `Function(...)`. Import-free: the runtime-eval provider build
- * concatenates the interpreter files and strips their imports (`INTERP_FILES` in scripts/runtime-eval-provider.mjs).
+ * interpreter, the compile-time fold of a literal `Function(...)` and the Prepared path's literal function sources.
+ * Listed in `INTERP_FILES` (scripts/runtime-eval-provider.mjs), whose build concatenates the interpreter sources and
+ * strips their imports: it must stay import-free.
  */
 
 /**

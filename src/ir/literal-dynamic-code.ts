@@ -27,7 +27,7 @@ import {
   sloppyScriptHasStaticSyntaxError,
   type ParsedEvalScript,
 } from "../frontend/eval/script.js";
-import { fitsFunctionSourceText, functionSourceText } from "../interp/function-source-text.js";
+import { fitsFunctionSourceText, functionSourceText } from "../shared/contracts/function-source-text.js";
 import { isCommaExpression } from "../shared/binding-writes.js";
 import { planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { resolvesToSourceBinding } from "./analysis/ast-scope.js";
