@@ -395,6 +395,7 @@ import {
   tryThrowOnBigIntOrSymbolArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
+import { aliasedSymbolAt, moduleNamespaceSourceOf } from "../module-namespace-value.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
 import { tryCompileRawWasiCall } from "../raw-wasi-api.js";
 import { tryEmitStandalonePromiseStaticCallTypeError } from "./promise-static-call-typeerror.js";
@@ -2748,28 +2749,12 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
 }
 
 function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
-  const declaration = ctx.oracle.valueDeclarationOf(identifier);
-  if (declaration !== undefined && (ts.isNamespaceImport(declaration) || ts.isModuleDeclaration(declaration))) {
-    return true;
-  }
-
-  // A named import of an `export namespace` binds an ImportSpecifier at the
-  // use site. Follow that one checker alias to the provider's runtime
-  // ModuleDeclaration; the namespace object itself is not materialized by the
-  // Wasm backend, so member functions must use the same static call path as an
-  // `import * as ns` receiver.
-  let symbol = ctx.checker.getSymbolAtLocation(identifier);
-  if (symbol === undefined) return false;
-  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-    try {
-      symbol = ctx.checker.getAliasedSymbol(symbol);
-    } catch {
-      return false;
-    }
-  }
-  return [symbol.valueDeclaration, ...(symbol.declarations ?? [])].some(
-    (candidate) => candidate !== undefined && ts.isModuleDeclaration(candidate),
-  );
+  if (moduleNamespaceSourceOf(ctx, identifier) !== undefined) return true;
+  // A local `namespace`, or a named import of an `export namespace`: the
+  // namespace object itself is not materialized by the Wasm backend, so member
+  // functions must use the same static call path as an `import * as ns`
+  // receiver.
+  return aliasedSymbolAt(ctx, identifier)?.declarations?.some(ts.isModuleDeclaration) ?? false;
 }
 
 /** Resolve the single executable declaration behind an overloaded namespace member. */
