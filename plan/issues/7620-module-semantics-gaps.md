@@ -118,6 +118,10 @@ The probes are in `.tmp/p7620/` in the c8-7620 worktree. Every row answers ident
 ## Cross-child acceptance
 
 - Every child meets its own acceptance criteria: a red → green pin, a code-quality bullet, and a byte gate.
+- **Paths (2026-11-28).** #7558 and #7530 have landed on main (`389d373b8c`, `5e3c790785`). The module-binding files
+  now live in `src/codegen/module-bindings/`, the identifier index in `src/shared/callee-name-index.ts`, and eval
+  liveness is decided per source (`sourceTopLevelFunctions`, `index.ts`). New modules next to the table go in
+  `src/codegen/module-bindings/`. Line numbers in the children predate these merges; implementers re-locate them.
 - **No child edits** `source-binding-projection.ts` or `module-binding-table.ts`, or #7530's regions
   (`registerModuleGlobal`'s tail, `registerLiveFunctionGlobal`, `registerReassignedFunctionGlobals`,
   `module-init-prologue.ts`'s seed loop).

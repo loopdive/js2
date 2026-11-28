@@ -96,7 +96,8 @@ self-edge. Elision stays as it is for every other module.
   specifier resolved by `ctx.oracle.declarationsOf(moduleSpecifier).find(ts.isSourceFile)`.
 - That resolution is already written once, in `registerImportBindingAliases` (`index.ts:9428`). It is extracted into
   one helper, `importedSourceOf(ctx, moduleSpecifier)`, in a small new module next to `module-binding-table.ts`
-  (for example `src/codegen/module-import-graph.ts`). `registerImportBindingAliases` calls the helper: one copy,
+  (for example `src/codegen/module-bindings/module-import-graph.ts`; the flat-directory gate, #6797, refuses new top-level
+  files in `src/codegen/`). `registerImportBindingAliases` calls the helper: one copy,
   not two.
 - The new `moduleImportComponentOf(ctx, sourceFile)` in that module walks the edges from `sourceFile` with
   `condenseDirectedGraph` (`analysis/strongly-connected-components.ts:25`). It is memoized per `CodegenContext` and

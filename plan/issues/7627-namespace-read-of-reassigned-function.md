@@ -224,7 +224,8 @@ never inlinable, whatever the call site does.
 
 ### Order and dependencies
 
-- **Waits for #7530 to land.** The predicate reads `ModuleBinding.liveFunction`. Until then, a function has no
+- **#7530 landed on 2026-11-28** (`5e3c790785`), so A2-Y is unblocked. A2-ns still waits for #7625.
+- **Waited for #7530 to land.** The predicate reads `ModuleBinding.liveFunction`. Until then, a function has no
   binding in #7470's table.
 - **Waits for #7558, transitively.** #7530 is stacked on #7558's table.
 - **A2-ns waits for #7625.** Site 2's object path relies on #7625 keying namespace objects by module symbol and on
