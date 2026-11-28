@@ -43,7 +43,7 @@ interface Row {
    */
   readonly needs7622?: true;
   /**
-   * A known gap, recorded under "Follow-ups" in #7625's issue file: the current answer, in every lane, that differs
+   * A known gap, filed as its own issue (named on the row): the current answer, in every lane, that differs
    * from `node`. `"throws"` means the compile succeeds and `main()` throws.
    */
   readonly knownGap?: number | "throws";
@@ -239,8 +239,8 @@ const ROWS: readonly Row[] = [
       "dep.ts": `export let g = 7; export function bump(): void { g = 8; }`,
     },
   },
-  // A module that re-exports its own namespace (`export * as ns from "./dep"` inside dep): the namespace object is
-  // still null, as for `import * as d; d.ns` on main.
+  // #7651: a module that re-exports its own namespace (`export * as ns from "./dep"` inside dep): the namespace
+  // object is still null, as for `import * as d; d.ns` on main.
   {
     name: "self-cycle: import { ns } of dep's own namespace",
     node: 73,
