@@ -1924,6 +1924,10 @@
   ],
   "moves": [
     {
+      "from": "src/interp/function-source-text.ts",
+      "to": "src/shared/contracts/function-source-text.ts"
+    },
+    {
       "from": "src/ir/nested-stackification.ts",
       "to": "src/ir/analysis/nested-stackification.ts"
     },
@@ -2039,6 +2043,14 @@
       "destination": "ir-core",
       "owner": "7354-prepared-path",
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/this-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend `this` binding (a function's entry receiver, a method's self, script-level this as the global object) and the script-this predicate the Prepared program scan shares; moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/arguments-object.ts",
@@ -2416,6 +2428,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/shared/contracts/function-source-text.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-preparation-failure.ts",
       "state": "clean",
       "layer": "foundation"
@@ -2442,6 +2459,11 @@
     },
     {
       "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-delete-helper.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -6945,6 +6967,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/module-bindings/global-space.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/global-var-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7850,6 +7880,14 @@
     },
     {
       "path": "src/codegen/mixed-return-widening.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/module-bindings/module-binding-table.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9937,6 +9975,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/module-bindings/source-binding-projection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/source-function-members.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11854,14 +11900,6 @@
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
     },
     {
-      "path": "src/interp/function-source-text.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "foundation",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Import-free CreateDynamicFunction source text shared by the interpreter and the compile-time Function fold; it becomes a foundation module once the runtime-eval provider build stops concatenating src/interp."
-    },
-    {
       "path": "src/interp/dynamic-function.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12772,7 +12810,15 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/eval-literal.ts",
+      "path": "src/ir/literal-dynamic-code.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/literal-dynamic-code-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -16932,6 +16978,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -17412,6 +17463,21 @@
     },
     {
       "path": "src/ir/program/dynamic-value-chains.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-builtin-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-tag.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-types.ts",
       "state": "clean",
       "layer": "ir-program"
     },

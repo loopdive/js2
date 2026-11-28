@@ -37,7 +37,7 @@ import { emitThrowJsError } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../../shared/is-strict-function.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
-import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
+import { EVAL_SOURCE_FILENAME } from "../../frontend/eval/script.js";
 import { addFoldedEvalBindingNames, foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
 import { evalBodyHasUseStrictDirective, foldedEvalStaticSyntaxError } from "../../frontend/eval/script.js";
 import { parseEvalScript, providerOwnsEvalDeclarations } from "./eval-script.js";
@@ -56,7 +56,7 @@ import {
 } from "../direct-eval-environment.js";
 import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 import { emitRefusedDynamicFunction, isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
-import { fitsFunctionSourceText, functionSourceText } from "../../interp/function-source-text.js";
+import { fitsFunctionSourceText, functionSourceText } from "../../shared/contracts/function-source-text.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**

@@ -9,30 +9,46 @@
  * evaluated (the front end, left to right), so an extra one has run and is ignored. Any other callee holding the
  * constructor (through a variable) reaches the dispatcher, whose built-in arm is the run-time abort.
  *
- * Construction. `new X(v)` makes a wrapper object, which the realm does not have yet: it refuses by name.
+ * Construction. (#7561) `new X(v)` is the same conversion, then the realm's wrapper of it
+ * (`js.object.create-wrapper`): its [[Prototype]] is X's `prototype`, read only and non-configurable, so the realm
+ * reads it.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { WRAPPER_CONVERSIONS, type RealmConstructor } from "./builtin-prototype-keys.js";
 import type { RealmConstruction, RealmConstructionBuilders } from "./dynamic-realm-calls.js";
 import { carried } from "./dynamic-value-chains.js";
-import { gap } from "./dynamic-value-gap.js";
 
 type WrapperBuilders = RealmConstructionBuilders & {
   readonly toNumber: (instr: IrInstr, value: IrValueId, result: IrValueId) => IrInstr[];
 };
 
-/** `X(v)` of the wrapper constructor `ctor`, into the instruction's result; `new X(v)` refuses. */
+/** `X(v)` or `new X(v)` of the wrapper constructor `ctor`, into the instruction's result. */
 export function dynamicWrapperConstruction(
   b: WrapperBuilders,
   instr: RealmConstruction,
   ctor: RealmConstructor<"wrapper">,
   args: readonly IrValueId[],
 ): IrInstr[] {
-  if (instr.kind === "dyn.construct") gap(`new ${ctor.name} (a wrapper object; #7350 B3bc)`);
-  const [value, converted] = [args[0], b.fresh()];
+  if (instr.kind !== "dyn.construct") return conversion(b, instr, ctor, args[0], instr.result!);
+  const primitive = b.fresh();
+  return [
+    ...conversion(b, instr, ctor, args[0], primitive),
+    ...b.selectorCall("js.object.create-wrapper", [primitive], ctor.selector, instr.result!),
+  ];
+}
+
+/** The constructor's conversion of `value` (`WRAPPER_CONVERSIONS`), as a carrier primitive into `result`. */
+function conversion(
+  b: WrapperBuilders,
+  instr: RealmConstruction,
+  ctor: RealmConstructor<"wrapper">,
+  value: IrValueId | undefined,
+  result: IrValueId,
+): IrInstr[] {
+  const converted = b.fresh();
   const into = (instrs: IrInstr[], box: "js.number.box" | "js.boolean.box" | undefined): IrInstr[] => [
     ...instrs,
-    box === undefined ? carried(converted, instr.result!) : b.intrinsic(instr, box, [converted], instr.result!),
+    box === undefined ? carried(converted, result) : b.intrinsic(instr, box, [converted], result),
   ];
   const constant = (value: number | boolean): IrInstr => ({
     kind: "const",
@@ -40,23 +56,18 @@ export function dynamicWrapperConstruction(
     result: converted,
     resultType: { kind: "val", val: typeof value === "number" ? { kind: "f64" } : { kind: "i32", boolean: true } },
   });
-  const conversion = WRAPPER_CONVERSIONS[ctor.name];
-  switch (conversion.to) {
+  const rule = WRAPPER_CONVERSIONS[ctor.name];
+  switch (rule.to) {
     case "string":
       return into(
-        value === undefined ? [b.text(conversion.absent, converted)] : b.stringOf(instr, value, converted),
+        value === undefined ? [b.text(rule.absent, converted)] : b.stringOf(instr, value, converted),
         undefined,
       );
     case "number":
-      return into(
-        value === undefined ? [constant(conversion.absent)] : b.toNumber(instr, value, converted),
-        "js.number.box",
-      );
+      return into(value === undefined ? [constant(rule.absent)] : b.toNumber(instr, value, converted), "js.number.box");
     case "boolean":
       return into(
-        value === undefined
-          ? [constant(conversion.absent)]
-          : [b.intrinsic(instr, "js.value.to_boolean", [value], converted)],
+        value === undefined ? [constant(rule.absent)] : [b.intrinsic(instr, "js.value.to_boolean", [value], converted)],
         "js.boolean.box",
       );
   }

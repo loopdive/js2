@@ -53,8 +53,14 @@ export interface RealmFamilyOperands {
     readonly id: string;
     readonly global: number;
     readonly prototype: string;
+    /** (#7561) A wrapper prototype's primitive data (`NativeRealmIntrinsic.primitiveData`). */
+    readonly primitiveData?: string | number | boolean;
     readonly properties: readonly RealmFamilyProperty[];
+    /** (#7609) The catalog models only the object's identity (the global object). */
+    readonly identityOnly?: true;
   }[];
+  /** (#7561) Where the realm holds a wrapper prototype: the wrapper `id` of `primitiveData` over `prototype`. */
+  readonly wrapperAllocation?: (id: string, primitiveData: string | number | boolean, prototype: Instr[]) => Instr[];
 }
 
 const global = (index: number): Instr => ({ op: "global.get", index });
@@ -89,14 +95,20 @@ const accessorWord = (property: Pick<RealmFamilyProperty, "configurable">): numb
   flags.getterSpecified |
   flags.setterSpecified;
 
-/** Each object, linked to the realm's Object.prototype or to an object created before it, into its global. */
+/**
+ * Each object, linked to the realm's Object.prototype or to an object created before it, into its global; (#7561) an
+ * object with primitive data is a wrapper.
+ */
 export function realmFamilyAllocation(d: RealmFamilyOperands): Instr[] {
-  return d.objects.flatMap((object): Instr[] => [
-    ...(object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype)),
-    ...asObject(d),
-    { op: "call", funcIdx: d.createWithPrototype },
-    { op: "global.set", index: object.global },
-  ]);
+  return d.objects.flatMap((object): Instr[] => {
+    const prototype =
+      object.prototype === "object-prototype" ? [global(d.objectPrototype)] : intrinsic(d, object.prototype);
+    const created =
+      object.primitiveData === undefined
+        ? [...prototype, ...asObject(d), { op: "call", funcIdx: d.createWithPrototype } as Instr]
+        : d.wrapperAllocation!(object.id, object.primitiveData, prototype);
+    return [...created, { op: "global.set", index: object.global }];
+  });
 }
 
 /** The externref of `property`'s value; (#7489) an accessor's getter's, then its setter's. */
@@ -131,7 +143,7 @@ function define(d: RealmFamilyOperands, target: readonly Instr[], property: Real
 
 /**
  * The members' own properties (on their bags), then the objects'; last, (#7350 B3a) the identity mark on the bag of
- * each identity-only member, once nothing more is defined on it.
+ * each identity-only member and (#7609) on each identity-only object, once nothing more is defined on it.
  */
 export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
   const bag = (entry: RealmFamilyOperands["entries"][number]): Instr[] => [
@@ -146,6 +158,9 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
     ),
     ...d.entries.flatMap((entry) =>
       entry.identityOnly ? markIdentityOnly(d, () => [...bag(entry), ...asObject(d)]) : [],
+    ),
+    ...d.objects.flatMap((object) =>
+      object.identityOnly ? markIdentityOnly(d, () => [global(object.global), ...asObject(d)]) : [],
     ),
   ];
 }

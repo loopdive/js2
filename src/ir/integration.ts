@@ -96,10 +96,7 @@ import {
   ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
   ensureStandaloneRegExpCarrierExecHelper, // (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers
   ensureStandaloneRegExpCarrierTestHelper,
-  IR_DYN_DELETE_SLOPPY_HELPER,
-  IR_DYN_DELETE_STRICT_HELPER,
   irDeleteSiteIsStrict,
-  irDynamicDeleteHelperName,
   ensureIrDynamicInstanceOfHelper, // (#7106) generic dynamic instanceof wrapper
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
@@ -588,6 +585,11 @@ import {
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
 import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
+import {
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDynamicDeleteHelperName,
+} from "../shared/contracts/dynamic-delete-helper.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -6319,7 +6321,7 @@ function resolveModuleBindingGlobal(
   let tdzGlobal: GlobalDef | undefined;
   if (ctx.programAbiGlobals) {
     tdzGlobal = observed?.tdz;
-    if (ctx.tdzLetConstNames.has(name) && !tdzGlobal) {
+    if (ctx.tdzLetConstNames.has(name) && !observed?.tdzOmitted && !tdzGlobal) {
       throw new IrInvariantError(
         "unknown-global-ref",
         "build",

@@ -37,6 +37,7 @@
  */
 import type { GlobalDef, Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { absoluteGlobalIdx } from "../module-bindings/global-space.js";
 import {
   type ArmResources,
   armResources,
@@ -104,14 +105,9 @@ export function markGlobalVarBindingInstrs(
   return instrs;
 }
 
-function globalIndex(ctx: CodegenContext, global: GlobalDef): number | undefined {
-  const local = ctx.mod.globals.indexOf(global);
-  return local < 0 ? undefined : ctx.numImportGlobals + local;
-}
-
 /** The getter body: the module global, boxed to externref. */
 function getterBody(ctx: CodegenContext, accessor: GlobalVarAccessor, undef: Instr[]): Instr[] {
-  const index = globalIndex(ctx, accessor.global);
+  const index = absoluteGlobalIdx(ctx, accessor.global);
   const type = accessor.global.type;
   if (index === undefined) return undef;
   if (!globalVarAccessorSupports(accessor.global)) return undef;
@@ -120,7 +116,7 @@ function getterBody(ctx: CodegenContext, accessor: GlobalVarAccessor, undef: Ins
 
 /** The setter body (param 0 = the new value): convert, store, answer `undefined`. */
 function setterBody(ctx: CodegenContext, accessor: GlobalVarAccessor, undef: Instr[]): Instr[] {
-  const index = globalIndex(ctx, accessor.global);
+  const index = absoluteGlobalIdx(ctx, accessor.global);
   const type = accessor.global.type;
   if (index === undefined) return undef;
   const value: Instr = { op: "local.get", index: 0 };

@@ -78,7 +78,9 @@ How it is enforced:
 the merge queue gates on for the current edition
 (`scripts/test262-current-edition.json`, ES5: a pass → not-pass of that
 edition parks the PR, #7551) and CI measures daily for the whole corpus, which
-is what the site publishes and shows by default (#7537). On 2026-11-16 that
+is what the site publishes and shows by default (#7537), plus the current
+edition's figure from the newest landed merge when that is newer, with its own
+commit and date (#7616). On 2026-11-16 that
 path passed no positive ES5 test: every test stops inside the shared harness
 prelude. It shares only `lowerFunctionAstToIr` with the ordinary pipeline, not
 the selector or the codegen-backed resolver, so a file with zero legacy units

@@ -4,7 +4,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { createNewFunctionShim } from "../src/runtime-eval.js";
 import { ts } from "../src/ts-api.js";
-import { foldedEvalEarlyError } from "../src/frontend/eval/early-errors.js";
+import { SLOPPY_SCRIPT_GOAL, staticEarlyError } from "../src/frontend/eval/early-errors.js";
 
 const LANES = [
   { name: "host", target: undefined },
@@ -121,9 +121,11 @@ describe("#3632 folded eval Script early errors", () => {
   });
 
   it("keeps property names legal while rejecting orphan control statements", () => {
-    expect(foldedEvalEarlyError(parsedEval(`"use strict"; ({ public: 1 }).public;`), true)).toBeUndefined();
-    expect(foldedEvalEarlyError(parsedEval(`LOCAL: while (true) { continue LOCAL; }`), false)).toBeUndefined();
-    expect(foldedEvalEarlyError(parsedEval(`break CALLER;`), false)).toMatch(/Undefined break target/);
-    expect(foldedEvalEarlyError(parsedEval(`continue CALLER;`), false)).toMatch(/Undefined continue target/);
+    expect(
+      staticEarlyError(parsedEval(`"use strict"; ({ public: 1 }).public;`), { ...SLOPPY_SCRIPT_GOAL, strict: true }),
+    ).toBeUndefined();
+    expect(staticEarlyError(parsedEval(`LOCAL: while (true) { continue LOCAL; }`), SLOPPY_SCRIPT_GOAL)).toBeUndefined();
+    expect(staticEarlyError(parsedEval(`break CALLER;`), SLOPPY_SCRIPT_GOAL)).toMatch(/Undefined break target/);
+    expect(staticEarlyError(parsedEval(`continue CALLER;`), SLOPPY_SCRIPT_GOAL)).toMatch(/Undefined continue target/);
   });
 });

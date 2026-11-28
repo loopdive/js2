@@ -37,7 +37,7 @@ import { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
-import { literalEvalSiteRefusal, verifyLiteralEvalSources, type LiteralEvalSource } from "./eval-literal.js";
+import { literalDynamicCodeSiteRefusal, verifyLiteralDynamicCodeSources } from "./literal-dynamic-code.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
@@ -850,7 +850,7 @@ export interface IrProgramSourceInput {
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
-  readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+  readonly codeStrictness?: (node: ts.Node) => boolean;
   /**
    * (#7354 U) Present: a function whose body cannot be lowered gets the run-time abort as its body and is recorded
    * here (`abort-bodies.ts`). Absent: the program is refused. Only the test262 Prepared entry switches it on.
@@ -867,8 +867,8 @@ export interface IrProgramSourceInput {
   readonly nativeStringValueProjection?: "standalone-native";
   /** Independent string-only console intents; no async family or runtime availability is implied. */
   readonly nativeStringOutputProjection?: "standalone-native";
-  /** (#7363) Each top-level literal direct eval site and the script holding its text; absent: none. */
-  readonly literalEvalSources?: readonly LiteralEvalSource[];
+  /** (#7363, #7487) Each literal dynamic-code site, its kind and the script holding its text; absent: none. */
+  readonly literalDynamicCodeSources?: readonly import("./literal-dynamic-code.js").LiteralDynamicCodeSource[];
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -1530,17 +1530,17 @@ function prepareSourceGlobals(
   }
 }
 
-/** The input's inventory options for its own entry and checker; (#7363 A3) each called eval source after its caller. */
+/** The input's inventory options for its own entry and checker; (#7363 A3) each dynamic-code source after its site. */
 function sourceInventoryOptions(
   input: IrProgramSourceInput,
-  evalDependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>,
+  siteDependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>,
 ): BuildIrUnitInventoryOptions {
   const resolved = input.inventoryOptions?.resolvedDependencies ?? [];
   return {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
     checker: input.checker,
-    resolvedDependencies: new Map([...resolved, ...evalDependencies]),
+    resolvedDependencies: new Map([...resolved, ...siteDependencies]),
   };
 }
 
@@ -1552,8 +1552,8 @@ export function prepareIrProgramSources(
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
-  const literalEval = verifyLiteralEvalSources(input.literalEvalSources ?? [], input.sourceFiles, input.entrySource);
-  const inventory = buildIrUnitInventory(input.sourceFiles, sourceInventoryOptions(input, literalEval.dependencies));
+  const code = verifyLiteralDynamicCodeSources(input.literalDynamicCodeSources, input.sourceFiles, input.entrySource);
+  const inventory = buildIrUnitInventory(input.sourceFiles, sourceInventoryOptions(input, code.dependencies));
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
@@ -1587,12 +1587,12 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const startupSources = sourceFiles.filter((source) => !literalEval.sources.has(source));
-    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources);
-    // (#7363 A4, A5) A site that does not lower refuses the program at select, owned by the entry's init.
-    for (const call of literalEval.calls.keys()) {
-      const refusal = literalEvalSiteRefusal(call, dynamicContracts);
-      if (!refusal) continue;
+    const startupSources = sourceFiles.filter((source) => !code.sources.has(source));
+    const contractOptions = { literalFunctionSites: code.functionSites.size > 0 };
+    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources, contractOptions);
+    // (#7363 A4; #7487) A site that does not lower refuses the program at select, owned by the entry's init.
+    const refusal = literalDynamicCodeSiteRefusal(code, dynamicContracts);
+    if (refusal) {
       diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(input.entrySource);
       throw refusal;
     }
@@ -1618,11 +1618,11 @@ export function prepareIrProgramSources(
           identityContext: identity,
           target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
           deferTopLevelInit: input.deferTopLevelInit,
-          // (#7363) This script's homes: the values are the only startup source's, so a called eval source holds none.
+          // (#7363) This script's homes: the values are the only startup source's, so a dynamic-code source holds none.
           functionValues: dynamicContracts.functionDeclarationValues.filter(
             (value) => value.getSourceFile() === sourceFile,
           ),
-          called: literalEval.sources.has(sourceFile),
+          called: code.calledSources.has(sourceFile),
           scriptVarModel: "with-for-in-heads",
           blockFunctions: dynamicContracts.blockFunctions.filter(
             (block) => block.declaration.getSourceFile() === sourceFile,
@@ -1739,7 +1739,7 @@ export function prepareIrProgramSources(
                 project: sourceMapProjector.project,
               }),
       abortBodies: input.unlowerableBodies,
-      literalEvalCalls: literalEval.calls,
+      literalCode: code,
     };
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;

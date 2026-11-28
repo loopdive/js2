@@ -61,9 +61,11 @@
 import { ts } from "../../ts-api.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import type { Instr } from "../../ir/types.js";
+import type { GlobalDef, Instr } from "../../ir/types.js";
+import { absoluteGlobalIdx } from "../module-bindings/global-space.js";
+import { moduleBindingOf } from "../module-bindings/module-binding-table.js";
 import { localGlobalIdx } from "../registry/imports.js";
-import { forEachScriptVarDeclaration, scriptVarBindingNames } from "../source-scan-predicates.js";
+import { forEachScriptVarDeclaration } from "../source-scan-predicates.js";
 import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 
 /**
@@ -77,8 +79,8 @@ import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
  * function bindings afterwards — so a name that is both a `var` and a function
  * declaration must end up holding the FUNCTION, not this seed.
  */
-/** (#6894) Names whose module global the prologue seed wrote, per compile. */
-const seededModuleVarNames = new WeakMap<CodegenContext, Set<string>>();
+/** (#6894) The module globals the prologue seed wrote, per compile. */
+const seededModuleVarGlobals = new WeakMap<CodegenContext, Set<GlobalDef>>();
 
 export function emitModuleVarUndefinedSeeds(
   ctx: CodegenContext,
@@ -89,18 +91,49 @@ export function emitModuleVarUndefinedSeeds(
   // emitScriptGlobalVarBindings. A private-slot seed would reset a prior
   // Script's live value after all accesses are routed to the shared record.
   if (ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) return;
-  const seeded = new Set<number>();
-  let seededNames = seededModuleVarNames.get(ctx);
-  if (seededNames === undefined) seededModuleVarNames.set(ctx, (seededNames = new Set()));
-  for (const varName of scriptVarBindingNames(sourceFile)) {
-    const globalIdx = ctx.moduleGlobals.get(varName);
-    if (globalIdx === undefined || seeded.has(globalIdx)) continue;
-    if (ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind !== "externref") continue;
-    if (!emitUndefinedExtern(ctx, initFctx)) continue;
-    initFctx.body.push({ op: "global.set", index: globalIdx });
-    seeded.add(globalIdx);
-    seededNames.add(varName);
+  let seeded = seededModuleVarGlobals.get(ctx);
+  if (seeded === undefined) seededModuleVarGlobals.set(ctx, (seeded = new Set()));
+  const seededNow = new Set<GlobalDef>();
+  // (#7531) Every module's `var`s: one `__module_init` instantiates the whole graph.
+  for (const source of ctx.callableSourceFiles ?? [sourceFile]) {
+    if (source.isDeclarationFile) continue;
+    forEachScriptVarDeclaration(source, (declaration) =>
+      forEachBindingLeaf(declaration, (leaf) => {
+        const globalIdx = declaredGlobalIdx(ctx, leaf);
+        if (globalIdx === undefined) return;
+        const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+        if (global === undefined || seededNow.has(global) || global.type.kind !== "externref") return;
+        if (!emitUndefinedExtern(ctx, initFctx)) return;
+        initFctx.body.push({ op: "global.set", index: globalIdx });
+        seededNow.add(global);
+        seeded.add(global);
+      }),
+    );
   }
+}
+
+type IdentifierLeaf = (ts.VariableDeclaration | ts.BindingElement) & { readonly name: ts.Identifier };
+
+/** Visit every identifier-named leaf of `declaration`'s binding pattern, in source order. */
+function forEachBindingLeaf(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  visit: (leaf: IdentifierLeaf) => void,
+): void {
+  if (ts.isIdentifier(declaration.name)) visit(declaration as IdentifierLeaf);
+  else {
+    for (const element of declaration.name.elements) {
+      if (!ts.isOmittedExpression(element)) forEachBindingLeaf(element, visit);
+    }
+  }
+}
+
+/**
+ * The global `declaration` stores into: its own module binding's (#7470), or — for one that owns none, such as a
+ * `var` merged into a function binding — whatever the bare name shows.
+ */
+function declaredGlobalIdx(ctx: CodegenContext, declaration: IdentifierLeaf): number | undefined {
+  const binding = moduleBindingOf(ctx, declaration);
+  return binding ? absoluteGlobalIdx(ctx, binding.value) : ctx.moduleGlobals.get(declaration.name.text);
 }
 
 /**
@@ -170,11 +203,11 @@ export function emitClassStaticF64UndefinedSeeds(
  */
 export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): Set<number> {
   const globals = new Set<number>();
-  for (const { name } of seedCandidateDeclarations(ctx, sourceFile)) {
-    if (!ts.isIdentifier(name)) continue;
-    const globalIdx = ctx.moduleGlobals.get(name.text);
+  for (const declaration of seedCandidateDeclarations(ctx, sourceFile)) {
+    if (!ts.isIdentifier(declaration.name)) continue;
+    const globalIdx = declaredGlobalIdx(ctx, declaration as IdentifierLeaf);
     const type = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
-    if (globalIdx !== undefined && type && f64MayHoldUndefined(ctx, name, type)) globals.add(globalIdx);
+    if (globalIdx !== undefined && type && f64MayHoldUndefined(ctx, declaration.name, type)) globals.add(globalIdx);
   }
   for (const staticPropKey of staticF64UndefinedSeeds.get(ctx)?.keys() ?? []) {
     const globalIdx = ctx.staticProps.get(staticPropKey);
@@ -213,5 +246,7 @@ function seedCandidateDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFil
  * binding), or an assignment that ran earlier (`x = 5; var x;`).
  */
 export function moduleVarSlotIsUndefinedSeeded(ctx: CodegenContext, name: string): boolean {
-  return seededModuleVarNames.get(ctx)?.has(name) === true;
+  const globalIdx = ctx.moduleGlobals.get(name);
+  const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+  return global !== undefined && seededModuleVarGlobals.get(ctx)?.has(global) === true;
 }
