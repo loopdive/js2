@@ -158,15 +158,14 @@ invariant), and nothing reads it before it is written.
   - (b) semantics, from the emitted module: `__runtime_eval_pull_globals` writes `$__mod_d`, and
     `__runtime_eval_push_globals` reads `$__mod_d` rather than `$__fn_closure_d`. Prototype, standalone: pull writes
     global 1255 = `$__mod_d`, and push reads 1255.
-- `tests/issue-2928-runtime-link.test.ts`: the expected user-module import order becomes `apply_interpreted,
-  indirect_eval, new_function, direct_eval`.
-  - This is compiled output and has nothing to do with the stub. Measured with the prototype: the order is the same
-    with the original and the stub-fixed probe, because the stub lives in the provider source, not the user module.
+- `tests/issue-2928-runtime-link.test.ts` is not changed here. It stays red on main for its execution rows, and the
+  pre-push changed-root-tests hook would block a PR that touches it while it is red. #7634's PR carries its
+  import-order update, together with the stub fix. That order is compiled output:
+  - it is identical with the original and the stub-fixed probe, because the stub lives in the provider source;
   - `indirect_eval` comes first because the declaration-time `Function` companion seed lowers `Function` to
-    `indirect_eval("Function")` (`emitStandaloneIntrinsicFunctionValue`) before any body asks for `new_function`.
-  - Unverified (the clone is shallow): the old expectation predates that seed. The user module has not compiled on
-    main since then, so the expectation could not be refreshed.
-  - `aotThrowRoundTrip` stays excluded, citing #7633.
+    `indirect_eval("Function")` (`emitStandaloneIntrinsicFunctionValue`);
+  - with this fix the user module compiles and its imports are `apply_interpreted, indirect_eval, new_function,
+    direct_eval`.
 
 **Byte identity (prototype, 2026-11-28, main 28ca865e).**
 - Plain corpus above: 300 compiles, gc + standalone, 0 byte differences.
@@ -189,6 +188,7 @@ invariant), and nothing reads it before it is written.
   - the settled/reserved pair replaces the filled flag, with no new ordering-dependent flag;
   - no change to the singleton reuse check, which was right to refuse a mismatched ABI.
 - (d) gc and standalone byte-identical on everything but the early-fill rows of an export-bearing eval sample.
-- (e) In `tests/issue-2928-runtime-link.test.ts`, the user-module compile row and the import-order row pass. The
-  execution rows belong to #7634, and `aotThrowRoundTrip` to #7633.
+- (e) The runtime-link test is #7634's (plan review, option A): with this fix its run gets past the user-module compile
+  and import assertions. Under the current expectation it then stops at the import order, and under #7634's at
+  `executionErrors`.
 - All gates are green, including `LOC_GATE_BASE=origin/main` with no grant for `src/codegen/index.ts`.

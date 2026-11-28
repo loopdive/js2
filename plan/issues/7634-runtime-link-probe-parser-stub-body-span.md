@@ -70,5 +70,9 @@ it. It asserts that the parameter text contains no `{`, so a stub source that br
 
 ## Note
 
-Its own PR, landing after #7632 (plan review R3): it can only be shown green once #7632's compile fix is in,
-because the probe's user module does not compile on main.
+Its own PR. It lands after #7632, and also after #7633: the pre-push changed-root-tests hook runs
+`tests/issue-2928-runtime-link.test.ts` in full, and its `aotThrowRoundTrip` row fails until #7633 is fixed. A row is
+never marked as a known failure without the lead's decision.
+
+This PR also carries the runtime-link test's import-order update
+(`apply_interpreted, indirect_eval, new_function, direct_eval`), moved here from #7632.

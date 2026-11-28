@@ -67,12 +67,12 @@ describe("#2928 — linked runtime Function provider", () => {
       },
       {
         module: "js2wasm:runtime-eval",
-        name: "__runtime_indirect_eval",
+        name: "__runtime_new_function",
         kind: "function",
       },
       {
         module: "js2wasm:runtime-eval",
-        name: "__runtime_new_function",
+        name: "__runtime_indirect_eval",
         kind: "function",
       },
       {
