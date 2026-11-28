@@ -353,7 +353,7 @@ only), 88 cases. Each row is compared with node 22's answer for the same sources
 ### Review fixes (2026-11-28)
 
 A review blocked the PR on a renamed export and found two older defects in the same code. Seven rows were added to
-the pin test, now 31 rows and 120 cases (31 × 4 configurations, minus the namespace-import row with the IR path off). All but the `as k` row failed before these fixes, on gc and standalone, with
+the pin test, now 31 rows and 120 cases (31 rows × 4 configurations, minus the 2 namespace-import rows on each target with the IR path off). All but the `as k` row failed before these fixes, on gc and standalone, with
 the IR path on and off:
 
 | shape | node | before | after |
