@@ -512,6 +512,18 @@ X and Z and the reviewer's extra probes match node, the residuals reproduce with
    ts.BindingElement` as `IrModuleBindingDeclaration` (`src/ir/module-bindings.ts`).
 5. (8) Condition e now says a name that appears only inside an eval string is not hidden.
 
+After the fix, against the reviewed head (dc5c7fed3d), on 2026-11-28:
+
+- Byte gate: 4,220 of 4,220 rows identical (the 389-file, eval/Annex B and reassign samples × gc/standalone × IR
+  on/off). Every corpus file is a single source, so the per-source walk visits the same declarations in the same
+  order there.
+- lodash-es `compileProject(lodash.js)`, three runs each: gc 6,356,395 → 6,359,057 bytes (+2,662, +0.04 %; each
+  source's own eval-rebindable functions are now live), standalone 6,232,698 bytes both. Compile medians gc 36.6 s
+  → 35.9 s, standalone 33.6 s → 33.5 s (within noise). Both validate. The "after" side includes the merge of main
+  ea628a7874.
+- Pins: the 7530, 7470, 7464, 4133 ×2, 2930, 2931, 4182 and 6880 files, 261 of 261 (the 8 new eval rows included,
+  run with QuickJS built here).
+
 Follow-ups filed, unclaimed: [#7639](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7639-eval-liveness-only-in-modules-with-direct-eval) (eval liveness only in modules that contain a direct eval, the
 lodash-es cost driver) and [#7640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7640-reassigned-let-and-function-of-same-name-in-two-modules) (VAR2: a reassigned `let f` in one module and a `function f` in
 another, wrong on main too). [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function)'s
