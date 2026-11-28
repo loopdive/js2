@@ -2630,8 +2630,11 @@
                 return;
               }
               const filename = activeMode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-              irProvenance.textContent =
-                window.t262ViewState.irMeasurementLabel(view.report, activeMode) + ` · results/${filename}`;
+              window.t262ViewState.showIrProvenance(
+                irProvenance,
+                window.t262ViewState.irMeasurementLabel(view.report, activeMode) + ` · results/${filename}`,
+                view.editionsSrc,
+              );
             }
             renderConformance(view, conformanceHost, preservedState);
           };

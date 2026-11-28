@@ -15,6 +15,7 @@ import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall, realmConstantRead } from "./realm-static-call.js";
 import { realmConstructorId, type RealmConstructor, type RealmFamily } from "./program/builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
+import { isScriptThis } from "./this-binding.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -35,6 +36,7 @@ export function programObjects(
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
+  let globalObject = false;
   const realmFamilies = new Set<RealmFamily>();
   const wrappers = new Set<NativeWrapperConstructor>();
   // (#7354 G1) The family of the realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it
@@ -64,8 +66,16 @@ export function programObjects(
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
+    globalObject ||= isScriptThis(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present: present || realmFamilies.has("error"), functions, namesSymbol, realmFamilies, wrappers };
+  return {
+    present: present || globalObject || realmFamilies.has("error"),
+    functions,
+    namesSymbol,
+    globalObject,
+    realmFamilies,
+    wrappers,
+  };
 }

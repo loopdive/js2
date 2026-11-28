@@ -313,8 +313,9 @@ function beginRealm(
       : undefined;
   };
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each
-  // ((#7561) a held prototype is an object of its family, `familyObjects`). A family member's call through the
-  // dispatcher is the run-time abort, whatever its catalog implementation (`NativeBuiltinFunctionBehavior`).
+  // ((#7561) a held prototype and (#7609) the global object are objects, `familyObjects`). A family member's call
+  // through the dispatcher is the run-time abort, whatever its catalog implementation
+  // (`NativeBuiltinFunctionBehavior`).
   const functions = requirements.description.intrinsics.filter((id) => held.find((row) => row.id === id)?.callable);
   const intrinsics = [...catalog.bootstrap, ...functions].map((id, index) => {
     const row = held.find((row) => row.id === id),

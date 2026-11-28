@@ -52,7 +52,7 @@ import { dynamicErrorConstruction } from "./dynamic-error-constructors.js";
 import { dynamicWrapperConstruction } from "./dynamic-wrapper-constructors.js";
 import { dynamicObjectTag } from "./dynamic-object-tag.js";
 import { realmConstructorOf, realmIntrinsicOfHelper, type RealmConstruction } from "./dynamic-realm-calls.js";
-import type { RealmConstructor } from "./builtin-prototype-keys.js";
+import { GLOBAL_OBJECT_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
 import {
   CARRIER,
   additionBuilder,
@@ -249,6 +249,9 @@ export function legalizeDynamicValues(
         return dynamicMemberWrite(memberAccess, instr);
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
+      // (#7609) The realm's global object (`this` at script level).
+      case "dyn.global_object":
+        return builders.realmIntrinsic(GLOBAL_OBJECT_ID, instr.result!);
       case "dyn.arguments_length":
       case "dyn.publish_argc":
         return argumentsCount(functionOperations, instr);
@@ -333,7 +336,6 @@ export function legalizeDynamicValues(
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
 }
-
 /**
  * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that reads one,
  * every throw, in whichever function, must be a value of a {@link carrierKindOf}. Any other value refuses by name.

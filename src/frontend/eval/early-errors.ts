@@ -42,12 +42,21 @@ export interface EvalCallerCapabilities {
 
 const NO_CAPABILITIES: EvalCallerCapabilities = { newTarget: false, superProperty: false, superCall: false };
 
-/** Return the first early-error message, or undefined when the body is valid. */
-export function foldedEvalEarlyError(
-  sourceFile: ts.SourceFile,
-  scriptIsStrict: boolean,
-  caller: EvalCallerCapabilities = NO_CAPABILITIES,
-): string | undefined {
+/**
+ * The goal a Script text is checked under: whether it starts strict, and what its caller licenses. A Script that is
+ * not an eval's, such as the text of a dynamic function (#7487), is global code, so its caller licenses nothing.
+ */
+export interface StaticEarlyErrorGoal {
+  readonly strict: boolean;
+  readonly caller: EvalCallerCapabilities;
+}
+
+/** The goal of sloppy global Script code. */
+export const SLOPPY_SCRIPT_GOAL: StaticEarlyErrorGoal = { strict: false, caller: NO_CAPABILITIES };
+
+/** Return the first early-error message of a Script text under `goal`, or undefined when it is valid. */
+export function staticEarlyError(sourceFile: ts.SourceFile, goal: StaticEarlyErrorGoal): string | undefined {
+  const { strict: scriptIsStrict, caller } = goal;
   let error: string | undefined;
 
   const metaError = evalMetaPropertyEarlyError(sourceFile, caller);

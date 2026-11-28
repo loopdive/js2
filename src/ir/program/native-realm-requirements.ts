@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  GLOBAL_OBJECT_ID,
   NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
@@ -34,9 +35,10 @@ export interface NativeRealmDescription {
   readonly sourceAllocationOccurrences: readonly number[];
   readonly objectUses: NativeObjectAccessRequirements["uses"];
   /**
-   * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
+   * The values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
    * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
-   * since no other read can reach one; (#7354 G1, #7350 B3a) the families the program uses ({@link heldFamilies}).
+   * since no other read can reach one; (#7354 G1, #7350 B3a) the families the program uses ({@link heldFamilies});
+   * (#7609) the global object where the program reads it. All but the global object are function values.
    */
   readonly intrinsics: readonly string[];
   /**
@@ -202,7 +204,8 @@ const HELD_FAMILIES: readonly HeldFamily[] = [
     base: ["%Error%", "%TypeError%", ERROR_TO_STRING_ID],
     implied: bindsCaughtValue,
   },
-  // The wrapper families: each constructor the IR reads, alone; (#7561) each prototype and method as pinned.
+  // The wrapper families and (#7609) the global object: each constructor and the global object the IR reads, alone;
+  // (#7561) each prototype and method as pinned.
   {
     members: NATIVE_VALUE_INTRINSICS.slice(NATIVE_VALUE_INTRINSICS.indexOf(`%${NATIVE_WRAPPER_CONSTRUCTORS[0]}%`)),
     contracts: new Set(["js.object.create-wrapper", "js.object.wrapper-data"]),

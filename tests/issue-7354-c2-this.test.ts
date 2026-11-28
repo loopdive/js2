@@ -91,7 +91,6 @@ describe("#7354 C2 — this", () => {
       "function F(){ return this; } var g = function(){ return 1; }; if (g() !== 1) throw 2; F();",
       "a direct call of F installs no receiver for its 'this'",
     ],
-    ["`this` at top level", "var x = this;", "'this' reference outside an instance method body (<module-init>)"],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });

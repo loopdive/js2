@@ -57,6 +57,8 @@ export interface NativeBuiltinObject {
   readonly prototype: string;
   readonly primitiveData?: string | number | boolean;
   readonly properties: readonly NativeBuiltinProperty[];
+  /** (#7609) An object the catalog models only as an identity (`NativeRealmIntrinsic.identityOnly`). */
+  readonly identityOnly?: true;
 }
 export interface NativeBuiltinFunctionRequirement {
   readonly id: string;

@@ -64,6 +64,8 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
 import { refuseImmutableWrite } from "./const-binding-writes.js";
+import { lowerLiteralDynamicCodeSite } from "./literal-dynamic-code-lowering.js";
+import type { FunctionDeclarationUnit } from "./function-declaration-values.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -459,6 +461,7 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
+import { bindEntryThis, lowerThis } from "./this-binding.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -609,9 +612,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
   /**
    * (#7363 A2) The module-init of the called script that holds this direct eval's literal text
-   * (`src/ir/eval-literal.ts`): `null` when the text runs nothing; undefined when the call has no such script.
+   * (`literal-dynamic-code.ts`): `null` when the text runs nothing; undefined when the call has no such script.
    */
   literalEvalCalledInit?(call: ts.CallExpression): IrFuncRef | null | undefined;
+  /** (#7487) The declaration unit of this literal `Function` site's source (`literal-dynamic-code.ts`); else none. */
+  literalFunctionUnit?(site: ts.CallExpression | ts.NewExpression): FunctionDeclarationUnit | undefined;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -764,6 +769,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly get: IrFuncRef;
     readonly has: IrFuncRef;
   } | null;
+  /** (#7609) The `this` expression reads the realm's global object (`this-binding.ts`). */
+  globalObjectThis?(expr: ts.Expression): boolean;
   /**
    * (#7377) The script-var model of a module-init unit (`ScriptVarModel`): which `var` lists declare script vars
    * the unit writes in place. Every resolver that lowers a module-init unit names its pipeline's model; without
@@ -2999,15 +3006,6 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
  *     route through the slot — this preserves the cross-iteration value
  *     semantics without requiring SSA phi nodes.
  */
-/**
- * (#7106) OrdinaryCallBindThis: bind `this` once at entry through
- * `dyn.current_this` — the receiver the caller installed, else legacy's
- * unbound answer for this strictness.
- */
-function bindEntryThis(scope: Map<string, ScopeBinding>, builder: IrFunctionBuilder, strict: boolean): void {
-  scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(strict), type: irDynamic() });
-}
-
 type ScopeBinding =
   | { kind: "local"; value: IrValueId; type: IrType; stringEncoding?: Encoding }
   | {
@@ -5209,24 +5207,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   if (ts.isArrayLiteralExpression(expr)) {
     return lowerArrayLiteral(expr, cx, hint);
   }
-  // #1370 Phase B: `this` reference inside an instance method body.
-  // The integration loop binds `this` in scope to the synthetic
-  // `__self` parameter's SSA value before lowering the body. Outside
-  // of class-method bodies the keyword never enters scope, so this
-  // branch only fires for IR-claimed instance methods.
-  if (expr.kind === ts.SyntaxKind.ThisKeyword) {
-    const p = cx.scope.get("this");
-    if (!p) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: 'this' reference outside an instance method body (${cx.funcName})`,
-      );
-    }
-    if (p.kind !== "local") {
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: unexpected 'this' binding kind ${p.kind} in ${cx.funcName}`);
-    }
-    return p.value;
-  }
+  if (expr.kind === ts.SyntaxKind.ThisKeyword) return lowerThis(expr, cx);
   if (ts.isIdentifier(expr)) {
     const read = classifyIdentifierRead(expr, cx);
     switch (read.kind) {
@@ -7737,16 +7718,6 @@ function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null 
   return null;
 }
 
-/**
- * (#7363 A4) A literal direct eval runs its text, a called script of the program (`init`: its module-init, `null` when
- * the text runs nothing). Admission refused the program unless every site discards its value and the global `eval` is
- * the realm's %eval% (`refuseUnadmittedLiteralEvalSites`), so the site is just that call.
- */
-function lowerLiteralEvalCall(init: IrFuncRef | null, cx: LowerCtx): null {
-  if (init !== null) cx.builder.emitCall(init, [], null);
-  return null;
-}
-
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7816,8 +7787,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // call; the backend emits the mandated Wasm `drop` for its externref result.
     return result;
   }
-  const literalEvalInit = cx.resolver?.literalEvalCalledInit?.(expr);
-  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(literalEvalInit, cx);
+  const literalCode = lowerLiteralDynamicCodeSite(expr, cx);
+  if (literalCode !== undefined) return literalCode;
   if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier))
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
@@ -8462,6 +8433,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
   if (primitiveWrapper !== null) return primitiveWrapper;
+  const literalFunction = lowerLiteralDynamicCodeSite(expr, cx);
+  if (literalFunction !== undefined) return literalFunction;
   // (#4461) `new Map()` on a lane whose `Map` carrier is the native `$Map`
   // struct. Intercepted before the extern-class registry, which has no `Map`
   // entry at all in host-free mode — the pre-#4461 behaviour was the
@@ -10381,7 +10354,7 @@ function emitStringRelational(
     throw new Error(`ir/from-ast: string compare produced void result (${cx.funcName})`);
   }
   const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
-  return cx.builder.emitBinary(foldOp, sign, zero, irVal({ kind: "i32" }));
+  return cx.builder.emitBinary(foldOp, sign, zero, IR_BOOL);
 }
 
 function lowerStringMethodCall(
@@ -16162,7 +16135,7 @@ function tryLowerDynamicRelational(
       return null;
   }
   if (lt.kind === "dynamic" && rt.kind === "dynamic") {
-    const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], irVal({ kind: "i32" }));
+    const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], IR_BOOL);
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: dynamic relational helper ${runtimeName} produced no result in ${cx.funcName}`);
@@ -16173,7 +16146,7 @@ function tryLowerDynamicRelational(
   if (lf === null) return null;
   const rf = relOperandToF64(rhs, rt, cx);
   if (rf === null) return null;
-  return cx.builder.emitBinary(binop, lf, rf, irVal({ kind: "i32" }));
+  return cx.builder.emitBinary(binop, lf, rf, IR_BOOL);
 }
 
 /**

@@ -404,3 +404,13 @@ are new in the merge and were not part of either review:
 
 `BOOLEAN` moved to `dynamic-value-types.ts` (main exported one from `dynamic-value-chains.ts`, this slice kept one in
 `dynamic-builtin-methods.ts`, which the chains import).
+
+## Merge with main's global object (#7609), 2026-11-28
+
+- `NATIVE_VALUE_INTRINSICS`: the wrapper constructors, `%GlobalObject%` (main's place), then this slice's prototypes
+  and methods. The wrapper family row of `HELD_FAMILIES` slices from the first wrapper constructor, so it holds the
+  global object as main's row did (alone, where the IR reads it).
+- `dynamic-object-tag.ts` carries main's global-object arm of `Object.prototype.toString` (`objectTag` tests the
+  global object first, then `ownTag`); main's `objectTag` in `dynamic-value-legalization.ts` is gone.
+- `native-realm.ts`: the realm's function entries are the callable rows, which excludes the global object as main's
+  filter did. `js.object.intrinsic` reads a held object (a prototype, the global object) through one arm.

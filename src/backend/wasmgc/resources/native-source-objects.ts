@@ -292,7 +292,7 @@ const ROWS = {
     signature: { params: [I32], results: [EXTERNREF] },
     body: ({ kernel }, tx) => {
       const d = nativeBuiltinFunctionOperands(tx, kernel);
-      // (#7561) A held prototype object is read after the realm's initialization.
+      // (#7561, #7609) A held object (a prototype, the global object) is read after the realm's initialization.
       const value = (id: string): readonly Instr[] | undefined => {
         if (kernel.entries.some((entry) => entry.id === id))
           return [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }];

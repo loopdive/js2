@@ -232,7 +232,27 @@ const legacyProperty = (row: NativeRealmProperty): NativeRealmProperty => ({
   legacy: true,
 });
 const errorToString: Method = ["toString", 0, ["Get", "ToString"]];
-
+/**
+ * (#7609) §9.3.1 [[GlobalObject]], the value of `this` at script level. The realm models only its identity
+ * (`identityOnly`, no property): its own properties are the script's bindings and the host's, which stay in their
+ * homes, so the kernel aborts every query of them. Its [[Prototype]] is implementation-defined (§19); the realm links
+ * it to Object.prototype, the one object of the chain a program can hold. The row brings itself: the realm holds it
+ * where the program reads it.
+ */
+export const GLOBAL_OBJECT_ID = "%GlobalObject%";
+const globalObjectRow: NativeRealmIntrinsic = {
+  id: GLOBAL_OBJECT_ID,
+  heldWith: GLOBAL_OBJECT_ID,
+  identityOnly: [],
+  aliases: [GLOBAL_OBJECT_ID],
+  prototype: objectPrototype,
+  extensible: true,
+  immutablePrototype: false,
+  constructible: false,
+  normativeOptional: false,
+  legacy: false,
+  properties: [],
+};
 /**
  * (#7354 G1) §20.5.1-20.5.3, §20.5.6: a constructor (length 1, own `prototype` read only; a NativeError's
  * [[Prototype]] is %Error%) and its prototype object (`constructor`, `name`, `message` "", and Error.prototype's
@@ -394,14 +414,15 @@ const WRAPPER_MEMBERS: Readonly<
 /**
  * (#7354 G1) The values a Prepared realm can hold, in the order the realm's `js.object.intrinsic(selector)` numbers
  * them: the native Object.prototype methods, the Error constructors, `Error.prototype.toString`, (#7350 B3a) the
- * wrapper constructors, (#7561) their prototype objects and those prototypes' methods. Positional: new rows are
- * appended.
+ * wrapper constructors, (#7609) the global object, (#7561) the wrappers' prototype objects and those prototypes'
+ * methods. Positional: new rows are appended.
  */
 export const NATIVE_VALUE_INTRINSICS: readonly string[] = Object.freeze([
   ...NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name)),
   ...NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`),
   realmMethodId("Error.prototype", errorToString[0]),
   ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}%`),
+  GLOBAL_OBJECT_ID,
   ...NATIVE_WRAPPER_CONSTRUCTORS.map((name) => `%${name}.prototype%`),
   ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap((name) =>
     [...WRAPPER_MEMBERS[name].methods, ...WRAPPER_MEMBERS[name].legacy].map(([method]) =>
@@ -588,6 +609,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ]),
     ...NATIVE_ERROR_CONSTRUCTORS.flatMap(errorRows),
     ...NATIVE_WRAPPER_CONSTRUCTORS.flatMap(wrapperRows),
+    globalObjectRow,
   ];
   return rows.map((row) => ({
     ...row,

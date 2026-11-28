@@ -64,6 +64,8 @@ export const objectPrototypeMethodId = (name: NativeObjectPrototypeMethod): stri
 /** (#7354 G1) The catalog ids of `%Error%` and of `Error.prototype.toString`. */
 export const ERROR_ID = "%Error%";
 export const ERROR_TO_STRING_ID = realmMethodId("Error.prototype", "toString");
+/** (#7609) The catalog id of the global object. */
+export { GLOBAL_OBJECT_ID } from "../../runtime/contracts/native-realm-catalog.js";
 
 /** (#7350 B3a) The realm's constructor families and their names: (#7354 G1) the Error constructors, the wrappers. */
 interface RealmFamilyNames {

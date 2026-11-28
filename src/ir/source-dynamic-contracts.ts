@@ -70,6 +70,7 @@ import {
   ownThisEscapes,
   readsAmbientThisGlobal,
 } from "../shared/body-references-own-this.js";
+import { isScriptThis } from "./this-binding.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -347,6 +348,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicDeleteBoxesExternref?: () => boolean;
     /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
     readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
+    /** (#7609) A `this` of script code reads the realm's global object (`isScriptThis`). */
+    readonly globalObjectThis?: (expr: ts.Expression) => boolean;
   };
   /**
    * (#7363 A4) Some sloppy function binds ambient `this`, which a plain call makes the global object, and lets it
@@ -387,10 +390,11 @@ export interface RefusalOwners {
 /**
  * `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. `input` is
  * the producer's: its checker, policy and the compiler's answer to the strictness of a piece of code. (#7363 A3)
- * `startupSources` are the sources startup runs, every one but the called eval sources. The answers that need the
- * program's only script to run first are asked over them: the script-var homes (`irOwnedScriptVarHome`), the function
- * declarations read as values, the Annex B block functions and the static function values. Every other answer here
- * reads the whole program.
+ * `startupSources` are the sources startup runs, every one but the literal dynamic-code sources (#7487). The answers
+ * that need the program's only script to run first are asked over them: the script-var homes
+ * (`irOwnedScriptVarHome`), the function declarations read as values, the Annex B block functions and the static
+ * function values. Every other answer here reads the whole program. (#7487) `literalFunctionSites`: the program has a
+ * literal `Function` site, which makes a value of its source's declaration as a declaration read as a value does.
  */
 export function programDynamicContracts(
   input: {
@@ -401,6 +405,7 @@ export function programDynamicContracts(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
   startupSources: readonly ts.SourceFile[] = sourceFiles,
+  { literalFunctionSites = false }: { readonly literalFunctionSites?: boolean } = {},
 ): ProgramDynamicContracts {
   const { checker, policy } = input;
   // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
@@ -410,7 +415,7 @@ export function programDynamicContracts(
   const blockFunctions = functionObjects ? scriptBlockFunctions(startupSources) : [];
   const objects = programObjects(
     sourceFiles,
-    functionDeclarationValues.length > 0 || blockFunctions.length > 0,
+    functionDeclarationValues.length > 0 || blockFunctions.length > 0 || (functionObjects && literalFunctionSites),
     pristineBuiltinGlobal(checker, sourceFiles),
   );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
@@ -455,6 +460,7 @@ export function programDynamicContracts(
           dynamicDeleteSymbol: (site) => irDynamicDeleteHelperName(input.codeStrictness?.(site) !== false),
           dynamicDeleteBoxesExternref: () => true,
           dynamicForInPlan: () => FOR_IN_PLAN,
+          globalObjectThis: isScriptThis,
         }
       : {},
     result: (declaration) =>

@@ -56,6 +56,8 @@ export interface RealmFamilyOperands {
     /** (#7561) A wrapper prototype's primitive data (`NativeRealmIntrinsic.primitiveData`). */
     readonly primitiveData?: string | number | boolean;
     readonly properties: readonly RealmFamilyProperty[];
+    /** (#7609) The catalog models only the object's identity (the global object). */
+    readonly identityOnly?: true;
   }[];
   /** (#7561) Where the realm holds a wrapper prototype: the wrapper `id` of `primitiveData` over `prototype`. */
   readonly wrapperAllocation?: (id: string, primitiveData: string | number | boolean, prototype: Instr[]) => Instr[];
@@ -141,7 +143,7 @@ function define(d: RealmFamilyOperands, target: readonly Instr[], property: Real
 
 /**
  * The members' own properties (on their bags), then the objects'; last, (#7350 B3a) the identity mark on the bag of
- * each identity-only member, once nothing more is defined on it.
+ * each identity-only member and (#7609) on each identity-only object, once nothing more is defined on it.
  */
 export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
   const bag = (entry: RealmFamilyOperands["entries"][number]): Instr[] => [
@@ -156,6 +158,9 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
     ),
     ...d.entries.flatMap((entry) =>
       entry.identityOnly ? markIdentityOnly(d, () => [...bag(entry), ...asObject(d)]) : [],
+    ),
+    ...d.objects.flatMap((object) =>
+      object.identityOnly ? markIdentityOnly(d, () => [global(object.global), ...asObject(d)]) : [],
     ),
   ];
 }

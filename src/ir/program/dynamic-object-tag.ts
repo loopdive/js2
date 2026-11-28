@@ -4,9 +4,11 @@
  * tag per kind `v` may hold (§20.1.3.6). `undefined` and `null` are named before ToObject (steps 1-2), a primitive
  * answers its wrapper's builtinTag, and an object a wrapper's kind by its primitive data (#7561), "Error" for
  * [[ErrorData]] (G1), else "Object"; its `@@toStringTag` is reachable only by naming `Symbol`, which refuses by name.
+ * (#7609) The global object's tag is the host's (node's has an own `@@toStringTag` "global"), which the realm does not
+ * know: where the program holds it, an object that is it ends at the run-time abort.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
+import { GLOBAL_OBJECT_ID, WRAPPER_DATA, WRAPPER_OF_PRIMITIVE } from "./builtin-prototype-keys.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
 import { gap } from "./dynamic-value-gap.js";
@@ -32,8 +34,24 @@ export function dynamicObjectTag(b: ChainBuilders, program: LegalizationProgram,
   );
 }
 
-/** An object's tag: a wrapper's kind by its primitive data (`undefined` for no wrapper), "Error", else "Object". */
+/** An object's tag: the run-time abort for the global object, else its own (`ownTag`). */
 function objectTag(b: ChainBuilders, program: LegalizationProgram, instr: ObjectTag, result: IrValueId): IrInstr[] {
+  if (!program.objects.globalObject) return ownTag(b, program, instr, result);
+  const [global, isGlobal] = [b.fresh(), b.fresh()];
+  return [
+    ...b.realmIntrinsic(GLOBAL_OBJECT_ID, global),
+    b.intrinsic(instr, "js.value.strict_eq", [instr.value, global], isGlobal),
+    b.branch(
+      isGlobal,
+      (r) => b.abortText(instr, "Object.prototype.toString of the global object", r),
+      (r) => ownTag(b, program, instr, r),
+      result,
+    ),
+  ];
+}
+
+/** A wrapper's kind by its primitive data (`undefined` for no wrapper), "Error", else "Object". */
+function ownTag(b: ChainBuilders, program: LegalizationProgram, instr: ObjectTag, result: IrValueId): IrInstr[] {
   const plain = (r: IrValueId): IrInstr[] => {
     if (!holdsFamily(program, "error")) return [b.text(`[object ${OBJECT_TAG.object}]`, r)];
     const isError = b.fresh();

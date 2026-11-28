@@ -198,9 +198,8 @@ export type IrUnsupportedCode =
   | "new-target-threading"
   | "static-class-member"
   | "module-init-legacy-coupling"
-  // (#7363 A4, A5) A literal direct eval site whose value is used, or whose global `eval` may not be %eval%: a
-  // select-time refusal of the program (`eval-literal.ts`). The test262 entry reads the code, not the message, to
-  // keep this refusal instead of compiling again without the texts.
+  // (#7363 A4, #7487) A literal dynamic-code site whose global `eval` or `Function` may not be the realm's built-in: a
+  // select-time refusal of the program (`literal-dynamic-code.ts`).
   | "literal-eval-site-unsupported";
 
 export type IrInvariantCode =

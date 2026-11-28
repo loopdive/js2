@@ -1938,9 +1938,12 @@ jobs:
     #   schedule (daily) / workflow_dispatch → the full corpus, 102 shards
     #     (~300 runner-min: a shard takes ~2 min because a file the IR does not
     #     fully lower is refused at compile time); uploaded as
-    #     `test262-ir-standalone-measurement`, the only artifact the site reads.
+    #     `test262-ir-standalone-measurement`.
     # The distinct artifact names are what keep an edition run from ever being
-    # read as a whole-corpus measurement.
+    # read as a whole-corpus measurement: the site (#7616,
+    # scripts/test262-ir-site-measurements.mjs) publishes the full one, and an
+    # edition one of a later landed commit only as a separate current-edition
+    # figure with its own commit and date.
     needs: [changes]
     # always(): `changes` does not run on schedule.
     if: |
@@ -2227,7 +2230,8 @@ jobs:
           node scripts/validate-test262-completeness.mjs --input ir-measurement/results.jsonl \
             "${manifests[@]}" --expected-shards "$EXPECTED_SHARDS" "${expected[@]}"
       - name: Record the measurement's scope (#7551)
-        # Read back by a later edition run that picks this one as its baseline.
+        # Read back by a later edition run that picks this one as its baseline,
+        # and (#7616) by deploy-pages, which publishes only an IR standalone one.
         env:
           EDITION: ${{ needs.compiler-path-measurement-plan.outputs.edition }}
           SOURCE_SHA: ${{ github.sha }}
@@ -2237,6 +2241,7 @@ jobs:
           if [ -n "$EDITION" ]; then editions+=(--editions current); fi
           # Same revision read as the regression gate's (#1081): the submodule pin, never the outer HEAD.
           node --experimental-strip-types scripts/test262-edition-scope.ts meta --scope "$SCOPE" "${editions[@]}" \
+            --compiler-path ir --target standalone \
             --source-sha "$SOURCE_SHA" --test262-sha "$(git submodule status test262 | awk '{print $1}' | tr -d '+-')" \
             --eval-engine "$EVAL_ENGINE" --out ir-measurement/scope.json
       # Named "Download …" on purpose: auto-park classifies a failure here as
@@ -2368,11 +2373,11 @@ jobs:
           NODE
       - uses: actions/upload-artifact@v6
         with:
-          # Distinct names per scope (#7551): the site reads only the full one.
+          # Distinct names per scope (#7551): the site never reads an edition run as the full corpus (#7616).
           name: ${{ needs.compiler-path-measurement-plan.outputs.artifact }}
           path: ir-measurement
           if-no-files-found: error
-          # The daily full run carries the 90-day history; per-merge edition runs only serve as baselines.
+          # The daily full run carries the 90-day history; per-merge edition runs serve as baselines and the site's fresh edition row.
           retention-days: ${{ env.SCOPE == 'edition' && 14 || 90 }}
           # A re-run of failed jobs re-uploads under the same name.
           overwrite: true

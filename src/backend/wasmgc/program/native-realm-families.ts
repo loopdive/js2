@@ -53,6 +53,7 @@ export function familyObjects(
       ...(row.primitiveData === undefined ? {} : { primitiveData: row.primitiveData }),
       // A family's ordinary objects hold no accessor in the catalog.
       properties: familyProperties(row, entryOf, false),
+      ...(row.identityOnly ? { identityOnly: true as const } : {}),
     }));
   return objects.length === 0 ? {} : { objects };
 }
