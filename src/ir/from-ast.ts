@@ -64,6 +64,8 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
 import { refuseImmutableWrite } from "./const-binding-writes.js";
+import { lowerLiteralDynamicCodeSite } from "./literal-dynamic-code-lowering.js";
+import type { FunctionDeclarationUnit } from "./function-declaration-values.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -609,9 +611,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
   /**
    * (#7363 A2) The module-init of the called script that holds this direct eval's literal text
-   * (`src/ir/eval-literal.ts`): `null` when the text runs nothing; undefined when the call has no such script.
+   * (`literal-dynamic-code.ts`): `null` when the text runs nothing; undefined when the call has no such script.
    */
   literalEvalCalledInit?(call: ts.CallExpression): IrFuncRef | null | undefined;
+  /** (#7487) The declaration unit of this literal `Function` site's source (`literal-dynamic-code.ts`); else none. */
+  literalFunctionUnit?(site: ts.CallExpression | ts.NewExpression): FunctionDeclarationUnit | undefined;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -7737,16 +7741,6 @@ function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null 
   return null;
 }
 
-/**
- * (#7363 A4) A literal direct eval runs its text, a called script of the program (`init`: its module-init, `null` when
- * the text runs nothing). Admission refused the program unless every site discards its value and the global `eval` is
- * the realm's %eval% (`refuseUnadmittedLiteralEvalSites`), so the site is just that call.
- */
-function lowerLiteralEvalCall(init: IrFuncRef | null, cx: LowerCtx): null {
-  if (init !== null) cx.builder.emitCall(init, [], null);
-  return null;
-}
-
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7816,8 +7810,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // call; the backend emits the mandated Wasm `drop` for its externref result.
     return result;
   }
-  const literalEvalInit = cx.resolver?.literalEvalCalledInit?.(expr);
-  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(literalEvalInit, cx);
+  const literalCode = lowerLiteralDynamicCodeSite(expr, cx);
+  if (literalCode !== undefined) return literalCode;
   if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier))
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
@@ -8462,6 +8456,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
   if (primitiveWrapper !== null) return primitiveWrapper;
+  const literalFunction = lowerLiteralDynamicCodeSite(expr, cx);
+  if (literalFunction !== undefined) return literalFunction;
   // (#4461) `new Map()` on a lane whose `Map` carrier is the native `$Map`
   // struct. Intercepted before the extern-class registry, which has no `Map`
   // entry at all in host-free mode — the pre-#4461 behaviour was the
