@@ -59,12 +59,10 @@ export const isRootMethod = (heldRows: readonly NativeRealmIntrinsic[], row: Nat
 export const familyProperties = (row: NativeRealmIntrinsic): NativeBuiltinProperty[] => kernelProperties(row);
 
 /**
- * The properties of the realm's object `id` (the root, (#7557) Function.prototype) whose value is a held family member,
- * as the kernel seeds them: the realm's own objects, seeded only with what the program holds.
+ * The properties of the realm's own object `row` (the root, (#7557) Function.prototype) whose value is one of `members`,
+ * as the kernel seeds them: such an object is seeded only with what the program holds.
  */
-export function heldMemberProperties(heldRows: readonly NativeRealmIntrinsic[], id: string): NativeBuiltinProperty[] {
-  const members = new Set(heldRows.flatMap((row) => (row.heldWith === undefined ? [] : [row.id])));
-  const row = heldRows.find((held) => held.id === id)!;
+export function heldMemberProperties(row: NativeRealmIntrinsic, members: ReadonlySet<string>): NativeBuiltinProperty[] {
   return kernelProperties(
     row,
     row.properties.filter(
@@ -90,6 +88,7 @@ export function familyObjects(
       ...(row.array ? { array: row.array } : {}),
       properties: familyProperties(row),
     }));
-  const root = heldMemberProperties(heldRows, OBJECT_PROTOTYPE_ID);
+  const members = new Set(heldRows.flatMap((row) => (row.heldWith === undefined ? [] : [row.id])));
+  const root = heldMemberProperties(heldRows.find((row) => row.id === OBJECT_PROTOTYPE_ID)!, members);
   return { ...(objects.length === 0 ? {} : { objects }), ...(root.length === 0 ? {} : { root }) };
 }

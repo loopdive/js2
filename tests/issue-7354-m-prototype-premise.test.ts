@@ -30,10 +30,10 @@ const notInScope = (name: string) => `ir/from-ast: identifier "${name}" is not i
 // (#7561) A wrapper prototype is obtainable (`String.prototype`, `new String(…)`): a primitive of that kind then reads
 // through the realm's prototype (tests/issue-7561-wrappers.test.ts). (#7352) So is `Array.prototype`, which is on no
 // primitive's and no function's chain (tests/issue-7352-arrays.test.ts). (#7574) So is `Object.prototype`, which every
-// primitive reads through where it is (tests/issue-7574-object-value.test.ts). Every other built-in prototype is not.
+// primitive reads through where it is (tests/issue-7574-object-value.test.ts). (#7557) So is `Function.prototype`
+// (tests/issue-7557-function-call.test.ts). Every other built-in prototype is not.
 describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => {
   it.each([
-    ["Function.prototype", "function f(){ return Function.prototype; } f();", notInScope("Function")],
     [
       "Object.getPrototypeOf",
       "function f(){ return Object.getPrototypeOf(1); } f();",
@@ -65,8 +65,9 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ["a dynamic value's __proto__", "function f(v){ return v.__proto__; } f(1);"],
     ["a dynamic value's constructor", "function f(v){ return v.constructor; } f(1);"],
     // (#7354 P1) The routes a populated Object.prototype method opens: it is a built-in function object, and every key
-    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts.
-    ...(["constructor", "__proto__", "call"] as const).flatMap((key) =>
+    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts; (#7557) its
+    // `call` is the realm's Function.prototype.call.
+    ...(["constructor", "__proto__"] as const).flatMap((key) =>
       ["({})", "1"].map((receiver): [string, string] => [
         `a method of ${receiver}'s ${key}`,
         `var fv = function(){ return 1; }; fv(); function f(v){ return v.hasOwnProperty.${key}; } f(${receiver});`,
@@ -74,11 +75,9 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ),
     // (#7354 G1) The Error family's values and prototypes are the program's to read and write, but none leads on to a
     // prototype the premise covers: each route past them (a function's or an object's [[Prototype]], Function) aborts.
-    ...["TypeError.__proto__", "TypeError.constructor", "TypeError.call", "Error.prototype.__proto__"].map(
-      (route): [string, string] => [
-        `the Error family's ${route}`,
-        `var fv = function(){ return 1; }; fv(); function f(){ return ${route}; } f();`,
-      ],
-    ),
+    ...["TypeError.__proto__", "TypeError.constructor", "Error.prototype.__proto__"].map((route): [string, string] => [
+      `the Error family's ${route}`,
+      `var fv = function(){ return 1; }; fv(); function f(){ return ${route}; } f();`,
+    ]),
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
 });

@@ -687,7 +687,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       identityOnly: ["length", "name", "prototype", ...HELD_OBJECT_STATICS],
       heldWith: "%Object%",
     },
-    // (#7557) Held with itself, identity-only; its call (dynamic code) refuses.
+    // (#7557) Identity-only; its call (dynamic code) refuses.
     {
       ...callable(
         "%Function%",
@@ -700,7 +700,6 @@ function catalog(): readonly NativeRealmIntrinsic[] {
         "native",
       ),
       identityOnly: ["length", "name", "prototype"],
-      heldWith: "%Function%",
     },
     ...members("Object", objectStatics),
     ...members("Object.prototype", objectMethods).map((row) =>
@@ -731,12 +730,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       true,
     ),
     ...members("Object.prototype", legacyMethods, true),
-    // (#7557) A method held by name is held with itself, so Function.prototype is seeded with it.
-    ...members("Function.prototype", functionMethods).map((row) =>
-      (NATIVE_PROTOTYPE_METHODS["Function.prototype"] as readonly string[]).includes(row.callable!.initialName)
-        ? { ...row, heldWith: row.id }
-        : row,
-    ),
+    ...members("Function.prototype", functionMethods),
     callable("%Function.prototype[@@hasInstance]%", "[Symbol.hasInstance]", 1, "OrdinaryHasInstance", [
       "OrdinaryHasInstance",
     ]),

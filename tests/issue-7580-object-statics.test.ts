@@ -135,10 +135,6 @@ var out = String(Object.getOwnPropertyDescriptor({ a: 1 }, "a"));`,
       "var O = Object, f = function () { return 1; }; O.create = f;\nvar out = String(Object.create === f) + String(Object.create());",
     ],
     [
-      "a static called as a method of another name (the dispatcher's built-in arm)",
-      'var h = { f: Object.defineProperty }, o = {};\nh.f(o, "z", { value: 7 });\nvar out = String(o.z);',
-    ],
-    [
       "getOwnPropertyNames called through the value",
       "var n = Object.getOwnPropertyNames;\nvar out = String(n({ a: 1 }).length);",
     ],

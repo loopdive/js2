@@ -313,6 +313,7 @@ function beginRealm(
   // ((#7561) a held prototype is an object of its family, `familyObjects`). A family member's call through the
   // dispatcher is the run-time abort, whatever its catalog implementation (`NativeBuiltinFunctionBehavior`).
   const functions = requirements.description.intrinsics.filter((id) => held.find((row) => row.id === id)?.callable);
+  const values = new Set(requirements.description.intrinsics);
   const intrinsics = [...catalog.bootstrap, ...functions].map((id, index) => {
     const row = held.find((row) => row.id === id),
       call = row?.callable;
@@ -345,9 +346,9 @@ function beginRealm(
       constructible: row.constructible,
       aliases: row.aliases,
       ...(entry === "native" ? { properties: familyProperties(row) } : {}),
-      // (#7557) Function.prototype is seeded with the members the program holds, as the root (`familyObjects`).
-      ...(entry === "function-prototype" && heldMemberProperties(held, id).length > 0
-        ? { properties: heldMemberProperties(held, id) }
+      // (#7557) Function.prototype is seeded with the function values the realm holds, as the root (`familyObjects`).
+      ...(entry === "function-prototype" && heldMemberProperties(row, values).length > 0
+        ? { properties: heldMemberProperties(row, values) }
         : {}),
       ...(row.identityOnly ? { identityOnly: true as const } : {}),
     };

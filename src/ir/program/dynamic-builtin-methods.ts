@@ -15,12 +15,16 @@ import {
   ERROR_TO_STRING_ID,
   FUNCTION_PROTOTYPE_ID,
   FUNCTION_PROTOTYPE_UNHELD_KEYS,
+  IS_ARRAY_ID,
+  PROTOTYPE_METHOD_IDS,
   OBJECT_PROTOTYPE_ID,
   OBJECT_PROTOTYPE_UNHELD_KEYS,
   WRAPPER_DATA,
   WRAPPER_OF_PRIMITIVE,
   isArrayIndexKey,
   objectPrototypeMethodId,
+  objectStaticId,
+  wrapperMethodId,
 } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import type { ChainBuilders } from "./dynamic-value-chains.js";
@@ -193,13 +197,19 @@ export function conversionMethodTests(
 /**
  * `Object.prototype.toString.call(v)` (`dyn.object_tag`) into its result: the tag of `v`; (#7574) where the program can
  * obtain the root it can write its `toString`, so the call is of the method the root holds, answered by the table
- * above, and any other method is the run-time abort.
+ * above, and any other method is the run-time abort. (#7557) Where the program may replace `Function.prototype.call`
+ * (`ProgramObjects.replacesCall`), the call may be of another function: the run-time abort, never the fold.
  */
 export function dynamicObjectTag(
   b: BuiltinMethodBuilders,
   program: LegalizationProgram,
   instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
 ): IrInstr[] {
+  if (program.objects.replacesCall) {
+    const aborted = b.fresh();
+    b.kinds.learn(aborted, ["string"]);
+    return [...b.abort(instr, aborted), ...b.stringOf(instr, aborted, instr.result!)];
+  }
   if (!holdsFamily(program, "object")) return objectTagOf(b, program, instr, instr.value, instr.result!);
   const [root, text, key, method, tag] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
   const tests = conversionMethodTests(b, instr, program, "toString", method, instr.value);
@@ -268,6 +278,26 @@ function unlessStringObject(
       b.branch(indexed, (s) => b.abort(instr, s), then, r, CARRIER),
     ];
   };
+}
+
+/**
+ * (#7557) The built-in functions the program may hold that the realm's built-in caller answers and that have no
+ * [[Construct]]: the methods held by name whose names the source spells, `Array.isArray`, the statics read as values,
+ * `Function.prototype`, and the conversion methods of the families the program holds. `new` of one is IsConstructor's
+ * TypeError (`dynamicConstruct`), never the caller's [[Call]].
+ */
+export function heldNonConstructors(program: LegalizationProgram): readonly string[] {
+  const { objects } = program;
+  const conversions = ["toString", "valueOf"] as const;
+  return [
+    ...[...objects.prototypeMethodNames].map((name) => PROTOTYPE_METHOD_IDS.get(name)!),
+    ...(holdsFamily(program, "array") ? [IS_ARRAY_ID] : []),
+    ...[...objects.staticValues].map(objectStaticId),
+    ...(holdsFamily(program, "function") ? [FUNCTION_PROTOTYPE_ID] : []),
+    ...(holdsFamily(program, "error") ? [ERROR_TO_STRING_ID] : []),
+    ...(holdsFamily(program, "object") ? conversions.map(objectPrototypeMethodId) : []),
+    ...[...objects.wrappers].flatMap((wrapper) => conversions.map((name) => wrapperMethodId(wrapper, name))),
+  ];
 }
 
 /** The tests in turn, each answering where it holds, else `otherwise`; into the arm's result, of `resultType`. */

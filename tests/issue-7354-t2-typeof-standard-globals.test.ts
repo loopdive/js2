@@ -16,7 +16,6 @@ const UNPROVIDED = [
   "RegExp",
   "Date",
   "JSON",
-  "Function",
   "encodeURIComponent",
   "globalThis",
 ];

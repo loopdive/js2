@@ -31,6 +31,7 @@ import {
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
 import {
   sourceLetsIntrinsicEscape,
+  sourceMayWriteUnspelledMember,
   sourceNamesReflectiveRoute,
   sourceRunsDynamicCode,
   sourceWritesMemberNamed,
@@ -122,5 +123,13 @@ export function programObjects(
     wrappers,
     staticValues: escapes ? new Set(HELD_OBJECT_STATICS) : staticValues,
     replacedStatics: new Set(realmFamilies.has("object") ? HELD_OBJECT_STATICS.filter(replaces) : []),
+    // (#7557) A `call` member written anywhere, dynamic code, or, where the program can obtain Function.prototype, a
+    // reflective route or a write under an unspelled name.
+    replacesCall: sourceFiles.some(
+      (file) =>
+        sourceWritesMemberNamed(file, "call") ||
+        sourceRunsDynamicCode(file) ||
+        (realmFamilies.has("function") && (sourceNamesReflectiveRoute(file) || sourceMayWriteUnspelledMember(file))),
+    ),
   };
 }

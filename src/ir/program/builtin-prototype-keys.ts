@@ -242,13 +242,15 @@ export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%")
  */
 export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
-/** The keys of the realm object `object` whose value is a row a family brings, seeded with the family. */
-const familyKeys = (object: string): ReadonlySet<string> =>
+/** The keys of the realm object `object` whose value is a member of a family (`member`), seeded with the family. */
+const familyKeys = (
+  object: string,
+  member = (id: string) => NATIVE_REALM_CATALOG.intrinsics.some((row) => row.heldWith !== undefined && row.id === id),
+): ReadonlySet<string> =>
   stringKeys(
-    propertiesOf([object]).filter((property) => {
-      const value = property.kind === "data" && property.value.kind === "intrinsic" ? property.value.id : undefined;
-      return NATIVE_REALM_CATALOG.intrinsics.some(({ id, heldWith }) => heldWith !== undefined && id === value);
-    }),
+    propertiesOf([object]).filter(
+      (property) => property.kind === "data" && property.value.kind === "intrinsic" && member(property.value.id),
+    ),
   );
 
 /**
@@ -257,13 +259,22 @@ const familyKeys = (object: string): ReadonlySet<string> =>
  */
 export const OBJECT_FAMILY_ROOT_KEYS = familyKeys(OBJECT_PROTOTYPE_ID);
 
-/** (#7557) The names of the prototype methods a realm holds by name (`NATIVE_PROTOTYPE_METHODS`). */
-export const PROTOTYPE_METHOD_NAMES: ReadonlySet<string> = new Set(Object.values(NATIVE_PROTOTYPE_METHODS).flat());
+/** (#7557) The catalog ids of the prototype methods a realm holds by name (`NATIVE_PROTOTYPE_METHODS`), by name. */
+export const PROTOTYPE_METHOD_IDS: ReadonlyMap<string, string> = new Map(
+  Object.entries(NATIVE_PROTOTYPE_METHODS).flatMap(([parent, names]) =>
+    names.map((name): [string, string] => [name, realmMethodId(parent, name)]),
+  ),
+);
+export const PROTOTYPE_METHOD_NAMES: ReadonlySet<string> = new Set(PROTOTYPE_METHOD_IDS.keys());
+
+/** (#7557) The catalog id of a wrapper prototype's method `name` (`%Number.prototype.valueOf%`). */
+export const wrapperMethodId = (wrapper: NativeWrapperConstructor, name: string): string =>
+  realmMethodId(`${wrapper}.prototype`, name);
 
 /** (#7557) Function.prototype's methods the realm holds where a key names one. */
 const FUNCTION_PROTOTYPE_METHOD_KEYS: ReadonlySet<string> = new Set(NATIVE_PROTOTYPE_METHODS["Function.prototype"]);
 /** (#7557) Function.prototype's keys the realm holds where the program holds the Function family (`constructor`). */
-const FUNCTION_FAMILY_KEYS = familyKeys(FUNCTION_PROTOTYPE_ID);
+const FUNCTION_FAMILY_KEYS = familyKeys(FUNCTION_PROTOTYPE_ID, (id) => realmConstructorById(id)?.family === "function");
 
 /**
  * (#7557) Whether the realm's Function.prototype holds `key`, so a function's read of it is the realm's [[Get]]: its

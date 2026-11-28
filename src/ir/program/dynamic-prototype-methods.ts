@@ -8,10 +8,11 @@
  * can call the program's code, which only the program can run (`stringOf`).
  *
  * (#7557) {@link heldBuiltinRungs} is the one list of those tests over a {@link BuiltinCall}. A method call `o.m(v)`
- * tests the rungs named `m` at its site; any other built-in reached through a value is the dispatcher's built-in arm,
- * which calls the realm's built-in caller, whose body tests every rung (`dynamic-builtin-call.ts`). Where the program
- * creates no source function no dispatcher exists: the site tests the rungs named `m` first, then the others, and any
- * other callee is the run-time abort.
+ * tests the rungs named `m` at its site, a detached call (`var d = Object.defineProperty; d(o, k, v)`) the rungs that
+ * read no `this`; any other built-in reached through a value is the dispatcher's built-in arm, which calls the realm's
+ * built-in caller, whose body tests every rung (`dynamic-builtin-call.ts`). Where the program creates no source
+ * function no dispatcher exists: the site tests those rungs first, then the others, and any other callee is the
+ * run-time abort.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
@@ -51,9 +52,14 @@ export interface BuiltinCall {
   readonly args: readonly IrValueId[];
   readonly detached: boolean;
 }
-/** A built-in a callee may be: its name (`hasOwnProperty`, `toString`, …) and its identity test. */
+/**
+ * A built-in a callee may be: its name (`hasOwnProperty`, `toString`, …) and its identity test. `thisless`: it reads no
+ * `this`, so a detached call may be it at the call's own site, whose constant arguments (the key a query of the root
+ * pins, `unlessUnheldOwnKey`) the caller's vector does not carry.
+ */
 interface BuiltinRung {
   readonly name: string;
+  readonly thisless?: boolean;
   readonly test: () => BuiltinMethodTest;
 }
 
@@ -195,13 +201,25 @@ export function heldBuiltinRungs(
     ...conversion("toString"),
     ...conversion("valueOf"),
     ...(holdsFamily(b.program, "array")
-      ? [{ name: "isArray", test: () => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, call, r)) }]
+      ? [
+          {
+            name: "isArray",
+            thisless: true,
+            test: () => identityTest(b, instr, IS_ARRAY_ID, callee, (r) => isArray(b, call, r)),
+          },
+        ]
       : []),
     ...[...objects.staticValues].flatMap((value) => {
       const native = nativeObjectStatic(value)?.name;
       return native === undefined
         ? []
-        : [{ name: native, test: () => objectStaticTest(b, instr, native, callee, call.args) }];
+        : [
+            {
+              name: native,
+              thisless: true,
+              test: () => objectStaticTest(b, instr, native, callee, call.args),
+            },
+          ];
     }),
     ...(holdsFamily(b.program, "function")
       ? [
@@ -218,8 +236,8 @@ export function heldBuiltinRungs(
 }
 
 /**
- * The legalized dispatcher call, where its callee may be a built-in the realm holds: the rungs named as the method the
- * call reads (or, without a dispatcher, every rung), each answering where the callee is it (`builtinMethodChain`),
+ * The legalized dispatcher call, where its callee may be a built-in the realm holds: the site's rungs (the module doc;
+ * without a dispatcher, every rung), each answering where the callee is it (`builtinMethodChain`),
  * else the call as it was (or, without a dispatcher, the run-time abort); `undefined` for any other call.
  */
 export function dynamicPrototypeMethodCall(
@@ -232,9 +250,9 @@ export function dynamicPrototypeMethodCall(
   const [receiver, callee, ...args] = instr.args as [IrValueId, IrValueId, ...IrValueId[]];
   const call: BuiltinCall = { instr, receiver, args, detached: name === undefined };
   const rungs = heldBuiltinRungs(b, call, callee, args.length > 0);
-  const named = rungs.filter((rung) => rung.name === name);
+  const atSite = (rung: BuiltinRung): boolean => rung.name === name || (call.detached && rung.thisless === true);
   const dispatcher = b.program.objects.functions;
-  const tests = (dispatcher ? named : [...named, ...rungs.filter((rung) => rung.name !== name)]).map(
+  const tests = (dispatcher ? rungs.filter(atSite) : [...rungs.filter(atSite), ...rungs.filter((r) => !atSite(r))]).map(
     (rung) => rung.test,
   );
   if (tests.length === 0) return undefined;

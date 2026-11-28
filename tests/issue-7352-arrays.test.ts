@@ -92,10 +92,6 @@ describe("#7352 — what PR A leaves out refuses or aborts", () => {
     ["Number()", "var out = String(Number(new Array(2)));"],
     ["an own toString", 'var a = Array(1); a.toString = function () { return "own"; }; var out = String(a);'],
     ["a call of a held method", 'var out = Array(1, 2).join("-");'],
-    [
-      "Array.isArray moved under another name",
-      "var n = new Number(1); n.isA = Array.isArray; var out = String(n.isA(5));",
-    ],
     ["a held method called through call", "var out = Array.prototype.join.call(Array(1, 2));"],
     ["a string length value", 'var a = Array(1, 2); a.length = "1"; var out = String(a.length);'],
     [

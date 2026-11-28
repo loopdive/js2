@@ -22,7 +22,7 @@ import {
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { ERROR_ID, FUNCTION_PROTOTYPE_ID, OBJECT_PROTOTYPE_ID } from "./builtin-prototype-keys.js";
-import { builtinMethodChain, identityTest } from "./dynamic-builtin-methods.js";
+import { builtinMethodChain, heldNonConstructors, identityTest } from "./dynamic-builtin-methods.js";
 import { BOOLEAN } from "./dynamic-value-types.js";
 
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
@@ -107,7 +107,7 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
  *
  * IsConstructor is the function-kind test, then (#7354 O2) the function object's own answer
  * (`js.object.is-constructor`, the bit `init-function` sets from `isConstructorFunction`: an accessor has no
- * [[Construct]]).
+ * [[Construct]]), and (#7557) the held built-ins that have none (`heldNonConstructors`).
  */
 export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
@@ -158,9 +158,17 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       b.branch(test, construct, notConstructor, r, CARRIER),
     ];
   };
+  // (#7557) A held built-in the realm's built-in caller answers has no [[Construct]].
+  const methods = heldNonConstructors(b.program).map((id) => () => identityTest(b, instr, id, callee, notConstructor));
   return [
     ...isFunction.instrs,
-    b.branch(isFunction.cond, b.program.objects.functions ? source : builtin, notConstructor, result, CARRIER),
+    b.branch(
+      isFunction.cond,
+      b.program.objects.functions ? builtinMethodChain(b, methods, source, CARRIER) : builtin,
+      notConstructor,
+      result,
+      CARRIER,
+    ),
   ];
 }
 
