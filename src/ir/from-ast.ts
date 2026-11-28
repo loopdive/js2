@@ -14973,13 +14973,10 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     return lowerExactNumericExponentiation(expr, cx);
   }
 
-  // === / !== / == / != with a `null` literal: slice 1 has no nullable IR
-  // types yet, so every operand we can lower trivially evaluates to false
-  // for === null / true for !== null. Try this fold first; it short-
-  // circuits the standard f64-hint lowering below (which would otherwise
-  // recurse into a bare NullKeyword and throw).
-  const nullFold = tryFoldNullCompare(expr, op, cx);
-  if (nullFold !== null) return nullFold;
+  // === / !== / == / != with a `null` literal: fold where the operand's representation decides it.
+  // A declined fold hands its lowered operand to the general lowering below — an operand is evaluated once.
+  const nullCompare = tryFoldNullCompare(expr, op, cx);
+  if (nullCompare !== null && "result" in nullCompare) return nullCompare.result;
 
   // (#2856 C3) STRICT undefined-compare — `hit !== undefined`. Dispatch on
   // the non-undefined operand's IrType (mirrors the selector's acceptance):
@@ -15015,7 +15012,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     isIrBitwiseOperatorToken(op) &&
     isI32PureExprIR(expr.left, cx.i32PureNames, cx.provenCharReads) &&
     isI32PureExprIR(expr.right, cx.i32PureNames, cx.provenCharReads);
-  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, additive.proofs, cx);
+  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, additive.proofs, nullCompare, cx);
   const lt = typeOfValue(lhs, cx);
   const rt = typeOfValue(rhs, cx);
 
@@ -15231,9 +15228,11 @@ function lowerBinaryOperands(
   op: ts.SyntaxKind,
   i32Pure: boolean,
   additiveProofs: readonly [AdditiveProof, AdditiveProof] | undefined,
+  declinedNullCompare: DeclinedNullCompare | null,
   cx: LowerCtx,
 ): readonly [IrValueId, IrValueId] {
   const lower = (operand: ts.Expression, otherProof: AdditiveProof | undefined): IrValueId => {
+    if (operand === declinedNullCompare?.operand) return declinedNullCompare.lowered;
     if (i32Pure) return emitI32PureExpr(operand, cx);
     if (isNumericReaderOperator(op) && peelParensExpr(operand).kind === ts.SyntaxKind.NullKeyword) {
       return cx.builder.emitConst({ kind: "f64", value: 0 }, IR_F64);
@@ -15797,7 +15796,14 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   );
 }
 
-function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId | null {
+/** A null-compare whose fold declined after lowering its `operand`: the general comparison reuses `lowered`. */
+type DeclinedNullCompare = { readonly operand: ts.Expression; readonly lowered: IrValueId };
+
+function tryFoldNullCompare(
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  cx: LowerCtx,
+): { readonly result: IrValueId } | DeclinedNullCompare | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryFoldNullCompare(expr, op, cx));
   const isEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
@@ -15822,9 +15828,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
     );
   }
 
-  // Lower the non-null side to learn its IrType AND keep any side effects
-  // emitted (the IR DCE pass drops the unused result if the producing
-  // instructions are pure).
+  // The fold is decided by the operand's IrType, so the operand is lowered — once, also for a declined fold.
   const v = lowerExpr(other, cx, irVal({ kind: "f64" }));
   const otherType = cx.builder.typeOf(v);
 
@@ -15836,17 +15840,12 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // never folded (legacy emits the runtime check); every other representation
   // can never hold `null` and folds to a constant.
   const family = irOperandFamily(otherType, other);
-  if (!nullComparisonFolds(op, family)) return null;
-  if (family === "dynamic") {
-    const flag = cx.builder.emitTagTest(v, JS_TAG_IDS.Null);
-    return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
+  if (!nullComparisonFolds(op, family)) return { operand: other, lowered: v };
+  if (family === "dynamic" || family === "externref") {
+    const flag = family === "dynamic" ? cx.builder.emitTagTest(v, JS_TAG_IDS.Null) : cx.builder.emitRefIsNull(v);
+    return { result: isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag };
   }
-  if (family === "externref") {
-    const flag = cx.builder.emitRefIsNull(v);
-    return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
-  }
-
-  return cx.builder.emitConst({ kind: "bool", value: isNeq }, IR_BOOL);
+  return { result: cx.builder.emitConst({ kind: "bool", value: isNeq }, IR_BOOL) };
 }
 
 /**

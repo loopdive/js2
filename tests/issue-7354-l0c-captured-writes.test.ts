@@ -77,6 +77,13 @@ describe("#7354 L0c — closures and functions that write outer bindings", () =>
     );
   });
 
+  it("calls a writing function once where its result is compared with null", async () => {
+    await agrees(
+      "var x = 1; function f() { x++; } var g = function () { x++; return 5; }; var o = { m: f };\n" +
+        "f() == null; null == g(); var a = f() != null; if (g() == null) x = -1;\nvar out = String(a) + (null != o.m()) + x;",
+    );
+  });
+
   it("ends at the run-time abort where a closure writes a loop head's let", async () => {
     await abortsAtRunTime(
       'function t() { var r = ""; for (let i = 0; i < 3; i++) { var f = function () { i++; }; f(); r += i; } return r; }\nvar out = t();',
