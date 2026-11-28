@@ -72,6 +72,7 @@ import { expectedArgumentCountOfParams } from "../shared/function-expected-argum
 import { functionInstanceName } from "../shared/named-evaluation.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { EVAL_SOURCE_FILENAME } from "../frontend/eval/script.js";
+import { definedGlobalAt } from "./module-bindings/global-space.js";
 
 /** The closure-struct slot name. `$`-prefixed to stay out of name enumeration. */
 export const FN_META_FIELD = "$fnmeta";
@@ -112,10 +113,6 @@ export interface PreparedFnMetaSlot {
   readonly key: string;
   readonly structTypeIdx: number;
   readonly global: GlobalDef;
-}
-
-function moduleGlobalAt(ctx: CodegenContext, absIdx: number): GlobalDef | undefined {
-  return ctx.mod.globals[absIdx - ctx.numImportGlobals];
 }
 
 /**
@@ -209,7 +206,7 @@ export function prepareFnMetaSlotOfMeta(ctx: CodegenContext, meta: FnInstanceMet
     ctx.mod.globals.push(global);
     cache.set(key, globalIdx);
   } else {
-    global = moduleGlobalAt(ctx, globalIdx);
+    global = definedGlobalAt(ctx, globalIdx);
   }
   if (
     global === undefined ||
@@ -248,7 +245,7 @@ export function materializePreparedFnMetaSlot(
   // location of the retained `GlobalDef` object.
   const nameInit = nativeStringLiteralInstrs(ctx, prepared.meta.name);
   const globalIdx = ctx.fnInstanceMetaGlobalByKey?.get(prepared.key);
-  if (globalIdx === undefined || moduleGlobalAt(ctx, globalIdx) !== prepared.global) {
+  if (globalIdx === undefined || definedGlobalAt(ctx, globalIdx) !== prepared.global) {
     throw new Error(`prepared fn metadata global '${prepared.key}' is no longer current`);
   }
   if (
