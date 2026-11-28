@@ -2,11 +2,22 @@
 /** Canonical cross-module marker for provider-owned interpreted callbacks. */
 
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureAnyHelpers } from "./any-helpers.js";
+import { lastFunctionImplementations, registersTopLevelFunction } from "./ast-modifiers.js";
+import { popBody, pushBody } from "./context/bodies.js";
+import { allocLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { withSourceBindings } from "./module-bindings/source-binding-projection.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
+import { buildRestoreOnUnwind } from "../wasm/physical/exception-control.js";
+import { recordScriptVarBindingNames } from "./source-scan-predicates.js";
+
+/** The helpers that mirror eval-visible bindings onto the global object (push) and back into their globals (pull). */
+export const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
+export const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
 
 export const RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A = 0x2928;
 export const RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B = 0x4556414c;
@@ -44,6 +55,186 @@ export function ensureRuntimeEvalProviderActiveGlobal(ctx: CodegenContext): numb
   });
   ctx.runtimeEvalProviderActiveGlobalIdx = globalIdx;
   return globalIdx;
+}
+
+/*
+ * (#7644) The active flag also says whose bindings the push and pull mirror: 0 inactive, 1 the shared view, 2 + i
+ * the i-th tagged source. The global object is one namespace, so where two sources mirror the same name, only the
+ * entering source's binding may cross; indirect eval and `new Function` run at global scope (tag 1) and see none.
+ */
+const RUNTIME_EVAL_INACTIVE_TAG = 0;
+export const RUNTIME_EVAL_SHARED_TAG = 1;
+const RUNTIME_EVAL_FIRST_SOURCE_TAG = 2;
+
+export interface RuntimeEvalSourceTags {
+  readonly tagOf: ReadonlyMap<ts.SourceFile, number>;
+  /** Each name two or more sources mirror, with the tagged sources among them. */
+  readonly bindersOf: ReadonlyMap<string, readonly ts.SourceFile[]>;
+}
+
+/** The names the push mirrors from one source: its registered top-level functions and its top-level `var`s. */
+function mirroredSourceNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const implementations = lastFunctionImplementations(sourceFile.statements);
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name &&
+      registersTopLevelFunction(statement, implementations)
+    ) {
+      names.add(statement.name.text);
+    }
+  }
+  recordScriptVarBindingNames(names, sourceFile);
+  return names;
+}
+
+/**
+ * Tag each source that holds a direct eval and mirrors a name another source also mirrors. Decided from the AST
+ * before declaration collection, so every emitter, including one reached while bindings are still being registered,
+ * reads the same answer. Undefined when no source is tagged: then none of the tag code emits anything.
+ */
+export function planRuntimeEvalSourceTags(
+  sourceFiles: readonly ts.SourceFile[],
+  evalSourceFiles: ReadonlySet<ts.SourceFile>,
+): RuntimeEvalSourceTags | undefined {
+  if (sourceFiles.length < 2 || evalSourceFiles.size === 0) return undefined;
+  const names = sourceFiles.map(mirroredSourceNames);
+  const mirrorCount = new Map<string, number>();
+  for (const sourceNames of names) {
+    for (const name of sourceNames) mirrorCount.set(name, (mirrorCount.get(name) ?? 0) + 1);
+  }
+  const colliding = [...mirrorCount].filter(([, count]) => count > 1).map(([name]) => name);
+  const tagOf = new Map<ts.SourceFile, number>();
+  sourceFiles.forEach((sourceFile, index) => {
+    if (evalSourceFiles.has(sourceFile) && colliding.some((name) => names[index]!.has(name))) {
+      tagOf.set(sourceFile, RUNTIME_EVAL_FIRST_SOURCE_TAG + tagOf.size);
+    }
+  });
+  if (tagOf.size === 0) return undefined;
+  const bindersOf = new Map<string, ts.SourceFile[]>();
+  for (const name of colliding) {
+    bindersOf.set(
+      name,
+      sourceFiles.filter((sourceFile, index) => tagOf.has(sourceFile) && names[index]!.has(name)),
+    );
+  }
+  return { tagOf, bindersOf };
+}
+
+/** The tag a direct eval in `sourceFile` enters the provider with. */
+export function runtimeEvalSourceTag(ctx: CodegenContext, sourceFile: ts.SourceFile): number {
+  return ctx.runtimeEvalSourceTags?.tagOf.get(sourceFile) ?? RUNTIME_EVAL_SHARED_TAG;
+}
+
+/** Is any source tagged? Every provider entry keeps its untagged code when not. */
+export function runtimeEvalTagsInUse(ctx: CodegenContext): boolean {
+  return ctx.runtimeEvalSourceTags !== undefined;
+}
+
+/** Set the active flag to `tag`. */
+export function emitRuntimeEvalProviderActive(ctx: CodegenContext, fctx: FunctionContext, tag: number): void {
+  const globalIdx = ensureRuntimeEvalProviderActiveGlobal(ctx);
+  fctx.body.push({ op: "i32.const", value: tag }, { op: "global.set", index: globalIdx });
+}
+
+/**
+ * Save the caller's tag in a fresh local and set `tag`, ahead of the push, so the push already mirrors the entering
+ * source and the exit puts a nested entry's outer tag back. Undefined, emitting nothing, when no source is tagged.
+ */
+export function emitRuntimeEvalTagEnter(ctx: CodegenContext, fctx: FunctionContext, tag: number): number | undefined {
+  if (!runtimeEvalTagsInUse(ctx)) return undefined;
+  const savedLocal = allocLocal(fctx, `__runtime_eval_saved_tag_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push(
+    { op: "global.get", index: ensureRuntimeEvalProviderActiveGlobal(ctx) },
+    { op: "local.set", index: savedLocal },
+  );
+  emitRuntimeEvalProviderActive(ctx, fctx, tag);
+  return savedLocal;
+}
+
+/** Put the saved tag back, or clear the flag when none was saved. */
+export function runtimeEvalTagRestore(ctx: CodegenContext, savedTagLocal: number | undefined): Instr[] {
+  return [
+    savedTagLocal === undefined
+      ? { op: "i32.const", value: RUNTIME_EVAL_INACTIVE_TAG }
+      : { op: "local.get", index: savedTagLocal },
+    { op: "global.set", index: ensureRuntimeEvalProviderActiveGlobal(ctx) },
+  ];
+}
+
+/** Leave the provider: pull the bindings back, then {@link runtimeEvalTagRestore}. */
+export function runtimeEvalProviderExit(ctx: CodegenContext, savedTagLocal: number | undefined): Instr[] {
+  const pullIdx = ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS);
+  return [
+    ...(pullIdx === undefined ? [] : [{ op: "call", funcIdx: pullIdx } satisfies Instr]),
+    ...runtimeEvalTagRestore(ctx, savedTagLocal),
+  ];
+}
+
+/**
+ * Protect the provider call emitted from `fctx.body[from]` on, so a throw through it with this module's own tag (the
+ * provider rethrows a caller's exception with the caller's tag) still pulls and restores the saved tag. Nothing when
+ * no tag was saved.
+ */
+export function emitRuntimeEvalRestoreOnUnwind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  from: number,
+  savedTagLocal: number | undefined,
+): void {
+  if (savedTagLocal === undefined) return;
+  const unwindLocal = allocLocal(fctx, `__runtime_eval_unwind_${fctx.locals.length}`, { kind: "externref" });
+  const call = fctx.body.splice(from);
+  const restore = runtimeEvalProviderExit(ctx, savedTagLocal);
+  fctx.body.push(
+    buildRestoreOnUnwind({ kind: "val", type: { kind: "externref" } }, call, ensureExnTag(ctx), unwindLocal, restore),
+  );
+}
+
+/** Do two sources mirror `name`, so that the push and pull carry it per tagged source? */
+export function runtimeEvalMirrorsPerSource(ctx: CodegenContext, name: string): boolean {
+  return ctx.runtimeEvalSourceTags?.bindersOf.has(name) ?? false;
+}
+
+/**
+ * Where two sources mirror `name`, emit `emitOne` once per tagged source that binds it, behind a test of its tag and
+ * under its own binding view, with no default arm. Any other name is emitted once, as is.
+ */
+export function emitPerSourceArms(ctx: CodegenContext, fctx: FunctionContext, name: string, emitOne: () => void): void {
+  const binders = ctx.runtimeEvalSourceTags?.bindersOf.get(name);
+  if (binders === undefined) {
+    emitOne();
+    return;
+  }
+  for (const sourceFile of binders) {
+    const arm: Instr[] = [];
+    // The `if` joins the attached body before its arm is filled, so global-index fixups reach the arm meanwhile.
+    fctx.body.push(
+      { op: "global.get", index: ensureRuntimeEvalProviderActiveGlobal(ctx) },
+      { op: "i32.const", value: runtimeEvalSourceTag(ctx, sourceFile) },
+      { op: "i32.eq" },
+      { op: "if", blockType: { kind: "empty" }, then: arm },
+    );
+    const saved = pushBody(fctx);
+    fctx.body = arm;
+    withSourceBindings(ctx, sourceFile, emitOne);
+    popBody(fctx, saved);
+  }
+}
+
+/**
+ * The tag an interpreted callback runs under: the active one, so a callback inside a source's eval keeps that
+ * source's arms, else the shared view.
+ */
+export function runtimeEvalCallbackTag(ctx: CodegenContext, activeBeforeLocal: number): Instr[] {
+  if (!runtimeEvalTagsInUse(ctx)) return [{ op: "i32.const", value: RUNTIME_EVAL_SHARED_TAG }];
+  return [
+    { op: "local.get", index: activeBeforeLocal },
+    { op: "i32.const", value: RUNTIME_EVAL_SHARED_TAG },
+    { op: "local.get", index: activeBeforeLocal },
+    { op: "select" },
+  ];
 }
 
 /**

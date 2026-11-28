@@ -1,7 +1,8 @@
 ---
 id: 7644
 title: "Runtime-eval push and pull use one program-wide namespace, so a second module's eval write is lost"
-status: in-progress
+status: done
+completed: 2026-11-28
 sprint: Backlog
 created: 2026-11-28
 updated: 2026-11-28
@@ -12,7 +13,12 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: runtime-eval
-related: [7530, 7639]
+related: [7530, 7639, 7646, 7647]
+loc-budget-allow:
+  # 2026-11-28: +3, the import of the push/pull constants that replace its string literals (plan step 1) and the callback tag (step 6)
+  - src/codegen/object-runtime.ts
+  # 2026-11-28: +3, the `runtimeEvalSourceTags` field the plan's A1 condition stores on ctx, with its type import
+  - src/codegen/context/types.ts
 ---
 
 # #7644 — runtime-eval push and pull use one program-wide namespace

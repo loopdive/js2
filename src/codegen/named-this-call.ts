@@ -31,7 +31,7 @@ import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
-import { buildStandardTryTable } from "../ir/try-table.js";
+import { buildRestoreOnUnwind } from "../ir/try-table.js";
 
 interface NamedThisCallTarget {
   readonly trampolineFuncIdx: FuncHandle;
@@ -370,24 +370,10 @@ export function restoreThisOnUnwind(
   currentThisGlobalIdx: number,
   unwindExnLocal: number,
 ): Instr {
-  const restore: Instr[] = [
+  // (#6979 S7-c2) The native regime always takes the standard `try_table` form.
+  return buildRestoreOnUnwind(blockType, body, ensureExnTag(ctx), unwindExnLocal, [
     { op: "local.get", index: prevThisLocal },
     { op: "global.set", index: currentThisGlobalIdx },
-  ];
-  // (#6979 S7-c2) The native regime always takes the standard `try_table` form.
-  const tagIdx = ensureExnTag(ctx);
-  return buildStandardTryTable(blockType, body, [
-    {
-      kind: "catch",
-      tagIdx,
-      payloadType: { kind: "externref" },
-      body: [
-        { op: "local.set", index: unwindExnLocal },
-        ...restore,
-        { op: "local.get", index: unwindExnLocal },
-        { op: "throw", tagIdx },
-      ],
-    },
   ]);
 }
 

@@ -270,6 +270,9 @@ import {
   buildRuntimeEvalValueUnwrap,
   ensureRuntimeEvalCallResultUnwrapHelper,
   ensureRuntimeEvalProviderActiveGlobal,
+  RUNTIME_EVAL_PULL_GLOBALS,
+  RUNTIME_EVAL_PUSH_GLOBALS,
+  runtimeEvalCallbackTag,
   RUNTIME_EVAL_AOT_CALLABLE_BRAND_A,
   RUNTIME_EVAL_AOT_CALLABLE_BRAND_B,
   RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A,
@@ -6943,8 +6946,8 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const runtimeInterpTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const runtimeInterpApplyIdx = ctx.funcMap.get("__runtime_apply_interpreted");
   const truthyIdx = ctx.funcMap.get("__is_truthy");
-  const runtimeEvalPushGlobalsIdx = ctx.funcMap.get("__runtime_eval_push_globals");
-  const runtimeEvalPullGlobalsIdx = ctx.funcMap.get("__runtime_eval_pull_globals");
+  const runtimeEvalPushGlobalsIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
+  const runtimeEvalPullGlobalsIdx = ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS);
   if (
     runtimeInterpTypeIdx !== undefined &&
     runtimeInterpApplyIdx !== undefined &&
@@ -7008,7 +7011,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
             then: [
               { op: "global.get", index: runtimeEvalActiveGlobalIdx },
               { op: "local.set", index: activeBeforeLocal },
-              { op: "i32.const", value: 1 },
+              ...runtimeEvalCallbackTag(ctx, activeBeforeLocal),
               { op: "global.set", index: runtimeEvalActiveGlobalIdx },
               ...(runtimeEvalPushGlobalsIdx === undefined
                 ? []

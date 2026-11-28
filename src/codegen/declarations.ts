@@ -47,6 +47,7 @@ import {
   isSynchronousTopLevelAwaitRecovery,
 } from "./module-init-collection.js";
 import { ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
+import { lastFunctionImplementations, registersTopLevelFunction } from "./ast-modifiers.js";
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
@@ -1695,12 +1696,7 @@ function runtimeModuleDeclarationGroups(sourceFile: ts.SourceFile): readonly Run
     }
     if (!ts.isModuleBlock(body)) return;
 
-    const lastImplementation = new Map<string, ts.FunctionDeclaration>();
-    for (const statement of body.statements) {
-      if (ts.isFunctionDeclaration(statement) && statement.name && statement.body && !hasDeclareModifier(statement)) {
-        lastImplementation.set(statement.name.text, statement);
-      }
-    }
+    const lastImplementation = lastFunctionImplementations(body.statements);
     const group: RuntimeModuleDeclarationGroup = {
       block: body,
       functions: [...lastImplementation.values()],
@@ -2539,21 +2535,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // against the survivor's signature (transient garbage). The same map also
   // identifies TypeScript overload sets: their bodyless signatures are
   // type-only, while the one body-bearing declaration is the runtime callable.
-  const lastTopLevelFnWithBody = new Map<string, ts.FunctionDeclaration>();
-  for (const stmt of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
-      lastTopLevelFnWithBody.set(stmt.name.text, stmt);
-    }
-  }
+  const lastTopLevelFnWithBody = lastFunctionImplementations(sourceFile.statements);
 
   // Third: collect function declarations (uses resolveWasmType for real type indices)
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt))) {
-      // Skip ambient stubs: `declare function`, and `.d.ts` implicit-declare (#1282).
-      if (hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile) continue;
-      // (#3419/#4267) Keep the canonical body; erase its shadowed bodies and type-only overload signatures.
-      const implementation = stmt.name ? lastTopLevelFnWithBody.get(stmt.name.text) : undefined;
-      if (implementation && (stmt.body ? implementation !== stmt : true)) continue;
+      // Skip ambient stubs, shadowed bodies and type-only overload signatures.
+      if (!registersTopLevelFunction(stmt, lastTopLevelFnWithBody)) continue;
 
       // Anonymous `export default function() {}` gets the synthetic name "default"
       const name = stmt.name ? stmt.name.text : "default";

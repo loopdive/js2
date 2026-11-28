@@ -52,7 +52,7 @@ import {
 import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
 import {
   observeProgramAbiFunctionValue,
-  sourceFunctionDeclarationForHandle,
+  topLevelFunctionDeclarationFor,
 } from "../program-abi-source-callable-planning.js";
 // (#4630) the DECLARATION half of the parked-async `$Promise` value substrate
 import {
@@ -1093,10 +1093,7 @@ export function ensureFuncClosureSingleton(
   const sig = getFuncSignature(ctx, funcIdx);
   if (!sig) return null;
 
-  const ownerDeclaration =
-    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
-    ctx.funcMapOwnerDecl.get(funcName) ??
-    ctx.topLevelFunctionDeclarations.get(funcName);
+  const ownerDeclaration = topLevelFunctionDeclarationFor(ctx, funcName, funcIdx);
   constructible = normalizeOrdinaryFunctionConstructibility(ctx, funcName, constructible, ownerDeclaration);
   const explicitThisParam = hasExplicitThisParameter(ownerDeclaration);
   // The direct FunctionDeclaration ABI deliberately retains TS's pseudo-this
@@ -1392,9 +1389,7 @@ export function emitCachedFuncClosureAccess(
     ctx,
     funcName,
     constructible,
-    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
-      ctx.funcMapOwnerDecl.get(funcName) ??
-      ctx.topLevelFunctionDeclarations.get(funcName),
+    topLevelFunctionDeclarationFor(ctx, funcName, funcIdx),
   );
   const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
   // A synthetic-name collision makes the canonical pair unavailable, but
@@ -1432,12 +1427,8 @@ export function emitCachedFuncClosureAccess(
   );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
-  return initializeNativeGeneratorFunctionValue(
-    ctx,
-    fctx,
-    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
-      ctx.funcMapOwnerDecl.get(funcName) ??
-      ctx.topLevelFunctionDeclarations.get(funcName),
-    { kind: "ref", typeIdx: structTypeIdx },
-  );
+  return initializeNativeGeneratorFunctionValue(ctx, fctx, topLevelFunctionDeclarationFor(ctx, funcName, funcIdx), {
+    kind: "ref",
+    typeIdx: structTypeIdx,
+  });
 }
