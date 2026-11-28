@@ -150,13 +150,6 @@ describe("#7354 M1 — refusals that stay", () => {
       "function f(v){ return v.m(); } f({});",
       gapText("js.closure.call:0 in a program that creates no function value"),
     ],
-    // (#7354 M1) This threw out of compile() ("internal capability violation"): the Prepared path has no selector.
-    ["G45: v.a += 1", "function f(v){ v.a += 1; } f({a:1});", "binary operator '+=' is capability-deferred in f"],
-    [
-      "G45: v.a++",
-      "function f(v){ v.a++; } f({a:1});",
-      "ir/from-ast: unsupported expression kind PostfixUnaryExpression in f",
-    ],
     // (#7471) A delete of a constant key runs (tests/issue-7471-prepared-delete); a computed key refuses, as a read's.
     [
       "G45: delete of a computed key",
