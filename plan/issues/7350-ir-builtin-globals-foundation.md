@@ -583,7 +583,7 @@ B3b and B3c are one slice (review finding 13): a wrapper is useless without ToPr
   prototype itself (`Number.prototype.toString(16)` is "0"). Their `this` is thisXValue: the payload of a primitive or
   of a wrapper of that kind, else a TypeError.
 - `Number.prototype.toString(radix)` (§21.1.3.6): thisNumberValue first; `radix` undefined → 10; otherwise
-  ToIntegerOrInfinity(radix), outside 2–36 a RangeError (test262 `S15.7.4.2_A4_*`); radix 10 is ToString, any other
+  ToIntegerOrInfinity(radix), outside 2–36 a RangeError (test262 `S15.7.4.2_A3_*`); radix 10 is ToString, any other
   the native number formatter's radix bodies.
 - Every other method is a function object (real `name`, `length`, [[Prototype]] `%Function.prototype%`, no
   `prototype`) whose own properties can be read, written and deleted.
@@ -668,7 +668,7 @@ Correctness:
      `built-ins/Number/S15.7.5_A1_T02.js` (`(new Number()).toString === Number.prototype.toString`),
      `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-85.js` (descriptor of `Boolean.prototype.toString`),
      `built-ins/Number/prototype/toString/S15.7.4.2_A2_T14.js` (Number.prototype's +0), and the
-     `S15.7.4.2_A4_*` RangeError rows.
+     `S15.7.4.2_A3_*` RangeError rows.
    Each gained row gets a mutated twin (flip one expected value) that must fail in the same run.
 2. A probe matrix against node, each row with a wrong twin, at module level and inside a function:
    - B3a: the three names in every value position; `X.name`, `X.length`; `String.prototype`, `Number.isNaN`,
@@ -758,7 +758,7 @@ Code quality:
 | 8 key lists | Diffed against node 22: equal; acceptance criterion 9 |
 | 9 folded constants | A fold is not a use; holding trigger listed; byte-equality criterion for `Number.MAX_VALUE` vs the literal |
 | 10 member cost | Gate up front (> 4 KB or > 10 % compile time ⇒ per-member holding), fallback rule, estimate from G1's measured cost |
-| 11 `toString(radix)` | undefined → 10, RangeError outside 2–36, probes and `S15.7.4.2_A4_*` rows |
+| 11 `toString(radix)` | undefined → 10, RangeError outside 2–36, probes and `S15.7.4.2_A3_*` rows |
 | 12 empty calls | `String()` / `Number()` / `Boolean()` direct and through the realm value; probes |
 | 13 slicing | B3b and B3c merged into B3bc with its yield |
 | other | `claude/7350-string-call` cited (`b05ac39870…`, feature commit `e50febcb71`); B3a absorbs it, the branch closes in its favour |
@@ -1999,8 +1999,8 @@ because every A1/A2 value prints the same in every radix and the A3 rows accept 
 **The other rows of the directory** (carriers, on main; not this slice's yield):
 
 - `S15.7.4.2_A1_T01` already passes.
-- `S15.7.4.2_A4_T01`, `T02`, `T05` (thisNumberValue's TypeError, not RangeError: the B3bc text at l585 and l761
-  calls `S15.7.4.2_A4_*` the RangeError rows, which is wrong) trap in `__call_fn_method_0`. Their second block calls
+- `S15.7.4.2_A4_T01`, `T02`, `T05` (thisNumberValue's TypeError, not RangeError; the B3bc text at l585, l671 and
+  l761 called them the RangeError rows and is corrected to `A3_*`) trap in `__call_fn_method_0`. Their second block calls
   the method under another name (`s2.myToString = Number.prototype.toString; s2.myToString()`). That is the
   dispatcher's built-in arm, which `dynamicPrototypeMethodCall` reaches only for a method read under its own name. A
   probe shows that the same call under the name `toString` already throws the TypeError on main.
@@ -2314,7 +2314,7 @@ answer, apart from two named aborts that the formatter fix later removes.
 4. **The typed-number wall (site 3).** `(255).toString(16)` and even `(255).toString()` refuse in `from-ast.ts`. It
    has 0 first stops on both lists, and the 10 latent rows above stop earlier. Fixing it means boxing the receiver
    into the dynamic arm under `from-ast.ts`'s no-growth rule, which is its own issue once a census shows yield.
-5. **B3bc text.** l585 and l761 call `S15.7.4.2_A4_*` the RangeError rows. They are the TypeError rows. The RangeError
-   rows are `A3_*`. Their T01, T02 and T05 trap in the dispatcher (a method read under another name), not in B3e.
+5. **B3bc text (corrected in this commit).** l585, l671 and l761 called `S15.7.4.2_A4_*` the RangeError rows. They
+   are the TypeError rows; the RangeError rows are `A3_*`, and the three lines now say so. Their T01, T02 and T05 trap in the dispatcher (a method read under another name), not in B3e.
 6. **Scope.** No Math, arrays, descriptor semantics, `with` or global object. `%RangeError%` is held through the
    Error family only.
