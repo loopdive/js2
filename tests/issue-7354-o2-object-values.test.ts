@@ -157,6 +157,7 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: false,
       functions: false,
       namesSymbol: false,
+      globalObject: false,
       realmFamilies: new Set(),
       wrappers: new Set(),
     });
@@ -164,6 +165,7 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
       present: true,
       functions: false,
       namesSymbol: false,
+      globalObject: false,
       realmFamilies: new Set(),
       wrappers: new Set(),
     });
