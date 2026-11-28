@@ -2686,9 +2686,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     /** (#4307) `(externref) -> externref` closure→carrier wrap helper. */
     wrapHelperFuncIdx?: number;
   };
-  /** Runtime-eval global-object push/pull helpers have been reserved/filled. */
+  /** Runtime-eval global-object push/pull helpers have been reserved; they are filled once the bindings are settled. */
   runtimeEvalGlobalSyncReserved?: boolean;
-  runtimeEvalGlobalSyncFilled?: boolean;
+  runtimeEvalGlobalBindingsSettled?: boolean;
   /** Runtime guard: 1 only while execution is crossing the linked provider. */
   runtimeEvalProviderActiveGlobalIdx?: number;
   /** This unit consumes linked runtime eval and therefore needs mutable global
@@ -3182,9 +3182,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * realm (`fn = …`). ES function bindings are live/mutable, so such a name is
    * backed by a mutable `externref` module global (registered in `moduleGlobals`)
    * that both the reassignment (`global.set`) and every read (`global.get`) go
-   * through. Import aliases of a reassigned function propagate into this set too
-   * (see `registerImportBindingAliases`). Empty for the common case (no function
-   * declaration is ever reassigned), so non-affected programs stay byte-identical.
+   * through. (#7530) The bare-name view of `ModuleBinding.liveFunction`, like
+   * `moduleGlobals` of the binding table: written only by
+   * `markLiveFunctionBinding` and the per-source projection, which shows a live
+   * import alias in its importing module only. Empty for the common case (no
+   * function declaration is ever reassigned), so non-affected programs stay
+   * byte-identical.
    */
   liveFuncBindingGlobals?: Set<string>;
   /**
@@ -3194,13 +3197,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * immutable declaration from an unrelated same-named reassigned function.
    */
   reassignedFunctionDeclarations?: WeakSet<ts.FunctionDeclaration>;
-  /**
-   * (#6880) Members of {@link liveFuncBindingGlobals} that are live ONLY because
-   * linked runtime eval could rebind them — no source assignment targets them.
-   * The named `.call` receiver trampoline may still serve these: the lowering it
-   * replaces calls the same static function and drops the receiver.
-   */
-  evalOnlyLiveFuncBindings?: Set<string>;
   /**
    * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
    * block/`if`/`switch`-nested `function f` whose enclosing var scope is the

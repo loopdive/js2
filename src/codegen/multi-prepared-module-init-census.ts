@@ -24,6 +24,7 @@ import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { liveFunctionBindings } from "./module-bindings/module-binding-table.js";
 
 export interface MultiPreparedModuleInitCensusInput {
   readonly multiAst: MultiTypedAST;
@@ -277,7 +278,8 @@ function sourceLiveFunctionNames(
         ts.isFunctionDeclaration(statement) && !!statement.name && !!statement.body,
     ),
   );
-  const names = new Set(suppliedLiveFunctionNames ?? ctx.liveFuncBindingGlobals ?? []);
+  // (#7530) From the binding table: the bare-name set changes with the view a source compiles under.
+  const names = new Set(suppliedLiveFunctionNames ?? liveFunctionBindings(ctx).map((binding) => binding.name));
   const exactDeclarations = ctx.reassignedFunctionDeclarations;
   const bySource = new Map<ts.SourceFile, readonly string[]>();
   let available = true;

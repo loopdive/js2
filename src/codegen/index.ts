@@ -170,7 +170,7 @@ import {
   type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
-import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
+import type { IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
 import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
@@ -280,7 +280,11 @@ import {
   withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
-import { runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js";
+import {
+  applyRuntimeEvalBoundaryPlan,
+  runtimeEvalOwnsGlobalEval,
+  settleRuntimeEvalGlobalBindings,
+} from "./expressions/runtime-eval-provider.js";
 import {
   auditIrSkippedClassMemberSlots,
   auditIrSkippedFunctionSlots,
@@ -677,10 +681,10 @@ import {
 import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
-import { prepareModuleTdzGlobals } from "./module-global-registration.js";
+import { prepareModuleTdzGlobals, registerLiveFunctionGlobal } from "./module-global-registration.js";
 import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import { exportDeferredDefaultGlobals } from "./global-export-fixup.js";
-import { moduleBindingOf } from "./module-bindings/module-binding-table.js";
+import { type LiveFunctionKind, moduleBindingOf } from "./module-bindings/module-binding-table.js";
 import {
   noteImportedSourceFunction,
   ownSourceFunctionIdx,
@@ -5441,11 +5445,7 @@ export function generateModule(
   importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
-  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
-  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
-    ctx.runtimeEvalCallableBoundaryEnabled = true;
-  }
+  applyRuntimeEvalBoundaryPlan(ctx, [ast.sourceFile]);
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   // (#6937) `inferModuleStrictArguments: false` = synthetic `export` on a SCRIPT; the
   // top-level goal must follow it like function strictness does (see #6937).
@@ -5909,6 +5909,7 @@ export function generateModule(
     // module-scope class static assignment needs its value cell registered
     // before the module initializer and exported bodies are emitted.
     registerModuleClassStaticAssignments(ctx, [ast.sourceFile]);
+    settleRuntimeEvalGlobalBindings(ctx); // (#7632) Nothing after this may add an eval-visible name or retype its global.
 
     // (#3523 R4) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. The plan remains an observer for
@@ -9039,11 +9040,12 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
  * "auto-allocate a throwaway local", losing the write entirely.
  *
  * This pass (run after `collectDeclarations`, before bodies compile) statically
- * detects reassigned function-declaration names, backs each with a MUTABLE
- * `externref` module global (which the write-path then targets via `global.set`),
- * and records the name in `ctx.liveFuncBindingGlobals` so the identifier read-path
- * reads through the global (`global.get`). `__module_init` seeds each global with
- * the function's closure so a read *before* any reassignment still yields the
+ * detects reassigned function declarations and backs each declaration's binding
+ * with a MUTABLE `externref` module global (which the write-path then targets via
+ * `global.set`), marked live so the identifier read-path reads through the global
+ * (`global.get`). A binding belongs to its module (#7530), so a same-named
+ * function of another module keeps its static index. `__module_init` seeds each
+ * global with the function's closure so a read *before* any reassignment still yields the
  * function (see `compileModuleInitBody`). Reassigning a function declaration is a
  * rare pattern, so `liveFuncBindingGlobals` is empty for virtually every program
  * and this is a no-op there.
@@ -9053,8 +9055,8 @@ function registerReassignedFunctionGlobals(
   sourceFiles: readonly ts.SourceFile[],
   runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
 ): void {
-  const reassigned = new Set<string>();
-  const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
+  // Insertion order is registration order, which `__module_init` seeds in.
+  const reassignedDeclarations = new Map<ts.FunctionDeclaration, LiveFunctionKind>();
   const runtimeEvalConsumer =
     ctx.runtimeEvalProviderAbsent !== true && runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
@@ -9116,10 +9118,7 @@ function registerReassignedFunctionGlobals(
         if (candidates?.length === 1) decl = candidates[0];
       }
     }
-    if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
-      reassigned.add(decl.name.text);
-      reassignedDeclarations.add(decl);
-    }
+    if (decl && ts.isFunctionDeclaration(decl) && decl.name) reassignedDeclarations.set(decl, "assigned");
   };
   const recordTarget = (target: ts.Node): void => {
     if (ts.isIdentifier(target)) {
@@ -9199,41 +9198,47 @@ function registerReassignedFunctionGlobals(
       global.type = { kind: "externref" };
       global.init = [{ op: "ref.null.extern" }];
     }
-    for (const name of ctx.topLevelFunctionNames) {
-      const declaration = ctx.topLevelFunctionDeclarations.get(name);
-      const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
+    // Per source: `ctx.topLevelFunctionDeclarations` keeps one declaration per name across modules (#7530).
+    for (const [name, declaration] of sourceTopLevelFunctions(sourceFiles, functionDeclarationsByEnvironment)) {
+      const canBeReboundByEval = !ctx.sourceIsModule || !hasExportModifier(declaration);
       // A fragment that only calls the declaration still needs it live: the
       // static eval splice reaches a top-level function only through its live
       // binding, and without one drops the call (`eval("f()")`, 15.3.5.4_2-57gs).
       const namedByDynamicSource =
         runtimeEvalPlan.dynamicSourceWrites.has(name) || runtimeEvalPlan.dynamicSourceReferences.has(name);
-      if (canBeReboundByEval && (hasUnknownDynamicSource || namedByDynamicSource)) {
-        if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
-        reassigned.add(name);
-        if (declaration) reassignedDeclarations.add(declaration);
+      if (
+        canBeReboundByEval &&
+        (hasUnknownDynamicSource || namedByDynamicSource) &&
+        !reassignedDeclarations.has(declaration)
+      ) {
+        reassignedDeclarations.set(declaration, "eval");
       }
     }
   }
-  if (reassigned.size === 0) return;
+  if (reassignedDeclarations.size === 0) return;
 
   const exactDeclarations = (ctx.reassignedFunctionDeclarations ??= new WeakSet<ts.FunctionDeclaration>());
-  for (const declaration of reassignedDeclarations) exactDeclarations.add(declaration);
-
-  const set = (ctx.liveFuncBindingGlobals ??= new Set<string>());
-  for (const name of reassigned) {
-    const funcIdx = ctx.funcMap.get(name);
+  for (const [declaration, kind] of reassignedDeclarations) {
+    exactDeclarations.add(declaration);
+    const name = declaration.name!.text;
     // Only defined user functions (not host imports) have an in-module body.
+    const funcIdx = ownSourceFunctionIdx(ctx, declaration.getSourceFile(), name) ?? ctx.funcMap.get(name);
     if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) continue;
-    if (ctx.moduleGlobals.has(name)) continue; // already a global — nothing to do
-    const globalIdx = nextModuleGlobalIdx(ctx);
-    ctx.mod.globals.push({
-      name: `__mod_${name}`,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.moduleGlobals.set(name, globalIdx);
-    set.add(name);
+    registerLiveFunctionGlobal(ctx, name, declaration, kind);
+  }
+}
+
+/** Each source's own top-level functions by name, in statement order: per name, the last declaration with a body. */
+function* sourceTopLevelFunctions(
+  sourceFiles: readonly ts.SourceFile[],
+  declarationsByEnvironment: ReadonlyMap<ts.Node, ReadonlyMap<string, readonly ts.FunctionDeclaration[]>>,
+): Generator<[string, ts.FunctionDeclaration]> {
+  for (const sourceFile of sourceFiles) {
+    const own = declarationsByEnvironment.get(sourceFile);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isFunctionDeclaration(statement) || !statement.name) continue;
+      if (own?.get(statement.name.text)?.at(-1) === statement) yield [statement.name.text, statement];
+    }
   }
 }
 
@@ -9599,10 +9604,6 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     }
     const restInfo = ctx.funcRestParams.get(targetName);
     if (restInfo !== undefined && !ctx.funcRestParams.has(localName)) ctx.funcRestParams.set(localName, restInfo);
-    // (#2931) If the target is a reassigned function backed by a live-binding
-    // global, propagate membership so the aliased local name reads through the
-    // (copied) module global too.
-    if (ctx.liveFuncBindingGlobals?.has(targetName)) ctx.liveFuncBindingGlobals.add(localName);
   };
 
   for (const sf of sourceFiles) {
@@ -9774,11 +9775,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   const irAuthority = makeIrPlanningAuthority(multiAst.checker, irPlanningIdentityContext, options?.experimentalIR);
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
-  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
-  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
-    ctx.runtimeEvalCallableBoundaryEnabled = true;
-  }
+  applyRuntimeEvalBoundaryPlan(ctx, multiAst.sourceFiles);
   // Multi-file compilation is linked through import/export module records.
   //
   // (#6474) …except when the caller says the ENTRY may legitimately be a
@@ -10143,6 +10140,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // default. Runs after collectDeclarations (targets registered), before bodies.
     registerImportBindingAliases(ctx, multiAst.sourceFiles);
     for (const sf of multiAst.sourceFiles) recordSourceModuleBindingView(ctx, sf);
+    settleRuntimeEvalGlobalBindings(ctx); // (#7632) Nothing after this may add an eval-visible name or retype its global.
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 

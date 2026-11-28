@@ -29,6 +29,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { isNonReferenceName } from "../shared/binding-writes.js";
+import { identifierIndex } from "../shared/callee-name-index.js";
 import { closureSignatureEquals, irTypeEquals, type IrClosureSignature, type IrType } from "./nodes.js";
 
 export interface ClosureSignatureFlowHooks {
@@ -39,8 +40,6 @@ export interface ClosureSignatureFlowHooks {
 }
 
 type SlotOwner = ts.FunctionDeclaration | ts.MethodDeclaration | ts.ConstructorDeclaration;
-
-const identifierIndexCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly ts.Identifier[]>>();
 
 /**
  * True when the callable parameter `parameter` may be handed a function whose
@@ -165,23 +164,6 @@ function isTypePosition(id: ts.Identifier): boolean {
     if (ts.isExpression(node.parent) || ts.isStatement(node.parent)) return false;
   }
   return false;
-}
-
-function identifierIndex(sourceFile: ts.SourceFile): ReadonlyMap<string, readonly ts.Identifier[]> {
-  const cached = identifierIndexCache.get(sourceFile);
-  if (cached) return cached;
-  const index = new Map<string, ts.Identifier[]>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      const bucket = index.get(node.text);
-      if (bucket) bucket.push(node);
-      else index.set(node.text, [node]);
-    }
-    forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  identifierIndexCache.set(sourceFile, index);
-  return index;
 }
 
 function valueHasExactSignature(
