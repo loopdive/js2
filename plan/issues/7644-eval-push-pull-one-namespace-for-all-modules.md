@@ -289,3 +289,110 @@ Approved with one condition, now in the plan:
 | # | condition | settled by |
 | --- | --- | --- |
 | A1 | `runtimeEvalTagsInUse` must give the same answer at every emission site, also before all module bindings are registered | the tag set is computed once from the AST in `applyRuntimeEvalBoundaryPlan` (before declaration collection) and stored on ctx; every consumer reads only it; INIT pinned (today 34, node 42) |
+
+## Results (2026-11-28)
+
+Implemented on `agent-7644-impl`, stacked on 3711c8ff35 (#7572 merged in). All plan steps landed. Four rows do not
+reach the plan's "after" value; they are deviations, pinned as stated limits (below).
+
+### Rows
+
+`compileMulti`, standalone, QuickJS provider, IR path off and on (identical in every row). node 22 runs the same
+sources as `.mjs`. "before" is the base 3711c8ff35, "after" is this change.
+
+| row | node | before | after | status |
+| --- | --- | --- | --- | --- |
+| EV5 | 42 | 41 | 42 | fixed |
+| READ2 | 42 | 41 | 42 | fixed |
+| NEST | 42 | 41 | 42 | fixed |
+| NESTIND | 42 | 41 | 42 | fixed |
+| NESTFN | 42 | 41 | 42 | fixed |
+| INIT | 42 | 34 | 42 | fixed |
+| CTRL (only dep declares `f`) | 41 | 41 | 41 | kept |
+| INDIRECT | 41 | 49 | 49 | stated limit, #7647 |
+| NEWFN | 41 | 49 | 49 | stated limit, #7647 |
+| LATER | 41 | 44 | 41 | stated limit, #7647: matches node by accident |
+| THROWCB | 42 | 41 | 41 | stated limit, #7646 |
+| THROW1 (one module) | 2 | 1 | 1 | unchanged, #7646 |
+| LEX1 / LEX2 | 40 / 42 | 30 / 31 | 30 / 31 | unchanged, #7645 |
+
+`tests/issue-7644-eval-per-module-scope.test.ts` pins the structure on every run:
+
+- EV5's push and pull carry both `__mod_f` globals behind two tag arms, and `run2`'s provider call is under the
+  restore-on-unwind wrap.
+- INIT's `__module_init` sets c's tag, and dep's `run` sets dep's.
+- Single-source output has no tag compare, saved-tag local or unwind local.
+
+Under QuickJS, the same file pins every row above: fixed rows at node's value, each limit at its measured value with
+its cause. Run against the base `src`, 11 of its 16 tests fail: all four structural EV5/INIT pins, the six fixed
+rows, and LATER, whose old value was 44.
+
+### Deviations from the approved plan
+
+1. **INDIRECT and NEWFN stay at 49** (node 41). The push defines `f` on the shared global object as a
+   non-configurable property, and nothing removes it. dep's earlier eval leaves dep's `f` there. A tag-1 entry pushes
+   nothing for a colliding name, as the plan says, but `typeof f` still reads that stale property. The plan expected
+   an empty default arm to be enough. Defining the name as `undefined` under tag 1 was considered and deliberately
+   not done (lead's call). Filed as [#7647](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7647-eval-global-mirror-never-retracts-module-binding).
+2. **LATER answers 41, node's value, by accident.** `h` runs under tag 1 outside any eval, where nothing is pushed
+   for `f`. It reads c's `f` only because c's own eval left that stale property behind. It is pinned as a limit, not
+   presented as fixed (#7647).
+3. **THROWCB stays at 41** (node 42). The restore-on-unwind wrap (`buildRestoreOnUnwind`) is emitted and fires: a
+   trace shows `__runtime_direct_eval` throwing with the caller's tag. It pulls and restores the tag, and dep's part
+   answers 4. But QuickJS has not written `f = …` back to the global object when the AOT `t()` throws, so the pull
+   reads c's old `f`. That is the provider-side write-back on the throw path,
+   [#7646](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7646-eval-throw-through-aot-skips-pull)'s
+   mechanism. No row I could build changes when the wrap is removed, so it is pinned structurally.
+4. **Smaller structural choices:**
+   - `stableSourceId` stays private. `runtime-eval-boundary-plan.ts` exports `directEvalSourceFiles(plan, sources)`
+     instead, and `planRuntimeEvalSourceTags(sources, evalSources)` is pure and returns the record, which
+     `applyRuntimeEvalBoundaryPlan` stores on ctx. Exporting `stableSourceId` to `runtime-eval-boundary.ts` added two
+     codegen→ir import edges and failed `check:import-cycles`.
+   - `emitPerSourceArms` emits a non-colliding name once itself, so the push and the pull do not each repeat that
+     branch.
+   - The arms are a flat run of `if (tag == T)` blocks, not an `else` chain. The tags are exclusive, so the meaning
+     is the same.
+   - The tag-scan predicate follows the reviewer's note: ambient stubs and overload signatures are skipped by
+     `lastFunctionImplementations` / `registersTopLevelFunction`, moved out of `declarations.ts` into
+     `ast-modifiers.ts`. `declarations.ts` now uses them, so it shrinks by 12 lines. Its namespace-body copy of the
+     same loop uses them too.
+
+### Byte gate
+
+Every row is identical to the base 3711c8ff35 (sha1 per row; compile-error rows compared by message):
+
+- single files, each × gc/standalone × IR off/on, 4,240 rows, 0 differences (372 rows are compile errors in both):
+  - the 389-file sample;
+  - the eval sample (113 files);
+  - the reassign sample (553 files);
+  - the generator/async sample (5 files with a direct eval, whose push reaches a top-level `function*`, an `async
+    function` and an `async function*`).
+- `compileMulti` graphs, × gc/standalone × IR off/on, 32 rows, 0 differences:
+  - the clash-free `mhash` graphs: add, live, three, cls, dflt;
+  - #7530's EV2;
+  - a clash with no direct eval (the #7470/#7530 shape);
+  - a direct eval with no clash.
+
+### Tests and gates
+
+- Each of these passes, with the QuickJS rows running (none skipped): 261 tests in 11 files, covering
+  `tests/issue-7530-*` (EV1–EV4 included), `issue-7632-*`, `issue-7470-*`, `issue-4133-*` (2 files),
+  `issue-2930`, `issue-2931`, `issue-4182-*`, `issue-6880-*` (2 files) and the new `issue-7644-*`.
+- `node scripts/equivalence-gate.mjs`: exit 0: 4,856 passing, 20 failing, all among the 22 known failures in the baseline, so no new regression; 2 baseline failures now pass.
+- Each of these exits 0:
+  - `check-loc-budget` and `check-func-budget`, against the merge base and against `LOC_GATE_BASE=origin/main`. Two
+    +3 grants are in this file's frontmatter: `object-runtime.ts`, `context/types.ts`. There is none in `index.ts`
+    or `declarations.ts`.
+  - `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`, `check:import-cycles`,
+    `check:flat-dir-budget`.
+  - `check-compiler-boundaries --mode inventory`, against `HEAD^1` and against `origin/main`. No new src file.
+  - `lint`, `typecheck`, prettier.
+
+### lodash-es `compileProject` (median of 3)
+
+| target | bytes before | bytes after | ms before | ms after |
+| --- | --- | --- | --- | --- |
+| gc | 6,359,057 | 6,359,057 | 28,037 | 27,324 |
+| standalone | 6,232,698 | 6,232,698 | 26,976 | 27,030 |
+
+Bytes are identical. The time differences are within run-to-run noise (gc runs spanned 27.2–32.8 s before).
