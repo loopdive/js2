@@ -1673,3 +1673,266 @@ six routes are therefore listed under "Not yet seen" in the `foldsBuiltinMember`
 goes into `assigned`, so `delete eval` still lands in `taken`. `GLOBAL_ALIASES` stays exported for #7502's
 `ownThisEscapes`. The `foldsBuiltinMember` doc's eval line follows S2's wording, minus the `globalThis` clause,
 which the write scan now covers.
+
+## Implementation Plan — B3b-2 (2026-11-28, on main 330caff2a8)
+
+B3b-2 is the **write half** of a primitive's member access through a held wrapper prototype. B3b-1 landed as #7561,
+which already took the read half (#7561 decision 2: a primitive of a kind whose prototype the program can obtain,
+`ProgramObjects.wrappers`, reads through `%X.prototype%` with the primitive as receiver), so B3b-1's interim
+primitive *refusal* is gone from main. What is left is one run-time abort and the step-2.b operand of the set body.
+
+### Measured (2026-11-28, main `330caff2a8`, no code change)
+
+Commands (in this worktree, `test262/` a symlink to the checkout; result files are scratch, not committed):
+
+```bash
+sed 's|^test/||' plan/samples/7354-o411.txt > .tmp/o411-files.txt
+npx tsx scripts/ir-census/prepared-census.mts --files .tmp/o411-files.txt --out .tmp/main-o411.jsonl --harness real --jobs 3
+npx tsx scripts/ir-census/prepared-census.mts --files plan/samples/7350-b3bc/carriers.txt --out .tmp/main-carriers.jsonl --harness real --jobs 3
+```
+
+| list | rows | pass | fail | compile error | skip (negative) | crash |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| carriers | 1,977 | 819 | 278 | 846 | 33 | 1 |
+| o411 | 411 | 118 | 36 | 237 | 20 | 0 |
+
+**First stops at a B3b-2 site: 0 carriers, 0 o411.** Attribution:
+
+- The census reports the first run-time abort's reason (`abort.detail`, with `siteFrame`) for 142 of the 278
+  carrier fails and 30 of the 36 o411 fails. No reason is B3b-2's ("member write 'k' of a … whose prototype chain
+  holds the key"); no compile refusal names B3b-2; no row's abort-body list (`aborts`) does either.
+- The other 136 + 6 fails trap without a site: in the dispatcher's method arms (`__call_fn_method_N`, 119 carriers)
+  or in the realm's `findOwn` / `ownKeys` / `deleteOwn` (identity-only misses). The B3b-2 abort always carries its
+  site, so none of them is B3b-2's.
+- **Stub check** (cheap, measured). A `git archive` copy of main with the B3b-2 abort replaced by step 2.b's answer for
+  a data property or a miss (`held = absent`: sloppy no-op, strict TypeError; a setter is not called), re-run on all
+  302 failing rows of both lists: **0 rows change** (status or abort reason).
+
+So the yield is **0; 0** (measured upper bound), and the slice table's claim "B3b-2 is 0; 0; 0 as first stops"
+holds for carriers and o411 on current main (l420 was not re-run). B3b-2 is a correctness completion: it turns an
+uncatchable abort into the specification's answer.
+
+**B3c, measured the same way** (slice-table row 5): **1 carrier, 0 o411.**
+
+- carriers: `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-14.js` ("an own-property operation on a String
+  object with a key that may be an index": `getOwnPropertyDescriptor(new String("123"), "2")`).
+- The one o411 row with the sloppy-`this` abort, `language/expressions/call/11.2.3-3_8.js`, is `this` of `undefined`
+  (a sloppy function called without a receiver): the global object (#7609 A2), not B3c's primitive half.
+- Not B3c either: `language/types/string/S8.4_A3.js` ("member read 'length' of a string needs its own length and
+  index properties", a primitive's own keys, #7352).
+
+What the failing carriers stop at instead (first-stop counts on main, measured): `.call` / `.apply` read off a
+function (G4 / #7349 S7) 53; `Number.prototype.toString with a radix` 40; String methods without an algorithm (B3d)
+about 45 site aborts plus most of the 119 dispatcher-arm traps (not attributed by name: an estimate).
+
+**Behaviour probes on main** (Prepared entry, runner options, a receiver that reaches `dyn.member_set` through a
+parameter: `function put(v) { v.x = 1 } put("a")`), against node in a fresh realm:
+
+| program | node | main |
+| --- | --- | --- |
+| `String.prototype.x = 0`, sloppy write of `x` on a string | no-op | abort |
+| the same, strict | TypeError | abort |
+| setter-less accessor on `Boolean.prototype`, strict write on `true` | TypeError | abort |
+| strict setter on `String.prototype`, `this` seen | the primitive | abort |
+| strict write of `length` on a string, String family held | TypeError | abort |
+| a miss, family held, sloppy / strict | no-op / TypeError | agrees / agrees |
+| a getter on `Number.prototype` read through `5` (strict getter) | "number" | agrees (#7561) |
+
+A **statically typed** primitive receiver never reaches this site: `"a".x = 1`, `(5).z = 2`, `true.g = 1` refuse in
+the front end ("property assignment on string / f64 / i32 is not in slice 4", `from-ast.ts` `lowerPropertyAssignment`;
+reads: ".x on string is not in slice 2"). Both lists have 0 first stops there. That wall is out of B3b-2's scope
+(open question 3).
+
+### Sites, and what replaces each
+
+| # | site on main | today | B3b-2 |
+| --- | --- | --- | --- |
+| 1 | `src/ir/program/dynamic-member-access.ts` `dynamicMemberWrite`, the `primitive` arm (~line 345–359: `held`, "whose prototype chain holds the key") | where the kind's prototype is held, `js.object.has` on it, then the abort if found, else the absent answer | `js.object.set(%X.prototype%, key, value, primitive)` and the same PutValue branch as the object and function arms (sloppy: ignore `false`; strict: TypeError on `false`). The `has` call and the abort go |
+| 2 | same file, the module doc (lines 8–12) and `dynamicMemberWrite`'s doc | "a write meeting a key on it is the run-time abort (§10.1.9.2 step 2.b, a setter's call, is #7350 B3b-2)" | states the rule: OrdinarySet on the held prototype with the primitive as Receiver |
+| 3 | same file, `Access.missing` of the write | no string-own-key case: `"ab"["0"] = 1` on a held String prototype reaches the walk | where the String prototype is held, a constant array-index key on a string is missing ("its own index properties", #7350 B3c), so the existing refusal / abort machinery (`memberAccess`) answers it. `length` needs no case (below) |
+| 4 | `src/runtime/wasmgc/values/source-object-bodies.ts` `buildSourceObjectSetDefinition` | a primitive receiver traps at `findInStorage`'s `ref.cast` (`bag`) | step 2.b behind an optional operand (design below) |
+| 5 | `src/backend/wasmgc/resources/native-builtin-functions.ts` `operands()` | `...(wrappers && { wrapperAllocation })` | the same spread also supplies the operand; `realmWrapperRepresentation(...)` is built once for both |
+
+`grep -rn "B3b-2" src` on main finds exactly sites 1 and 2. No other interim abort or refusal is B3b-2's:
+
+- the read arm is #7561's;
+- the delete arm involves no prototype: a primitive's [[Delete]] is on its wrapper's own keys, already answered;
+- a sloppy setter or getter called with a primitive `this` is `dynamicCurrentThis`'s sloppy abort
+  (`dynamic-function-operations.ts:92`): B3c;
+- the String-object index aborts (`stringObjectIndex`, `unlessStringObject`): B3c.
+
+### The step-2.b operand
+
+`SourceObjectSetOperands` gains `primitiveReceiver?: (value: readonly Instr[]) => Instr[]`. It is a test that leaves
+an i32: the value is a primitive of a held wrapper kind. The body uses it once, before it reads the receiver's own
+storage:
+
+```text
+if primitiveReceiver(local 3):            ;; §10.1.9.2 with Receiver not an Object
+  inherited                                ;; lookup(object, key): status 1 -> requireWritable, status > 2 -> trap
+  i32.const 0; return                      ;; a data property (writable or not) or a miss: step 2.b, false
+findInStorage(bag(receiver)) …             ;; unchanged
+inherited
+define(CREATE_DATA_PROPERTY)
+```
+
+- `inherited` is today's lookup segment (`lookup`, the status test, `requireWritable`), extracted into one constant
+  that both paths use, not copied.
+- `requireWritable` already does the rest: an accessor with a setter calls it with local 3 (the primitive) as
+  `this` and answers `true`; a setter-less accessor and a read-only data property answer `false`.
+- A writable data property falls through `requireWritable`, and the primitive path answers `false` instead of
+  CreateDataProperty: step 2.b.
+- Where the operand is absent the emitted body is instruction-for-instruction today's. The backend passes it only
+  under `...(wrappers && …)`, that is, only where the realm holds a wrapper family.
+
+The test is built from `primitive-wrapper-bodies.ts`' `SLOT[kind].isPrimitive`, which `buildWrapperDataDefinition`
+already uses, over the held kinds (`realmWrapperKinds`). It is one new export, `heldPrimitiveTest(d, kinds, value)`,
+which ORs the held kinds' tests. Rejected:
+
+- a flag (`primitiveReceivers: true`) with the test inside the set body: a boolean operand whose meaning is
+  "re-derive what the backend already knows";
+- "no `$Object` and no function" (`ref.test` plus `match`): it would accept a non-held carrier that no caller passes,
+  and the realm's own representation already answers "a primitive of kind X".
+
+### The IR arm
+
+`dynamicMemberWrite`'s `set()` and `putValue` take the base (the object the walk starts at) and the receiver as
+parameters, instead of reading `instr.recv` for both. The object and function arms pass `instr.recv` twice. The
+primitive arm of a held kind passes the realm's `%X.prototype%` (`b.realmIntrinsic`, as the read arm does) and
+`instr.recv`.
+
+So the three arms are one parameterised PutValue arm. The primitive arm of an **unheld** kind keeps `absent`: the
+static premise, and its bytes.
+
+### Target modules and layers (`scripts/compiler-boundaries.json`)
+
+| module | layer | change |
+| --- | --- | --- |
+| `src/ir/program/dynamic-member-access.ts` | ir-program (clean) | sites 1–3 |
+| `src/runtime/wasmgc/values/source-object-bodies.ts` | native-runtime (clean) | site 4 |
+| `src/runtime/wasmgc/values/primitive-wrapper-bodies.ts` | native-runtime (clean) | `heldPrimitiveTest` beside `SLOT` |
+| `src/backend/wasmgc/resources/native-builtin-functions.ts` | backend-wasmgc (clean) | site 5 |
+
+No new file, no new import edge: backend → native-runtime and ir-program → runtime contracts already exist. No change
+to `src/ir/from-ast.ts`, `src/codegen/` or `native-source-objects.ts` (its `js.object.set` row already passes
+`nativeBuiltinFunctionOperands`).
+
+**Reuses:**
+
+- the kernel's one set entry (`js.object.set`) and its walk, `requireWritable` and `buildAccessorCall`;
+- `heldPrototype`, `b.realmIntrinsic` and `memberAccess`'s refusal / abort chain;
+- `SLOT.isPrimitive`, `realmWrapperKinds` and `realmWrapperRepresentation`.
+
+**Removes:**
+
+- the `has`-then-abort arm and its reason;
+- the primitive arm's own copy of the PutValue branch (folded into the parameterised arm);
+- the second `realmWrapperRepresentation` call in `operands()`;
+- the stale B3b-2 doc text.
+
+**Does not add:** a second set entry, a wrapper allocation for ToObject (unobservable: step 2.b never writes the
+wrapper), or a selector-side rule.
+
+### Hazards
+
+- **Order.** The value is evaluated before the set (unchanged `dyn.member_set` operands). One lookup, then at most
+  one setter call. No getter runs on a write.
+- **`this` is the primitive, not a wrapper.** The setter is called with local 3. A *strict* setter sees the
+  primitive. A *sloppy* setter takes ToObject(this) (§10.2.1.2), which is `dynamicCurrentThis`'s sloppy abort until
+  B3c. Pinned as an abort row, so the slice cannot answer it wrongly.
+- **ToObject.** No wrapper is allocated: the only effects of [[Set]] are the setter call and the answer, so the
+  wrapper's identity is unobservable.
+- **Strict vs sloppy.** `instr.sloppy` picks: ignore `false`, or throw a TypeError. The message is one per arm
+  (V8 has three: "Cannot create property", "Cannot assign to read only property", "… which has only a getter"). Tests
+  check the class only.
+- **A read-only data property** on the chain answers `false`, like a writable one (step 2.b). The difference shows
+  only in V8's message.
+- **A setter on the chain above `%X.prototype%`.** `lookup` walks the chain, so an accessor on `%Object.prototype%`
+  is found. A user-defined one is unreachable today (`Object` is no value: "not in scope"; `__proto__` refuses), and
+  the walk is already right once it is reachable (#7561 item 2). The realm's incomplete Object.prototype (status 2)
+  is a miss, as today. The write's `missing` keeps refusing Object.prototype's accessor keys.
+- **A string's own keys.**
+  - `length`: the walk finds `%String.prototype%`'s own `length` {!w} and answers `false`. That is the answer of the
+    string's own non-writable `length`, and `%String.prototype%.length` is non-configurable, so no accessor can stand
+    there.
+  - An index key: the primitive's own non-writable index must shadow a setter on the prototype, and only a non-empty
+    string has it. It is refused or aborts until B3c (site 3).
+- **Identity-only objects** on the chain: the walk's `abortIfUnmodelled` (`parentLink`) still traps, unchanged.
+
+### Acceptance criteria
+
+Correctness, each row in `tests/issue-7350-b3b2-primitive-set.test.ts`:
+
+- Rows with `agreesWithNode(…, runnerOptions(), freshRealmOut)`, each with its wrong twin. Every program writes a
+  built-in, so the fresh realm is required. Each is run at module level and inside a function, and with the receiver
+  reaching `dyn.member_set` (a parameter):
+  - `String.prototype.x = 0` and a sloppy write of `x` on a string: a no-op; `x` read back is 0 through the
+    primitive and through `new String`;
+  - an inherited strict setter on `Number.prototype` called by a sloppy and by a strict write: called once, `this`
+    the primitive (`typeof this`, `this === 5`), the setter's argument the written value;
+  - a write of `X.prototype` read back through a primitive and through a wrapper (B3bc criterion 2, B3b-2);
+  - a compound write `v.c += 1` with an inherited `c`: the get, then the set's `false`;
+  - `length` written on a string with the String family held: sloppy no-op;
+  - a miss and a hit on each of String, Number and Boolean.
+- Rows with `throwsAsNode`, or a catch that answers `e instanceof TypeError`, in strict code: an inherited writable
+  data property (`"use strict"`, `String.prototype.x = 0`), a read-only one (`defineProperty(String.prototype, "r",
+  {value: 1})`), a setter-less accessor on `Boolean.prototype`, and `length` on a string. Each also checks that no own
+  property was created.
+- Rows with `abortsAtRunTime(…, reason, freshRealmOut)`:
+  - a sloppy setter on a wrapper prototype, called through a primitive (B3c's `this`);
+  - a constant index key written on a string with the String family held (site 3), unless the receiver can only be a
+    string, which is a refusal by name.
+- `Object.prototype.foo = 1; (5).foo` (B3bc criterion 2): still refuses by name (`Object` is no value). It is
+  recorded, not built.
+- `check:prepared-bytes` (`scripts/prepared-byte-identity.mts`): 804 / 804 identical, base `330caff2a8` (a
+  `git archive` copy) vs head. Only row 582 names a wrapper. If it changes, the change is explained (it would mean
+  that row declares `js.object.set` and holds Number), before the hold is released.
+- `prove-emit-identity`: 60 / 60 identical. Ordinary pipeline: the 180 files of slice 1, default and standalone,
+  360 / 360 identical. No `src/codegen/` file changes.
+- Census on carriers and o411, base vs head: 0 lost, 0 new crashes. Expected gained: 0. A gain is listed row by row.
+- The #7561 suite, B3a's, B3b-0's, slice 1's and `tests/issue-7354-o3-member-write.test.ts` and `tests/issue-7354-f1b-function-object-writes.test.ts` pass.
+
+Code quality:
+
+- One PutValue arm for object, function and primitive, parameterised by base and receiver. No `has`-then-abort.
+- One set body. The step-2.b path reuses the extracted `inherited` segment. With the operand absent, the body is
+  byte-identical (the criterion above).
+- The operand is a test built from `SLOT.isPrimitive`, not a flag, and is present only under `wrappers`.
+- No `func-budget-allow` / `loc-budget-allow`.
+- A fresh-context adversarial review gets the diff and this section; its verdict goes in the PR body.
+
+### Size
+
+About 40 to 60 source lines net, with deletions about equal to additions in `dynamic-member-access.ts`, and about
+150 test lines. Every touched file stays far below the 1,500-line ceiling. `dynamicMemberWrite` (~60 lines) and
+`buildSourceObjectSetDefinition` (~95) stay below 300 lines. No budget grant.
+
+### Recommendation
+
+The measured yield is 0 (carriers, o411). B3c's is 1 carrier, 0 o411. Neither is a yield slice. By the "foundations
+first" rule, the next slice by measured size is not B3b-2 or B3c but `.call` / `.apply` on functions (G4 / #7349 S7,
+53 carriers), `Number.prototype.toString(radix)` (40 carriers), and B3d's String methods (about 45 named aborts plus
+unattributed dispatcher traps, an estimate).
+
+If the #7350 lane continues in order anyway, take B3b-2 before B3c:
+
+- B3b-2 is small;
+- it removes one uncatchable abort;
+- B3c's sloppy `this` then also covers the sloppy setters B3b-2 reaches.
+
+Measuring B3c first is not needed: it is measured above.
+
+### Risks and open questions for the plan reviewer
+
+1. **Row 582.** If `ProgramObjects.wrappers` holds Number for `new Number(1)` inside a refused unit, and the program
+   declares `js.object.set`, its bytes change. That would be a #7561 holding question (a refused unit's IR should
+   hold nothing), not a B3b-2 defect. Checked by the byte criterion.
+2. **The operand's test.** `SLOT.isPrimitive` over the held kinds vs "no `$Object` and no function". The plan picks
+   the first. The reviewer may prefer the second for a smaller body; both keep the bytes where no wrapper family is
+   held.
+3. **Typed primitive receivers** (`"a".x = 1` refusing in `from-ast.ts`). They have 0 first stops on both lists. When
+   they do matter, the fix is to box the receiver and take the dynamic arm. That is a `from-ast.ts` change under its
+   no-growth rule, so it stays out of this slice; it would be its own issue if a census run shows yield.
+4. **Session B's areas.** B3b-2 needs none of them. The chain above `%X.prototype%` is Object.prototype (#7561
+   item 2, `Object` as a value), not the global object or descriptor semantics.
+5. **l420** was not re-run here. The slice table's 0 for it is from the B3a run.
