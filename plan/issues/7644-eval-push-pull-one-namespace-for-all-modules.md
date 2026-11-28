@@ -69,13 +69,14 @@ push and pull functions (`__runtime_eval_push_globals` / `__runtime_eval_pull_gl
 - #7530's EV1–EV4 rows still pass.
 - Single-file output stays byte-identical; the ES5 test262 IR gate shows no pass → not-pass.
 
-## Implementation Plan (revision 2, 2026-11-28, S7)
+## Implementation Plan (revision 3, 2026-11-28, S7)
 
 Branch `claude/7644-eval-push-pull-per-module`, stacked on #7572 (`claude/7632-singleton-support`, e7b1a08c98),
 because this change edits the fill step #7572 rewrote. #7572 builds the push and pull bodies once per program,
 after the multi-source settle point, with no source view applied. Enqueue only after #7572 lands.
 
-Revision 1 (a72f904e15) was blocked by PRV-7644 with 10 findings; the table at the end says how each is settled.
+Revision 1 (a72f904e15) was blocked by PRV-7644 with 10 findings, and revision 2 (e9e63bbfd6) with N1–N3 and one
+minor point. The tables at the end say how each is settled.
 
 ### Measured repros
 
@@ -92,6 +93,8 @@ main(){return run()*10+run2()}` and dep `function f(){return 3} export function 
 | EV5 | `function f(){return 1} … run2(){ eval("f = function(){return 2}"); return f(); }` | 42 | 41 | 42 |
 | READ2 | as EV5, eval `f = (function(o){ return function(){ return o()+1 } })(f)` | 42 | 41 | 42 |
 | NEST | as EV5, plus `function g(){ eval("0"); return 0 }`, eval `g(); f = function(){return 2}` | 42 | 41 | 42 |
+| NESTIND | as NEST, with `g` running `(0,eval)("0")` | 42 | 41 | 42 |
+| NESTFN | as NEST, with `g` running `new Function("return 0")()` | 42 | 41 | 42 |
 | THROWCB | c: `try { eval("f = function(){return 2}; t()") } catch {} return f()` with `t` throwing; dep's `run` then calls an eval-made `h` through `[0].map(h)`; entry runs c first | 42 | 41 | 42 |
 | INDIRECT | `run2(){ return (0,eval)("typeof f") === "undefined" ? 1 : 9; }` | 41 | 49 | 41 |
 | NEWFN | `run2(){ return new Function("return typeof f")() === "undefined" ? 1 : 9; }` | 41 | 49 | 41 |
@@ -100,8 +103,12 @@ main(){return run()*10+run2()}` and dep `function f(){return 3} export function 
 
 LATER stays wrong by design: outside any eval no arm is active, and the default arm is empty for a colliding name (see Stated limits). It no longer reads dep's `f`.
 
-Out of scope: #7645 (a module `var` write is lost; `eval("f()")` throws, both with one module) and #7646 (THROW1:
-a throw through AOT code inside an eval skips the pull, also with one module).
+Out of scope:
+
+- #7645: with one module, an eval write to a module `var` or `let` is lost, and `eval("f()")` throws. A
+  same-name `let` in two modules (LEX2: node 42, today 31) is wrong for the same reason, so it goes there too.
+  #7644 leaves the lexical-cell names exactly as they are (the minor review point).
+- #7646 (THROW1): a throw through AOT code inside an eval skips the pull, also with one module.
 
 ### Cause
 
@@ -150,16 +157,26 @@ the flag it owns (finding 7). It is 514 lines; this adds about 80, under the 1,5
    `emitPerSourceArms`; any other name calls it directly, as today.
 4. **Pull body** (`emitRuntimeEvalGlobalBindingPullBody`). For a colliding name, each arm reads the global object's
    value, coerces it to **that arm's own target global's type** (`emitRuntimeEvalPullCoerceCall` per arm, finding
-   9), and does the `global.set` there. The lexical-cell loop takes the same arms; the cell stays shared.
+   9), and does the `global.set` there. The lexical-cell loop is not changed (see #7645).
 5. **Direct eval sites**, only when `runtimeEvalTagsInUse(ctx)`:
    - **Tag before push** (finding 1). The site saves the current tag in a local, sets its own source's tag, then
      calls the push. Untagged sites in such a program set tag 1 the same way. With no tags in use, the order stays
      push then `i32.const 1`, byte-identical.
    - **Restore instead of reset** (finding 2). `emitRuntimeEvalResultUnwrap` restores the saved tag instead of
-     writing 0, so a nested eval does not drop the outer site to the default arm.
-   - **Throw path** (finding 3). The provider call is wrapped in `try` / `catch_all`: on an exception, it pulls,
-     restores the saved tag and rethrows. That also fixes THROWCB, and THROW1's shape inside tagged programs.
-     #7646 tracks THROW1 for single-source programs, whose bytes this change must not touch.
+     writing 0, so a nested eval does not drop the outer site to the default arm. The unwrap's restore is shared
+     by both kinds of caller: direct sites and the global-scope support functions below.
+   - **Global-scope entries too** (N1). The support function `ensureRuntimeEvalGlobalCall`
+     (`runtime-eval-provider.ts` ~L679-701, used by indirect eval, script eval and `new Function`) saves the current
+     tag in a local, sets 1, and restores the saved tag through the same unwrap. NESTIND and NESTFN are pinned.
+   - **Throw path** (finding 3, N3). The provider call at direct sites and in the global support functions is
+     wrapped by a generalised **`buildRestoreOnUnwind(blockType, body, tagIdx, unwindExnLocal, restore)`** in
+     `src/wasm/physical/exception-control.ts`, beside `buildStandardTryTable`. It catches the module's own exception
+     tag (`ensureExnTag`; the provider preserves the caller's tag, `runtime-eval-callable.ts` ~L128), runs `restore`
+     (here: the pull call, then restoring the saved tag) and rethrows. It is the house pattern, not a `catch_all`:
+     `buildTargetTaggedTry` drops `catchAll`, and a rethrowing `catch_all` would need exnref, which
+     `StandardEhHandler` does not model. `restoreThisOnUnwind` (`named-this-call.ts` ~L365) becomes a call to the same
+     helper, so the pattern exists once. That fixes THROWCB, and THROW1's shape inside tagged programs; #7646 tracks
+     THROW1 for single-source programs, whose bytes this change must not touch.
    - `emitRuntimeEvalProviderActive(ctx, fctx, tag)` takes a tag (a number) instead of a boolean. The global-scope
      entries keep tag 1.
 6. **Interpreted-callback path** (`object-runtime.ts` ~L7011). When tags are in use, it keeps a non-zero active tag
@@ -183,8 +200,9 @@ the flag it owns (finding 7). It is 514 lines; this adds about 80, under the 1,5
 
 ### Byte identity
 
-- **When no source is tagged**, steps 2–6 emit nothing, and steps 1 and 7 move code without changing what is
-  emitted. That covers every single-source program and every multi-source program without a colliding eval-mirrored
+- **When no source is tagged**, steps 2–6 emit nothing (the tag save/restore, the global-entry save/restore and
+  the unwind wrap are all gated on `runtimeEvalTagsInUse`), and steps 1 and 7, and the `restoreThisOnUnwind` fold,
+  move code without changing what is emitted. That covers every single-source program and every multi-source program without a colliding eval-mirrored
   name.
 - **Step 7** keeps the existing chain's order. In the push it adds the first two lookups before
   `topLevelFunctionDeclarations`. In a single source those return the same declaration or none: the gate checks it,
@@ -192,7 +210,9 @@ the flag it owns (finding 7). It is 514 lines; this adds about 80, under the 1,5
 - **Gate:**
   - the 389-file sample, the eval/Annex B sample (113) and the reassign sample (553), × gc/standalone × IR on/off;
   - the `mhash` clash-free graphs;
-  - #7530's EV1–EV4 graphs (no tagged source: each has one eval-binding module);
+  - #7530's EV2 graph (no clash). EV1, EV3 and EV4 are **not** in the byte gate (N2): dep contains a direct eval and
+    binds `f`, which another module also binds, so dep is tagged and their bytes change. They are gated on
+    behaviour (their QuickJS rows in the #7530 test file);
   - the new generator/async sample.
 
   All must be identical to the base.
@@ -203,8 +223,8 @@ New file `tests/issue-7644-eval-per-module-scope.test.ts`, standalone, IR path o
 
 - **Structural, every run:** in EV5, the push and the pull carry both modules' `__mod_f` behind tag arms, and
   untagged single-source output has no tag compare.
-- **Under QuickJS (skipped where it is not built), against node:** EV5, READ2, NEST, THROWCB, INDIRECT and NEWFN at
-  node's answers; LATER pinned at its limit value; a control where only dep declares `f`.
+- **Under QuickJS (skipped where it is not built), against node:** EV5, READ2, NEST, NESTIND, NESTFN, THROWCB, INDIRECT
+  and NEWFN at node's answers; LATER pinned at its limit value; a control where only dep declares `f`.
 
 ### Acceptance
 
@@ -214,6 +234,7 @@ New file `tests/issue-7644-eval-per-module-scope.test.ts`, standalone, IR path o
 - **Code quality:**
   - the push/pull names are defined once;
   - the declaration chain is one helper with four callers;
+  - restore-on-unwind is one helper (`buildRestoreOnUnwind`) shared with `restoreThisOnUnwind`;
   - the tag lives with its owner, `runtime-eval-boundary.ts`;
   - the arms reuse `withSourceBindings` without a copy, and non-colliding names keep one path;
   - no grant in `index.ts` or `declarations.ts`.
@@ -232,3 +253,12 @@ New file `tests/issue-7644-eval-per-module-scope.test.ts`, standalone, IR path o
 | 8 | the declaration lookup diverges from its three copies | fixed (lead's call): one helper, four callers; generator/async byte sample |
 | 9 | the pull must coerce per arm | fixed: step 4 |
 | 10 | acceptance misses rows | fixed: every row above, with node's answers |
+
+### PRV-7644 delta review (revision 2, e9e63bbfd6)
+
+| # | finding | settled by |
+| --- | --- | --- |
+| N1 | a nested global-scope entry still drops the outer tag | fixed: step 5, global support functions save and restore through the shared unwrap; NESTIND and NESTFN pinned (today 41, node 42) |
+| N2 | EV1/EV3/EV4 are tagged, so not byte-identical | fixed: out of the byte gate, gated on behaviour; EV2 stays |
+| N3 | the throw wrap does not fit the EH form | fixed: `buildRestoreOnUnwind` in `exception-control.ts`, catching the module's own tag, shared with `restoreThisOnUnwind`; gated on tags in use |
+| minor | lexical cells reachable but untested | lexical names untouched; LEX1 (one module, 30 vs 40) and LEX2 (two modules, 31 vs 42) go to #7645 |
