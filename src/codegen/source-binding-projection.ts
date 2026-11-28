@@ -42,6 +42,8 @@ interface SourceBindingView {
 }
 
 const viewsByContext = new WeakMap<CodegenContext, Map<ts.SourceFile, SourceBindingView>>();
+/** Names that two or more modules declare as their own top-level function. */
+const collidingFunctionsByContext = new WeakMap<CodegenContext, ReadonlySet<string>>();
 
 function viewOf(ctx: CodegenContext, sourceFile: ts.SourceFile): SourceBindingView {
   let views = viewsByContext.get(ctx);
@@ -72,6 +74,7 @@ export function snapshotSourceFunctionBindings(
   collidingNames: ReadonlySet<string>,
 ): void {
   if (collidingNames.size === 0) return;
+  collidingFunctionsByContext.set(ctx, collidingNames);
   for (const statement of sourceFile.statements) {
     if (!ts.isFunctionDeclaration(statement) || !statement.name || !statement.body) continue;
     const name = statement.name.text;
@@ -196,14 +199,15 @@ interface SavedNames {
 
 function applyView(ctx: CodegenContext, view: SourceBindingView): SavedNames {
   const saved: SavedNames = { functions: new Map(), generators: new Map(), globals: new Map() };
+  const colliding = collidingFunctionsByContext.get(ctx);
   for (const [name, ref] of [...view.ownFunctions, ...view.importedFunctions]) {
     const idx = ctx.funcMap.get(name);
     saved.functions.set(name, idx === undefined ? undefined : functionRef(ctx, idx));
     projectFunction(ctx, name, ref);
-    // The inliner is keyed by bare name and does not record which function an entry is, so it may hold another
-    // module's tiny function of this name. This module's own body re-registers its version if it qualifies; an
-    // imported function is called rather than inlined.
-    ctx.inlinableFunctions.delete(name);
+    // The inliner is keyed by bare name and does not record which function an entry is, so where two modules
+    // declare `name` it may hold the other module's tiny function. This module's own body re-registers its version
+    // if it qualifies; an imported function of a colliding name is called rather than inlined.
+    if (colliding?.has(name)) ctx.inlinableFunctions.delete(name);
   }
   for (const [name, info] of view.generators) {
     saved.generators.set(name, ctx.nativeGenerators.get(name));
@@ -234,7 +238,9 @@ const appliedByContext = new WeakMap<CodegenContext, AppliedView>();
 /**
  * Run `action` with `sourceFile`'s view applied, then restore every name it changed. A view is relative to the
  * collect-time names, so one requested while another module's view is applied (a statement of `__module_init`,
- * which compiles once under the last module's view) first lifts that view and re-applies it after.
+ * which compiles once under the last module's view) first lifts that view and re-applies it after. Re-applying
+ * resets the projected names, which is safe because a nested call only happens in `__module_init`, after the last
+ * module body has compiled.
  */
 export function withSourceBindings<T>(ctx: CodegenContext, sourceFile: ts.SourceFile, action: () => T): T {
   const outer = appliedByContext.get(ctx);

@@ -278,6 +278,14 @@ const ROWS: [name: string, node: number, files: Record<string, string>][] = [
       "dep.ts": `var w: any; export function peek(): number { return w === undefined ? 1 : 0; }`,
     },
   ],
+  [
+    "collision-free import of a tiny function",
+    10,
+    {
+      "entry.ts": `import { add } from "./m"; export function main(): number { return add(1, 2) + add(3, 4); }`,
+      "m.ts": `export function add(a: number, b: number): number { return a + b; }`,
+    },
+  ],
 ];
 
 async function runMain(
