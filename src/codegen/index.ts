@@ -679,7 +679,8 @@ import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import { absoluteGlobalIdx } from "./global-space.js";
-import { moduleBindingOf, sourceModuleBindings } from "./module-binding-table.js";
+import { exportDeferredDefaultGlobals } from "./global-export-fixup.js";
+import { moduleBindingOf } from "./module-binding-table.js";
 import {
   noteImportedSourceFunction,
   ownSourceFunctionIdx,
@@ -6176,41 +6177,7 @@ export function generateModule(
     // Collect ref.func targets so the binary emitter can add a declarative element segment
     collectDeclaredFuncRefs(ctx);
 
-    // Resolve deferred `export default <variable>` for module globals (#1108).
-    // Must run AFTER compileDeclarations — string-constant imports added during
-    // body compilation shift numImportGlobals, so indices aren't final until now.
-    if (ctx.deferredDefaultGlobalExport) {
-      const varName = ctx.deferredDefaultGlobalExport;
-      const globalName = `__mod_${varName}`;
-      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-      if (localIdx >= 0) {
-        const absIdx = ctx.numImportGlobals + localIdx;
-        const alreadyExported = ctx.mod.exports.some(
-          (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
-        );
-        if (!alreadyExported) {
-          ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
-          ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
-        }
-      }
-      ctx.deferredDefaultGlobalExport = undefined;
-    }
-    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
-      const localIdx = ctx.mod.globals.indexOf(value);
-      if (localIdx < 0) {
-        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
-        continue;
-      }
-      if (ctx.mod.exports.some((e) => e.name === "default")) {
-        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
-        continue;
-      }
-      ctx.mod.exports.push({
-        name: "default",
-        desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
-      });
-    }
-    ctx.deferredDefaultExpressionExports?.clear();
+    exportDeferredDefaultGlobals(ctx, ast.sourceFile);
 
     // Copy metadata for .d.ts / helper generation — only include actually-used extern classes
     const importNames = mod.imports.map((imp) => imp.name);
@@ -10277,46 +10244,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("declared-func-refs", () => collectDeclaredFuncRefs(ctx));
     frameStage(ctx, "collectDeclaredFuncRefs");
 
-    // Resolve deferred `export default <variable>` for module globals (#1108).
-    // Must run AFTER compileDeclarations — string-constant imports added during
-    // body compilation shift numImportGlobals, so indices aren't final until now.
-    profilePhase("deferred-default-exports", () => {
-      if (ctx.deferredDefaultGlobalExport) {
-        const varName = ctx.deferredDefaultGlobalExport;
-        // (#7470) The entry's own binding, which another module's same-named `__mod_` may precede.
-        const entryBinding = sourceModuleBindings(ctx, multiAst.entryFile).get(varName);
-        const localIdx = entryBinding
-          ? ctx.mod.globals.indexOf(entryBinding.value)
-          : ctx.mod.globals.findIndex((g) => g.name === `__mod_${varName}`);
-        if (localIdx >= 0) {
-          const absIdx = ctx.numImportGlobals + localIdx;
-          const alreadyExported = ctx.mod.exports.some(
-            (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
-          );
-          if (!alreadyExported) {
-            ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
-            ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
-          }
-        }
-        ctx.deferredDefaultGlobalExport = undefined;
-      }
-      for (const value of ctx.deferredDefaultExpressionExports ?? []) {
-        const localIdx = ctx.mod.globals.indexOf(value);
-        if (localIdx < 0) {
-          reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
-          continue;
-        }
-        if (ctx.mod.exports.some((e) => e.name === "default")) {
-          reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
-          continue;
-        }
-        ctx.mod.exports.push({
-          name: "default",
-          desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
-        });
-      }
-      ctx.deferredDefaultExpressionExports?.clear();
-    });
+    profilePhase("deferred-default-exports", () => exportDeferredDefaultGlobals(ctx, multiAst.entryFile));
 
     // Copy metadata for .d.ts / helper generation
     profilePhase("copy-module-metadata", () => {
