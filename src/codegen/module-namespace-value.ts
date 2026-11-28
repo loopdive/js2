@@ -5,10 +5,12 @@ import type { GlobalDef, ValType, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { emitCachedFuncClosureAccess, ensureFuncClosureSingleton } from "./closures.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
+import { isNodeBuiltinSpecifier } from "./expressions/node-builtin-named-import.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isNodeBuiltin, normalizeNodeBuiltin } from "../import-resolver.js";
+import { normalizeNodeBuiltin } from "../import-resolver.js";
+import { aliasedSymbolAt } from "../shared/aliased-symbol.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -175,7 +177,7 @@ function hostMemberOf(
   specifier: ts.Expression | undefined,
   binding: ts.ImportSpecifier | ts.ExportSpecifier,
 ): { moduleName: string; propertyName: string } | undefined {
-  if (specifier === undefined || !ts.isStringLiteral(specifier) || !isNodeBuiltin(specifier.text)) return undefined;
+  if (!isNodeBuiltinSpecifier(specifier)) return undefined;
   return {
     moduleName: normalizeNodeBuiltin(specifier.text),
     propertyName: (binding.propertyName ?? binding.name).text,
@@ -321,22 +323,12 @@ function moduleSourceFile(symbol: ts.Symbol): ts.SourceFile | undefined {
   return symbol.declarations?.find((node): node is ts.SourceFile => ts.isSourceFile(node));
 }
 
-/** The symbol `identifier` binds, resolved through an import or export alias. */
-export function aliasedSymbolAt(ctx: CodegenContext, identifier: ts.Identifier): ts.Symbol | undefined {
-  const symbol = ctx.checker.getSymbolAtLocation(identifier);
-  if (symbol === undefined || (symbol.flags & ts.SymbolFlags.Alias) === 0) return symbol;
-  try {
-    return ctx.checker.getAliasedSymbol(symbol);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * The ES module whose namespace `identifier` imports: `import * as ns`, or a
  * named or default import of a re-exported namespace (`export * as ns`,
- * `import * as ns; export { ns }`). The checker's alias chain already resolves
- * renames and `export *` hops to the module itself.
+ * `import * as ns; export { ns }`, `export default ns`, `export = ns`). The
+ * checker's alias chain already resolves renames and `export *` hops to the
+ * module itself.
  */
 export function moduleNamespaceSourceOf(ctx: CodegenContext, identifier: ts.Identifier): ts.SourceFile | undefined {
   const declaration = ctx.oracle.valueDeclarationOf(identifier);
@@ -348,17 +340,6 @@ export function moduleNamespaceSourceOf(ctx: CodegenContext, identifier: ts.Iden
   }
   const target = ctx.oracle.aliasedValueDeclarationOf(identifier);
   return target !== undefined && ts.isSourceFile(target) ? target : undefined;
-}
-
-/**
- * (#5330) Whether `identifier` is imported from a Node builtin specifier. Its
- * namespace is served by the host module object (`__node_<mod>`), never by a
- * synthesized one, even when the specifier resolves to a source file.
- */
-function importsNodeBuiltin(ctx: CodegenContext, identifier: ts.Identifier): boolean {
-  const declaration = ctx.oracle.valueDeclarationOf(identifier);
-  const specifier = declaration && ts.findAncestor(declaration, ts.isImportDeclaration)?.moduleSpecifier;
-  return specifier !== undefined && ts.isStringLiteral(specifier) && isNodeBuiltin(specifier.text);
 }
 
 /**
@@ -555,19 +536,19 @@ function runtimeSurfaceCache(ctx: CodegenContext): WeakMap<ts.Symbol, RuntimeNam
   return cache;
 }
 
+/** The executable block of a TypeScript `namespace N { … }` outside a declaration file. */
+function runtimeNamespaceBlockOf(declaration: ts.Declaration): ts.ModuleBlock | undefined {
+  return ts.isModuleDeclaration(declaration) &&
+    declaration.body !== undefined &&
+    ts.isModuleBlock(declaration.body) &&
+    !declaration.getSourceFile().isDeclarationFile
+    ? declaration.body
+    : undefined;
+}
+
 function canonicalRuntimeNamespaceSymbol(ctx: CodegenContext, identifier: ts.Identifier): ts.Symbol | undefined {
-  const symbol = aliasedSymbolAt(ctx, identifier);
-  // A module augmentation (`declare module "./dep" { … }`) merges a block into
-  // an ES module's symbol; that symbol keeps the module-namespace object, whose
-  // cache this surface shares.
-  if (symbol === undefined || moduleSourceFile(symbol) !== undefined) return undefined;
-  return symbol.declarations?.some(
-    (declaration) =>
-      ts.isModuleDeclaration(declaration) &&
-      declaration.body !== undefined &&
-      ts.isModuleBlock(declaration.body) &&
-      !declaration.getSourceFile().isDeclarationFile,
-  )
+  const symbol = aliasedSymbolAt(ctx.checker, identifier);
+  return symbol?.declarations?.some((declaration) => runtimeNamespaceBlockOf(declaration) !== undefined)
     ? symbol
     : undefined;
 }
@@ -670,14 +651,8 @@ function runtimeNamespaceFunctionSurface(
 
   const moduleBlocks = new Set<ts.ModuleBlock>();
   for (const declaration of symbol.declarations ?? []) {
-    if (
-      ts.isModuleDeclaration(declaration) &&
-      declaration.body !== undefined &&
-      ts.isModuleBlock(declaration.body) &&
-      !declaration.getSourceFile().isDeclarationFile
-    ) {
-      moduleBlocks.add(declaration.body);
-    }
+    const block = runtimeNamespaceBlockOf(declaration);
+    if (block !== undefined) moduleBlocks.add(block);
   }
 
   const mutableKeys = new Set<string>();
@@ -1350,7 +1325,11 @@ export function tryEmitCompiledModuleNamespaceObject(
   identifier: ts.Identifier,
 ): ValType | undefined {
   const sourceFile = moduleNamespaceSourceOf(ctx, identifier);
-  if (sourceFile === undefined || importsNodeBuiltin(ctx, identifier)) return undefined;
+  if (sourceFile === undefined) return undefined;
+  // (#5330) A Node builtin's namespace is the host module object
+  // (`__node_<mod>`), even when its specifier resolves to a package source file.
+  const importDeclaration = ts.findAncestor(ctx.oracle.valueDeclarationOf(identifier), ts.isImportDeclaration);
+  if (isNodeBuiltinSpecifier(importDeclaration?.moduleSpecifier)) return undefined;
   return tryEmitModuleNamespaceObjectForSource(ctx, fctx, sourceFile);
 }
 

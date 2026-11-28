@@ -122,7 +122,8 @@ import {
 import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
-import { aliasedSymbolAt, moduleNamespaceSourceOf } from "./module-namespace-value.js";
+import { moduleNamespaceSourceOf } from "./module-namespace-value.js";
+import { aliasedSymbolAt } from "../shared/aliased-symbol.js";
 import {
   tryCompileNativeDisposableStackAnyDisposedGet,
   tryCompileNativeDisposableStackDisposedGet,
@@ -3433,7 +3434,7 @@ function runtimeNamespaceFunctionValueReceiver(
   // declarations. Resolve the symbol once and retain every executable block;
   // choosing only valueDeclaration would make `N.second` depend on which
   // declaration TypeScript happened to nominate for the merged symbol.
-  const symbol = aliasedSymbolAt(ctx, identifier);
+  const symbol = aliasedSymbolAt(ctx.checker, identifier);
   if (symbol === undefined) return undefined;
   const moduleBlocks = new Set<ts.ModuleBlock>();
   for (const declaration of [symbol.valueDeclaration, ...(symbol.declarations ?? [])]) {

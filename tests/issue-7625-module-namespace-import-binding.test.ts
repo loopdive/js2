@@ -10,13 +10,19 @@
 // The identity rows return `10 * (a is non-null) + (a === b)` and are decoded into two separate assertions, so a null
 // namespace cannot pass by being `===` to another null.
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { compileMulti } from "../src/index.js";
+import { compileMulti, compileProject } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 const mid = `export * as ns from "./dep";`;
 const dep = `export let g = 7;`;
+const nsAsDefault = `import * as ns from "./dep"; export { ns as default };`;
+const nsExportDefault = `import * as ns from "./dep"; export default ns;`;
+const nsExportEquals = `import * as ns from "./dep"; export = ns;`;
 const readsG = (binding: string) => `export function main(): number { return ${binding}.g * 10 + 3; }`;
 const identityOf = (a: string, b: string) =>
   `export function main(): number { const a: any = ${a}; const b: any = ${b}; ` +
@@ -29,8 +35,8 @@ interface Row {
   /** `main()` encodes `10 * nonNull + same`; assert the two facts separately. */
   readonly identity?: true;
   /**
-   * The row calls a namespace function (`ns.f()`), which with the IR path off throws until #7622 builds the IR
-   * identity context without `experimentalIR`. That cell is an expected failure until #7622 lands.
+   * The row calls a namespace function (`ns.f()`), which with the IR path off compiles but throws at run time until
+   * #7622 builds the IR identity context without `experimentalIR`. That cell pins the throw until #7622 lands.
    */
   readonly needs7622?: true;
 }
@@ -156,10 +162,9 @@ const ROWS: readonly Row[] = [
       "dep.ts": dep,
     },
   },
-  // A module augmentation merges a `ModuleDeclaration` into dep's module symbol. That symbol must stay on the module
-  // namespace path, never on the TypeScript-`namespace` path, whose namespace objects share the same cache.
+  // A program with a module augmentation of dep (`declare module "./dep"`): `d.f()` keeps the static namespace call.
   {
-    name: "module augmentation keeps the module namespace path",
+    name: "d.f() beside a module augmentation",
     node: 73,
     needs7622: true,
     files: {
@@ -167,16 +172,67 @@ const ROWS: readonly Row[] = [
       "dep.ts": `export function f(): number { return 7; }`,
     },
   },
+  // A default import of a re-exported namespace binds an `ImportClause`.
+  {
+    name: "default import of `export { ns as default }`",
+    node: 73,
+    files: { "entry.ts": `import d from "./mid"; ${readsG("d")}`, "mid.ts": nsAsDefault, "dep.ts": dep },
+  },
+  {
+    name: "default import of `export { ns as default }`: identity",
+    node: 11,
+    identity: true,
+    files: {
+      "entry.ts": `import d from "./mid"; import * as s from "./dep"; ${identityOf("d", "s")}`,
+      "mid.ts": nsAsDefault,
+      "dep.ts": dep,
+    },
+  },
+  {
+    name: "default import of `export default ns`",
+    node: 73,
+    files: { "entry.ts": `import d from "./mid"; ${readsG("d")}`, "mid.ts": nsExportDefault, "dep.ts": dep },
+  },
+  {
+    name: "default import of `export default ns`: identity",
+    node: 11,
+    identity: true,
+    files: {
+      "entry.ts": `import d from "./mid"; import * as s from "./dep"; ${identityOf("d", "s")}`,
+      "mid.ts": nsExportDefault,
+      "dep.ts": dep,
+    },
+  },
+  // `export = ns` of a module namespace, read through a default import. Node cannot run `export =`, so node's answer
+  // is for an ES entry importing the CommonJS emit of mid and dep, where the default import is `module.exports`.
+  {
+    name: "default import of `export = ns`",
+    node: 73,
+    files: { "entry.ts": `import d from "./mid"; ${readsG("d")}`, "mid.ts": nsExportEquals, "dep.ts": dep },
+  },
+  {
+    name: "default import of `export = ns`: member call",
+    node: 73,
+    needs7622: true,
+    files: {
+      "entry.ts": `import d from "./mid"; export function main(): number { return d.f() * 10 + 3; }`,
+      "mid.ts": nsExportEquals,
+      "dep.ts": `export function f(): number { return 7; }`,
+    },
+  },
 ];
 
-async function runMain(files: Record<string, string>, target: "gc" | "standalone", experimentalIR: boolean) {
+async function compileMain(files: Record<string, string>, target: "gc" | "standalone", experimentalIR: boolean) {
   const result = await compileMulti(files, "entry.ts", { target, experimentalIR });
   expect(result.success, result.errors.map((e) => e.message).join(" | ")).toBe(true);
   const host = buildImports(result.imports, {}, result.stringPool);
   const imports = target === "standalone" ? {} : { env: host.env, string_constants: host.string_constants };
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  return (instance.exports.main as () => number)();
+  return instance.exports.main as () => number;
 }
+
+// With the IR path off the call reaches a null namespace and the module throws a JS exception out of Wasm.
+const THROW_UNTIL_7622 = WebAssembly.Exception;
 
 const decoded = (row: Row, value: number) =>
   row.identity ? { nonNull: Math.floor(value / 10) === 1, same: value % 10 === 1 } : value;
@@ -185,11 +241,47 @@ for (const target of ["gc", "standalone"] as const) {
   for (const experimentalIR of [true, false]) {
     describe(`#7625 module namespace import bindings (${target}, IR ${experimentalIR ? "on" : "off"})`, () => {
       for (const row of ROWS) {
-        const test = row.needs7622 && !experimentalIR ? it.fails : it;
-        test(row.name, async () => {
-          expect(decoded(row, await runMain(row.files, target, experimentalIR))).toEqual(decoded(row, row.node));
+        if (row.needs7622 && !experimentalIR) {
+          it(`${row.name}: compiles, then throws until #7622`, async () => {
+            expect(await compileMain(row.files, target, experimentalIR)).toThrow(THROW_UNTIL_7622);
+          });
+          continue;
+        }
+        it(row.name, async () => {
+          const main = await compileMain(row.files, target, experimentalIR);
+          expect(decoded(row, main())).toEqual(decoded(row, row.node));
         });
       }
     });
   }
 }
+
+// (#5330) A namespace import of a Node builtin specifier binds the host module (`__node_events`), even when the
+// specifier resolves to a package source file in `node_modules`. `compileMulti` never resolves a bare builtin
+// specifier to a source file, so this row compiles a project directory.
+describe("#7625 namespace import of a builtin-named package", () => {
+  it("keeps the host module binding", async () => {
+    const root = mkdtempSync(joinPath(tmpdir(), "js2-7625-"));
+    try {
+      const files: Record<string, string> = {
+        "main.js": `import * as ev from 'events'; export function main() { return ev === null ? 0 : 1; }`,
+        "node_modules/events/package.json": `{"name":"events","type":"module","main":"index.js"}`,
+        "node_modules/events/index.js": `export function f() { return 7; }`,
+      };
+      for (const [name, source] of Object.entries(files)) {
+        mkdirSync(joinPath(root, name, ".."), { recursive: true });
+        writeFileSync(joinPath(root, name), source);
+      }
+      const result = await compileProject(joinPath(root, "main.js"), {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "gc",
+        platform: "node",
+      });
+      expect(result.success, result.errors.map((e) => e.message).join(" | ")).toBe(true);
+      expect(result.imports.map((entry) => entry.name)).toContain("__node_events");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

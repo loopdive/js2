@@ -395,7 +395,8 @@ import {
   tryThrowOnBigIntOrSymbolArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
-import { aliasedSymbolAt, moduleNamespaceSourceOf } from "../module-namespace-value.js";
+import { moduleNamespaceSourceOf } from "../module-namespace-value.js";
+import { aliasedSymbolAt } from "../../shared/aliased-symbol.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
 import { tryCompileRawWasiCall } from "../raw-wasi-api.js";
 import { tryEmitStandalonePromiseStaticCallTypeError } from "./promise-static-call-typeerror.js";
@@ -2754,7 +2755,7 @@ function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Identifi
   // namespace object itself is not materialized by the Wasm backend, so member
   // functions must use the same static call path as an `import * as ns`
   // receiver.
-  return aliasedSymbolAt(ctx, identifier)?.declarations?.some(ts.isModuleDeclaration) ?? false;
+  return aliasedSymbolAt(ctx.checker, identifier)?.declarations?.some(ts.isModuleDeclaration) ?? false;
 }
 
 /** Resolve the single executable declaration behind an overloaded namespace member. */

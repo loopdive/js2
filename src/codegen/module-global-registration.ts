@@ -20,6 +20,7 @@ import {
   scopedModuleBinding,
 } from "./module-bindings/module-binding-table.js";
 import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
+import { moduleNamespaceSourceOf } from "./module-namespace-value.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 
 const TOP_LEVEL_LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
@@ -459,7 +460,7 @@ function importsOwnNamespace(ctx: CodegenContext, sourceFile: ts.SourceFile): bo
     if (!ts.isImportDeclaration(statement)) continue;
     const bindings = statement.importClause?.namedBindings;
     if (bindings === undefined || !ts.isNamespaceImport(bindings)) continue;
-    if (ctx.oracle.aliasedValueDeclarationOf(bindings.name) === sourceFile) return true;
+    if (moduleNamespaceSourceOf(ctx, bindings.name) === sourceFile) return true;
   }
   return false;
 }
