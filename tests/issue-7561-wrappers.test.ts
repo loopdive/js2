@@ -173,11 +173,17 @@ describe("#7561 — what the slice leaves out refuses by name or aborts", () => 
     [
       "a static of a pristine constructor written",
       "Number.isNaN = function () { return 1; };",
-      'identifier "Number" is not in scope',
+      "Number.isNaN is not reachable",
+    ],
+    // Never the folded built-in after a write through an alias.
+    [
+      "a static written through an alias",
+      "var N = Number; N.isNaN = function () { return 1; }; var out; try { out = Number.isNaN(1); } catch (e) { out = e; }",
+      "Number.isNaN is not reachable",
     ],
     ["loose equality with a wrapper", "var out = new Number(1) == 1;", "dyn.eq (loose)"],
     ["a static of a constructor read", "var p = String.fromCharCode;", "String.fromCharCode is not reachable"],
-    ["a constructor's prototype deleted", "var out = delete Number.prototype;", "member delete 'prototype' of Number"],
+    ["a constructor's prototype deleted", "var out = delete Number.prototype;", "Number.prototype is not reachable"],
   ])("refuses %s", async (_label, source, expected) => {
     expect(await refusal(source + CALLS, runnerOptions())).toContain(expected);
   });
@@ -196,19 +202,6 @@ describe("#7561 — what the slice leaves out refuses by name or aborts", () => 
     "aborts %s",
     (_label, statement) =>
       abortsAtRunTime(`${CHECK}var out = check(function () { ${statement} });${CALLS}`, runnerOptions()),
-    SLOW,
-  );
-
-  // Never the folded built-in after a write through an alias (the identity row's mark).
-  it(
-    "aborts a static written through an alias",
-    () =>
-      abortsAtRunTime(
-        `var N = Number; N.isNaN = function () { return 1; }; var out; try { out = Number.isNaN(1); } catch (e) { out = e; }${CALLS}`,
-        runnerOptions(),
-        undefined,
-        freshRealmOut,
-      ),
     SLOW,
   );
 });

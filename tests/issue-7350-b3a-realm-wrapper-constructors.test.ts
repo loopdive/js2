@@ -99,8 +99,8 @@ describe("#7350 B3a — what the identity rows lack refuses by name or aborts", 
   it.each([
     ["a static's read", "var p = Number.isNaN;", "Number.isNaN is not reachable on this path yet (#7350 B3bc)"],
     ["a static's call", "var p = String.fromCharCode(65);", "String.fromCharCode is not reachable on this path yet"],
-    // The write's own route refuses its receiver first.
-    ["a write of a key it lacks", "Boolean.prototype = 1;", 'identifier "Boolean" is not in scope'],
+    // (#7350 slice 1) The statement is an expando, which no longer makes `Boolean` non-pristine: the key refuses.
+    ["a write of a key it lacks", "Boolean.prototype = 1;", "Boolean.prototype is not reachable on this path yet"],
     // An `Object` static whose target is the constructor and whose key is a constant: as visible as a member read.
     [
       "Object.defineProperty(Number, 'zz', …)",

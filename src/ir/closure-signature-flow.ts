@@ -28,6 +28,7 @@
  * `obj[k](h)`) is not attributed to its slot.
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { isNonReferenceName } from "../shared/binding-writes.js";
 import { closureSignatureEquals, irTypeEquals, type IrClosureSignature, type IrType } from "./nodes.js";
 
 export interface ClosureSignatureFlowHooks {
@@ -155,34 +156,6 @@ function sameBinding(resolved: ts.Declaration, declaration: ts.Declaration): boo
     resolved.name !== undefined &&
     resolved.name.text === declaration.name?.text
   );
-}
-
-/** Declaration names, property names and labels named like the owner are not references to it. */
-function isNonReferenceName(id: ts.Identifier): boolean {
-  const parent = id.parent;
-  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return true;
-  if (ts.isQualifiedName(parent) && parent.right === id) return true;
-  if (
-    (ts.isPropertyAssignment(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent) ||
-      ts.isPropertySignature(parent) ||
-      ts.isMethodSignature(parent) ||
-      ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isVariableDeclaration(parent) ||
-      ts.isParameter(parent) ||
-      ts.isBindingElement(parent) ||
-      ts.isEnumMember(parent)) &&
-    parent.name === id
-  ) {
-    return true;
-  }
-  return ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent);
 }
 
 function isTypePosition(id: ts.Identifier): boolean {

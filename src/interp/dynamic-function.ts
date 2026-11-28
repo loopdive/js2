@@ -8,7 +8,7 @@
 // function at the module global environment, and materializes an ordinary
 // callable through the interpreter's existing closure seam.
 
-import { fitsFunctionSourceText, functionSourceText } from "./function-source-text.js";
+import { fitsFunctionSourceText, functionSourceText } from "../shared/contracts/function-source-text.js";
 import { emitFunction, emitProgram } from "./emitter.js";
 import {
   createRuntimeEvalGlobalEnvironment,

@@ -141,6 +141,16 @@ function heldPrototype(b: MemberAccessBuilders, kind: CarrierKind): string | und
   return wrapper !== undefined && b.wrappers.has(wrapper) ? `%${wrapper}.prototype%` : undefined;
 }
 
+/**
+ * (#7561) The realm holds a wrapper constructor's `prototype` only where the program reads it (`pinnedWrapperMembers`),
+ * so its write and its delete refuse as a key the constructor's row lacks (`identityOnlyKeyRefusal`).
+ */
+function unreadPrototype(b: MemberAccessBuilders, recv: IrValueId, name: string): void {
+  const ctor = realmConstructorOf(recv, b.definitions);
+  if (ctor?.family === "wrapper" && name === "prototype")
+    gap(`${ctor.name}.prototype is not reachable on this path yet (#7350 B3bc)`);
+}
+
 /** (#7561) An array-index key on an object that may be a String object, whose index properties the realm lacks. */
 const stringObjectIndex = (b: MemberAccessBuilders, name: string): boolean =>
   b.wrappers.has("String") && isArrayIndexKey(name);
@@ -299,6 +309,7 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
 export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): IrInstr[] {
   const site = memberSite(instr);
   const name = constantKey(b, site);
+  unreadPrototype(b, instr.recv, name);
   const unread = (r: IrValueId): IrInstr => b.intrinsic(instr, "js.value.undefined", [], r);
   const set = (): { readonly ok: IrValueId; readonly instr: IrInstr } => {
     const ok = b.fresh();
@@ -363,9 +374,7 @@ export function dynamicMemberDelete(b: MemberAccessBuilders, instr: Call, strict
   const [recv, key] = instr.args as [IrValueId, IrValueId];
   const site: MemberSite = { instr, recv, key, label: instr.target.name };
   const name = constantKey(b, site);
-  // (#7561) The realm holds a wrapper constructor's `prototype` only where the program reads it.
-  const ctor = realmConstructorOf(recv, b.definitions);
-  if (ctor?.family === "wrapper" && name === "prototype") gap(`member delete 'prototype' of ${ctor.name}`);
+  unreadPrototype(b, recv, name);
   const ordinaryDelete = (kind: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] => {
     if (!strict) return [realmCall("js.object.delete", [recv, key], r)];
     const deleted = b.fresh();

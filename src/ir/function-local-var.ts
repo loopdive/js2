@@ -3,6 +3,7 @@
 // #3783 — proof for the function-local `var` subset that the IR can represent
 // with its existing lexical local/slot model.
 
+import { isNonReferenceName } from "../shared/binding-writes.js";
 import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 
@@ -16,28 +17,6 @@ function isFunctionBoundary(node: ts.Node): boolean {
     ts.isSetAccessor(node) ||
     ts.isConstructorDeclaration(node)
   );
-}
-
-function isIdentifierReference(node: ts.Identifier): boolean {
-  const parent = node.parent;
-  if (!parent) return true;
-  if (ts.isVariableDeclaration(parent) && parent.name === node) return false;
-  if (ts.isParameter(parent) && parent.name === node) return false;
-  if (
-    (ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent)) &&
-    parent.name === node
-  ) {
-    return false;
-  }
-  if ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === node) return false;
-  if (ts.isBindingElement(parent) && parent.name === node) return false;
-  if (ts.isLabeledStatement(parent) && parent.label === node) return false;
-  if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return false;
-  return true;
 }
 
 function nodeIsWithin(node: ts.Node, region: ts.Node): boolean {
@@ -166,7 +145,7 @@ export function collectIrSafeVarDeclarationLists(
     const scanReferences = (node: ts.Node, insideNestedFunction = false): void => {
       if (!safe) return;
       const nested = insideNestedFunction || (node !== body && isFunctionBoundary(node));
-      if (ts.isIdentifier(node) && node.text === name && isIdentifierReference(node)) {
+      if (ts.isIdentifier(node) && node.text === name && !isNonReferenceName(node)) {
         if (nested || node.getStart() < declaration.end || !nodeIsWithin(node, region)) {
           safe = false;
           return;

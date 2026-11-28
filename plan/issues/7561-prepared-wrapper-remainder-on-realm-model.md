@@ -414,3 +414,12 @@ are new in the merge and were not part of either review:
   global object first, then `ownTag`); main's `objectTag` in `dynamic-value-legalization.ts` is gone.
 - `native-realm.ts`: the realm's function entries are the callable rows, which excludes the global object as main's
   filter did. `js.object.intrinsic` reads a held object (a prototype, the global object) through one arm.
+
+## Merge with main's expando writes (#7350 slice 1, PR 7549), 2026-11-28
+
+Main no longer treats `X.k = v` on a realm constructor as making `X` non-pristine, so the write reaches
+`dynamicMemberWrite`. This slice lets `prototype` pass `identityOnlyKeyRefusal`, and the realm holds a wrapper
+prototype only where the program reads it: `unreadPrototype` (`dynamic-member-access.ts`) refuses the write and the
+delete of a wrapper constructor's `prototype` by the row's own wording. Not in either review. Pins that moved in
+`tests/issue-7561-wrappers.test.ts`: a static written on the constructor, directly or through an alias, now refuses
+with "Number.isNaN is not reachable" (the alias case aborted at run time before).

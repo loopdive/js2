@@ -14,7 +14,7 @@ import {
   pairLiteralDynamicCodeSources,
   verifyLiteralDynamicCodeSources,
 } from "../src/ir/literal-dynamic-code.js";
-import { functionSourceText } from "../src/interp/function-source-text.js";
+import { functionSourceText } from "../src/shared/contracts/function-source-text.js";
 import {
   compile,
   requiredPreparedEmission,
