@@ -30,15 +30,17 @@ import { moduleDeclares } from "./select-planned-closure-operands.js";
 
 /**
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
- * program's `startupSources`: every source but its called eval sources (#7363 A3). Every script of a program
- * shares one global scope, and the reads proof walks only the declaration's file, so a typed home needs that file
- * to be the program's only startup source: a read in a script that runs first would otherwise go unseen. The
+ * program's `startupSources`: every source but its literal dynamic-code sources (#7363 A3, #7487). Every script of a
+ * program shares one global scope, and the reads proof walks only the declaration's file, so a typed home needs that
+ * file to be the program's only startup source: a read in a script that runs first would otherwise go unseen. The
  * dynamic home needs it too: each script's module-init stores the hoisted `undefined` into its own globals, so a
- * script that runs first would read the carrier's null. A called eval source breaks neither rule. It declares
- * nothing and stores into no identifier (a text that does is no site, `eval-literal.ts`: the write walks see only the
- * declaring file), so it stores no hoisted `undefined`, owns no binding asked about here and writes none. It runs
- * only from its site in the startup source, after that source's prologue. Its reads break no proof: the site is a
- * direct eval, so its caller has no typed home (`sourceRunsDynamicCode`).
+ * script that runs first would read the carrier's null. A dynamic-code source breaks neither rule. A called eval
+ * source declares nothing; a `Function` source declares only its function, under a synthesized name no other code
+ * spells. Neither stores into an identifier (a text that does is no site, `literal-dynamic-code.ts`: the write walks
+ * see only the declaring file), so neither stores a hoisted `undefined`, owns a binding asked about here or writes
+ * one. An eval source runs only from its site, after the startup source's prologue; a function source's body only
+ * when the value its site makes is called. Their reads break no proof: the site names `eval` or `Function`, so its
+ * file has no typed home (`sourceRunsDynamicCode`).
  * `storesDynamic` (the lane's dynamic provenance, absent without a carrier) says whether a store may be the
  * dynamic value.
  */

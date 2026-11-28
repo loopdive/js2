@@ -7,7 +7,7 @@
 // (the #3611 hazard, documented at `promote-baseline`). The #7551 routing
 // changes which events run which jobs — `changes` does not run on schedule, the
 // legacy matrix now runs on schedule — so a job that was fine per-merge could be
-// skipped, green, on the weekly run. That is exactly how the weekly full-corpus
+// skipped, green, on the scheduled run. That is exactly how the scheduled full-corpus
 // IR measurement would have stopped running.
 //
 // This models every event: each job's `if:` is evaluated three-valued (true /
@@ -246,7 +246,7 @@ describe("#7551 skip propagation in test262-sharded.yml", () => {
     });
   }
 
-  it("the weekly run reaches the full IR measurement and the legacy matrix", () => {
+  it("the daily run reaches the full IR measurement and the legacy matrix", () => {
     const states = runStates(jobs, "schedule");
     expect(states.get("changes")).toBe("skipped");
     for (const job of ["test262-ir-measurement-shard", "merge-ir-measurement", "test262-shard", "merge-report"])

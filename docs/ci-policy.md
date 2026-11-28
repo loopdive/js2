@@ -604,10 +604,27 @@ Owner decision, 2026-11-26.
   was removed (owner decision 2026-11-26), because after a failed run it
   would bank the regression. A forced refresh is a manual dispatch only.
 
-**Full-corpus IR runs** (daily, dispatch) upload
-`test262-ir-standalone-measurement`. That is the only IR artifact the site
-reads (`deploy-pages.yml` lists artifacts by that name), so site IR numbers
-are as of the last full run.
+**IR numbers on the site (#7616).** Full-corpus IR runs (daily, dispatch)
+upload `test262-ir-standalone-measurement`; edition runs upload
+`test262-ir-standalone-edition-measurement`. `deploy-pages.yml` runs
+`scripts/test262-ir-site-measurements.mjs`, which publishes:
+
+- every IR file and every edition row from the newest full run, with that
+  run's commit and date, so nothing the pages sum or scale mixes commits;
+- beside those rows (`currentEdition` in `ir/test262-standalone-editions.json`),
+  the current edition's figure from the newest edition run whose commit is
+  LATER on main's first-parent line than the full run's, with its own commit
+  and date. The IR provenance line on both pages shows it after the full
+  run's. A queue group that failed or was cancelled never lands on main, so
+  its measurement is never shown. An edition run is never presented as a
+  full-corpus score;
+- in the edition history, the newest measurement of each day of each kind;
+  an edition-only point is drawn only at its own edition's scope.
+
+The deploy after a merge (`push` to main) picks up the measurement of the
+group that just landed, once that group's `Test262 Sharded` run has
+completed. With no retained valid edition artifact the site shows the full
+run alone.
 
 **Rollback (the gate only; the alert-only staleness rule stays):** a plain
 `git revert` of the Part B commits does not apply cleanly (5d7abeaf87 and

@@ -56,7 +56,7 @@ import {
   realmIntrinsicOfHelper,
   type RealmConstruction,
 } from "./dynamic-realm-calls.js";
-import type { RealmConstructor } from "./builtin-prototype-keys.js";
+import { GLOBAL_OBJECT_ID, type RealmConstructor } from "./builtin-prototype-keys.js";
 import {
   CARRIER,
   additionBuilder,
@@ -64,6 +64,7 @@ import {
   conversionBuilders,
   knownKinds,
   type AbortSite,
+  type ChainBuilders,
 } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -74,6 +75,7 @@ import {
   admittedKinds,
   carrierKindOf,
   holdsFamily,
+  type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
@@ -234,22 +236,7 @@ export function legalizeDynamicValues(
           instr,
           instr.value,
           instr.result!,
-          (kind, result) => {
-            if (kind === "object" && program.objects.namesSymbol)
-              gap("Object.prototype.toString of an object in a program that names 'Symbol'");
-            if (kind !== "object" || !errors) return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
-            // (#7354 G1) An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9).
-            const isError = fresh();
-            return [
-              realmCall("js.object.is-error", [instr.value], isError),
-              builders.branch(
-                isError,
-                (r) => [text("[object Error]", r)],
-                (r) => [text("[object Object]", r)],
-                result,
-              ),
-            ];
-          },
+          (kind, result) => objectTag(builders, program, instr, kind, result),
           kinds.kindsOf(instr.value),
         );
       case "string.const":
@@ -268,6 +255,9 @@ export function legalizeDynamicValues(
         return dynamicMemberWrite(memberAccess, instr);
       case "dyn.current_this":
         return dynamicCurrentThis(functionOperations, instr);
+      // (#7609) The realm's global object (`this` at script level).
+      case "dyn.global_object":
+        return builders.realmIntrinsic(GLOBAL_OBJECT_ID, instr.result!);
       case "dyn.arguments_length":
       case "dyn.publish_argc":
         return argumentsCount(functionOperations, instr);
@@ -351,6 +341,49 @@ export function legalizeDynamicValues(
   // signature) has no carrier on this projection.
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
+}
+
+/**
+ * (#7354 M1, B-tag) `Object.prototype.toString`'s answer for a value of `kind` (`OBJECT_TAG`) into `result`. (#7354 G1)
+ * An error is an ordinary object with [[ErrorData]] (§20.1.3.6 step 9). (#7609) The global object's tag is the host's
+ * (node's has an own `@@toStringTag` "global"), which the realm does not know: where the program holds it, an object
+ * that is it ends at the run-time abort.
+ */
+function objectTag(
+  b: ChainBuilders,
+  program: LegalizationProgram,
+  instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
+  kind: CarrierKind,
+  result: IrValueId,
+): IrInstr[] {
+  if (kind === "object" && program.objects.namesSymbol)
+    gap("Object.prototype.toString of an object in a program that names 'Symbol'");
+  if (kind !== "object") return [b.text(`[object ${OBJECT_TAG[kind]}]`, result)];
+  const ordinary = (r: IrValueId): IrInstr[] => {
+    if (!holdsFamily(program, "error")) return [b.text("[object Object]", r)];
+    const isError = b.fresh();
+    return [
+      realmCall("js.object.is-error", [instr.value], isError),
+      b.branch(
+        isError,
+        (s) => [b.text("[object Error]", s)],
+        (s) => [b.text("[object Object]", s)],
+        r,
+      ),
+    ];
+  };
+  if (!program.objects.globalObject) return ordinary(result);
+  const [global, isGlobal] = [b.fresh(), b.fresh()];
+  return [
+    ...b.realmIntrinsic(GLOBAL_OBJECT_ID, global),
+    b.intrinsic(instr, "js.value.strict_eq", [instr.value, global], isGlobal),
+    b.branch(
+      isGlobal,
+      (r) => b.abortText(instr, "Object.prototype.toString of the global object", r),
+      ordinary,
+      result,
+    ),
+  ];
 }
 
 /**

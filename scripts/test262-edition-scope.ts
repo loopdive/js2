@@ -17,7 +17,8 @@
  *   report  --results <jsonl> --meta <scope.json> --test262 <root> [--editions current|completed]
  *           [--baseline-dir <dir>] [--prs <json>] [--watch-out <json>] --summary <md> --json <out>
  *   meta    --scope edition|full [--editions current|completed] --source-sha <sha> --test262-sha <sha>
- *           --eval-engine <name> --out <scope.json>    record what a measurement is (#7537)
+ *           --eval-engine <name> [--compiler-path <path> --target <target>] --out <scope.json>
+ *           record what a measurement is (#7537)
  *   candidates --report <json> --watched <out> --other <out>   rows the re-check runs (#7537)
  *   override --results <jsonl> [--recheck <jsonl>] [--recheck-watched <jsonl>]   re-checked rows replace shard rows (#7537)
  *
@@ -189,6 +190,9 @@ export function readReclassified(path = RECLASSIFIED_CONFIG): Set<string> {
 
 /** What a measurement artifact says about itself (`scope.json`). */
 export interface ScopeMeta {
+  /** Named by the IR measurement only: the site (#7616) publishes an artifact that says so. */
+  compilerPath?: string;
+  target?: string;
   scope: "edition" | "full";
   edition?: string;
   sourceSha: string;
@@ -811,7 +815,11 @@ function cmdOverride(args: string[]): void {
 function cmdMeta(args: string[]): void {
   const scope = required(args, "--scope");
   if (scope !== "edition" && scope !== "full") usage(`--scope must be edition or full, not ${scope}`);
+  const compilerPath = arg(args, "--compiler-path");
+  const target = arg(args, "--target");
   const meta: ScopeMeta = {
+    ...(compilerPath ? { compilerPath } : {}),
+    ...(target ? { target } : {}),
     scope,
     // A full measurement has no edition; an edition one names the scope it measured.
     ...(scope === "edition" || arg(args, "--editions") ? { edition: readScope(arg(args, "--editions")).label } : {}),

@@ -11,7 +11,11 @@
 // pristine; the rows that show the site's gap first write `eval` after it, so the site refuses by A4's name.
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
-import { literalEvalFileName, literalEvalTexts, pairLiteralEvalSources } from "../src/ir/eval-literal.js";
+import {
+  literalDynamicCodeFileName,
+  literalDynamicCodeTexts,
+  pairLiteralDynamicCodeSources,
+} from "../src/ir/literal-dynamic-code.js";
 import { runsAtStartup } from "../src/ir/module-init-plan.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import {
@@ -22,6 +26,9 @@ import {
 } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { requireProgram, typedOptions } from "./helpers/typed-program-fixtures.js";
+
+const literalEvalFileName = (index: number) => literalDynamicCodeFileName("eval", index);
+const literalEvalTexts = (file: string, text: string) => literalDynamicCodeTexts(file, text).map((row) => row.text);
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -73,7 +80,11 @@ function prepare(entry: string, extra: Record<string, string> = {}, edges: reado
       checker: ast.checker,
       policy: typedOptions.policy,
       deferTopLevelInit: false,
-      literalEvalSources: pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, texts.length),
+      literalDynamicCodeSources: pairLiteralDynamicCodeSources(
+        ast.entryFile,
+        ast.sourceFiles,
+        literalDynamicCodeTexts("test.js", entry),
+      ),
       inventoryOptions: { resolvedDependencies },
     }),
   );
