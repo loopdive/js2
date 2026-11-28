@@ -1,7 +1,8 @@
 ---
 id: 7375
 title: "Prepared path: compound assignment with a non-numeric right-hand side"
-status: ready
+status: done
+completed: 2026-11-26
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
@@ -13,6 +14,16 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7354, 7349, 7350]
+# 2026-11-19 (S10): src/ir/from-ast.ts +23. The compound arm reads a boolean / string right-hand side with the
+# binary form's steps through one helper, `numericReaderOperandToF64` (the binary form's boolean conversion is
+# factored into `booleanToNumber`, which both use), and from-ast's resolver capability union names
+# `native-dynamic-to-number`, which prettier now splits over lines.
+# 2026-11-19 (S10): plannedClosureOperandRefusal +2. Its compound-write arm passes the lane's
+# `native-dynamic-to-number` capability into the one table; prettier wraps the return over three lines.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+func-budget-allow:
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 
 # #7375 — Prepared path: compound assignment with a non-numeric right-hand side
@@ -128,3 +139,119 @@ string or boolean, which this path already has.
   `compoundWriteAdmissible` stays the one table both from-ast and the selector
   ask; no arm specific to the Prepared path; `src/ir/from-ast.ts` does not
   grow, or the growth is granted in this file with a dated reason.
+
+## Result (2026-11-19, S10, local branch `claude/7375-compound-rhs`)
+
+The lead's decision: (b). JS-environment bytes stay identical; standalone is the target. The gate is the existing
+backend capability set, not an ad-hoc boolean.
+
+Built:
+
+- **New capability** `native-dynamic-to-number` in `IrBackendTargetCapability` (`src/ir/backend/legality.ts`),
+  ToNumber of a boxed concrete boolean / string. It is grouped with the host-free-standalone-only capabilities, so
+  it is false for the JS environment's native regime (`nativeRegimeInJs`), for WASI and for gc.
+- **`compoundWriteAdmissible`** takes the lane's answer as a parameter. With it, a numeric compound other than
+  `+=` (a string concatenates) and `**=` (exact-exponentiation operands) admits a boolean or string right-hand
+  side, on a dynamic or a number slot. All callers pass the capability: the ordinary selector's number-compound
+  arm, its planned-closure operand check (`nativeDynamicToNumber`, beside its sibling lane flags) and from-ast.
+- **from-ast's compound arm** reads that right-hand side with `numericReaderOperandToF64`, the binary form's
+  steps: a boolean is its 0 / 1 (`booleanToNumber`, factored out of `booleansReadAsNumbers`); a string is boxed
+  (`boxConcreteToDynamic`) and read with `dyn.to_number`.
+- **The Prepared resolver answers the capability** through the same legality predicate. After the merge of
+  2026-11-26 this is the one capability answer main already had (#7354 T, `prepareSourceBuiltinResolvers` in
+  `src/ir/program-source-units.ts`, which answered `number-to-string` alone). It now answers the set
+  `{number-to-string, native-dynamic-to-number}` through `supportsIrBackendTargetCapability` on a standalone wasmgc
+  profile. A second answer in `source-dynamic-contracts.ts` was dropped. Every other capability stays unanswered,
+  so what the path admits does not move.
+- **Cleanup:** the selector's `supportsBackendCapability` option spelled out the 28-member capability union
+  inline; it now names `IrBackendTargetCapability`.
+
+Out of scope, noted: `var x = 2; x *= "3"` (a typed number slot). The binary form `x = x * "3"` refuses
+identically: a typed program has no dynamic carrier to box the string into. `+=` waits for Str2's dynamic `+`.
+
+Measured:
+
+- **Prepared:** every probe of the acceptance list runs with node's answer, except the shared typed-slot gap
+  above. Covered: the ten operators × string and boolean right-hand sides, in module-init and in a function. The
+  30 census files (S9's stand-in harness, this tree) all get past `compound-assign-unsupported`; each one now
+  first stops at `unknown class Test262Error` (slice C).
+- **JS-environment bytes,** vs an `origin/main` export: identical on 9 isolated programs (the 7 compound probes
+  plus two `+=` ones), `.js` and `.ts`. The 250-file test262 sample (the 30 + 220) is identical on both targets.
+- **Ordinary standalone, the programs whose bytes change:** 52 programs (13 compound shapes × right and wrong
+  answer × `.js`/`.ts`) run with node's answer. 48 now take the IR path where 4 did on base. Shapes: `x = true;
+  x *= true`, `x = "1"; x *= "1"`, `x <<= "1"`, `var x = 2; x *= "3"`, the function case, `x |= "1"`,
+  `x %= "4"`, `x -= 1` on `"abc"`, `x /= "x"`, `x >>>= true`, `x >>= "1"`, `x &= "3"`, `x ^= true`.
+- **Standalone test262 verdicts** of the 30 files (the ordinary runner, `runTest262File`): 30/30 pass on base and
+  on this branch.
+- **Pins moved:** `tests/es5-dynamic-compound.test.ts`. Six "refuses at selection" rows (`-= "2"`, `*= true`,
+  `-= fs()`, `<<= fs()`, `-= "a" + "b"`, `<<= "a" + "b"`) are now claimed, lowered and run against node. The
+  #7144 selector⇔from-ast sweep (`tests/issue-7144-operand-admissibility.test.ts`) now expects per lane. That
+  sweep caught `n += s` being admitted on a number slot, a concatenation; `+=` is excluded, and the new test
+  pins it.
+- **Pre-existing on main, not this change:** 4 tests of the #7144 sweep fail on the base too (`'-'`, `'|'`, `'<'`
+  over every pair; plain writes into each slot family).
+- **Mutation check:** 4 mutants, all killed. They removed: the capability case; the Prepared resolver's answer;
+  the table's capability test; the boolean arm.
+- `tests/issue-7375-compound-non-numeric-rhs.test.ts`: 40 tests.
+
+### Why the from-ast growth (+23) stays in from-ast
+
+- The new code is two helpers and their call sites.
+  - `numericReaderOperandToF64` (8 lines) is built from from-ast's own lowering primitives: `relOperandToF64`,
+    `boxConcreteToDynamic` and the function builder's `emitDynToNumber`. All three are module-private and used by
+    dozens of from-ast arms.
+  - `booleanToNumber` (4 lines) is the conversion `booleansReadAsNumbers` already had inline, lifted so both
+    forms share it.
+- Moving the two helpers to a module of their own would mean exporting those primitives from from-ast, a wider
+  surface for 12 lines. They belong beside `booleansReadAsNumbers` and `boxNumericReaderOperands`, the binary
+  form's same steps.
+- The rest is not new logic: the resolver's capability union (+5, prettier splits it over lines), the
+  capability read in `lowerCompoundAssignment` (+1), and the doc lines.
+- Red on main, found while measuring: four tests of `tests/issue-7144-operand-admissibility.test.ts` also fail on
+  `origin/main`. Filed as #7408 with the bisected merges; this change leaves them exactly as on main.
+
+## Suspended Work
+
+Suspended 2026-11-20 (budget window end, C lead's wind-down).
+
+- Branch `claude/7375-compound-rhs`, pushed with this note, **no PR yet**. It is built on `origin/main` `89e47482`
+  (before #7321).
+- Done and verified: the "Result" section above. Commits `cd697e49` (the change) and `6902a8a12` (#7408 + the
+  from-ast justification). The `598a77f6` WIP commit is superseded by `cd697e49`.
+- **Next steps:**
+  1. Merge `origin/main`, which now has #7321. `tests/helpers/prepared-script-run.ts` is add/add with #7321's
+     copy: keep this branch's version, a superset that adds the arithmetic/comparison tolerated diagnostics.
+  2. Re-run gates, the #7375 test file, `tests/es5-dynamic-compound.test.ts` and the #7144 sweep (expect only
+     #7408's 4 rows red).
+  3. Open the PR with `hold`. In the body: the capability is the first one the Prepared resolver asks, plus the
+     from-ast grant justification.
+- **Open:** no review yet.
+
+## Re-measured after merging main (2026-11-26, main `6694a8b83`)
+
+- **The gap still reproduces on main.** `var x; x = true; x *= true;` refuses with `compound assign RHS has no
+  numeric carrier (got i32)`. `function f() { var x; x = 2; x *= "3"; return x; }` compiles to an abort body (#7354
+  U) and traps when called. On this branch both run with node's answer.
+- **Out-of-scope note revised.** `var x = 2; x *= "3"` (a typed number slot) now runs on this branch with node's
+  answer: main gave typed programs a dynamic carrier since the plan was written. It is a run test now, no longer a
+  refusal. `x += true` runs on main itself (Str2's dynamic `+`) and is not this issue's.
+- **Merge conflicts:**
+  - from-ast's capability union: main's `RegExpBuildCapability` plus `native-dynamic-to-number`.
+  - The Prepared capability answer: folded into main's #7354 T resolver; see above.
+  - A new caller on main (#7330, a string slot's `+=`) passes the capability too.
+  - The test helper: this branch's superset.
+- **Tests:**
+  - `tests/issue-7375-compound-non-numeric-rhs.test.ts`: 39/39.
+  - #7354, #7372, prepared-entry/-runtime, #7188, #7193, es5-standalone-instanceof, #7340, es5-dynamic-compound:
+    2312/2313. The one failure, `issue-7354-o-objects` "refuses what the later steps build, by name", fails
+    identically on main.
+  - The #7144 sweep: only #7408's four rows are red, as on main.
+- **JS-environment bytes** vs main: identical on the 9 isolated programs (`.js`/`.ts`) and on the 250-file sample
+  (both targets).
+- **Ordinary standalone:** 52/52 programs give node's answer on this branch (48 take the IR path) and on main (4
+  do).
+- **Census of the 30 files** (stand-in harness, `scripts/ir-census`, now on main): all get past the gap and next
+  stop at `unknown class Test262Error`. Standalone test262 verdicts: 30/30 pass on main and on this branch.
+- **Gates:** typecheck, loc and func (also with `LOC_GATE_BASE=origin/main`: from-ast +23,
+  plannedClosureOperandRefusal +2, both granted above), coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles.

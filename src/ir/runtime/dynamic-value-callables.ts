@@ -28,6 +28,7 @@ const SYMBOLS: Readonly<Record<DynamicValueRuntimeFeature, string>> = Object.fre
   "js.value.to_boolean": "__is_truthy",
   "js.value.undefined": "__js_undefined",
   "js.value.unsupported": "__js_value_unsupported",
+  "js.value.unsupported_at": "__js_value_unsupported_at",
 });
 
 /** One native arm per operation: the dynamic value exists only on standalone WasmGC. */

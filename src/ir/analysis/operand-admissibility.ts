@@ -556,27 +556,55 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
   return isNullCarrier(consumer);
 }
 
+/** (#7375) Does the lane read a boolean / string compound RHS with ToNumber? Its `native-dynamic-to-number`. */
+export function laneReadsToNumber(
+  supports: ((capability: "native-dynamic-to-number") => boolean) | undefined,
+): boolean {
+  return supports?.("native-dynamic-to-number") === true;
+}
+
+/**
+ * (#7375) A numeric compound reads a boolean or string right-hand side with ToNumber, as the binary form reads it
+ * (`numericReaderOperandToF64`). Not `+=` (a string concatenates) or `**=` (exact-exponentiation operands).
+ */
+export function compoundRhsReadsToNumber(op: ts.SyntaxKind, value: OperandFamily): boolean {
+  return (
+    op !== ts.SyntaxKind.PlusEqualsToken &&
+    op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
+    (value === "boolean" || value === "string")
+  );
+}
+
 /**
  * `lowerCompoundAssignment` for an identifier slot (an i32-promoted counter has
  * its own lowering): `+=` concatenates into a string slot only with a string
  * value (string-evidence then also requires an encoding), and is the dynamic
  * `+` into a dynamic slot with a boxable value; every numeric compound is
  * number arithmetic on an f64 or dynamic slot. Dynamic operands use ToNumber;
- * a value `void x` already supplies its numeric NaN.
+ * a value `void x` already supplies its numeric NaN. `dynamicToNumber` is the
+ * lane's `native-dynamic-to-number` capability, under which (#7375) a boolean
+ * or string right-hand side of a numeric compound is read with ToNumber.
  */
-export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, value: OperandFamily): boolean {
+export function compoundWriteAdmissible(
+  op: ts.SyntaxKind,
+  slot: OperandFamily,
+  value: OperandFamily,
+  dynamicToNumber: boolean,
+): boolean {
   if (op === ts.SyntaxKind.PlusEqualsToken) {
     if (slot === "string") return value === "string";
     if (slot === "dynamic") return boxableIntoDynamic(value);
   }
+  if (!isNumberCompoundAssignOperator(op)) return false;
+  const toNumbered = dynamicToNumber && compoundRhsReadsToNumber(op, value);
   // Dynamic numeric compounds use the same ToNumber path as binary arithmetic.
-  if (slot === "dynamic" && isNumberCompoundAssignOperator(op))
+  if (slot === "dynamic")
     return (
       op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
-      (value === "dynamic" || value === "number" || value === "undefined")
+      (value === "dynamic" || value === "number" || value === "undefined" || toNumbered)
     );
   // ToNumber(undefined) is the NaN sentinel the number arithmetic reads.
-  return isNumberCompoundAssignOperator(op) && slot === "number" && (value === "number" || value === "undefined");
+  return slot === "number" && (value === "number" || value === "undefined" || toNumbered);
 }
 
 /**

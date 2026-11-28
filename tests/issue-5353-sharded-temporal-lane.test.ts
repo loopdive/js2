@@ -175,11 +175,12 @@ describe("#5353 the parent pre-warms before the fork pool starts", () => {
     expect(workflow).toContain("temporal-provider-${{ github.run_id }}");
     // Both shard jobs must depend on it, or a shard races an artifact that is
     // not there yet and silently runs unlinked.
-    expect(
-      workflow.match(
-        /needs: \[changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline\]/,
-      ),
-    ).not.toBeNull();
+    // (#7537) `test262-shard` also needs the plan for its scope; read the list, not its layout.
+    const job = workflow.slice(workflow.indexOf("  test262-shard:\n"), workflow.indexOf("  test262-shard-mg:\n"));
+    const needs = (job.match(/needs:\s*\[([^\]]*)\]/)?.[1] ?? "").split(",").map((n) => n.trim());
+    expect(needs).toEqual(
+      expect.arrayContaining(["changes", "mg-artifact-probe", "runtime-eval-provider", "temporal-provider"]),
+    );
     expect(workflow.match(/needs: \[changes, runtime-eval-provider, temporal-provider\]/)).not.toBeNull();
     expect(workflow).toContain("JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal");
   });

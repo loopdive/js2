@@ -81,12 +81,17 @@ export interface IrTopLevelFunctionValueLoweringPlan {
   readonly cacheGlobalName: string;
 }
 
+export interface IrDirectCallSignature extends IrClosureSignature {
+  /** The ordinary source function returns no expression on any path. */
+  readonly returnsImplicitUndefined?: true;
+}
+
 /** Exact direct-call plan for one certified AST call site. */
 export interface IrDirectCallLoweringPlan {
   readonly ownerUnitId: IrUnitId;
   /** Exact closed-union callable target. `name` is adapter metadata only. */
   readonly target: IrFuncRef;
-  readonly signature: IrClosureSignature;
+  readonly signature: IrDirectCallSignature;
 }
 
 /** Already-validated callable target supplied by integration planning. */

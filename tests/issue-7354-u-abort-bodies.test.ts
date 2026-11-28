@@ -201,14 +201,17 @@ describe("#7354 U — what still refuses at compile time, by the same text", () 
   });
 
   it(
-    "a program with no unlowerable function has the same bytes with and without the policy",
+    // (#7486) A run-time abort site names its id where the policy is on: `typeof f` would make f a function value,
+    // whose ToString is such a site, and so would `String(…)`, a realm value (#7350 B3a) whose family admits objects
+    // to `v + 1`.
+    "a program with no unlowerable function and no run-time abort site has the same bytes with and without the policy",
     async () => {
-      const source = "function f(v){ return v + 1; } var out = String(f(1)) + typeof f;";
+      const source = "function f(v){ return v + 1; } var out = f(1);";
       const on = await compile(source, preparedOptions());
       const off = await compile(source, preparedOptions(), undefined, "refuse");
       expect(on.success && off.success).toBe(true);
       expect(Buffer.from(on.binary).equals(Buffer.from(off.binary))).toBe(true);
-      expect(nodeOut(source)).toBe("2function");
+      expect(nodeOut(source)).toBe("2");
     },
     SLOW,
   );

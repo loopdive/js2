@@ -88,7 +88,7 @@ describe("#7551 per-test comparison", () => {
   const paths = new Set([ES5_A, ES5_B, ES5_C]);
   const SAME = { sameTest262Revision: true, baselineCoversEdition: false };
 
-  it("gates every pass -> not-pass, compile_timeout included, and lists improvements", () => {
+  it("gates every pass -> not-pass, lists a first compile_timeout instead (#7537), and lists improvements", () => {
     const diff = compareEditionRuns(
       statuses({
         [ES5_A]: "compile_error",
@@ -105,10 +105,9 @@ describe("#7551 per-test comparison", () => {
       paths,
       SAME,
     );
-    expect(diff.regressions).toEqual([
-      { file: ES5_A, now: "compile_error" },
-      { file: ES5_C, now: "compile_timeout" },
-    ]);
+    expect(diff.regressions).toEqual([{ file: ES5_A, now: "compile_error" }]);
+    // #7537 (owner 2026-11-27): a first pass -> compile_timeout is listed and watched, not gated.
+    expect(diff.timeouts).toEqual([ES5_C]);
     expect(diff.improvements).toEqual([ES5_B]);
     // ES2015 regressed too, but it is outside the edition.
     expect(diff.regressions.some((r) => r.file === ES2015)).toBe(false);
@@ -436,14 +435,16 @@ describe("#7551 queue gate plumbing", () => {
     expect(code).toMatch(/if: steps\.staleness\.outputs\.breach == 'true'[\s\S]*?exit 1/);
   });
 
-  it("the floor goes stale by age, after a missed weekly promotion, not by merge count", () => {
+  it("the floor goes stale by age, after a missed daily promotion (#7537), not by merge count", () => {
     const now = Date.parse("2026-11-27T12:00:00Z");
-    expect(floorAge("2026-11-19T00:00:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
-      ageHours: 204,
+    expect(DEFAULT_MAX_FLOOR_AGE_HOURS).toBe(48);
+    expect(floorAge("2026-11-25T00:00:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 60,
       breach: true,
     });
-    expect(floorAge("2026-11-20T00:00:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
-      ageHours: 180,
+    // A healthy floor: the latest measured start delay plus run time, ~38 h.
+    expect(floorAge("2026-11-25T22:00:00Z", now, DEFAULT_MAX_FLOOR_AGE_HOURS)).toEqual({
+      ageHours: 38,
       breach: false,
     });
     // No usable timestamp is "undetermined", never a false breach.

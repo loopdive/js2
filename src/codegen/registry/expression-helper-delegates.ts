@@ -18,7 +18,6 @@ interface ExpressionHelpers {
   emitUndefined: typeof LateImports.emitUndefined;
   emitStandaloneGlobalEvalRuntime: typeof EvalInline.emitStandaloneGlobalEvalRuntime;
   ensureRuntimeEvalCallableCarrier: typeof EvalInline.ensureRuntimeEvalCallableCarrier;
-  foldedEvalDeclarationNames: typeof EvalInline.foldedEvalDeclarationNames;
   resolveConstantString: typeof EvalInline.resolveConstantString;
   ensureNativeArrayFromIterN: typeof IteratorNative.ensureNativeArrayFromIterN;
   ensureObjVecBuilders: typeof ObjectRuntime.ensureObjVecBuilders;
@@ -46,8 +45,6 @@ export const emitStandaloneGlobalEvalRuntime: ExpressionHelpers["emitStandaloneG
   helper("emitStandaloneGlobalEvalRuntime")(...a);
 export const ensureRuntimeEvalCallableCarrier: ExpressionHelpers["ensureRuntimeEvalCallableCarrier"] = (...a) =>
   helper("ensureRuntimeEvalCallableCarrier")(...a);
-export const foldedEvalDeclarationNames: ExpressionHelpers["foldedEvalDeclarationNames"] = (...a) =>
-  helper("foldedEvalDeclarationNames")(...a);
 export const resolveConstantString: ExpressionHelpers["resolveConstantString"] = (...a) =>
   helper("resolveConstantString")(...a);
 export const ensureNativeArrayFromIterN: ExpressionHelpers["ensureNativeArrayFromIterN"] = (...a) =>

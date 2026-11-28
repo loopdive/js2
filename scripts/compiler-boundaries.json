@@ -5818,12 +5818,28 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/expressions/eval-early-errors.ts",
+      "path": "src/frontend/eval/early-errors.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
+      "destination": "frontend-ts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
+    },
+    {
+      "path": "src/frontend/eval/script.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
+    },
+    {
+      "path": "src/frontend/eval/declaration-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
     },
     {
       "path": "src/codegen/expressions/eval-inline.ts",
@@ -12766,6 +12782,14 @@
     },
     {
       "path": "src/ir/effects.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/eval-literal.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
