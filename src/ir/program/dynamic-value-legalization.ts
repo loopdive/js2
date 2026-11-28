@@ -33,7 +33,8 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
-import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
+import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-operator-helpers.js";
+import { comparisonBuilders, relationalOfHelper } from "./dynamic-comparisons.js";
 import {
   IR_DYN_DELETE_SLOPPY_HELPER,
   IR_DYN_DELETE_STRICT_HELPER,
@@ -127,6 +128,7 @@ export function legalizeDynamicValues(
   const conversions = conversionBuilders(builders, program);
   const { stringOf, toNumber } = conversions;
   const addition = additionBuilder(builders, conversions);
+  const comparisons = comparisonBuilders(builders, conversions);
   // (#7354 O4, O3, #7471) What a member read, write or delete is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf, errors };
   // (#7354 C2) What `this`, `new`, `instanceof` and (#7562) the argument count are written with
@@ -166,10 +168,11 @@ export function legalizeDynamicValues(
       case "number":
         return [intrinsic(instr, "js.number.box", [value])];
       // (#7354 Str) A native string is its own carrier payload: the externref that wraps it; (#7354 O2) an ordinary
-      // object and (Fa) a function value's packed closure are one already.
+      // object and (Fa) a function value's packed closure are one already, and (L0a) so is a carrier the realm answered.
       case "string":
       case "object":
       case "function":
+      case "dynamic":
         return [
           {
             kind: "coerce.to_externref",
@@ -279,19 +282,23 @@ export function legalizeDynamicValues(
       }
       case "dyn.instanceof":
         return dynamicInstanceOf(functionOperations, instr);
-      case "dyn.eq": {
-        if (instr.loose) return gap("dyn.eq (loose)");
-        return withSense(instr, instr.negate, (result) => [
-          intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], result),
-        ]);
-      }
-      // A front-end dynamic helper (`__ir_dyn_lt`, ...) has no runtime declaration; (#7354 Str2-c) `__ir_dyn_add`
-      // is the dynamic `+` and (#7471) `__ir_dyn_delete_{strict,sloppy}` a member delete, expanded here.
+      case "dyn.eq":
+        return withSense(instr, instr.negate, (result) =>
+          instr.loose
+            ? comparisons.looseEquality(instr, [instr.lhs, instr.rhs], result)
+            : [intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], result)],
+        );
+      // A front-end dynamic helper has no runtime declaration: (#7354 Str2-c) `__ir_dyn_add` is the dynamic `+` and
+      // (L0a) `__ir_dyn_lt`, ... the relational operators and (#7471)
+      // `__ir_dyn_delete_{strict,sloppy}` a member delete, expanded here.
       // (#7354 Fa) The function-value projection's packed callable is its own carrier payload.
       case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
         const symbol = instr.target.binding.kind === "runtime" ? instr.target.binding.symbol : undefined;
+        const relational = symbol === undefined ? undefined : relationalOfHelper(symbol);
+        if (relational !== undefined)
+          return comparisons.relational(instr, relational, [instr.args[0]!, instr.args[1]!], instr.result!);
         if (symbol === IR_DYN_DELETE_STRICT_HELPER || symbol === IR_DYN_DELETE_SLOPPY_HELPER)
           return dynamicMemberDelete(memberAccess, instr, symbol === IR_DYN_DELETE_STRICT_HELPER);
         const objectStatic = symbol === undefined ? undefined : objectStaticOfHelper(symbol);

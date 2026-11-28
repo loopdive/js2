@@ -4,9 +4,9 @@
 // var by its initializer (`number`), but a hoisted function can read it before that runs (`undefined`), so the arm
 // is the dynamic value. The #5092 mixed-primitive claim used to prove it `number` and the lowering then threw
 // `IrInvariantError` out of `compile()` (propertyHelper.js's `isWritable`). Such an arm now joins on the dynamic
-// carrier as itself; an arm that only may yield the dynamic value is refused by name.
+// carrier as itself; (#7354 L0b) so does an arm that only may yield the dynamic value.
 import { describe, expect, it } from "vitest";
-import { abortBodies, agreesWithNode, runPrepared } from "./helpers/prepared-node-agreement.js";
+import { agreesWithNode, runPrepared } from "./helpers/prepared-node-agreement.js";
 
 /** `n`, `s` and `b` live in their dynamic homes: `f` reads them before their initializers run. */
 const program = (fn: string, calls = "f(1) + f(2)") =>
@@ -63,9 +63,8 @@ describe("#7354 W — a conditional arm read from a dynamic home", () => {
     );
   });
 
-  it("refuses by name an arm that may yield the dynamic value through `+`", async () => {
-    expect(await abortBodies(program('function f(a) { var u = a === 1 ? n + 1 : "x"; return typeof u; }'))).toEqual([
-      "f: ir/from-ast: ternary branches have different types (dynamic vs string) in f",
-    ]);
+  // (#7354 L0b) Arms of different primitive kinds join on the carrier, so this one is no longer refused.
+  it("gives node's value for an arm that may yield the dynamic value through `+`", async () => {
+    await agreesWithNode(program('function f(a) { var u = a === 1 ? n + 1 : "x"; return typeof u + u + ";"; }'));
   });
 });

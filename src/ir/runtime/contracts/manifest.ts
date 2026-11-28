@@ -135,6 +135,7 @@ export const DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.value.is_number",
   "native.js.value.is_string",
   "native.js.value.strict_eq",
+  "native.js.value.string_compare",
   "native.js.value.to_boolean",
   "native.js.value.undefined",
   "native.js.value.unsupported",

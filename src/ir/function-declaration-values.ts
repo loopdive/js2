@@ -38,9 +38,75 @@ import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
+import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 import { annexBDeclaringRange, annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
+
+/**
+ * (#7354 L0c) A function declaration with a body inside a function, not a script's: on the Prepared lane it is a
+ * function value its function makes at entry (from-ast hoists one with the all-dynamic contract), so the program may
+ * create function objects.
+ */
+export function isFunctionLocalDeclaration(node: ts.Node): node is ts.FunctionDeclaration {
+  return ts.isFunctionDeclaration(node) && node.body !== undefined && !ts.isSourceFile(node.parent);
+}
+
+/** The body of the function `node` is declared in, if any. */
+export function enclosingFunctionBody(node: ts.Node): ts.Node | undefined {
+  return (ts.findAncestor(node.parent, ts.isFunctionLike) as ts.FunctionLikeDeclaration | undefined)?.body;
+}
+
+/** A binding of a function that a closure inside it may share: a `var`, a `let` statement's or a parameter. */
+export type CapturedBinding = ts.VariableDeclaration | ts.ParameterDeclaration;
+
+/**
+ * (#7354 L0c) The bindings of the function whose body is `body` that a function nested in it (a declaration or a
+ * closure, at any depth) reads or writes. On the Prepared lane each lives in one cell the function and its closures
+ * share, made before any statement can capture it: a `var` or a parameter has one per activation, made at entry, so a
+ * closure created in a block or a loop body writes the function's binding; a `let` has one where it is bound, so a
+ * loop body's has one per iteration. A `const` (never written) and a loop head's `let` (whose per-iteration copies are
+ * not modelled) have none: a closure writing such a binding refuses. from-ast hoists each `var` as a cell of the
+ * carrier, so the provenance counts it as the dynamic value; a `let` is not hoisted, it keeps its TDZ.
+ */
+export function capturedBindings(body: ts.Block, checker: ts.TypeChecker): ReadonlySet<CapturedBinding> {
+  const found = new Set<CapturedBinding>();
+  const visit = (node: ts.Node, nested: boolean): void => {
+    if (nested && ts.isIdentifier(node)) {
+      const symbol =
+        ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+          ? checker.getShorthandAssignmentValueSymbol(node.parent)
+          : checker.getSymbolAtLocation(node);
+      for (const declaration of symbol?.declarations ?? [])
+        if (isCellBinding(declaration, body)) found.add(declaration as CapturedBinding);
+    }
+    ts.forEachChild(node, (child) => visit(child, nested || ts.isFunctionLike(node)));
+  };
+  visit(body, false);
+  return found;
+}
+
+/** Whether `declaration` (a binding a closure captures) is one of `capturedBindings(body)`. */
+export function sharesCell(declaration: CapturedBinding, checker: ts.TypeChecker): boolean {
+  const body = enclosingFunctionBody(declaration);
+  return body !== undefined && ts.isBlock(body) && capturedBindings(body, checker).has(declaration);
+}
+
+function isCellBinding(declaration: ts.Declaration, body: ts.Block): boolean {
+  if (ts.isParameter(declaration)) return declaration.parent === body.parent;
+  if (!ts.isVariableDeclaration(declaration) || enclosingFunctionBody(declaration) !== body) return false;
+  const list = declaration.parent;
+  return (
+    isVarBinding(declaration) ||
+    (ts.isVariableDeclarationList(list) && ts.isVariableStatement(list.parent) && (list.flags & ts.NodeFlags.Let) !== 0)
+  );
+}
+
+/** A `var` declaration, which a function hoists. */
+export const isVarBinding = (declaration: ts.Node): declaration is ts.VariableDeclaration =>
+  ts.isVariableDeclaration(declaration) &&
+  ts.isVariableDeclarationList(declaration.parent) &&
+  isVarDeclarationList(declaration.parent);
 
 /**
  * The top-level function declarations of a program with one startup source that some identifier of that source reads

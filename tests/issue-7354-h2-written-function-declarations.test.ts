@@ -114,10 +114,21 @@ describe("#7354 H2 — a written function declaration", () => {
     expect(await refusal(source)).toContain(message);
   });
 
+  // (#7354 L0c) Compound and update writes reach the home too: `f++` is ToNumeric of the function (NaN), and `f += ''`
+  // ends at the run-time abort where the function's source text would be its string.
+  it(
+    "increments the home as node does",
+    () => agreesWithNode("function f(){ return 1; } f++; var out = typeof f + f;"),
+    SLOW,
+  );
+  it(
+    "ends a compound string assignment of the home at the run-time abort",
+    () => abortsAtRunTime("function f(){ return 1; } f += '';"),
+    SLOW,
+  );
+
   // Write forms the module-binding write path does not lower refuse at the write.
   it.each([
-    ["compound assignment", "function f(){ return 1; } f += '';", 'compound assign to undeclared identifier "f"'],
-    ["increment", "function f(){ return 1; } f++;", 'increment/decrement of undeclared "f"'],
     ["logical assignment", "function f(){ return 1; } f ||= 0;", "unsupported body ExpressionStatement shape"],
     ["destructuring", "function f(){ return 1; } [f] = [3];", "unsupported body ExpressionStatement shape"],
   ])("refuses a %s of the name at the write", async (_label, source, message) => {

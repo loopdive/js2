@@ -144,6 +144,13 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       "f() !== true",
       "f() !== undefined",
     ],
+    // (#7354 L0c) A `var` a closure reads is the function's one cell, bound at entry.
+    [
+      "a closure reading the var",
+      "function f(v, w){ var r = w; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r; }",
+      "f(5, 0) !== 5",
+      "f(5, 0) !== 0",
+    ],
   ])("keeps the value across iterations with %s", async (_, program, holds, fails) => {
     expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
     expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
@@ -203,12 +210,6 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
     ),
     // (#7372) A nested and a repeated script `var` are one global: `tests/issue-7372-nested-script-var.test.ts`
     // runs the two script programs this list refused.
-    [
-      "read by a closure",
-      "function f(v, w){ var r = w; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r; } f(5, 0);",
-      // (#7354 Fa) The closure has the all-dynamic contract now; the hoisted `x` it reads has no capture.
-      'closure f__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
-    ],
   ])("refuses a var %s by name", async (_, program, message) => {
     expect(await refusal(program)).toMatch(message);
   });

@@ -74,7 +74,11 @@ import {
   type NativeClosureReservations,
   type NativeClosureDeclarationPlan,
 } from "../resources/native-closures.js";
-import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "../resources/native-source-closures.js";
+import {
+  nativeSourceRefCellTypes,
+  requireNativeSourceClosureTypes,
+  type NativeSourceClosureTypes,
+} from "../resources/native-source-closures.js";
 import {
   nativeInvocationAccessorCalls,
   nativeInvocationFunctions,
@@ -667,7 +671,7 @@ export interface EmittedNativeRealmSlots {
  * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated in one index batch
  * (a second enumeration would re-run every pack's ownership checks the certification just ran). (#7354 Fa) With
  * source closures, the slots also hold the closure types the realm borrows and the closure invocation population,
- * which their own `requireCompleted…` checks authenticated.
+ * which their own `requireCompleted…` checks authenticated, and (#7354 L0c) the cell types of mutable captures.
  */
 export function requireCompletedNativeRealmSlots(
   tx: PhysicalModuleReservations,
@@ -684,6 +688,7 @@ export function requireCompletedNativeRealmSlots(
     ...(sourceTypes
       ? [
           ...sourceTypes.shapes.map((shape) => shape.type),
+          ...nativeSourceRefCellTypes(tx, sourceTypes),
           ...nativeClosureReservationInventory(tx, sourceTypes.closures, sourceTypes.closurePlan).filter(
             (row): row is TypeReservation => row.kind === "type",
           ),

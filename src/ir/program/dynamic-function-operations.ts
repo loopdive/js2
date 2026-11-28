@@ -40,21 +40,6 @@ type ArgumentsCount = Extract<IrInstr, { kind: "dyn.arguments_length" | "dyn.pub
  */
 type Builders = ChainBuilders & { readonly program: LegalizationProgram; readonly objects: readonly CarrierKind[] };
 
-/**
- * Whether the once-evaluated `value` is one of `of`, into a fresh value: the kind tests of those `value` may hold, or
- * constant where it may hold all of them or none.
- */
-function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly CarrierKind[]) {
-  const held = b.kinds.kindsOf(value);
-  const cond = b.fresh();
-  const tested = held.filter((kind) => of.includes(kind));
-  const instrs =
-    tested.length === held.length || tested.length === 0
-      ? [booleanConst(tested.length !== 0, cond)]
-      : b.anyKind(instr, tested, value, cond);
-  return { instrs, cond };
-}
-
 /** A TypeError with `message`, then the arm's unread `answer` into `result`. */
 const throwing = (b: Builders, message: string, answer: (result: IrValueId) => IrInstr) => (result: IrValueId) =>
   typeErrorThen({ ...b, carrier: CARRIER }, message, answer(result));
@@ -82,7 +67,7 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
   };
   if (instr.strict) return [read];
   b.kinds.learn(instr.result!, b.objects);
-  const { instrs, cond } = holds(b, instr, receiver, b.objects);
+  const { instrs, cond } = b.holds(instr, receiver, b.objects);
   return [
     read,
     ...instrs,
@@ -146,7 +131,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   );
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
-  const isFunction = holds(b, instr, callee, ["function"]);
+  const isFunction = b.holds(instr, callee, ["function"]);
   // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
   // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
   const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, "new on a built-in function the realm holds", r);
@@ -158,7 +143,7 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
         : IS_OBJECT[kind]
           ? b.abort(instr, `new with a 'prototype' that is ${article(kind)}, not an ordinary object`, s)
           : [realmCall("js.object.create-default", [], s)];
-    const isObject = holds(b, instr, answer, b.objects);
+    const isObject = b.holds(instr, answer, b.objects);
     return [
       ...getPrototype(b, callee, prototype),
       ...b.kindChain(instr, prototype, object, link, b.admitted, CARRIER),
@@ -208,8 +193,8 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   const hasInstance = (r: IrValueId): IrInstr[] => {
     const valueObjects = b.kinds.kindsOf(value).filter((kind) => IS_OBJECT[kind]);
     const prototype = b.fresh();
-    const objectValue = holds(b, instr, value, b.objects);
-    const prototypeObject = holds(b, instr, prototype, b.objects);
+    const objectValue = b.holds(instr, value, b.objects);
+    const prototypeObject = b.holds(instr, prototype, b.objects);
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.inherits", [value, prototype], s)]
@@ -227,7 +212,7 @@ export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
     ];
     return [...objectValue.instrs, b.branch(objectValue.cond, ordinary, (s) => [unread(s)], r, BOOLEAN)];
   };
-  const callable = holds(b, instr, target, ["function"]);
+  const callable = b.holds(instr, target, ["function"]);
   return [
     ...callable.instrs,
     b.branch(
