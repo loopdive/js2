@@ -35,10 +35,18 @@ interface Row {
   /** `main()` encodes `10 * nonNull + same`; assert the two facts separately. */
   readonly identity?: true;
   /**
-   * The row calls a namespace function (`ns.f()`), which with the IR path off compiles but throws at run time until
-   * #7622 builds the IR identity context without `experimentalIR`. That cell pins the throw until #7622 lands.
+   * dep exports a function and the row uses the namespace through it (`ns.f()`, `ns.bump()`). With the IR path off,
+   * until #7622 builds the IR identity context without `experimentalIR`, such a namespace is not built at all: it
+   * compiles, but every use of `ns` sees null (`Object.keys(ns)` reads 0, passing `ns` to a function that reads a
+   * member throws even without a call through it), exactly as `import * as` does on main. The IR-off cell pins the
+   * throw until #7622 lands.
    */
   readonly needs7622?: true;
+  /**
+   * A known gap, recorded under "Follow-ups" in #7625's issue file: the current answer, in every lane, that differs
+   * from `node`. `"throws"` means the compile succeeds and `main()` throws.
+   */
+  readonly knownGap?: number | "throws";
 }
 
 const ROWS: readonly Row[] = [
@@ -220,6 +228,38 @@ const ROWS: readonly Row[] = [
       "dep.ts": `export function f(): number { return 7; }`,
     },
   },
+  // A live binding read after a call through the namespace.
+  {
+    name: "ns.bump(); ns.g",
+    node: 81,
+    needs7622: true,
+    files: {
+      "entry.ts": `import { ns } from "./mid"; export function main(): number { ns.bump(); return ns.g * 10 + 1; }`,
+      "mid.ts": mid,
+      "dep.ts": `export let g = 7; export function bump(): void { g = 8; }`,
+    },
+  },
+  // A module that re-exports its own namespace (`export * as ns from "./dep"` inside dep): the namespace object is
+  // still null, as for `import * as d; d.ns` on main.
+  {
+    name: "self-cycle: import { ns } of dep's own namespace",
+    node: 73,
+    knownGap: "throws",
+    files: {
+      "entry.ts": `import { ns } from "./dep"; ${readsG("ns")}`,
+      "dep.ts": `export * as ns from "./dep"; ${dep}`,
+    },
+  },
+  {
+    name: "self-cycle: identity",
+    node: 11,
+    identity: true,
+    knownGap: 1,
+    files: {
+      "entry.ts": `import { ns } from "./dep"; import * as d from "./dep"; ${identityOf("ns", "d")}`,
+      "dep.ts": `export * as ns from "./dep"; ${dep}`,
+    },
+  },
 ];
 
 async function compileMain(files: Record<string, string>, target: "gc" | "standalone", experimentalIR: boolean) {
@@ -231,7 +271,7 @@ async function compileMain(files: Record<string, string>, target: "gc" | "standa
   return instance.exports.main as () => number;
 }
 
-// With the IR path off the call reaches a null namespace and the module throws a JS exception out of Wasm.
+// With the IR path off the use reaches a null namespace and the module throws a JS exception out of Wasm.
 const THROW_UNTIL_7622 = WebAssembly.Exception;
 
 const decoded = (row: Row, value: number) =>
@@ -241,6 +281,15 @@ for (const target of ["gc", "standalone"] as const) {
   for (const experimentalIR of [true, false]) {
     describe(`#7625 module namespace import bindings (${target}, IR ${experimentalIR ? "on" : "off"})`, () => {
       for (const row of ROWS) {
+        const gap = row.knownGap;
+        if (gap !== undefined) {
+          it(`${row.name}: known gap (node: ${row.node})`, async () => {
+            const main = await compileMain(row.files, target, experimentalIR);
+            if (gap === "throws") expect(main).toThrow(WebAssembly.Exception);
+            else expect(decoded(row, main())).toEqual(decoded(row, gap));
+          });
+          continue;
+        }
         if (row.needs7622 && !experimentalIR) {
           it(`${row.name}: compiles, then throws until #7622`, async () => {
             expect(await compileMain(row.files, target, experimentalIR)).toThrow(THROW_UNTIL_7622);

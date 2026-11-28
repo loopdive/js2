@@ -248,3 +248,64 @@ The builtin-package row is green on main too: it pins the existing #5330 decline
   pass; loc and func pass with `LOC_GATE_BASE=4aa8ea4c46`; compiler boundaries pass against `HEAD^1` and origin/main.
 - **Typecheck:** the same 279 errors as before, all from `@types/node` missing in this container; none in a changed
   line.
+
+## Release review (2026-11-28)
+
+The release review approved PR #7580 at `b391ce84ad` with four findings. This commit adds pins and docs only (no
+src change).
+
+- **Pin comments for #7622.** The IR-off throw pins now say what #7622 covers in full: with the IR path off, a
+  namespace whose module exports a function is not built at all. `Object.keys(ns)` reads 0, and passing `ns` to a
+  function that reads a member throws without any call through it, as `import * as` does on main.
+- **Live-binding row.** `ns.bump(); ns.g` through `export * as ns`: 81 with IR on in both targets (node: 81); with
+  IR off it is a pinned #7622 throw.
+- **The self-cycle gap and the builtin re-export case** are recorded below as follow-ups. Both stay in this issue
+  file: they are gaps in which namespace object a re-export chain reaches, the subject of #7625, and neither relates
+  to #7649's predicate.
+- Pin test: 24 rows × 4 lanes plus the builtin-package row = 97 cases, all green. The two self-cycle rows assert the
+  current wrong answer in every lane.
+
+## Follow-ups (not fixed here)
+
+### A module that re-exports its own namespace
+
+```ts
+// dep.ts
+export * as ns from "./dep";
+export let g = 7;
+// entry.ts
+import { ns } from "./dep";
+import * as d from "./dep";
+export function main(): number { return ns.g * 10 + 3; } // node: 73; ours: compiles, main() throws (all 4 lanes)
+// (ns !== null ? 10 : 0) + (ns === d ? 1 : 0)             // node: 11; ours: 1 (both sides null)
+```
+
+- Measured 2026-11-28 on `b391ce84ad`, gc/standalone × IR on/off. `import * as m from "./dep"; m.ns.g` throws in all
+  4 lanes on both `b391ce84ad` and origin/main `4aa8ea4c46`.
+- Likely cause: `moduleSymbolNamespaceExports` declines a module whose export list contains itself (the `visiting`
+  cycle guard), so the whole namespace object declines and every route reads null. A self-reference needs the
+  nested slot to point at the object being built, not a decline.
+- Pinned in `tests/issue-7625-module-namespace-import-binding.test.ts` (the two `self-cycle` rows).
+
+### The #5330 builtin decline checks only the importing specifier
+
+```js
+// node_modules/events/index.js (a package named like the builtin)
+export function f() { return 7; }
+// mid.js
+export * as ev from 'events';
+// main.js
+import { ev } from './mid.js';
+export function main() { return ev === null ? 0 : (typeof ev.EventEmitter === "function" ? 2 : 1); }
+// node: 2 (the builtin events module); ours on b391ce84ad: 1 (a namespace synthesized from the package);
+// ours on origin/main 4aa8ea4c46: 0 (null). No `__node_events` import in either build.
+```
+
+- Measured 2026-11-28 with `compileProject` (gc, `platform: "node"`, `allowJs`).
+- The decline in `tryEmitCompiledModuleNamespaceObject` reads the specifier of the import that binds `ev`
+  (`'./mid.js'`), not the `'events'` specifier further down the alias chain. The nested-namespace slot of
+  `moduleSymbolNamespaceExports` has the same blind spot, already on main: `import * as m from './mid.js'; m.ev`
+  answers 1 on both `b391ce84ad` and origin/main.
+- Not fixed here: checking every specifier on the chain needs a walk of the checker's alias chain at both sites (raw
+  checker calls), which is not a small, byte-neutral change. The fix is to serve such a binding from the host module,
+  as `hostMemberOf` does for named members.
