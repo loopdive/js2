@@ -97,14 +97,16 @@ describe("#4153 — the heavy test262 matrix is not PR-gated, and the header say
     }
   });
 
-  // (#7551) The legacy matrix runs weekly (schedule) and on dispatch — never per
-  // PR, never per merge; the queue gates on the IR current edition instead.
-  it("test262-shard runs only on schedule and workflow_dispatch — never on a pull_request or a merge", () => {
+  // (#7551) The full legacy matrix runs daily (schedule) and on dispatch — never
+  // per PR, never in the queue, which gates on the IR current edition instead.
+  // (#7537) A push to main runs it for the completed editions only, after the
+  // merge (the bot's own pushes excluded).
+  it("test262-shard runs on schedule, dispatch and a non-bot push — never on a pull_request or in the queue", () => {
     const condition = jobIf(jobBlock(WORKFLOW, "test262-shard"));
 
     expect(condition).toContain("github.event_name == 'schedule'");
     expect(condition).toContain("github.event_name == 'workflow_dispatch'");
-    expect(condition).not.toContain("github.event_name == 'push'");
+    expect(condition).toContain("(github.event_name == 'push' && github.actor != 'github-actions[bot]')");
     expect(condition).not.toContain("merge_group");
     expect(admitsPullRequest(condition)).toBe(false);
   });

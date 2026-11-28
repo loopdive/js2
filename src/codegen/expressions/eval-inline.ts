@@ -37,13 +37,10 @@ import { emitThrowJsError } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../../shared/is-strict-function.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
-import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
-import {
-  evalBodyHasUseStrictDirective,
-  foldedEvalStaticSyntaxError,
-  parseEvalScript,
-  providerOwnsEvalDeclarations,
-} from "./eval-script.js";
+import { EVAL_SOURCE_FILENAME } from "../../frontend/eval/script.js";
+import { addFoldedEvalBindingNames, foldedEvalDeclarationNames } from "../../frontend/eval/declaration-names.js";
+import { evalBodyHasUseStrictDirective, foldedEvalStaticSyntaxError } from "../../frontend/eval/script.js";
+import { parseEvalScript, providerOwnsEvalDeclarations } from "./eval-script.js";
 import {
   ensureRuntimeEvalGlobalCall,
   RUNTIME_EVAL_IMPORT_MODULE,
@@ -377,59 +374,6 @@ function nearestExecutionContainer(n: ts.Node): ts.Node {
     p = p.parent;
   }
   return n;
-}
-
-function addFoldedEvalBindingNames(name: ts.BindingName, names: Set<string>): void {
-  if (ts.isIdentifier(name)) {
-    names.add(name.text);
-    return;
-  }
-  for (const element of name.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    addFoldedEvalBindingNames(element.name, names);
-  }
-}
-
-interface FoldedEvalDeclarationNames {
-  varNames: ReadonlySet<string>;
-  blockFunctionNames: ReadonlySet<string>;
-}
-
-/** Collect ordinary VarDeclaredNames separately from sloppy Annex-B block
- * functions. The former collide with intervening lexical records; the latter
- * use B.3.3's cancellation rule and must fall back instead of throwing. */
-export function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclarationNames {
-  const varNames = new Set<string>();
-  const blockFunctionNames = new Set<string>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isFunctionDeclaration(node)) {
-      if (node.name) {
-        (ts.isSourceFile(node.parent) ? varNames : blockFunctionNames).add(node.name.text);
-      }
-      return;
-    }
-    if (
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node) ||
-      ts.isGetAccessorDeclaration(node) ||
-      ts.isSetAccessorDeclaration(node) ||
-      ts.isConstructorDeclaration(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isClassExpression(node)
-    ) {
-      return;
-    }
-    if (ts.isVariableDeclaration(node)) {
-      const list = node.parent;
-      if (ts.isVariableDeclarationList(list) && (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-        addFoldedEvalBindingNames(node.name, varNames);
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
-  return { varNames, blockFunctionNames };
 }
 
 /**
@@ -2211,6 +2155,5 @@ function synthesizeThrowingFunctionStub(
 registerExpressionHelpers({
   emitStandaloneGlobalEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
-  foldedEvalDeclarationNames,
   resolveConstantString,
 });

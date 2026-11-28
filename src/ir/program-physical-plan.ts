@@ -42,6 +42,7 @@ import { ProgramAbiMap, type ProgramAbiPlanEntry } from "./program/abi.js";
 import { preparedIrCallableSignature, preparedIrTypeKey, preparedIrDataKey } from "./program-abi-contracts.js";
 import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./program-runtime-abi.js";
 import { preparedIrDataMismatch } from "./program/data.js";
+import { runsAtStartup } from "./module-init-plan.js";
 import {
   assertNativeStringValuePlanIssued,
   nativePublishedExportNames,
@@ -1153,7 +1154,7 @@ function planPhysicalStartup(
   const startupUnits: IrUnitId[] = [];
   let adapter: PhysicalStartup["adapter"] = "none";
   for (const plan of program.startup) {
-    if (!plan.executable || plan.unitId === null) continue;
+    if (!runsAtStartup(plan) || plan.unitId === null) continue;
     if (!bodies.has(plan.unitId))
       gaps.add(`startup source ${plan.sourceId} has no physical initializer body`, plan.unitId);
     startupUnits.push(plan.unitId);

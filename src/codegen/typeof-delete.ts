@@ -24,7 +24,7 @@ import { identifierHoldsRawExternref } from "./array-hof-nullable-elem-param.js"
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
-import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
+import { EVAL_SOURCE_FILENAME } from "../frontend/eval/script.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { tryEmitArrayProtoIteratorDelete } from "./expressions/proto-override.js";

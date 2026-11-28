@@ -143,6 +143,8 @@ classify_test262_path() {
     # The per-merge IR measurement's scope (#7551): which edition runs, and how
     # it is selected and compared. The IR measurement is a standalone lane.
     scripts/test262-edition-scope.ts | scripts/test262-current-edition.json | scripts/test262-edition-reclassified.json | scripts/lib/gh-api-retry.mjs | scripts/lib/regression-annotation.mjs) echo standalone ;;
+    # (#7537) The completed-edition check on push and the timeout rule.
+    scripts/test262-edition-ratchet.ts | scripts/test262-edition-ratchet-baseline.json | scripts/test262-edition-verdict.sh | scripts/test262-post-merge-alarm.mjs | scripts/lib/test262-timeout-watch.mjs | .github/actions/test262-runner-setup/action.yml) echo standalone ;;
     scripts/test262-worker.mjs) echo both ;;
     tests/test262-chunk*.test.ts) echo both ;;
     tests/test262-runner.ts) echo both ;;

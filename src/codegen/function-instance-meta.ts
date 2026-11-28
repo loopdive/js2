@@ -71,7 +71,7 @@ import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "../shared/function-expected-argument-count.js";
 import { functionInstanceName } from "../shared/named-evaluation.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
-import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
+import { EVAL_SOURCE_FILENAME } from "../frontend/eval/script.js";
 import { definedGlobalAt } from "./global-space.js";
 
 /** The closure-struct slot name. `$`-prefixed to stay out of name enumeration. */

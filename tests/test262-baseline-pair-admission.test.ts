@@ -231,8 +231,17 @@ describe("measurement-only baseline pair admission", () => {
   it("wires the same immutable pair before both consumers without altering legacy fetch selection", () => {
     const workflow = readFileSync(new URL("../.github/workflows/test262-sharded.yml", import.meta.url), "utf8");
     expect(workflow.match(/name: admitted-measurement-baseline/g)).toHaveLength(3);
-    expect(workflow).toContain(
-      "needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline]",
+    // (#7537) `test262-shard` also needs the plan for its scope; read the list, not its layout.
+    const job = workflow.slice(workflow.indexOf("  test262-shard:\n"), workflow.indexOf("  test262-shard-mg:\n"));
+    const needs = (job.match(/needs:\s*\[([^\]]*)\]/)?.[1] ?? "").split(",").map((n) => n.trim());
+    expect(needs).toEqual(
+      expect.arrayContaining([
+        "changes",
+        "mg-artifact-probe",
+        "runtime-eval-provider",
+        "temporal-provider",
+        "admit-measurement-baseline",
+      ]),
     );
     expect(workflow).toContain(
       "if: env.HOST_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')",
