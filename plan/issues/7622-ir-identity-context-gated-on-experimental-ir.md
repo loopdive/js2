@@ -64,16 +64,129 @@ Each cell is the same on standalone and on gc.
   fallback, so the call throws. A named import survives because its call takes the name-keyed `funcMap` path.
 - The lines are at `ada18e6bb6`.
 
-Not measured: whether any other reader of `programAbiSourceCallables` or `programAbiSession` changes behaviour under
-the same gate, and the gc byte effect of building the context unconditionally.
+
+## Implementation Plan
+
+Measured on 2026-11-28 on origin/main `c00c91962d`, the head at the time. Line numbers below are on that head.
+
+### Which build step is gated, and should not be
+
+- **The step that should not be gated:** building the IR planning identity context, and with it the Program ABI
+  session. Two sites gate it on `options?.experimentalIR || options?.trackIrOutcomes`:
+  - `generateModule`: `src/codegen/index.ts:5426`;
+  - `generateMultiModule`: `index.ts:9884`.
+- **Why it should not be gated.** The identity context is not IR lowering. It is the declaration → unit → function
+  map that exact legacy lookups need, so its presence must not depend on whether the IR overlay or telemetry is on.
+- **What stays gated, unchanged:** the IR overlay itself.
+  - `makeIrPlanningAuthority` (`index.ts:2968`) is passed `options?.experimentalIR`.
+  - `initializeMultiPreparedProgram` sets `irProgramCallableCutoverEnabled` from `!!options?.experimentalIR`
+    (`multi-prepared-callable-orchestration.ts:160`).
+  - `overlayEnabled` is `!!options?.experimentalIR` (`multi-prepared-program.ts:464`).
+- **The second, coupled gate.** `multi-prepared-program.ts:466` seals the body boundary for the "identity context
+  without IR" case:
+  `if (options?.trackIrOutcomes === true && options.experimentalIR !== true) owner.sealBodyBoundary();`.
+  Its condition repeats the first gate's telemetry half.
+  - Measured: un-gating only the two `index.ts` sites makes **every** IR-off `compileMulti` fail, 55 of 55 probe
+    graphs, with `multi-prepared-program:completion-order: owner is collecting, expected body-boundary-sealed`.
+  - So `:466` becomes `if (options?.experimentalIR !== true) owner.sealBodyBoundary();`.
+
+**Change.** Three conditions:
+
+1. `index.ts:5426` builds the context unconditionally.
+2. `index.ts:9884` builds the context unconditionally.
+3. `multi-prepared-program.ts:466` seals whenever the IR overlay is off.
+
+A throwaway patch with exactly these three edits (since reverted) made every row of the Measured table answer like
+node with IR off: `nsImport_bump` 23, `import * as d; d.f()` 5, TS `namespace` 5. No `trackIrOutcomes` is needed.
+
+### Readers that change
+
+These readers already exist; with the IR overlay off, they now see a context or session where they saw `undefined`.
+
+**Exact declaration → function lookups** (`programAbiSourceCallables.identityContext`). Each declines today with IR
+off; after the change it answers. This is the intended change.
+
+- `tryRuntimeNamespaceMemberCall` (`expressions/calls.ts`);
+- `moduleSymbolNamespaceExports`' function arm and `currentNamespaceFunctionHandle` (`module-namespace-value.ts`,
+  three reads);
+- `exactImportedTopLevelFunction` (`expressions/identifiers.ts`);
+- `runtimeNamespaceFunctionValueReceiver`'s caller path (`property-access.ts`);
+- `named-this-call.ts`, `declarations.ts` and `multi-prepared-string-leaf.ts` (one read each).
+
+**IR-planning readers** of the same field. With IR off they are reached only if the overlay runs, and the overlay
+stays gated:
+
+- `ir-fnctor-parameter-planning.ts` (3 reads);
+- `ir-imported-call-planning.ts`;
+- `program-abi-source-callable-planning.ts` (3 reads).
+
+**Program ABI session readers** (`ctx.programAbiGlobals` / `programAbiExports` / `programAbiCallables` /
+`programAbiSession`, created whenever the session exists, `context/create-context.ts:521-530`). These now run with
+IR off. The counts are from `grep` on `c00c91962d`:
+
+- `program-abi-planning.ts` (7);
+- `index.ts` (7);
+- `module-global-registration.ts` (6), the `assertModuleBindingsOpen` checks;
+- `multi-prepared-string-leaf.ts` (5);
+- `program-abi-import-planning.ts` (4);
+- `multi-prepared-module-init-batch.ts` (4);
+- `program-abi-finalization.ts` (3);
+- `multi-prepared-scalar-leaf.ts` (3);
+- `compiler-support-abi.ts` (3);
+- `vec-access-exports.ts`, `native-promise-number-boundary.ts`, `multi-prepared-fibonacci-pair.ts`,
+  `ir-overlay-finalize.ts`, `ir-imported-call-planning.ts`, `identifier-module-storage.ts` (2 each);
+- `vec-define-writeback.ts`, `property-access.ts`, `program-abi-declared-globals.ts`, `multi-prepared-program.ts`,
+  `multi-prepared-module-init-census.ts` (1 each).
+
+The byte measurement below is the evidence that, outside the namespace lookups, these readers do not change output.
+It covers the corpus, not a proof for every reader. The PR keeps the list and checks each reader that the gate's
+corpus does not reach.
+
+### Measured gc byte effect
+
+Measured with the throwaway patch on `c00c91962d`, `experimentalIR: false`, sha256 of the binary, base vs patched.
+Probe: `.tmp/p7620/idhash.mts`.
+
+| corpus | gc | standalone |
+| --- | --- | --- |
+| `website/playground/examples/**/*.ts` (13 files, `compile`) | 13 / 13 identical | 13 / 13 identical |
+| test262 `language/block-scope` + `language/statements/switch`, script files with their harness includes prepended (256 files; 87 compile on both base and new, 169 fail to compile on both) | 87 / 87 identical | 87 / 87 identical |
+| 55 multi-file probe graphs (`cases`, `cases6`, `cases10`, `c-cases`, `a-cases`, `y-cases`; `compileMulti`) | 40 identical, 15 changed | 40 identical, 15 changed |
+
+- **The 15 changed graphs are exactly the namespace-function ones:** `gap1c_importStarFnOnly`, `nsImport_bump`,
+  `N0_nsReassignedFn`, `N_nsReassignedFnOwnF`, `N0c_nsNoCall`, `Na_thirdFileF`, `N0_noReassign`, `ns_cycle_read`, and
+  `y-cases` `N0`, `Nb_entry_own_f`, `Na_third_file_f`, `N_value`, `N_no_reassign`, `N0_before_swap`, `Y_ns`.
+  These are the intended diffs: the namespace object or static member call now resolves.
+- **The IR-on lane is unaffected by construction.** It already builds the context; edit 3 changes nothing when
+  `experimentalIR` is on.
+- **Compile time** for this corpus, one run each: 3 min 10 s base, 3 min 27 s patched, about +9 %. A single run is
+  noisy; the PR re-measures on the gate corpus below.
+
+### Not measured
+
+- The #7470 389-file sample. Its file list was not available in this worktree; the PR runs it.
+- lodash-es.
+- The full equivalence suite.
 
 ## Acceptance criteria
 
-- **Pin test.** A new `tests/issue-7622-*.test.ts` holds the four rows above, × standalone/gc × {IR on, IR off,
+- **Pin test.** A new `tests/issue-7622-ir-identity-context.test.ts` holds the four rows above, × standalone/gc × {IR on, IR off,
   IR off + `trackIrOutcomes`}, and compares each with node's answer (TS semantics for the `namespace` row).
   - It is red on the base: the IR-off rows throw.
   - It is green after the fix.
   - Every row answers the same with and without `trackIrOutcomes`.
-- **gc output byte-identical** for programs that use no namespace call, on the #7470 single-file corpus (389 files)
-  and its multi-file graphs, base vs new.
+- **gc output byte-identical** for programs that use no namespace function call, base vs new, gc and standalone, IR
+  off and on:
+  - the #7470 single-file corpus (389 files);
+  - the playground examples;
+  - the test262 block-scope/switch sample above;
+  - `tests/equivalence/`;
+  - #7470's multi-file graphs.
+
+  The expected diffs are listed in the PR: graphs with a namespace call of a function, as in the 15 above.
+- **Code quality.**
+  - One predicate governs "identity context present, IR overlay off": the three conditions above, with no new flag.
+  - No IR-only branch is added, and no second declaration → function map.
+  - The budget gates pass.
+  - An adversarial review verdict goes in the PR body.
 - **No test262 regression** in the scoped `language/module-code|import|export` per-test diff, on standalone.

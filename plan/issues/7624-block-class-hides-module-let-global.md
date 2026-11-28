@@ -58,6 +58,10 @@ Measured on 2026-11-28 with node v22.23.5, on `ada18e6bb6` (head of PR #7558) an
 | `cl_fn_in_block` | `const o = g; { let g = 5; function k() { return g; } r = k(); }` | 25 | throws | throws |
 | `cl_arrow_in_block` | `const o = g; { let g = 5; const f = () => g; r = f(); }` | 25 | throws | throws |
 | `cm_class_method` | the `s_let_before` body in a class method | 25 | 5 | 5 |
+| `iter_outer_read` (per iteration) | `const fs = []; const o = g; for (let i = 0; i < 2; i++) { let g = i + 4; fs.push(() => g); } return o*100 + fs[0]()*10 + fs[1]()` | 245 | throws | throws |
+| `iter_fn_decl` (per iteration) | the same, with `function k() { return g; } fs.push(k);` in the loop body | 245 | throws | throws |
+| `iter_no_outer_read` (guard) | the same loop, outer `g` read only after the loop | 245 | 245 | 245 |
+| `iter_no_outer` (guard) | the same loop with `h`, no outer binding | 245 | 245 | 245 |
 | `m_import_before` | `import { g }`, then `s_let_before`'s body | 25 | 5 | 5 |
 | `m_import_switch` | `import { g }`, then `sw_case_let_early`'s body | 25 | 5 | 5 |
 | (gap-2 rows of #7620) | two sibling blocks / loop body / TDZ before a block `let` | 25 | 5 / 21 / throws | same |
@@ -84,7 +88,7 @@ Measured on 2026-11-28 with node v22.23.5, on `ada18e6bb6` (head of PR #7558) an
 
 | row | node | measured | why it is not in B |
 | --- | --- | --- | --- |
-| `gen_early` (generator, read before the block) | 25 | NaN | Separate root. The control `ctl_gen_after` (read only after the block) is also NaN, while `ctl_gen_noshadow` is 25. Native generator lowering spills bindings into name-keyed fields (`spillTypes: Map<string, ValType>`, `generators-native.ts:416`, `:624-709`), so a block shadow and its outer binding share one field. To be filed as its own issue. |
+| `gen_early` (generator, read before the block) | 25 | NaN | Separate root, filed as [#7629](7629-generator-block-shadow-hides-module-binding.md). The control `gen_after` (read only after the block) is also NaN, while `gen_noshadow`, `gen_local_outer` and `gen_sibling_blocks` are 25. Native generator lowering spills bindings into name-keyed fields (`spillTypes: Map<string, ValType>`, `generators-native.ts:416`, `:624-709`). |
 | `ev_before` / `ev_inside` (direct eval of `g`) | 25 | 5 / 5 | The control `ctl_ev_noshadow` (`eval("g")` of a module `let`, no shadow) throws on every lane. An eval row therefore measures the eval path's own defect, not B, and no B trigger can fix that. B must not break the eval-inline snapshot of `preHoistedLetConstSlots` (`eval-inline.ts:875-902`, `1254-1313`), so B keeps the eval suites in its related-suite list instead. |
 
 ### Causes
@@ -160,18 +164,44 @@ like any shadow. Nothing name-keyed exists outside the block.
    - When that declaration has a record, take `valueSlot` and `flagSlot` from it. Otherwise fall back to `localMap`
      (body-level bindings).
    - The `__tdz_<name>` local-name scan (`:1692-1701`) is deleted.
-   - `emitEagerCaptureBoxes` (`:2823`) mints the cell keyed by slot (`eagerCaptureBoxOf`, as today). It sets
-     `localMap`/`boxedCaptures` only for a capture whose slot is the live `localMap` entry, so a nested
-     declaration's cell is installed at block entry by step 2.
+   - `emitEagerCaptureBoxes` (`:2823`) keeps minting a body-level declaration's cell at function top, as today.
+   - **A nested-block declaration's cell is minted at its block's entry, never at function top.**
+     - Inside a loop body, block entry runs once per iteration, so each iteration gets a fresh cell (the spec creates a
+       fresh block environment on every evaluation of the body).
+     - `iter_fn_decl` needs this: a hoisted `function k` that captures the body's `g` must see `4` from the first
+       iteration's closure and `5` from the second.
+     - The minting moves into step 2's block-entry install (`reinstallPreHoistedLetConstBinding` gains the "mint the
+       cell if the record is captured" arm).
+     - `emitEagerCaptureBoxes` skips nested-block records, so no cell for them exists at function top.
+     - The hoisted function's capture resolves the record (step 4 above), and its call site forwards the current
+       iteration's cell through `eagerCaptureCellForCall` (`eager-capture-box.ts:69`). That helper is already keyed
+       by slot.
+   - `iter_outer_read` is the B1 cause inside a loop: the early read hits the block slot's TDZ flag.
+     `iter_no_outer_read` already passes, which shows that today's arrow-closure cell is minted at the declaration,
+     per iteration. Step 2 must keep that placement for arrows.
 5. **B2, block functions.**
    - `annexBBlockNestedEligible` returns `null` in strict code (`isStrictContext`, `src/shared/is-strict-function.ts:103`).
    - In sloppy code the B.3.3 outer binding stays as it is: it is a real var-scoped binding.
    - A strict block function's local (`nested-declarations.ts:3381-3386`) becomes a declaration-keyed record, installed
      at block entry by step 2.
-   - `annexBReadIsUnbound` (`src/shared/annexb-block-functions.ts:556`, called at `identifiers.ts:1112`) must not
-     classify a read the checker resolves to an outer binding as unbound. The change lives in the shared module, so
-     `identifiers.ts` does not grow.
-   - This half is not yet validated by an experiment. The PR starts by pinning it.
+   - **The predicate behind `annexBReadIsUnbound`** (`src/shared/annexb-block-functions.ts:556`, called at
+     `identifiers.ts:1112`).
+     - `annexBReadIsUnbound` itself is correct: it condemns a read only where `collectAnnexBCancelSites` (`:437`)
+       recorded a site.
+     - The defect is the site test. Both site pushes (`:474` for a strict block or case function, `:486` for a
+       cancelled sloppy one) record a site when `!scopeBindsName(scope, name)` (`:223`). That asks only the function's
+       own var scope. A module `let g`, `var g`, or `import { g }` one scope further out is not seen.
+     - The exact new predicate: `scopeChainBindsName(scope, name)`, next to `scopeBindsName`. It is true when
+       `scopeBindsName` holds for `scope` or any ancestor reached by `enclosingVarScope` (`:180`), up to and including
+       the SourceFile.
+     - For the SourceFile it also counts import bindings (`ImportClause` name, `ImportSpecifier` name,
+       `NamespaceImport` name). `listBindsLexically` (`:94`) does not see those today.
+     - Both site pushes use `!scopeChainBindsName(scope, name)` instead of `!scopeBindsName(scope, name)`.
+     - `annexBReadEscapesFunctionScope` (`:578`) already does a one-level version of this
+       (`scopeBindsName(outerScope, …)`), so it calls the new predicate too. The one-level special case goes.
+     - Everything stays in the shared module, so `identifiers.ts` does not grow.
+   - Not yet validated by an experiment: the strict-code patch alone left this read throwing. The PR starts by pinning
+     `bf_fn_after` / `bf_fn_early`.
 6. **B3, block classes.**
    - `isClassOfScope` (`module-global-registration.ts:265`) requires the class declaration to be a top-level statement
      of its source (`classDeclaration.parent === classDeclaration.getSourceFile()`). A block class no longer takes
@@ -231,9 +261,21 @@ like any shadow. Nothing name-keyed exists outside the block.
     After B it owns one slot, so locals renumber.
   - This conflicts with the "keep gc output byte-identical" rule for shared code, and **needs the lead's explicit
     sign-off.** The alternative, keeping the dead slot to preserve bytes, is the residue the review forbids.
-  - **Gate.** Instead of byte identity, a function-level WAT diff on the corpus below must show that every changed
-    function contains a nested-block `let`/`const`/`class`/`function`, and that the changes are local
-    renumbering or removal plus the corrected reads. Every unchanged-construct function is byte-identical.
+  - **Gate (mechanical; this exact gate goes to the owner).** For each corpus program, base vs new, gc and
+    standalone, per function:
+    - **(a) Canonicalise, then diff.** Parse the WAT. Drop every local that no instruction reads or writes. Renumber
+      the remaining locals by first definition: first `local.set`/`local.tee`, or first `local.get` for a parameter.
+      Then diff the canonical function bodies.
+    - **(b) Allowed differences.** After (a), a function may differ only if it has either:
+      - an outer reference, meaning a read or write of a name outside a nested block that declares that same name
+        (`let`/`const`/`class`/`function`, or a `case` clause);
+      - a capture of a nested-block declaration by a function declared in that function.
+
+      The tool decides this from the source AST of that function, the same scan as `.tmp/p7620/yield-scan.mts`,
+      extended to captures.
+    - **(c) Anything else is a finding.** Any other canonical diff fails the gate and is fixed or explained in the PR
+      before merge.
+    - (a) absorbs the removed dead slot and the renumbering. (b) admits exactly the functions whose meaning B changes.
 - **Corpus, gc and standalone:**
   - the Temporal polyfill (`node tests/dogfood/temporal-polyfill-harness.mjs`);
   - all 285 files of `tests/equivalence/`;
@@ -302,8 +344,10 @@ and is not a body-level binding.
   - `check-loc-budget` and `check-func-budget` pass, including with `LOC_GATE_BASE` set to the upstream main tip, with
     no grant.
   - An adversarial review verdict goes in the PR body.
-- **Bytes.** The function-level diff gate on the corpus above passes on gc and standalone. The list of changed
-  functions is attached to the PR, and the lead signs off the byte change.
+- **Bytes.** The mechanical gate (a)–(c) above passes on the corpus, on gc and standalone. The canonical-diff list is
+  attached to the PR, and the lead signs off the byte change.
+- **Per-iteration pins.** `iter_outer_read` and `iter_fn_decl` go red → green (245). `iter_no_outer_read` and
+  `iter_no_outer` stay green.
 - **No test262 regression.** Scoped per-test diff over `language/block-scope`, `language/statements/switch`,
   `language/statements/class` and `annexB/language` on standalone: no pass → fail.
 - **Related suites green.**

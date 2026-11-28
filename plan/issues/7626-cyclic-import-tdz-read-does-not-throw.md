@@ -49,6 +49,8 @@ Measured on 2026-11-28 with node v22.23.5, on `ada18e6bb6` (head of PR #7558) an
 | `typeof_tdz` | `y = typeof g === "number" ? 13 : 12` (`typeof` of an uninitialized binding throws) | 4 | 13 |
 | `ns_cycle_read` (guard) | `import * as e from "./entry"; y = e.g + 13` | 4 | 4 |
 | `acyclic_guard` (guard) | dep → leaf, no cycle; `y = g + 13` | 14 | 14 |
+| `acyclic_flag_kept` (guard, byte guard) | no cycle; dep is `export function peek() { return g } export let g = 1`, entry returns `g * 10 + peek()`. dep keeps `__tdz_g` (WAT) because a hoisted function reads `g` | 11 | 11 |
+| `acyclic_typeof` (guard) | the same dep; entry returns `typeof g === "number" ? 14 : 0` | 14 | 14 |
 | `after_init_ok` (guard) | dep's `get()` reads `g` after both modules ran | 14 | 14 |
 
 **101 vs 131.** Both numbers are correct, for different programs. The #7620 draft's probe used `r() + 10` (101). Its
@@ -111,11 +113,28 @@ self-edge. Elision stays as it is for every other module.
    - For an `ImportSpecifier`/`ImportClause`, resolve the exporter's declaration with
      `ctx.importBindingTargets.get(binding)`. That is a lookup, not an enumeration, and the alias chain covers
      re-exports.
-   - Answer `absoluteGlobalIdx(ctx, moduleBindingOf(ctx, declaration).tdz)`.
+   - Answer `absoluteGlobalIdx(ctx, moduleBindingOf(ctx, declaration).tdz)`, **only when the importer's source is in
+     the exporter's non-trivial component**: `moduleImportComponentOf(ctx, id.getSourceFile())` contains
+     `declaration.getSourceFile()`. Otherwise answer `undefined`, as today.
+   - Why the gate (PRV-7620 round 2). An exporter can keep its flag for its own reasons. In `acyclic_flag_kept`,
+     dep's hoisted `peek` reads `g`, so dep keeps `__tdz_g`; on the base, entry's own read of `g` is the unchecked
+     `global.get 9`. Without the gate, part 2 would add a check at every such read in an acyclic graph.
+   - An acyclic importer always evaluates after its exporter, so the check could never fire. It would only change
+     bytes. The gate is the same component query step 1 uses; no second graph walk.
    - `analyzeTdzAccess` (`identifiers.ts:371`) must answer "check" when access and declaration are in different files.
      Its closure arm (`:398-402`) compares positions across files, which made `arrow_cross` "skip". This is a condition
      on the existing line; `identifiers.ts` must not grow.
    - **Waits for #7558:** `moduleBindingOf(…).tdz` exists only there.
+   - **`typeof g` needs no extra arm; verified at `ada18e6bb6`.**
+     - `src/codegen/typeof-static-folds.ts` folds only a BigInt-kernel call and the unshadowed realm global object
+       (`isUnshadowedRealmGlobal`, `:32`, behind `tryCompileStaticTypeofFold` `:118` and
+       `tryCompileStaticTypeofComparisonFold` `:132`). It never folds an imported binding.
+     - The fold that does apply is the checker-type fold in `typeof-delete.ts` (`:2045-2060` for `typeof`, `:2410-2428`
+       for the comparison). That fold first calls `emitTypeofTdzGuard` (`typeof-static-folds.ts:20`).
+     - `emitTypeofTdzGuard` asks `moduleTdzGlobalIndexForIdentifier`, which today answers `undefined` for an import.
+     - So `typeof_tdz` compiles to `i32.const 1` inside the `try` (WAT, `.tmp/p7620/tt.wat`), and gives 13.
+     - Once part 2 answers the flag for a cycle member's import, the same guard emits the check before the folded
+       string.
 3. **Ordering** (`prepareModuleTdzGlobals`, `:432`). At the first call for any member of a non-trivial component,
    decide and allocate the flags of every member, through `registerModuleTdzGlobal(ctx, member, name, declaration)`,
    memoized per component.
@@ -144,17 +163,26 @@ finds the retained flags. Only the legacy reader gets part 2: the IR does not cl
 
 ## Expected byte diffs
 
-Only programs with a non-trivial import component change. In those, each member's previously elided top-level
-lexical bindings gain:
+Only programs with a non-trivial import component change. Both parts are gated on that component:
+
+- part 1 (exporter elision), on the exporter's membership;
+- part 2 (importer check), on the importer being in the exporter's component.
+
+So an acyclic graph, including one whose exporter keeps a flag for its own reasons (`acyclic_flag_kept`), is
+byte-identical.
+
+In a changed program, each member's previously elided top-level lexical bindings gain:
 
 - one `__tdz_<name>` `i32` global;
 - the `i32.const 1; global.set` write at the binding's initialization in `__module_init`;
-- a flag check at each read that is not proven safe.
+- a flag check at each read from a component member that is not proven safe.
 
 | corpus | expected |
 | --- | --- |
 | #7470 single-file sample (389 files) | identical. One source has no edges; self-importing modules already keep every flag |
-| `tests/issue-7470-same-named-module-bindings.test.ts` graphs (31) | identical: none has a cycle |
+| `tests/issue-7470-same-named-module-bindings.test.ts` graphs (31) | identical: none has a cycle. That includes the TDZ rows whose exporter keeps a flag (`TDZ in one module only`): their importers are acyclic |
+| this issue's acyclic guard graphs (`acyclic_guard`, `acyclic_flag_kept`, `acyclic_typeof`) | identical |
+| this issue's cyclic rows, including the guards `after_init_ok` and `ns_cycle_read` (both are cycles) | changed: they gain the flag and its checks |
 | `tests/equivalence/` | identical unless a test compiles a cyclic graph. The PR lists any |
 | test262 `language/module-code` cycles | changed: `instn-iee-iee-cycle.js`, `instn-iee-star-cycle.js`, `instn-named-iee-cycle.js`, `instn-named-star-cycle.js`, `instn-star-iee-cycle.js`, `instn-star-iee-multi-cycle-same-name.js`, `instn-star-iee-single-cycle-same-name.js`, `instn-star-star-cycle.js`, `instn-star-props-circular.js`, `instn-iee-err-circular*.js` (if they compile) |
 | lodash-es (`tests/dogfood/lodash-upstream-suite.mjs`) | changed only if its graph has a cycle. Not measured; the PR reports it |
