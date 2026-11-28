@@ -395,6 +395,17 @@ describe("#7628 — a read by a key that is no literal", () => {
       "an assignment pattern's shorthand default",
       'var g; ({ g = ({})["__define" + "Getter__"] } = {}); g.call((1).constructor, "isNaN", function () {});',
     ],
+    // RV-PR7573 N1: a logical assignment's target is also read.
+    ["a writer read through ||=", `var d = (Object["define" + "Property"] ||= 0); d(${D});`],
+    ["a writer read through ??=", `var d = (Object["define" + "Property"] ??= 0); d(${D});`],
+    [
+      "an inherited writer read through ||=",
+      'var g = (({})["__define" + "Getter__"] ||= 0); g.call((1).constructor, "isNaN", function () {});',
+    ],
+    [
+      "an inherited writer read through ??=",
+      'var g = (({})["__define" + "Getter__"] ??= 0); g.call((1).constructor, "isNaN", function () {});',
+    ],
     [
       "an enum member read in its enum's body",
       {

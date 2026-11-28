@@ -442,18 +442,35 @@ function writeRootOf(node: ts.Expression): ts.Node | undefined {
  * inside a destructuring pattern, a `++`/`--` operand, or a for-in/for-of head.
  */
 export function isStoreTarget(target: ts.Expression): boolean {
+  return storingRootOf(target) !== undefined;
+}
+
+/**
+ * True when `target` is the left side of `||=`, `&&=` or `??=`: a store target whose old value is also the
+ * expression's value when the assignment does not store.
+ */
+export function isLogicalAssignmentTarget(target: ts.Expression): boolean {
+  const root = storingRootOf(target);
+  return root !== undefined && ts.isBinaryExpression(root) && LOGICAL_ASSIGNMENTS.has(root.operatorToken.kind);
+}
+
+/** The assignment, update or for-in/for-of head that stores into `target` ({@link isStoreTarget}), if any. */
+function storingRootOf(target: ts.Expression): ts.Node | undefined {
   const root = writeRootOf(target);
-  if (root === undefined) return false;
+  if (root === undefined) return undefined;
   let side: ts.Node = target;
   while (side.parent !== root) side = side.parent;
   if (ts.isBinaryExpression(root)) {
     const operator = root.operatorToken.kind;
-    return side === root.left && operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment;
+    const stores =
+      side === root.left && operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment;
+    return stores ? root : undefined;
   }
   if (ts.isPrefixUnaryExpression(root) || ts.isPostfixUnaryExpression(root)) {
-    return root.operator === ts.SyntaxKind.PlusPlusToken || root.operator === ts.SyntaxKind.MinusMinusToken;
+    const stores = root.operator === ts.SyntaxKind.PlusPlusToken || root.operator === ts.SyntaxKind.MinusMinusToken;
+    return stores ? root : undefined;
   }
-  return side === (root as ts.ForInStatement | ts.ForOfStatement).initializer;
+  return side === (root as ts.ForInStatement | ts.ForOfStatement).initializer ? root : undefined;
 }
 
 /** True when `identifier` is a target {@link identifierWritesOf} reports — a `var` declarator's own name excluded. */

@@ -637,3 +637,20 @@ The review of PR #7573 found two soundness holes; both are fixed, with these cha
 - Tests: the same 38 files, 1,373 pass, 16 fail; the 16 are the ones that fail on the base as well.
 - Gates exit 0: loc, func (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet, dead exports,
   typecheck, import cycles, compiler boundaries (`--base HEAD^1`, `--base origin/main`).
+
+**N1 (RV-PR7573, second round): a logical assignment's target is also a read.** `o[k] ||= v` and `o[k] ??= v`
+evaluate to `o[k]` when it holds a value, so they hand out a writer read by key. `isStoreTarget` is true for them, so
+`computedReadKey` recorded no read, and the store arm wrote only the exact key: `var d = (Object["define" +
+"Property"] ||= 0)` folded (a regression of the previous fix: `literalKey` had made that store write every key). The
+read arm now counts an element access unless it is a store target that is not the left side of `||=`, `&&=` or `??=`;
+arithmetic compound assignments stay store-only (their value is a number or a string, never the writer).
+`src/shared/binding-writes.ts` gains `isLogicalAssignmentTarget`, which reuses its `LOGICAL_ASSIGNMENTS` set and the
+root walk `isStoreTarget` already had (`storingRootOf`); `isStoreTarget` answers as before. Stop rows: a writer read
+through `||=` and `??=`, off `Object` and off a fresh object (4). No `&&=` row: `o[k] &&= v` hands out its old value
+only when it is falsy, which no writer is. Mutation: dropping the logical-assignment condition fails exactly those
+4 rows. Measured on base `be18d9d167`: `prepared-byte-identity` 804 / 804, `prove-emit-identity` 60 / 60, ordinary
+pipeline 360 / 360, all identical; census carriers 819 → 819, o411 118 → 118, 0 lost, 0 gained, 0 new crashes, 0
+changed rows; slice 1 + O1 ×2 + O2 ×2 + O2b: 302 / 302 pass. All gates exit 0 (loc and func also with
+`LOC_GATE_BASE` = the main tip in this head, `a755911c6b`; boundaries with `--base HEAD^1` and `--base origin/main`).
+Against the newer `origin/main` `4aa8ea4c46`, loc and func fail only on `src/codegen/index.ts` (+2 lines,
+`generateModule` and `generateMultiModule` +3), a file this branch does not touch: main shrank it after this head.

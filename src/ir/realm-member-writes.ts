@@ -12,7 +12,12 @@
  * nothing when the key's values are known and name no writer.
  */
 import { ts } from "../ts-api.js";
-import { isStoreTarget, occurrenceIsWriteTarget, skipOuterExpressions } from "../shared/binding-writes.js";
+import {
+  isLogicalAssignmentTarget,
+  isStoreTarget,
+  occurrenceIsWriteTarget,
+  skipOuterExpressions,
+} from "../shared/binding-writes.js";
 import { exactKey, keyValues, union, widen, type KeyValue, type KeyValues } from "./key-values.js";
 
 /** One store or definition: its receiver and its key, each `undefined` where the source does not spell it. */
@@ -175,10 +180,12 @@ function isPatternKey(name: ts.ComputedPropertyName): boolean {
 /**
  * The key of a read by key: an element access that is no store target, or a pattern's computed key. `isStoreTarget`
  * is exact where `occurrenceIsWriteTarget` is conservative: a default (`var {g = o[k]} = p`) is read, not stored, so
- * it must count as a read; the store arm may count it as a store as well.
+ * it must count as a read; the store arm may count it as a store as well. The target of `||=`, `&&=` or `??=` is a
+ * read too: `o[k] ||= v` evaluates to `o[k]` when it holds a value (a writer).
  */
 function computedReadKey(node: ts.Node): ts.Expression | undefined {
-  if (ts.isElementAccessExpression(node)) return isStoreTarget(node) ? undefined : node.argumentExpression;
+  if (ts.isElementAccessExpression(node))
+    return isStoreTarget(node) && !isLogicalAssignmentTarget(node) ? undefined : node.argumentExpression;
   return ts.isComputedPropertyName(node) && isPatternKey(node) ? node.expression : undefined;
 }
 
