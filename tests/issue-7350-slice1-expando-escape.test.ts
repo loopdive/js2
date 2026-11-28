@@ -161,6 +161,51 @@ describe("#7350 slice 1 — a write of the key stops the fold, whatever reaches 
     ["a computed key on this", 'var o = {}; var k = "o"; this[k] = (1).constructor; o.isNaN = 1;', "Number", "isNaN"],
     ["a parameter receiver", "function f(o) { o.isNaN = 1; } f((1).constructor);", "Number", "isNaN"],
     ["a fresh name and a binding of it that is not", "var o = {}; function g(o) { o.isNaN = 1; }", "Number", "isNaN"],
+    // Round 2: a key writer reached without spelling its name, through a reader of an operand's values.
+    [
+      "values of the descriptors of a realm object",
+      'Object.values(Object.getOwnPropertyDescriptors(Object))[4].value((1).constructor, "isNaN", {value: 1});',
+      "Number",
+      "isNaN",
+    ],
+    [
+      "a descriptor read by a computed key",
+      'var k = "define" + "Property"; Object.getOwnPropertyDescriptor(Object, k).value((1).constructor, "isNaN", {});',
+      "Number",
+      "isNaN",
+    ],
+    [
+      "a held descriptor reader",
+      'var g = Object.getOwnPropertyDescriptor; var k = "define" + "Property"; g(Object, k).value((1).constructor, "isNaN", {});',
+      "Number",
+      "isNaN",
+    ],
+    // An `Object.create(…)` result is fresh only while `create` folds.
+    [
+      "a created receiver while create is written",
+      "Object.create = function () { return (1).constructor; }; var n = Object.create(null); n.isNaN = 1;",
+      "Number",
+      "isNaN",
+    ],
+    [
+      "a created receiver while create is written by a route that names no Object",
+      "({}).constructor.create = function () { return (1).constructor; }; var n = Object.create(null); n.isNaN = 1;",
+      "Number",
+      "isNaN",
+    ],
+    [
+      "a created receiver while Object escapes",
+      "function f(o) {} f(Object); var n = Object.create(null); n.isNaN = 1;",
+      "Number",
+      "isNaN",
+    ],
+    [
+      "a created receiver while Object is declared",
+      "var Object = {create: function () { return (1).constructor; }}; var n = Object.create(null); n.isNaN = 1;",
+      "Number",
+      "isNaN",
+    ],
+    ["a parameter given a created value", "function h(p) { p.isNaN = 1; } h(Object.create(null));", "Number", "isNaN"],
   ])("%s stops the fold", (_label, source, name, member) => {
     expect(facts(source, name, member)).toEqual({ pristine: true, fold: false });
   });
@@ -190,6 +235,32 @@ describe("#7350 slice 1 — a write of the key stops the fold, whatever reaches 
     [
       "writes of any key on fresh objects",
       'var k = "isNaN"; var o = {}; var a = []; o[k] = 1; a[k] = 1; Object.defineProperty(o, k, {}); Object.assign(o, a); o.o = 1;',
+      "Number",
+      "isNaN",
+    ],
+    // Round 2's twins: readers of fresh operands or by a literal key, names, created values.
+    [
+      "readers of fresh operands and an iterator",
+      'var o = {a: 1}; Object.getOwnPropertyDescriptor(o, "a"); Object.getOwnPropertyDescriptors({}); Object.values(o); Object.entries([1]); [1].values();',
+      "Number",
+      "isNaN",
+    ],
+    [
+      "descriptor reads by a literal key",
+      'Object.getOwnPropertyDescriptor((1).constructor, "MAX_VALUE"); Object.getOwnPropertyDescriptor((1).constructor, `isNaN`); Object.getOwnPropertyDescriptor(Math);',
+      "Number",
+      "isNaN",
+    ],
+    [
+      "own names only",
+      "var n = Object.getOwnPropertyNames(Object).length + Object.keys(Object).length;",
+      "Number",
+      "isNaN",
+    ],
+    ["a write on a created value", "var n = Object.create(null); n.isNaN = 1; n.create = 2;", "Number", "isNaN"],
+    [
+      "a created map",
+      "var n = Object.create(null); Object.defineProperties(n, n); Object.assign(Object.create({}), n);",
       "Number",
       "isNaN",
     ],

@@ -1604,3 +1604,62 @@ All three are measured on the branch.
   (`--base HEAD^1` and `--base origin/main`; `realm-member-writes.ts` classified beside `builtin-global-binding.ts`).
   With `LOC_GATE_BASE=origin/main` (`ad10f474ca`) func passes and loc fails only on `src/ir/program-physical-plan.ts`
   (+1), which this branch does not touch: main has moved past the base.
+
+**After review RV-PR7549, round 2** (2026-11-28, on `e104f5a5a0`; review of `716f742e04`: BLOCK, soundness). The
+member rule missed a key writer called without its name being spelled. Lead's calls, in order:
+
+- *1(b), landed: readers of an operand's values.* `getOwnPropertyDescriptors`, `values`, `entries` and
+  `getOwnPropertyDescriptor` join `KEY_WRITERS` as readers (`{ target: 0 }`): a call as a member counts as a write of
+  every key **on its operand**, so a fresh operand (a literal, a fresh name) still folds; any other spelling writes
+  every key on any object, as for the writers. `getOwnPropertyDescriptor` by a literal key (`readKey`) writes nothing:
+  it hands out that key's value only, which holds a key writer only under the writer's own name (itself a counted
+  mention) or after a write of every key. `getOwnPropertyNames` and `keys` are left out: they hand out names, which
+  reach a value only through a computed read (rule a), a descriptor read or `Reflect`. Without the literal-key case,
+  (b) cost 8 carriers and 1 o411 pass (`getOwnPropertyDescriptor/15.2.3.3-4-191`, `-194`, `-196` … `-201`:
+  `Object.getOwnPropertyDescriptor(Number, "MAX_VALUE")`); with it, nothing.
+- *1(a), measured, NOT landed: a read by a key that is no literal* (`o[k]`, `` o[`a${b}`] ``, `var {[k]: d} = o`,
+  `({[k]: d} = o)`, counted as a write of every key on any object; any receiver may inherit a key writer). Census, base
+  `e104f5a5a0`, (a) on top of the landed head: carriers 229 → 215 (−14: the 8 `getOwnPropertyDescriptor/15.2.3.3-4-*`
+  rows above and `defineProperty/15.2.3.6-3-5`, `-6`, `-7`, `-10`, `-11`, `-12`, now the run-time abort), o411
+  83 → 40 (−43: `Object.create` / `defineProperty` / `defineProperties` / `getOwnPropertyDescriptor` / `Math` rows,
+  now `"Object"` / `"Math"` not in scope or the abort). Cause: `assert.js`'s `compareArray` reads `b[i]` and `a[i]`,
+  so every test262 program writes every key and no writable member folds (checked: the `assert.js` + `sta.js` prelude
+  alone defeats `Math.abs`'s fold; without that one line it folds). Left for the lead's decision; until then the doc
+  of `foldsBuiltinMember` lists the route under "Not yet seen". The patch and its six test rows are kept out of the
+  branch.
+- *2, landed: `Object.create(…)` results are fresh* (`Freshness = "fresh" | "created"`, `freshnessOf`,
+  `objectCreateCallee`). A created value, or a name only ever bound to fresh or created values, is fresh while
+  `create` folds: every `Object` it is read off is pristine, `Object` never escapes, and no reaching write names
+  `create`. The last is part of `realmWrittenKeys`' fixed point (the created values are dropped with the names until
+  nothing written rebinds them). A helper's parameter is never fresh. O1 (13) is back to its original input
+  (`Object.defineProperties(n, n)`) and agrees with node; its original-shape refusal pin (`e104f5a5a0`) is removed, as
+  it pinned the same input to a refusal that no longer happens and the row itself now covers it.
+- *3, nit, landed:* `KEY_WRITERS`' doc says that matching every spelling of a member name (a declaration's, a
+  string's) is an intended over-approximation.
+- *Tests* (`issue-7350-slice1-expando-escape`, 111): stop rows for the descriptor routes (values of
+  `getOwnPropertyDescriptors(Object)`, a descriptor read by a computed key, a held reader) and for created values
+  (`create` written, directly and by a route that names no `Object`; `Object` escaping; `Object` declared; a parameter
+  given a created value); keep rows for fresh operands and an iterator's `values()`, literal-key descriptor reads,
+  own names only, writes on a created value, a created map. Mutation checks: without the readers 3 stop rows fail;
+  without the created-value conditions 4 more fail; with (a) removed from its patch, exactly its 6 rows fail.
+
+**Measured after round 2** (base `e104f5a5a0`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804 identical (744 bytes, 59 refused, 1 threw); the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline: the same 180 files, `assert.js` + `sta.js`, default and standalone: 360 / 360 identical.
+- Census (`--harness real`):
+
+  | list | base pass | head pass | gained | lost | new crashes |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | carriers (1,977) | 229 | 229 | 0 | 0 | 0 |
+  | o411 (411) | 83 | 83 | 0 | 0 | 0 |
+  | carriers, with (a) | 229 | 215 | 0 | 14 | 0 |
+  | o411, with (a) | 83 | 40 | 0 | 43 | 0 |
+
+  No row changes on the landed head. Without `readKey`, (b) alone measured carriers 221, o411 82.
+- Tests: the same 22 files, 797 tests pass.
+- Gates exit 0: loc, func, coercion sites, oracle ratchet, dead exports, typecheck, import cycles, compiler boundaries
+  (`--base HEAD^1` and `--base origin/main`). With `LOC_GATE_BASE=origin/main` (`91ed0c420c`) loc fails on
+  `src/ir/program-physical-plan.ts` (+1) and func on `from-ast.ts::lowerBinary` (+8): neither changes in this round;
+  main has moved past the branch (no merge of main here, #7502 not yet merged).

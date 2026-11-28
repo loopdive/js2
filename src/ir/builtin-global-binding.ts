@@ -19,7 +19,14 @@ import {
   outermostParenthesized,
   skipOuterExpressions,
 } from "../shared/binding-writes.js";
-import { isFreshValue, memberWrites, realmWrittenKeys, type MemberWrite } from "./realm-member-writes.js";
+import {
+  freshnessOf,
+  memberWrites,
+  objectCreateCallee,
+  realmWrittenKeys,
+  type Freshness,
+  type MemberWrite,
+} from "./realm-member-writes.js";
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
@@ -73,33 +80,41 @@ function keepsValue(reference: ts.Identifier): boolean {
 
 /**
  * One walk over `sourceFiles`: `taken`, every name they declare (at any level) or assign; (#7350) `escaped`, every
- * name some reference of which lets its value escape ({@link keepsValue}); `writtenKeys`, the keys their writes may
- * store or define on a realm object (`realmWrittenKeys`), `undefined` for every key.
+ * name some reference of which lets its value escape ({@link keepsValue}); `writes`, the stores and definitions they
+ * make (`memberWrites`); `freshNames`, the names only ever bound to a fresh value, by freshness; `createCallees`, the
+ * `Object` of every `Object.create(…)` call.
  */
 function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
   readonly taken: ReadonlySet<string>;
   readonly escaped: ReadonlySet<string>;
-  readonly writtenKeys: ReadonlySet<string> | undefined;
+  readonly writes: readonly MemberWrite[];
+  readonly freshNames: ReadonlyMap<string, Freshness>;
+  readonly createCallees: readonly ts.Identifier[];
 } {
   const declared = new Set<string>();
   const assigned = new Set<string>();
   const mayHoldAny = new Set<string>();
+  const created = new Set<string>();
   const escaped = new Set<string>();
   const writes: MemberWrite[] = [];
-  const declare = (name: string, fresh: boolean): void => {
+  const createCallees: ts.Identifier[] = [];
+  const declare = (name: string, freshness: Freshness | undefined): void => {
     declared.add(name);
-    if (!fresh) mayHoldAny.add(name);
+    if (freshness === undefined) mayHoldAny.add(name);
+    else if (freshness === "created") created.add(name);
   };
-  const declareAny = (name: string): void => declare(name, false);
+  const declareAny = (name: string): void => declare(name, undefined);
   const visit = (node: ts.Node): void => {
     // A type names no value; `extends X` is an expression and is visited.
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
     if (ts.isIdentifier(node) && !isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
     memberWrites(node, (write) => writes.push(write));
+    const createCallee = ts.isCallExpression(node) ? objectCreateCallee(node) : undefined;
+    if (createCallee) createCallees.push(createCallee);
     if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isFunctionExpression(node)) && node.name)
-      declare(node.name.text, true);
+      declare(node.name.text, "fresh");
     else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name))
-      declare(node.name.text, node.initializer !== undefined && isFreshValue(node.initializer));
+      declare(node.name.text, node.initializer && freshnessOf(node.initializer));
     else if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
       boundNames(node.name, declareAny);
     else if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) targetNames(node.left, assigned);
@@ -116,12 +131,10 @@ function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  const freshNames = new Set([...declared].filter((name) => !mayHoldAny.has(name) && !assigned.has(name)));
-  return {
-    taken: new Set([...declared, ...assigned]),
-    escaped,
-    writtenKeys: realmWrittenKeys(writes, freshNames),
-  };
+  const freshNames = new Map<string, Freshness>();
+  for (const name of declared)
+    if (!mayHoldAny.has(name) && !assigned.has(name)) freshNames.set(name, created.has(name) ? "created" : "fresh");
+  return { taken: new Set([...declared, ...assigned]), escaped, writes, freshNames, createCallees };
 }
 
 interface BuiltinGlobalFacts {
@@ -140,8 +153,11 @@ function builtinGlobalFacts(checker: ts.TypeChecker, sourceFiles: readonly ts.So
   const known = programFacts.get(sourceFiles);
   if (known) return known;
   const libOnly = makeIrAmbientBindingPredicate(checker, "every-but-expando");
-  const { taken, escaped, writtenKeys } = bindingFacts(sourceFiles);
+  const { taken, escaped, writes, freshNames, createCallees } = bindingFacts(sourceFiles);
   const pristine = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
+  // An `Object.create(…)` result is fresh while `create` folds: `Object` pristine and never escaping, `create` unwritten.
+  const createIsBuiltin = !escaped.has("Object") && createCallees.every(pristine);
+  const writtenKeys = realmWrittenKeys(writes, freshNames, createIsBuiltin);
   const facts: BuiltinGlobalFacts = {
     pristine,
     foldsBuiltinMember: (identifier) => {
@@ -170,13 +186,25 @@ export function pristineBuiltinGlobal(
 /**
  * (#7350) The member rule, for the program of `sourceFiles`: `identifier`, the object of a member access `X.k`, is
  * pristine, no reference of `X` lets its value escape ({@link keepsValue}), and no write in the sources may store or
- * define the key `k` on a realm object (`realm-member-writes.ts`): every store, definition or key writer that names
- * `k`, or names no key it spells, has a receiver that is a fresh value or a name only ever bound to one. That rules
- * out a write of `X.k` by any route, including the ones that never spell `X` (`X.prototype.constructor`,
- * `(1).constructor`, `this` in a method `X` inherits, a re-export), so a fold of a writable member (an `Object`
- * static's call form, `Number.isNaN`, a `Math` method, …) reads the built-in. A non-writable, non-configurable
- * constant (`Number.MAX_VALUE`) folds wherever the name is pristine: a write of it fails.
- * Not yet seen: code eval or the `Function` constructor runs (#7503; both refuse on the Prepared path today).
+ * define the key `k` on a realm object (`realm-member-writes.ts`). The writes counted, by key unless their receiver is a
+ * fresh value (a literal, a function or class expression, an `Object.create(…)` result while `create` folds) or a name
+ * only ever bound to one:
+ * - a store target `o.k` / `o["k"]` (assignment, compound, `++` / `--`, `delete`, destructuring, for-in / for-of);
+ * - a call of `defineProperty`, `defineProperties`, `assign`, `__defineGetter__` or `__defineSetter__` as a member, by
+ *   its literal key operands (a computed one is every key);
+ * - a call of `getOwnPropertyDescriptors`, `values`, `entries`, or `getOwnPropertyDescriptor` by a key that is no
+ *   literal, as a member: as every key of its operand (it hands out a key writer's value).
+ * Counted as a write of every key on any object: any other spelling of those names (`var d = Object.defineProperty`,
+ * `.call`, a string), `with`, and a reference to `Reflect`. So no write of `X.k` escapes the count by a route that
+ * never spells `X` (`X.prototype.constructor`, `(1).constructor`, `this` in a method `X` inherits, a re-export), and a
+ * fold of a writable member (an `Object` static's call form, `Number.isNaN`, a `Math` method, …) reads the built-in,
+ * except by the routes below. A non-writable, non-configurable constant (`Number.MAX_VALUE`) folds wherever the name
+ * is pristine: a write of it fails.
+ * Not yet seen: a key writer read by a key that is no literal (`Object["define" + "Property"](X, "k", d)`,
+ * `` Object[`define${p}`] ``, `var {[k]: d} = Object`, `Object[n]` over `getOwnPropertyNames(Object)`), and code eval
+ * or the `Function` constructor runs (#7503; both refuse on the Prepared path today). Not counted: built-ins that write
+ * an object's index keys or `length` (`Array.prototype.push.call(X, v)`, an array method's species result): no folded
+ * member is one, and a constructor's `length` is not writable.
  */
 export function foldsBuiltinMember(
   checker: ts.TypeChecker,
