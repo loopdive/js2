@@ -353,7 +353,7 @@ only), 88 cases. Each row is compared with node 22's answer for the same sources
 ### Review fixes (2026-11-28)
 
 A review blocked the PR on a renamed export and found two older defects in the same code. Seven rows were added to
-the pin test, now 30 rows and 116 cases. All but the `as k` row failed before these fixes, on gc and standalone, with
+the pin test, now 31 rows and 120 cases (31 × 4 configurations, minus the namespace-import row with the IR path off). All but the `as k` row failed before these fixes, on gc and standalone, with
 the IR path on and off:
 
 | shape | node | before | after |
@@ -373,14 +373,17 @@ the IR path on and off:
 - **TDZ registration under a view.** `registerModuleTdzGlobal` runs for every name in every module. Under a view
   that shows `g` as dep's `x`, the bare TDZ entry is `x`'s flag; the module declares no `g`, so the call now leaves
   the entries alone instead of rejecting or re-allocating them.
-- **Imported functions.** A view clears the inlinable entry of its imported functions as well as its own.
+- **Imported functions.** A view clears the inlinable entry of a function name that two or more modules declare as
+  their own (`collectMultiIrFunctionNameCollisions`), whether this module declares or imports it.
 - **Classes.** A top-level binding skips its global only when the same-named class is in its own module.
 - `export default <var>` resolution is one helper, `exportDeferredDefaultGlobals` (`global-export-fixup.ts`), used by
   the single-file and multi-file paths. The duplicate `moduleGlobalAt` was folded into `global-space.ts`.
 - `source-binding-projection.ts` stays its own module: the table is storage, the projection is view handling. The
   largest import SCC stays at 708 files.
-- Imported functions are no longer inlined into the importing module of a multi-file graph. The inliner records no
-  function identity, so a name's entry cannot be trusted under a view. Single-file output is unaffected.
+- A function whose name two modules declare is no longer inlined into a module that imports it: the inliner records
+  no function identity, so that name's entry cannot be trusted under a view. Every other name keeps its inlining, so
+  collision-free multi-file graphs are byte-identical to main (5 graphs × gc/standalone × IR on/off = 20 compiles
+  against main 16fe9ca936; an earlier cut that cleared every imported name changed 6 of them).
 - Validation: single-file bytes identical against origin/main (389 files × gc/standalone, 0 differences); the
   scoped standalone test262 run (731 verdicts) has 0 status changes against the previous run; the 48 related
   `compileMulti` test files have no new failures (31 failures, all also in the previous run's 34).
