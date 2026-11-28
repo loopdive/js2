@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7470, 7621, 7627, 7635, 7636, 7639, 7640]
+related: [7470, 7621, 7627, 7635, 7636, 7639, 7640, 7644]
 loc-budget-allow:
   # 2026-11-28 (#7530): +2 in withDirectRuntimeModuleBindings, which keeps the name's live-function kind across a namespace projection (plan step at declarations.ts:1748); the save/restore loop lives in that driver, so the line cannot move to a module
   - src/codegen/declarations.ts
@@ -523,6 +523,12 @@ After the fix, against the reviewed head (dc5c7fed3d), on 2026-11-28:
   ea628a7874.
 - Pins: the 7530, 7470, 7464, 4133 ×2, 2930, 2931, 4182 and 6880 files, 261 of 261 (the 8 new eval rows included,
   run with QuickJS built here).
+
+**Known regression against main (approved on condition, 2026-11-28): EV5**, two modules each rebinding their own
+`f` with a direct eval. node gives 42 and main gives 42, but only by accident: one shared `__mod_f`. This PR gives 41,
+because runtime-eval push and pull still form one program-wide namespace keyed by bare name, and carry only one
+module's `f`. This is not a test262 shape (test262 runs one source at a time). It needs a per-module eval scope and is
+filed as [#7644](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7644-eval-push-pull-one-namespace-for-all-modules), which also holds its known-wrong pin.
 
 Follow-ups filed, unclaimed: [#7639](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7639-eval-liveness-only-in-modules-with-direct-eval) (eval liveness only in modules that contain a direct eval, the
 lodash-es cost driver) and [#7640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7640-reassigned-let-and-function-of-same-name-in-two-modules) (VAR2: a reassigned `let f` in one module and a `function f` in
