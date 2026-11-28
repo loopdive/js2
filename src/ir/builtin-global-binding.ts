@@ -61,8 +61,9 @@ const ANY: NameBinding = { kind: "any" };
 /**
  * The declarations whose `name` binds no value: a member key, a type, an export name, a meta property. Soundness rests
  * on one invariant: the list never holds a kind that binds a value. A kind missing from it only costs precision (its
- * name records `any`); a value-binding kind added to it would let that name hold a value the scan never sees. In
- * `tests/issue-7350-slice1-expando-escape.test.ts`, the #7628 stop rows of an enum, a namespace and
+ * name records `any`); a value-binding kind added to it would let that name hold a value the scan never sees. An enum
+ * member is not listed: inside its enum's body it is a bare-name binding (`enum E { A = …, B = o[A] }`). In
+ * `tests/issue-7350-slice1-expando-escape.test.ts`, the #7628 stop rows of an enum, an enum member, a namespace and
  * `import p = require(…)` fail when their kind is listed here (the guard of the invariant), and the CTL row of an
  * interface and a type alias fails when those leave it (the list's precision).
  */
@@ -75,7 +76,6 @@ const BINDS_NO_VALUE: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.SetAccessor,
   ts.SyntaxKind.PropertySignature,
   ts.SyntaxKind.MethodSignature,
-  ts.SyntaxKind.EnumMember,
   ts.SyntaxKind.InterfaceDeclaration,
   ts.SyntaxKind.TypeAliasDeclaration,
   ts.SyntaxKind.TypeParameter,

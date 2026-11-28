@@ -17,7 +17,12 @@ export type KeyValues = ReadonlySet<KeyValue> | undefined;
 
 /** A set past this size is any value: it bounds both a name's chain in a fixed point and one `+`'s pairs. */
 const CAP = 64;
-/** `"getOwnPropertyDescriptors".length`, the longest key writer name. */
+/**
+ * `"getOwnPropertyDescriptors".length`, the longest key writer name. The writer names also contain none of the texts
+ * `undefined`, `NaN`, `function`, `class` and `[object`: so the domain may leave out the value a `var` holds before its
+ * initializer runs (`undefined`, or the realm's global property of that name), whose text or sum contains one of them,
+ * and no operator of the domain removes text.
+ */
 const LONGEST_WRITER_NAME = 25;
 
 const ARITHMETIC: ReadonlySet<ts.SyntaxKind> = new Set([
@@ -91,9 +96,9 @@ function product(
 ): KeyValues {
   if (!left || !right) return undefined;
   const out = new Set<KeyValue>();
-  for (const a of left)
-    for (const b of right) {
-      const value = combine(a, b);
+  for (const leftValue of left)
+    for (const rightValue of right) {
+      const value = combine(leftValue, rightValue);
       if (value === undefined) return undefined;
       out.add(value);
       if (out.size > CAP) return undefined;
@@ -107,7 +112,9 @@ function unaryValues(node: ts.PrefixUnaryExpression, values: (operand: ts.Expres
   if (node.operator !== ts.SyntaxKind.MinusToken && node.operator !== ts.SyntaxKind.PlusToken) return ONE_SOME_NUMBER;
   const operand = values(node.operand);
   const sign = node.operator === ts.SyntaxKind.MinusToken ? -1 : 1;
-  return operand ? new Set([...operand].map((v) => (typeof v === "number" ? sign * v : SOME_NUMBER))) : ONE_SOME_NUMBER;
+  return operand
+    ? new Set([...operand].map((value) => (typeof value === "number" ? sign * value : SOME_NUMBER)))
+    : ONE_SOME_NUMBER;
 }
 
 /** The values of a binary `+`, an arithmetic operator or their compound assignment; any other operator is any value. */
@@ -120,7 +127,7 @@ function binaryValues(node: ts.BinaryExpression, values: (operand: ts.Expression
   if (!ARITHMETIC.has(operator)) return undefined;
   const left = values(node.left) ?? ONE_SOME_NUMBER;
   const right = values(node.right) ?? ONE_SOME_NUMBER;
-  return product(left, right, (a, b) => arithmetic(operator, a, b));
+  return product(left, right, (leftValue, rightValue) => arithmetic(operator, leftValue, rightValue));
 }
 
 /** The values of `expression`; `nameValues` answers a name (by default: any value). */
@@ -155,8 +162,12 @@ export function exactKey(values: KeyValues): string | undefined {
 export function widen(values: KeyValues): KeyValues {
   if (!values) return undefined;
   return new Set(
-    [...values].map((v) =>
-      typeof v === "number" ? SOME_NUMBER : typeof v === "string" && v.length > LONGEST_WRITER_NAME ? LONG_STRING : v,
+    [...values].map((value) =>
+      typeof value === "number"
+        ? SOME_NUMBER
+        : typeof value === "string" && value.length > LONGEST_WRITER_NAME
+          ? LONG_STRING
+          : value,
     ),
   );
 }

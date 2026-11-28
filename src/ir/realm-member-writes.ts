@@ -7,13 +7,13 @@
  * names `k`. A write reaches no realm object when its receiver is a fresh value (a literal, a function or class
  * expression, an `Object.create(…)` result while `Object.create` is the built-in) or a name that only ever holds one.
  * A key writer can also be called without spelling its name, once its value is read out of a descriptor or a values
- * list; such a read counts as a write of every key on its operand. (#7628) A read by a key that is no literal
- * (`Object["define" + p]`, a computed pattern key) counts as a mention of every writer name its key may evaluate to
- * (`key-values.ts`): it writes nothing when the key's values are known and name no writer.
+ * list; such a read counts as a write of every key on its operand. (#7628) A read by key (`Object["define" + p]`, a
+ * computed pattern key) counts as a mention of every writer name its key may evaluate to (`key-values.ts`): it writes
+ * nothing when the key's values are known and name no writer.
  */
 import { ts } from "../ts-api.js";
-import { occurrenceIsWriteTarget, skipOuterExpressions } from "../shared/binding-writes.js";
-import { keyValues, union, widen, type KeyValue, type KeyValues } from "./key-values.js";
+import { isStoreTarget, occurrenceIsWriteTarget, skipOuterExpressions } from "../shared/binding-writes.js";
+import { exactKey, keyValues, union, widen, type KeyValue, type KeyValues } from "./key-values.js";
 
 /** One store or definition: its receiver and its key, each `undefined` where the source does not spell it. */
 interface MemberStore {
@@ -21,7 +21,7 @@ interface MemberStore {
   readonly key: string | undefined;
 }
 
-/** A write `memberWrites` finds: a store, or a read by a key that is no literal (its key expression). */
+/** A write `memberWrites` finds: a store, or a read by key (its key expression). */
 export type MemberWrite = MemberStore | { readonly computedKey: ts.Expression };
 
 /**
@@ -44,7 +44,7 @@ const EVERY_KEY: MemberStore = { receiver: undefined, key: undefined };
  * Beside them the calls that hand out the values of the `target` operand's keys: §20.1.2.8 / .9
  * `getOwnPropertyDescriptor(s)`, .5 `entries`, .23 `values`. A key writer read this way is called without its name,
  * so the read counts as a write of every key on its operand: a fresh object holds a key writer only by a write that
- * spells the writer or writes every key itself. A descriptor read by a literal key (`readKey`) hands out that key's
+ * spells the writer or writes every key itself. A descriptor read by an exact key (`readKey`) hands out that key's
  * value only, which is a key writer only under the writer's own name (a counted mention) or where a write of every
  * key put one. `getOwnPropertyNames` and `keys` hand out names, which reach a value through a computed read (counted:
  * a name read back has an unknown key), a descriptor read or `Reflect`.
@@ -69,12 +69,6 @@ const KEY_WRITERS: ReadonlyMap<string, KeyWriter> = new Map<string, KeyWriter>([
 
 /** The names whose mention writes every key, unless it is a key writer's call: `KEY_WRITERS` and `Reflect`. */
 const isWriterName = (name: string): boolean => name === "Reflect" || KEY_WRITERS.has(name);
-
-/** The key a key operand spells as a literal (`"k"`, `0`, a template without substitutions). */
-function literalKey(operand: ts.Expression | undefined): string | undefined {
-  const key = operand && skipOuterExpressions(operand);
-  return key && (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) ? key.text : undefined;
-}
 
 /**
  * How fresh a value is: `"fresh"`, a fresh object or a primitive (a literal, `void`, a function or class expression);
@@ -140,7 +134,7 @@ function keyWriterWrites(
   const receiver =
     writer.target === "receiver" ? member.expression : writer.target < spelled ? operands[writer.target] : undefined;
   const keyAt = (index: number): string | undefined =>
-    index < spelled ? literalKey(operands[index]) : spread < 0 ? "undefined" : undefined;
+    index < spelled ? exactKey(keyValues(operands[index])) : spread < 0 ? "undefined" : undefined;
   if ("key" in writer) {
     write({ receiver, key: keyAt(writer.key) });
     return;
@@ -159,7 +153,12 @@ function keyWriterWrites(
     for (const { name } of source.properties)
       write({
         receiver,
-        key: name === undefined || ts.isComputedPropertyName(name) ? literalKey(name?.expression) : name.text,
+        key:
+          name === undefined
+            ? undefined
+            : ts.isComputedPropertyName(name)
+              ? exactKey(keyValues(name.expression))
+              : name.text,
       });
   }
 }
@@ -169,36 +168,35 @@ function isPatternKey(name: ts.ComputedPropertyName): boolean {
   const property = name.parent;
   return (
     ts.isBindingElement(property) ||
-    (ts.isPropertyAssignment(property) && property.name === name && occurrenceIsWriteTarget(property.parent))
+    (ts.isPropertyAssignment(property) && property.name === name && isStoreTarget(property.parent))
   );
 }
 
-/** The key of a read by a key that is no literal: an element access that is no store target, or a pattern's key. */
+/**
+ * The key of a read by key: an element access that is no store target, or a pattern's computed key. `isStoreTarget`
+ * is exact where `occurrenceIsWriteTarget` is conservative: a default (`var {g = o[k]} = p`) is read, not stored, so
+ * it must count as a read; the store arm may count it as a store as well.
+ */
 function computedReadKey(node: ts.Node): ts.Expression | undefined {
-  const key =
-    ts.isElementAccessExpression(node) && !occurrenceIsWriteTarget(node)
-      ? node.argumentExpression
-      : ts.isComputedPropertyName(node) && isPatternKey(node)
-        ? node.expression
-        : undefined;
-  return key && literalKey(key) === undefined ? key : undefined;
+  if (ts.isElementAccessExpression(node)) return isStoreTarget(node) ? undefined : node.argumentExpression;
+  return ts.isComputedPropertyName(node) && isPatternKey(node) ? node.expression : undefined;
 }
 
 /**
  * The writes `node` makes: a store target `o.k` / `o["k"]` (an assignment, compound, `++` / `--`, `delete`,
  * destructuring or for-in / for-of target); a key writer called as a member (`o.defineProperty(t, "k", d)`), whose
- * keys are its operands' literal ones; as a write of any key on any object, a key writer's other mention
+ * keys are its operands' exact ones (`exactKey`); as a write of any key on any object, a key writer's other mention
  * (`var d = Object.defineProperty`, `o["assign"]`, `.call`), a `with` statement and any spelling of `Reflect`; and a
- * read by a key that is no literal (`o["define" + p]`, `var {[k]: d} = o`), weighed once the program's names are known
+ * read by key (`o["define" + p]`, `var {[k]: d} = o`), weighed once the program's names are known
  * ({@link realmWrittenKeys}).
  */
 export function memberWrites(node: ts.Node, write: (write: MemberWrite) => void): void {
   const computedKey = computedReadKey(node);
   if (computedKey) write({ computedKey });
-  else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && occurrenceIsWriteTarget(node))
+  if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && occurrenceIsWriteTarget(node))
     write({
       receiver: node.expression,
-      key: ts.isPropertyAccessExpression(node) ? node.name.text : literalKey(node.argumentExpression),
+      key: ts.isPropertyAccessExpression(node) ? node.name.text : exactKey(keyValues(node.argumentExpression)),
     });
   else if (ts.isWithStatement(node)) write(EVERY_KEY);
   else if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && isWriterName(node.text)) {

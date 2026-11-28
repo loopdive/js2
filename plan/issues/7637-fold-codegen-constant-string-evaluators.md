@@ -28,6 +28,8 @@ expressions. Two more evaluators of an overlapping grammar remain in legacy code
 | --- | --- | --- | --- |
 | `foldConstantString` | `src/codegen/class-static-metadata.ts` | string literals and `+` | none |
 | `staticConstStringValues` | `src/codegen/analysis/static-string-values.ts` | literals, `const` names by checker symbol, `const` array elements, `.split` | checker symbols |
+| `foldComputedPropertyKey` | `src/shared/property-key-fold.ts` | string, no-substitution template and numeric literals, in parentheses | none |
+| `isConstantKey` | `src/shared/intrinsic-prototype-writes.ts` (~line 407) | literals, signed numeric literals, `true` / `false` / `null`, the unshadowed `undefined` / `NaN` / `Infinity` | unshadowed global constants |
 
 They stay out of #7628 because both are codegen (`backend-wasmgc` destination), whose gc output must stay
 byte-identical, and folding them changes behaviour:
@@ -36,6 +38,13 @@ byte-identical, and folding them changes behaviour:
   from unknown into `"a1"`.
 - `staticConstStringValues` resolves names by checker symbol and reads array elements and `.split`. The key domain
   has no use for either.
+
+Two shared-layer readers join the list (review RV-PR7573, item 6):
+
+- `foldComputedPropertyKey` feeds selector / lowerer parity (`select.ts`, `from-ast.ts`): a widened fold there must
+  widen both sides at once, or the selector claims a function the lowerer cannot deliver.
+- `isConstantKey` answers "constant or not" rather than a value, and reads three global constants that
+  `keyValues` treats as names (any value). Folding it means giving `keyValues` those globals or keeping the predicate.
 
 ## To plan
 

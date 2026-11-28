@@ -75,7 +75,23 @@ Measured on PR #7549's head `b7cfc6257f` (#7350 slice 1 + #7354 O2). `origin/mai
 #7556 makes a literal `Function(...)` text a program source (`<function:N>.js`); `bindingFacts` walks every program
 source, so those texts need no new handling. After main is merged, re-run the acceptance below on that head.
 
-Every number below is reproducible from `plan/samples/7628/` (patches, row probe, equivalence scan, commands).
+Every number below is reproducible from `plan/samples/7628/` (patches, row probe, equivalence scan, commands). That
+directory is not merged (review RV-PR7573, item 5): it is kept in commit `77cd8bb312` of this PR's history, and an
+archive commit of the same tree is meant for the unmerged branch `claude/7628-samples-archive` (see "Addendum after
+RV-PR7573").
+
+**Evidence: the candidate census** (`candidates.patch`, `RULE=<rule>`, `--harness real`, base `b7cfc6257f` = 230
+carriers / 84 o411; first round on `18be7b93d4`):
+
+| rule | the arm writes nothing when … | carriers | o411 | rows lost |
+| --- | --- | ---: | ---: | --- |
+| base | (no arm) | 230 | 84 | none |
+| naive | never | 216 | 41 | 14 carriers (`getOwnPropertyDescriptor/15.2.3.3-4-191`, `-194`, `-196` … `-201`; `defineProperty/15.2.3.6-3-5`, `-6`, `-7`, `-10`, `-11`, `-12`), 43 o411 (its `Object.create` / `defineProperty` / `defineProperties` / `getOwnPropertyDescriptor` / `Math` rows) |
+| (1) use | its value goes only into `===`, `typeof`, `!`, `void`, a statement or a test | 216 | 41 | the same 14 + 43 |
+| (2) receiver | its receiver is a fresh value or a fresh name | 216 | 41 | the same 14 + 43 |
+| (3) const key | its key's values are strings that name no key writer | 216 | 41 | the same 14 + 43 |
+| (3n) key values | as (3), plus numbers | 230 | 84 | none |
+| v2 / v3 scratch | the chosen rule | 230 | 84 | none (0 changed rows of 1,977 and of 411) |
 
 ### Measured candidates (first round, `18be7b93d4`)
 
@@ -573,3 +589,51 @@ below pins to the old reader.
   typecheck, import cycles, compiler boundaries inventory (`--base HEAD^1` and `--base origin/main`). No budget grant.
 - Not done here: the adversarial review (CLAUDE.md, before the hold is released) and the follow-up issues named in
   the plan (codegen constant-string evaluators; `pristine` and global-object rebinding), whose ids come from the lead.
+
+### Addendum after RV-PR7573 (2026-11-28)
+
+The review of PR #7573 found two soundness holes; both are fixed, with these changes:
+
+1. **A default is read, not stored.** The read arm asked `occurrenceIsWriteTarget`, which is conservative and
+   answers true for everything under a binding element, defaults included, so `var { g = ({})["__define" +
+   "Getter__"] } = {}` folded. The read arm (`computedReadKey`) and `isPatternKey` now ask the existing exact helper,
+   `isStoreTarget` (`src/shared/binding-writes.ts`, which never climbs into a default or a computed key). The store
+   arm keeps `occurrenceIsWriteTarget`, so it may still count a default as a store (an over-approximation), and it no
+   longer sits in an `else` behind the read arm. `occurrenceIsWriteTarget` itself is unchanged: its other callers
+   (the class-heritage proof and the `Math` write scan) feed gc codegen, whose bytes must not move. Stop rows: an
+   object binding element's default, an array binding element's default, a parameter pattern's default, a default
+   read by a name key (`f[k]`), and an assignment pattern's shorthand default.
+2. **`EnumMember` leaves `BINDS_NO_VALUE`.** Inside its enum's body a member is a bare-name binding (`enum E { A =
+   …, B = o[A] }`), so it records `any` by the default. Stop row: an enum member read in its own body beside a
+   `var A`; the "enum of another name" keep row still holds. `BINDS_NO_VALUE`'s doc says why the member is not
+   listed.
+3. `key-values.ts` states the hoisting invariant: no writer name contains `undefined`, `NaN`, `function`, `class` or
+   `[object`, so the domain may leave out a `var`'s value before its initializer.
+5. `plan/samples/7628/` is removed from the PR (`git rm -r`); its README said "never to merge" and it carries the
+   `RULE` switch and SCRATCH comments. The candidate census is in the evidence table above. The directory stays in
+   this PR's history at `77cd8bb312`. An archive commit of the same tree on `77cd8bb312` (`cb184ff6d5`, made with
+   commit-tree) is meant for the unmerged branch `claude/7628-samples-archive`, but its push was refused by the
+   repository's pre-push hook ("updating refs/heads/claude/7628-samples-archive to a commit that is not the
+   checked-out HEAD"), so that branch does not exist yet.
+6. `literalKey` is gone: every key in `realm-member-writes.ts` is `exactKey(keyValues(·))`, one grammar. The read arm
+   now records every read by key, literal ones too: a literal key's value names a writer only where its string
+   mention already writes every key. #7637 lists `src/shared/property-key-fold.ts` and `isConstantKey`
+   (`src/shared/intrinsic-prototype-writes.ts`) as further fold candidates.
+7. The terse locals `a`, `b` and `v` in `key-values.ts` are `leftValue`, `rightValue` and `value`.
+8. One debt note: the `key-values.ts` entry of `scripts/compiler-boundaries.json` carries it, and the
+   `class-accessor-safety.ts` entry points to it.
+
+**Measured** (base `74b4120c7b`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804, diff empty (744 bytes, 59 refused, 1 threw).
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline, 180 files × default and standalone: 360 / 360 identical.
+- Census `--harness real`: carriers 819 → 819, o411 118 → 118; 0 gained, 0 lost, 0 new crashes, 0 changed rows.
+- Mutations: reverting the read arm to `occurrenceIsWriteTarget` fails exactly the 5 default rows; `EnumMember` back
+  in `BINDS_NO_VALUE` fails exactly the enum-member row. The earlier mutations give the rows of the table above,
+  except: dropping the computed-read check now fails 47 of 49 stop rows (the 6 new ones included), and "`Reflect`
+  counted only as a reference" fails only `globalThis.Reflect`, because `this["Reflect"]` is now also a read by the
+  exact key `Reflect`.
+- Tests: the same 38 files, 1,373 pass, 16 fail; the 16 are the ones that fail on the base as well.
+- Gates exit 0: loc, func (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet, dead exports,
+  typecheck, import cycles, compiler boundaries (`--base HEAD^1`, `--base origin/main`).

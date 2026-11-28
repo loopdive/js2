@@ -12615,7 +12615,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies. Debt (#7628): exactPreparedAccessorExpressionKey imports key-values.ts (destination frontend-ts); it leaves ir-core with the frontend half, and ir-core receives the exact key as a string."
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies. See the src/ir/key-values.ts entry for this file's #7628 import debt."
     },
     {
       "path": "src/ir/class-definition-expressions.ts",
@@ -17545,7 +17545,7 @@
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "7354-prepared-path",
-      "nextBoundary": "One evaluator of a key expression's values (#7628); moves with realm-member-writes.ts under frontend/ts. Debt: class-accessor-safety.ts (destination ir-core) imports it for exactPreparedAccessorExpressionKey; ir-core may not import frontend-ts, so that caller's key reading moves to the frontend with it."
+      "nextBoundary": "One evaluator of a key expression's values (#7628); moves with realm-member-writes.ts under frontend/ts. Debt: class-accessor-safety.ts (destination ir-core) imports it for exactPreparedAccessorExpressionKey; ir-core may not import frontend-ts, so that caller's key reading leaves ir-core with the frontend half, and ir-core receives the exact key as a string."
     },
     {
       "path": "src/ir/realm-member-writes.ts",

@@ -33,7 +33,7 @@ Object.assign(globalThis, {Number: {isNaN: function () { return 7; }}});
 this["Num" + "ber"] = {isNaN: function () { return 7; }};
 ```
 
-Repro: `plan/samples/7628/probe-global.mts` on the #7628 branch. Found while planning #7628.
+Repro: `plan/samples/7628/probe-global.mts` on the unmerged archive branch `claude/7628-samples-archive` (the same tree as `77cd8bb312`). Found while planning #7628.
 
 **Blocks B3b-1 (#7561, PR #7535).** B3b-1 does not have an issue file on main yet, so there is no frontmatter link.
 Today a folded member and the native are the same algorithm on the Prepared path, so nothing observable goes wrong.

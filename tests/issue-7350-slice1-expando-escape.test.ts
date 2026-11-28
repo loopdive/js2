@@ -374,6 +374,33 @@ describe("#7628 — a read by a key that is no literal", () => {
     ["a for-in variable's initializer", `for (var p = "Xyz" in {Property: 0}) Object["define" + p](${D});`],
     ["a for-in variable over a computed key", `for (var k = "Xyz" in {["define" + "Property"]: 0}) Object[k](${D});`],
     ["a for-of variable", `for (var k of ["define" + "Property"]) Object[k](${D});`],
+    // RV-PR7573: a default is read, not stored.
+    [
+      "a binding element's default",
+      'var { g = ({})["__define" + "Getter__"] } = {}; g.call((1).constructor, "isNaN", function () {});',
+    ],
+    [
+      "an array binding element's default",
+      'var [g = ({})["__define" + "Getter__"]] = []; g.call((1).constructor, "isNaN", function () {});',
+    ],
+    [
+      "a parameter pattern's default",
+      'function f({ g = ({})["__define" + "Getter__"] } = {}) { g.call((1).constructor, "isNaN", function () {}); } f();',
+    ],
+    [
+      "a default read by a name key",
+      'var k = "__define" + "Getter__"; var f = {}; var { g = f[k] } = {}; g.call((1).constructor, "isNaN", function () {});',
+    ],
+    [
+      "an assignment pattern's shorthand default",
+      'var g; ({ g = ({})["__define" + "Getter__"] } = {}); g.call((1).constructor, "isNaN", function () {});',
+    ],
+    [
+      "an enum member read in its enum's body",
+      {
+        "./entry.ts": `var A = "x"; enum E { A = "define" + "Property", B = ((Object as any)[A](${D}), 1) }`,
+      },
+    ],
     [
       "a namespace",
       {
