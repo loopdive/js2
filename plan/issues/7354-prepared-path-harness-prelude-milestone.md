@@ -7204,6 +7204,870 @@ leave this lane, and (b) `native-object-get.ts` and its fixtures are retired (#7
 - The ordinary-pipeline suites beyond the 20-file byte comparison; the f1-function-expressions(-2/-3),
   h-script-var-dynamic-home and 3518-native-invocation-substrate suites.
 
+## Slice L0 plan (2026-11-23, branch `claude/7354-l0` from `origin/main` adc30d7fbc; Phase 1, not started)
+
+Language-core constructs that refuse or abort whatever the built-ins do. Measured on main adc30d7fbc (H2 merged, G1 and
+O2 not). Driver: the agree driver (Prepared entry, the runner's options, node's `out` asserted, wrong twin), extended to
+print the abort-body table, so a refusal inside a function shows its text instead of a bare `unreachable`.
+
+### (a) Re-measure on main: 202 probe programs, 0 WRONG
+
+Four batches (76 + 81 + 27 + 18 programs; the second re-runs the first with a boolean probed through
+`c ? "T" : "F"` instead of `String(c)`, the third and fourth put the helper at top level and the construct alone in
+the function). **0 wrong values, 0 invalid Wasm, 0 exceptions; every right answer's twin throws.**
+
+| construct | top level | in a function | main today |
+|---|---|---|---|
+| `<` `>` `<=` `>=`, two dynamic values | refused `__ir_dyn_lt/le/gt/ge has no Prepared intrinsic` | abort, same text | dynamic vs number literal is right (`o.a < 5`) |
+| same, a dynamic value vs a string literal | refused `__ir_dyn_lt` | abort | — |
+| same, two typed strings | refused `__ir_dyn_lt` (script homes are dynamic) | refused `runtime feature js.string.compare is unavailable under string-compare policy compare=unsupported` (a physical refusal: no abort body) | typed number vs string literal right (`"5" < 10`) |
+| same, boolean vs number (`true > 0`) | refused `Phase 1 requires matching operand types for '>'` | abort | — |
+| `==` `!=`, dynamic operands or two strings | refused `dyn.eq (loose) has no Prepared intrinsic` | abort | two dynamic numbers in a function right |
+| `==`, string vs number / boolean vs number (typed) | refused `mixed string/non-string operand for '=='` / `Phase 1 requires matching operand types for '=='` | abort | — |
+| `;` in a body, an `if` arm, a loop body | refused `unsupported body statement EmptyStatement` | abort; `; return x;` → `unexpected statement before tail`; `return x; ;` likewise | top-level `;;` right |
+| nested function declaration | — | abort `nested func must have a return type annotation` / `… params must be Identifier-named with annotations`; called before its declaration: `direct call to "inner" has no exact AST-site plan` | — |
+| `switch` on a dynamic value / mixed literal tests / non-literal tests | refused `switch disc must lower to i32/f64` / `switch-case-test-mixed` / `switch-case-test-nonliteral`; a string disc held in a script var: `string-tested switch disc lowered to dynamic` | abort, same texts (also for an untyped numeric parameter) | typed number or typed string disc with literal tests right |
+| `o.a++`, `o.a += v`, `o["a"] *= v` | refused `compound property/element write on dynamic not in IR scope` | abort `… on externref` | `o.a = o.a + 1` right |
+| `x = o.a++` / `j = i++` / `j = ++i` (value position) | refused `unsupported expression kind PostfixUnaryExpression` / `value-position prefix update` | — | statement position right |
+| `o[k]` / `o[k] = v`, non-literal key | refused `dyn.member_get/member_set with a computed key` | abort `element access on externref with index Identifier not in slice 12` | — |
+| more arguments than parameters | refused `call to f has 2 args, expected 1` | abort | fewer arguments right (undefined) |
+| a function without `return <expr>` used as a value | refused `call to f returned void used as expression` | abort | a function with a partial return is right |
+| ternary, number vs string arms | right | right | (#5092's mixed join) |
+| ternary, a typed arm vs `undefined` | refused `ternary branches have different types (f64 vs dynamic<tag:1>)` | — | — |
+| mutable string local | right (a script var is a dynamic home) | abort `mutable binding 's' (string) has no slot representation` | a mutated string parameter is right |
+| closure writing a script var: `n = n + 1` | right | right | — |
+| closure writing a script var: `n++`, `n += 2` | abort `increment/decrement of undeclared "n"` / `compound assign to undeclared identifier "n"` | — | H2 left these refused |
+| closure writing a captured function local | — | refused `nondefaultable reference widening needs a separately authenticated physical post-state` (presentation gap, `ir-program-presentation.ts` `referenceDemand`; no abort body) | closure reading a local assigned before it is created is right; one declared after it refuses by name |
+| `null` in a function, `{ n: null }`, `x == null` | `{n: null}` refused `bare 'null' in non-reference context (f64)` | `var x = null` aborts with the same text | `var x = null` at top level, `f(null)` right |
+
+Also found, not in the brief: `var x` twice in a function (`redeclaration of 'x'`), a `var` assigned before its
+declaration in a function (`assignment to undeclared identifier "x"`), `String(a < b)` at top level (`String() of
+i32 operand is deferred`; `var c = a < b; String(c)` is right).
+
+### (b) Gain
+
+**Sample (411 rows, real runner, main adc30d7fbc): 62 pass / 24 fail / 325 compile_error.** (O2's base run on the
+pre-H2 main gives 61/19/331; the difference is exactly H2's 79 rows.)
+
+First blocker that is an L0 construct (error text, incl. the abort-body text of `fail` rows): relational 2
+(S9.1_A1_T4 `__ir_dyn_lt`, S11.8.4_A4.12_T1 string compare), loose `==` 1 (S11.9.1_A2.4_T2), EmptyStatement 1
+(S12.5_A10_T1), postfix value 1 (S8.6_A2_T2), computed key 1, closure capture 1 — **7 rows**. Every other row is
+behind a built-in (`Array` 48, nested var / for-in 28, eval 18+6, `TypeError` 17, `String` 30, `globalThis` 15, RegExp
+literal 14 + 5, …).
+
+AST scan (TypeScript checker over each row's test file and its includes other than assert.js/sta.js; a comparison
+counts only when its operands are not both checker-numbers, a `switch` only when its disc is not a number). Of the
+349 non-passing sample rows, the ones that use the construct at all, and those that name no un-provided built-in
+(the Error family allowed, G1):
+
+| construct | non-pass rows using it | of which built-in-free | ES5 files (9,174) | in the test body | built-in-free |
+|---|---:|---:|---:|---:|---:|
+| relational, dynamic | 4 | 1 | 206 | 141 | 66 |
+| relational, two strings | 2 | 1 | 25 | 25 | 21 |
+| loose `==` / `!=` (not two numbers) | 5 | 1 | 115 | 115 | 33 |
+| EmptyStatement below script level | 2 | 1 | 188 | 188 | 158 |
+| nested function declaration | 6 | 3 | 330 | 264 | 220 |
+| `switch`, non-number disc | 0 | 0 | 78 | 13 | 11 |
+| compound / update on a member | 2 | 1 | 115 | 51 | 8 |
+| postfix in value position | 1 | 1 | 29 | 29 | 13 |
+| computed key, object receiver | 62 | 12 | 1,277 | 307 | 238 |
+| computed key, array receiver (#7352, not L0) | 66 | 14 | 1,341 | 374 | 249 |
+| more arguments than parameters | 0 | 0 | 31 | 31 | 4 |
+| void result used | 62 | 1 | 1,227 | 316 | 87 |
+| mixed-type ternary | 48 | 0 | 930 | 18 | 4 |
+| mutable string local in a function | 0 | 0 | 63 | 3 | 3 |
+| closure writes a captured local | 1 | 0 | 103 | 23 | 10 |
+| closure `++`/`op=` on a script var | 0 | 0 | 32 | 32 | 15 |
+| `null` inside a function | 52 | 1 | 1,077 | 89 | 44 |
+
+- The large "ES5 files" counts of void result, mixed ternary, computed keys and `null` come from **propertyHelper.js**
+  (47 sample rows include it): they matter once `verifyProperty` rows get past `Object`/`Array`, not before.
+- ES5 files that use any L0 construct: 2,541; of these, 838 name no un-provided built-in. Those 838 are the ceiling of
+  what L0 can turn on its own (≈ 37 expected in a 411-row sample; the sample has 26 non-passing such rows, 12 of them
+  behind a RegExp literal, which the built-in scan does not see).
+- **Targeted run** (200 of the 807 built-in-free L0 files outside the sample, seeded; real runner; 197 ran): 16 pass,
+  41 fail, 140 compile_error. First blockers: RegExp literal 59 (scan blind spot), comparisons **17** (`__ir_dyn_*` 9,
+  `Phase 1 requires matching operand types` 7, mixed string `==` 1), `ReferenceError`/`TypeError` 20 (G1), EmptyStatement
+  **8**, function declaration in a nested position **14** (nested-decl annotation 6, `FunctionDeclaration` in a
+  function expression 8 — Annex B block functions, mostly), `this` at top level 8, Annex B `redeclaration of 'f'` 5,
+  `call … returned void` **3**, `null` **3**, switch **2**, labeled tail 2, value-position update **2**. Scaled to the 807:
+  comparisons ≈ 70 files, EmptyStatement ≈ 33, void result ≈ 12, switch ≈ 8 first-blocked.
+- Nested declarations (264 ES5 files with one in the test body): 163 files have one inside a block (Annex B, out of
+  L0), 256 have one that captures nothing of the enclosing function, 34 one that references a sibling declaration,
+  8 one that captures a local.
+
+**Reading.** On the sample L0 turns at most ~7 rows today, because built-ins block nearly everything else. Its value
+is (1) ≈ 9 % of ES5 (838 files) contain an L0 construct with no built-in in the way, and (2) it is the second wall of
+the propertyHelper / compareArray rows once the built-in slices land. A per-slice gain will be measured on the sample
+AND on the targeted 197-row set (the sample alone cannot show it).
+
+### (c) Per construct: refused where, spec, reuse, what stays refused
+
+1. **Relational** (`__ir_dyn_lt/le/gt/ge`; legalization `dynamic-value-legalization.ts` `expand`, `call` arm's
+   `gap(name)`). IsLessThan §7.2.13: px = ToPrimitive(x, number), py = ToPrimitive(y, number) in SOURCE order for every
+   operator (`a > b` is IsLessThan(b, a, LeftFirst = false), which still converts `a` first); both strings → code-unit
+   order; else ToNumeric both, NaN → undefined → false. `a <= b` is `!(b < a)` with undefined → false, which is
+   `f64.le`'s NaN behaviour; for strings it is `compare <= 0`. Reuse: `primitiveOf` (F2, the `+` arm's ToPrimitive)
+   and `toNumber` from `conversionBuilders`, `kindChain`/`kindTest`/`branch`, `js.value.as_string`, the native string
+   compare (`IR_STRING_COMPARE_FN`, the ordinary pipeline's `__str_compare`). Front end: from-ast already emits the
+   helper call with operands in source order (`tryLowerDynamicRelational`); dynamic vs typed number already is the
+   carrier ToNumber + `f64.*`, and is right.
+   - Typed strings: the Prepared policy (`preparedPresentationPolicy`, `prepared-provider-census.ts`) does not select
+     `stringCompare`. Add `stringCompare: { compare: "native" }` with its census row beside `stringEq`.
+   - Mixed typed operands (`true > 0`, `"1" == 1`, `s < n`): from-ast throws `Phase 1 requires matching operand
+     types` / `mixed string/non-string operand` (lowerBinary). On the Prepared lane only, a relational or equality
+     operator whose operand families differ boxes both concrete operands (`boxConcreteToDynamic`) and takes the dynamic
+     arm. Gated on the lane: `binaryOperandsAdmissible` is the ordinary selector's predicate and stays unchanged.
+   - Stays refused: an operand of a kind the carrier does not hold (closure pack, vec) — the existing gap names it.
+     Symbol/BigInt do not exist on this lane.
+2. **Loose equality** (`dyn.eq` with `loose`; same `expand`). IsLooselyEqual §7.2.14 reduced to the carrier kinds:
+   same type → IsStrictlyEqual (`js.value.strict_eq`); either side undefined/null → both nullish (no ToPrimitive:
+   `{valueOf(){…}} == undefined` calls nothing); both object kinds → identity; otherwise ToPrimitive of the object side
+   (hint default = number for every object kind this lane has; Date does not exist), then nullish again (a `valueOf`
+   that returns null), then two strings → `strict_eq`, else `f64.eq(ToNumber x, ToNumber y)` (boolean → number, string →
+   StringToNumber, which covers §7.2.14 steps 5, 6, 9, 10 at once: `"1" == true`, `"" == 0`, `"a" == "a"` stays a string
+   comparison, `NaN == NaN` false). Reuse: as 1. Stays refused: nothing new; `document.all` (B.3.6) does not exist.
+3. **EmptyStatement** (`lowerBodyStatement` `unsupported body statement`, the tail walker `unexpected statement before
+   tail`, module-init's statement list). §14.4: evaluates to empty. Skip it in each statement walker through one
+   predicate. Gated on the lane only if the ordinary bytes move (the ordinary selector may already demote these
+   functions before from-ast sees them; to be measured, not assumed).
+4. **Nested function declarations** (`lowerNestedFunctionDeclaration`, from-ast, the typed-TS lift). §10.2.11
+   FunctionDeclarationInstantiation step 36: each top-level declaration of the body is instantiated (a fresh function
+   object closing over the function's environment) before the first statement, in source order, last one wins. On the
+   Prepared lane: at function entry, lower each body-level declaration as the function expression of the same text
+   (F2's closure lift + `emitFunctionObjectInit`) and bind the name as a local; calls go through Fa's static closure
+   call or F2's dispatcher (arity padding/dropping for free); its own name inside its body is the closure itself (as a
+   named function expression's). Fresh identity per invocation is right by construction.
+   - Captures: a closure created at entry that reads a local declared later already refuses by name (`closure …
+     reads "x", a local of its enclosing function declared after the closure is created`). That covers capturing
+     declarations (8 files) and sibling references (34 files) soundly; turning them needs ref-cell captures (item 11).
+   - Stays refused: a declaration in a block / `case` / `if` arm (Annex B.3.3, 163 files; T cause 4 is the script-level
+     twin), two declarations of one name, a declaration beside a `var`/parameter of the same name, `arguments`.
+5. **switch** (`lowerSwitchStatement`, `switch-case-tests.ts`). §14.12.4 CaseBlockEvaluation: the disc once; each case
+   expression evaluated lazily in source order (the clauses before `default`, then after it) and compared with
+   IsStrictlyEqual; the first match enters, statements fall through; no match enters `default` wherever it stands.
+   On the Prepared lane, a switch the numeric/string literal ladder does not take (dynamic disc, mixed or non-literal
+   tests): store the disc as a carrier in a slot; a short-circuit chain `if (strict_eq(disc, case_k)) m = k else …` in
+   source order computes the clause index (only the matched test and those before it are evaluated); then the existing
+   `IrInstrSwitch` ladder over indices, exactly as the string dispatch (`lowerStringSwitchDispatch`) does today. The
+   literal-only typed paths stay byte-identical.
+6. **Compound / update on a member** (from-ast `compound property/element write on …`, `PostfixUnaryExpression`,
+   `value-position prefix update`). §13.15.2 / §13.4: evaluate the object (and key) once, GetValue, the operator
+   (`+=` is the dynamic `+`; the others ToNumeric), PutValue, result = the new value (postfix: the old ToNumeric
+   value). Reuse: `dyn.member_get` / `dyn.member_set` (C2-D1/O2 write path, strictness included), `emitDynamicAdd`,
+   `dyn.to_number`. The same read-modify-write serves item 10 (script-var homes in a closure) with the home's
+   read/write instead of the member's — one helper, two reference kinds.
+   - A computed key in `o[k] += v` is evaluated once and must be ToPropertyKey'd once; only a primitive key is
+     admitted (an object key refuses by name: its `toString` order is observable).
+7. **Computed keys** (`dynamic-member-access.ts`, `dyn.member_get/member_set with a computed key`). §13.3.3
+   EvaluatePropertyAccessWithExpressionKey + ToPropertyKey: string → itself, number → Number::toString (the admitted
+   formatter), boolean/undefined/null → their names, object → ToPrimitive(hint string) — refused by name in L0. Then
+   the ordinary [[Get]]/[[Set]] with a run-time key; the realm's own-property lookup must accept a run-time key string
+   (to check: today's rows take a literal key). Arrays are #7352, not L0. **Conflicts with G1 and O2** (both edit
+   `dynamic-member-access.ts`): build after they land.
+8. **More arguments than parameters** (`planUnderArityDirectCall` / `call to f has N args, expected M`). §10.2.11:
+   every argument is evaluated (§13.3.8.1 ArgumentListEvaluation, left to right) and the extras are dropped unless
+   `arguments` reads them. Generalise the under-arity plan to both directions (one `planDirectCallArity`): the extras
+   are lowered as discarded expressions after the supplied ones, before the call. A callee that names `arguments`
+   keeps the refusal (fail closed for the future `arguments` slice).
+9. **Void result used** (`call to f returned void used as expression`, and the imported-call twin). §10.2.1.4
+   OrdinaryCallEvaluateBody: a body that completes normally yields undefined. On the Prepared lane the value is the
+   undefined carrier after the call.
+10. **Ternary with a typed arm and a dynamic arm** (`lowerConditional`, #5092's mixed join takes only two concrete
+    primitive arms). Box the concrete arm into the carrier and join as dynamic.
+11. **Closure writes to a captured function local** (presentation gap `referenceDemand`). Needs ref-cell captures whose
+    struct type the Prepared presentation authenticates (a physical post-state the presentation does not yet accept).
+    It is a presentation-layer change in `src/compiler/`, not a language arm, and it also unlocks capturing nested
+    declarations. **Proposed out of L0** (own slice); measured need is small (10 + 15 built-in-free files).
+12. **Mutable string local in a function** (`bindLocalName` → `resolveIrSlotRepresentation`): the Prepared resolver
+    answers no `resolveString`. Answer it with the native string's storage type, where the Prepared resolvers answer
+    `resolveDynamic`. 3 built-in-free files; small, goes with L0b.
+13. **`null` under an f64 hint** (`lowerExpr` NullKeyword): on the Prepared lane the carrier holds null; an object
+    literal property and a local initialised with `null` should take the carrier. 44 built-in-free files.
+
+### (d) Split (ordered by measured gain per effort)
+
+**L0a — comparisons (items 1, 2).** Legalization: one new sibling `src/ir/program/dynamic-comparisons.ts` with the
+relational and loose-equality expansions over `conversionBuilders`; two `case` lines in `expand`. Census/policy: the
+`stringCompare` row. from-ast: one call to a lane arm for mixed typed operands, placed in a sibling module; from-ast
+pays for it by moving `tryLowerDynamicRelational` + `relOperandToF64` (≈ 70 lines) into the same module (as built,
+`tryLowerDynamicRelational` changed on the move: the lane fallback, and the f64 path decided before anything is emitted).
+Gain: ≈ 17 of the 197 targeted rows' first blocker, 3 sample rows. Effort M.
+- Tests `tests/issue-7354-l0a-relational.test.ts`, `…-l0a-loose-equality.test.ts`: node agreement + wrong twin over
+  {number, string, numeric string, "", boolean, undefined, null, object with `valueOf`/`toString` (order logged),
+  function} × each operator × {top level, function parameter, condition, loop bound}; NaN/±0/±Infinity; code-unit
+  order (`"B" < "a"`, prefixes, `"\uD800" < "￿"`); `valueOf` call order for `a > b`; `== undefined` calls no
+  `valueOf`. Tripwire: a `valueOf` that throws is caught by `try`.
+- Quality: one module, the comparisons share `primitiveOf`/`toNumber` (no third ToPrimitive), no new predicate in
+  `binaryOperandsAdmissible`, from-ast does not grow, legalization `expand` grows by two lines.
+
+**L0b — statement and expression shapes (items 3, 5, 8, 9, 10, 12, 13; plus the value-position update on an
+identifier).** Each a small arm in a sibling (`src/ir/prepared-statement-shapes.ts` or next to its family:
+`switch-case-tests.ts` for the dispatch decision, a call-arity module for 8 with the under-arity plan moved out of
+from-ast). Gain: EmptyStatement 8 + void 3 + switch 2 + `null` 3 + update 2 targeted first blockers, 2 sample rows;
+corpus ≈ 33 + 12 + 8 files first-blocked. Effort M.
+- Tests one file per family with node agreement + twin: `;` in every statement position; switch: dynamic/mixed/
+  non-literal tests, lazy evaluation order logged, fallthrough, `default` first/middle/last, `"1"` vs `1`, NaN never
+  matches, `case` with side effects after the match not evaluated; extra arguments with side effects in order, a
+  callee using `arguments` still refused; void result in `+`, `typeof`, `===`; ternary arms number/undefined/string/
+  object; mutable string locals in loops; `null` in literals and locals.
+- Quality: from-ast does not grow (code moves out to pay); no arm duplicates an existing one (the switch reuses the
+  index ladder, arity is one plan for both directions); every arm is gated on the lane unless the ordinary bytes are
+  shown identical without the gate.
+
+**L0c — bindings and members (items 4, 6, 7, and 6's script-var form).** Nested declarations as entry-hoisted F2
+closures; one read-modify-write helper for member and script-var-home references; computed keys on ordinary objects
+after G1 and O2 land (they share `dynamic-member-access.ts`). Gain: nested decl 6 targeted rows + the abort bodies of
+every harness/test function that declares a helper; compound member 51 test-body files; computed keys 238 built-in-free
+files (the biggest single number, but most of those rows also need arrays). Effort L.
+- Tests: hoisting (call before the declaration), last-declaration-wins refusal, identity per invocation, recursion by
+  own name, a capturing declaration refuses by name, Annex B block declarations still refuse; `o.a++`/`o[k] op= v` with
+  the receiver and key evaluated once (logged), postfix result, strict write to a non-writable property throws a
+  TypeError caught by `try`; `n++` in a closure on a script var; computed keys of each primitive kind, a missing key,
+  an object key refused.
+- Quality: no second closure path (nested declarations reuse the function-expression lift), one RMW helper, no new
+  whole-program scan.
+
+Out of L0: item 11 (ref-cell captures; presentation layer); arrays as computed-key receivers (#7352); `arguments`;
+Annex B block functions; `var` redeclaration / use-before-`var` inside functions (found here, 5 + ? rows, separate).
+
+### Proof plan per sub-slice
+
+≥ 150 probes base vs head (node's answer, 0 wrong / invalid / exceptions, nothing right becomes anything else);
+ordinary pipeline 20 test262 files + the probes × default/standalone byte-identical; `check:prepared-bytes` with every
+difference explained; the sample AND the 197-row targeted set through the real runner, each new pass with a mutated twin
+that fails; all gates incl. `LOC_GATE_BASE` = main.
+
+### Open questions
+
+1. L0a's string compare: `__str_compare` under `--utf8-storage` — must compare UTF-16 code units; to verify before the
+   census admits it (the Prepared lane's storage is the ordinary nativeStrings one).
+2. Should EmptyStatement and the over-arity plan be lane-gated, or ungated if the ordinary bytes do not move?
+3. Item 11 (ref-cell captures): a separate slice, or part of L0c?
+4. Computed keys: wait for G1 + O2, or build L0c's other parts first and add keys after?
+
+### Not verified
+
+- No construct after the first blocker was measured: the per-slice gain is the first-blocker count, an upper bound.
+- The AST scan's types are the checker's view of untyped JS (`any` for parameters and properties), close to but not
+  the compiler's own carrier typing; "built-in-free" misses RegExp literals and member-only built-ins (`x.toString`).
+- Node 25 (not installed; Node 22).
+
+## Slice L0a result (2026-11-26, branch `claude/7354-l0`; `main` c3b7be667a with G1 and O2 merged)
+
+Comparisons over values of any kind on the Prepared lane: `<` `>` `<=` `>=`, `==` `!=`, typed strings, mixed typed
+operands.
+
+### Built
+
+- **Legalization** (`src/ir/program/dynamic-comparisons.ts`, new, 184 lines; two `case` arms in
+  `dynamic-value-legalization.ts`).
+  - IsLessThan for the front end's `__ir_dyn_lt/le/gt/ge`, and IsLooselyEqual for `dyn.eq` with `loose`.
+  - ToPrimitive is F2's `primitiveOf` and ToNumber is `toNumber` (`conversionBuilders`). There is no second
+    ToPrimitive.
+  - Kind tests fold where the proven kinds decide them.
+  - C2's `holds` moved into the chain builders, so the two modules share it; it now reports `known`.
+- **String compare** (`js.value.string_compare`). It is a new intrinsic of the dynamic-value family, which takes two
+  string carriers and answers -1/0/1. It has a native provider and a resource row in `native-dynamic-values.ts`.
+  - The body is the ordinary pipeline's `__str_compare` loop, moved to `src/runtime/wasmgc/values/string-compare-body.ts`
+    with parameterised locals. Codegen now calls it, and its bytes are identical.
+  - Both operands are flattened first: a rope, or a UTF-8 string under `--utf8-storage`, becomes a flat WTF-16
+    string. The loop therefore always reads UTF-16 code units.
+  - No `js.string.compare` policy is selected.
+- **Front end** (`src/ir/dynamic-comparison-lowering.ts`, new). It holds `comparisonTakesCarrier`, `carrierOperand`,
+  `relOperandToF64` and `tryLowerDynamicRelational` (moved out of from-ast and changed: the lane fallback, and the f64
+  path decided before anything is emitted), and `dynamicOperandsUnlowered` (removed in review round 1).
+  - On the Prepared lane (`createsFunctionObjects`), every comparison pair goes into the carrier except:
+    - two dynamic values, which already take the dynamic arm;
+    - two numeric scalars of one kind;
+    - two strings under `==`/`===`.
+  - An `externref` scalar (an object) is not a fast path.
+  - The concrete side goes into the carrier through `storedCarrierValue`. That also covers a closure's function value
+    and an ordinary object.
+  - A relational operator that has a dynamic operand against a number keeps the ToNumber + `f64` compare.
+  - Off the lane nothing changes.
+- **Leave it better.** `src/shared/contracts/dynamic-add-helper.ts` became `dynamic-operator-helpers.ts`, which now
+  holds the four relational helper names too (codegen re-exports them). The equality body's flatten preamble is
+  `flattenLocals`/`castFlatReads`, which the compare reuses.
+- Size: `from-ast.ts` 17340 → 17269. `lowerBinary` is at its budget. There is no grant.
+
+### Condition D: what refuses or aborts, and why
+
+- **A function operand that needs ToPrimitive** (relational; `==` against a non-nullish primitive) is the run-time
+  abort. Function.prototype.toString is the source text, which no closure carries (F1b). Strict equality, and loose
+  equality against `null`/`undefined`/objects, answer node's value.
+- **A program that names `Symbol`** refuses by name. That is the existing ToPrimitive gap: `@@toPrimitive` is
+  reachable.
+- **BigInt, Symbol, wrapper objects (`new Number`) and Date** never enter the carrier on this lane. They refuse at
+  their own site.
+- **A concrete operand with no carrier kind** refuses by name: `'<op>' operand has no dynamic carrier`.
+- **Errors** (G1): ordinary realm objects, converted by their own `toString` (`e == "TypeError: m"` is true).
+
+### Proof
+
+- **Probes.** The 202 Phase-1 programs, base = main c3b7be667a (base re-run after the merge, same tallies as before
+  it) vs head:
+  - refused→right 18, abort→right 4, refused→abort 3 (`log += …` inside a closure, which is L0c);
+  - nothing right became anything else;
+  - 0 wrong, 0 invalid, 0 exceptions.
+  - Plus 33 condition programs (A/B/C, all node's answer with their twin) and 5 Error programs (4 right; 1 still
+    refuses on `null.x`'s `null`, which is L0b).
+- **Operand sweep.** 20 kinds × 20 × 8 operators × {top level, inside a function}, one program per (operator,
+  position, left operand), 384 programs:
+  - 5,992 comparisons equal node's answer.
+  - 64 comparisons end at the function-ToPrimitive abort: all are function pairs, and all predicted.
+  - 344 function pairs were not generated. Each needs the function's ToPrimitive, so each is a predicted abort.
+  - 0 wrong.
+  - 32 random programs re-run with a wrong twin: all 32 twins throw.
+  - In a function, `null` comes through `id(null)`: a `null` literal under a number hint is L0b's refusal.
+- **Code units.** `"𐀀" < "￿"` is true. So are `"a" < "B"` false, `"" < "a"`, the prefix cases, and
+  `<=`/`>=` on equal strings. Checked typed and dynamic, and with `utf8Storage: true`.
+- **Mutations** (each alone): killed / survived.
+  - Converting the right operand first: killed, 8 order programs wrong.
+  - ToPrimitive on two objects: killed (`eq-objobj`).
+  - Treating a conversion's `null` like any primitive: **survived** the first test set. A test was added
+    (`z == 0` with `valueOf` → `null`); now killed.
+  - Dropping `externref` from the carrier rule: killed (the new object-locals test).
+- **Ordinary pipeline.** Identical bytes, base vs head, on two sets:
+  - 22 test262 comparison files × default/standalone;
+  - 6 ordinary-pipeline comparison probes × 2, including standalone `string < string` through the relocated
+    `__str_compare` body.
+- **`check:prepared-bytes`.** 804 rows; 5 differ, all compiling now and all run:
+  - 205 and 442 (`lt('a','b')` on typed strings): refused → `main=1`.
+  - 213, 237 and 579 (loose `==` of dynamic values): before, they compiled with an abort body; now they return
+    node's answer.
+- **Tests.**
+
+  | file | tests | exit |
+  |---|---:|---:|
+  | issue-7354-l0a-relational (new) | 8 | 0 |
+  | issue-7354-l0a-loose-equality (new) | 5 | 0 |
+
+  - Pins moved: Str (typed string compare now runs; the loose-equality refusal row removed), R census (no
+    `js.string.compare` selected, the compare runs), T truthiness and D1 (the loose-equality refusal rows removed),
+    D1 (the selection gains `stringCompare`).
+  - Every other `issue-7354-*` file (64), each alone, exits 0 except `o-objects` "refuses what the later steps build".
+    That one fails on main c3b7be667a too.
+  - 3526 string-boundary const, 3518 vocabulary/verification, 3526 runtime-manifest pass.
+  - 3526 boundary-residuals (4) and boolean-boundary-intrinsic (2) fail identically on main.
+
+### Sample (411 rows, real runner, base = main c3b7be667a)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| base | 82 | 25 | 304 |
+| L0a | **85** | 25 | 301 |
+
+- The three new passes are exactly the rows Phase 1 predicted: equals S11.9.1_A2.4_T2, greater-than-or-equal
+  S11.8.4_A4.12_T1 and relational S9.1_A1_T4. No other row changed.
+- **Targeted set** (the 197 built-in-free L0 rows outside the sample): 16 → **30** pass, no pass lost.
+  - New passes: does-not-equals A7.8; equals A3.2, A5.3, A7.9; greater-than-or-equal A2.2_T1, A4.11; greater-than
+    11.8.2-1, A2.4_T2, A3.1_T1.3; less-than-or-equal 11.8.3-2, A2.3_T1, A4.11; less-than A3.1_T1.3, A4.10.
+  - 3 rows moved to a later blocker: L0b's `null`, and `.toString()` on an object local, twice.
+- **Twins.** All 17 new passes have a mutated twin, written next to the original, run through the same runner and
+  deleted. The twin is the last `!==` flipped, or else the last `assert.sameValue` Boolean flipped, or else the last
+  `if` negated. All 17 twins FAIL.
+
+### Gates
+
+Exit 0, against the merge base and against `LOC_GATE_BASE` = c3b7be667a:
+- typecheck, LOC budget, function budget, coercion sites, oracle ratchet;
+- dead exports, import cycles;
+- compiler boundaries (`--mode inventory`): `dynamic-comparisons.ts` is clean ir-program, `string-compare-body.ts` is
+  clean native-runtime, and `dynamic-comparison-lowering.ts` is mixed-needs-split like `realm-static-call.ts`.
+
+### Not verified
+
+- Node 25 (not installed; Node 22).
+- The 344 ungenerated function pairs of the sweep (predicted aborts).
+- The full vitest suite: only the files listed above were run.
+
+### L0a review round 1 (PR 7513; `main` a9cdc8857a merged)
+
+**Blocker, fixed.** A Boolean data property of a function-local object refused the whole program, also where the
+function never ran. Example: `function t() { var o = { t: true, n: 1 }; return o.t == o.n; } var out = "ok";` →
+`semantic intrinsic js.boolean.unbox is unavailable under boolean-boundary policy`.
+- **Cause.** The typed read plan (`prepare-ordinary-object-access.ts`) types `o.t` as Boolean, and from-ast unboxes the
+  realm's [[Get]] result with `js.boolean.unbox`.
+  - The native unbox exists only with the keyed-Get result proof of the getter graph
+    (`native-object-result-requirements.ts`). Selecting `unbox: "native"` was tried: it then refuses with
+    `native Boolean extraction needs its exact keyed Get result proof`.
+  - On main the comparison refused inside `t` first, so `t` became an abort body and the program compiled. L0a lowered
+    the comparison and exposed the read.
+  - On main the same read already refused the whole program under `if (o.t)`, `o.t === true` and `o.t > o.f`.
+- **Fix.** On the Prepared lane the read is the dynamic value: the [[Get]] carrier boxed as `dynamic`. `carrierKindOf`
+  answers `dynamic` for a `js.object.get` result, and the box arm takes it as it is. Every use converts it: `==`, `>`,
+  ToBoolean, `===`.
+  - Off the lane the unbox stays.
+  - `check:prepared-bytes` shows no row change from this fix.
+- **Tests.** In the relational file: an uncalled function → `"ok"`; called → node's answer for `==`, `!=`, `>`, `>=`,
+  `===` and truthiness; both with wrong twins. o-objects' "Boolean unbox refuses" expectation is removed; the rest of
+  that test was red on main already.
+
+**Quality findings.**
+1. **One string compare on the Prepared lane.**
+   - `js.value.string_compare` now takes two native strings: `(string, string) -> i32`.
+   - Typed `string < string` calls it directly, without the carrier (`emitStringRelational`, moved to
+     `dynamic-comparison-lowering.ts`). `comparisonTakesCarrier` leaves two strings alone.
+   - The dynamic string arm reads each operand with `js.value.as_string` and calls the same intrinsic.
+   - The ordinary pipeline's `__str_compare` and the Prepared resource are one definition,
+     `buildStringCompareDefinition`. Ordinary bytes are identical.
+   - **Why `js.string.compare` is not reused yet.** That seam is a `call` on the `IR_STRING_COMPARE_FN` intrinsic
+     func-ref. The Prepared physical plan reserves such a call through a native call ABI row, and
+     `native-invocation-abi.ts` (`nativeCallAbiBindings`) already builds those rows for two families. Reusing the seam
+     therefore needs a third family in that builder, plus a string-compare resource in the native string setup.
+     **Deferred; follow-up:** bind `js.string.compare` on the Prepared lane through `nativeCallAbiBindings` and the
+     shared `buildStringCompareDefinition`, then drop `js.value.string_compare`.
+2. **`primitivesOf`** lives in the conversion builders. The addition and both comparisons use it.
+3. **`I32`** is exported from the chains and shared.
+4. **One relational table**, `RELATIONAL_OPERATORS` in `src/shared/contracts/dynamic-operator-helpers.ts`. It is keyed
+   by token and holds the helper, the f64 compare and the sign fold. The front end looks it up by token, the
+   legalization by helper.
+5. **`both()` is now `operandsHold(every | some)`.** It decides from the proven kinds before testing, which
+   `disjunction` does not.
+6. **`NativeDynamicValueStrings`** is `{ layout, flatten, equals }` with `equals` explicitly optional. Strict
+   equality's string arm is built from `strings.equals` in one place; the compare reads `layout` and `flatten`.
+7. **The `ComparisonLoweringHost` alias** is gone; the module uses `FunctionObjectLoweringHost`.
+8. **Doc text.** The overlong line is gone. The plan text now says `tryLowerDynamicRelational` changed on the move.
+9. **The `'<op>' operand has no dynamic carrier` refusal is removed.**
+   - No program reaches it: an array operand refuses earlier (`resolver cannot register vec`). An `undefined`-typed
+     local, closures, objects, strings, numbers and Booleans all box.
+   - The front end's dynamic arm ends at its original producer-promise invariant again.
+
+**Proof (round 1).**
+- Probes, base = main a9cdc8857a vs head: the 202 Phase-1 programs plus the reviewer's 141 (`probes2-4.json`).
+  - refused→right 89, abort→right 43, refused→abort 5;
+  - nothing right became anything else, no abort became a refusal;
+  - 0 wrong, 0 invalid, 0 exceptions.
+- The 33 condition programs, the 6 Boolean-property programs and the 4 Error programs: node's answer with twins.
+  Under `utf8Storage` the code-unit programs agree too.
+- Reduced sweep: 64 random programs of the 384. 50 agree with node; 14 end at the predicted function-ToPrimitive
+  abort, all function pairs. 16 of them were re-run with wrong twins, and every twin throws.
+- Ordinary pipeline: identical bytes on the 22 test262 comparison files and the 6 comparison probes, × default and
+  standalone (including standalone `string < string` through the shared body).
+- `check:prepared-bytes` vs main a9cdc8857a: the same 5 rows as before (205, 213, 237, 442, 579), all now node's
+  answer; no other row changes.
+- Tests: l0a-relational 9/9, l0a-loose-equality 5/5, d1 43, str 18, r census 117, str2c 32, t2 string-number 7, o2b 15.
+  - o-objects fails only at its first expectation, which is red on main.
+  - 3526 string-boundary-compare fails 2 on main and on head alike.
+- Gates exit 0, against the merge base and against `LOC_GATE_BASE` = a9cdc8857a: typecheck, LOC, function budget,
+  coercion sites, oracle ratchet, dead exports, import cycles, compiler boundaries (`--mode inventory`).
+- `from-ast.ts` is 17235 lines (main 17337).
+
+### L0a review round 2 (nits; no behaviour change)
+
+- The obstacle text above is corrected: reusing `js.string.compare` needs a third family in `nativeCallAbiBindings`
+  plus a string-compare resource. It is deferred and listed as a follow-up.
+- `operandsHold` takes the two operands as a pair, and its `known` rule is spelled out. The single-caller defaults are
+  gone (`bothNullish` is a `choose` over it).
+- `comparisonTakesCarrier` uses the shared `isEqualityOperator`.
+- `native-dynamic-values.ts` names strict equality's string arm (`stringEquality` / `NO_STRING_EQUALITY`) and drops
+  the compare's guard, which the reservation already rules out.
+- `+` now boxes through `carrierOperand` like the comparisons. Off the lane it is the same `boxConcreteToDynamic`; on
+  the lane its newly boxable operands (objects, closures) do not reach the arm yet, because `binaryOperandsAdmissible`
+  keeps `dynamic + object-local` out. Six `+` probes give the same outcomes on main and head.
+  - **Follow-up:** admit `dynamic + object/function` on the Prepared lane.
+- Rows 237 and 579 of `check:prepared-bytes` change bytes against round 1 (the `bothNullish` shape) and still return
+  node's answer. The ordinary probes are identical.
+
+## Slice L0b plan (2026-11-26, branch `claude/7354-l0b` from `claude/7354-l0` 8a7f1ada7d)
+
+Statement and expression shapes. Every arm is gated on the Prepared lane (`createsFunctionObjects`), and
+`from-ast.ts` (17235 lines at the base) must not grow.
+
+### Measured at the base (51 probes, `.tmp/l0b.json`; 0 wrong)
+
+| shape | today |
+|---|---|
+| `;` in a body, an `if` arm or a loop body | refused / abort: `unsupported body statement EmptyStatement`, `unexpected statement before tail` |
+| `switch` on a dynamic or string home, mixed or non-literal tests | refused / abort: `switch disc must lower to i32/f64`, `string-tested switch disc lowered to dynamic`, `switch-case-test-mixed`, `switch-case-test-nonliteral` |
+| more arguments than parameters | refused: `call to f has 2 args, expected 1` |
+| a void call used as a value | refused: `call to f returned void used as expression` |
+| a ternary whose arms differ (number vs undefined/null, string vs undefined) | refused: `ternary branches have different types` |
+| a mutable string local in a function | abort: `mutable binding 's' (string) has no slot representation` |
+| `null` under a number hint (`var x = null` in a function, `{ n: null }`) | refused / abort: `bare 'null' in non-reference context (f64)` |
+| `j = i++`, `j = --i` | refused / abort: `PostfixUnaryExpression`, `value-position prefix update` |
+| `true + 1` | refused: `'+' operands not provably both-number or string-concatenable (boolean/number)` |
+
+`String(a < b)` already works on the L0a head. `i += 2` in value position works.
+
+### Design and placement
+
+- **EmptyStatement** (§14.4: completes empty).
+  - `lowerStmt` returns at an EmptyStatement.
+  - `lowerStatementList` drops EmptyStatements before choosing the tail.
+  - One predicate lives in a new sibling module, `src/ir/statement-shapes.ts`.
+- **switch** (§14.12.4).
+  - The disc is lowered once, with the hint the tests imply, as today.
+  - When the typed ladder cannot take it (a disc of another type, mixed or non-literal tests), the lane takes a
+    carrier dispatch: the disc goes into a carrier slot, and each test in source order is evaluated lazily and compared
+    by `js.value.strict_eq` in a nested `if` chain that writes the clause index.
+  - The existing index ladder (`emitSwitch`) then runs unchanged; `default` keeps its place, because the ladder already
+    handles it.
+  - The string dispatch (`lowerStringSwitchDispatch`, about 70 lines) moves beside the carrier dispatch, in a new module
+    `src/ir/switch-dispatch.ts`. That pays for from-ast's new call.
+- **Extra arguments** (§10.2.11, §13.3.8.1).
+  - `planUnderArityDirectCall` becomes one arity plan for both directions, moved out of from-ast.
+  - Extra arguments are lowered as discarded expressions after the supplied ones, before the call.
+  - A callee that names `arguments` keeps the refusal.
+- **A void call used as a value** (§10.2.1.4): on the lane the value is the dynamic `undefined` after the call.
+- **A mixed ternary.** On the lane, when the arms' IR types differ and each boxes, both arms are boxed into the carrier
+  inside their own buffers; the join is dynamic.
+- **A mutable string local.** On the lane it takes the dynamic slot representation; the initial write and every
+  assignment box the string, and reads are dynamic.
+- **`null` under a non-reference hint.** On the lane it is the carrier's null, whatever the hint; the user converts it.
+- **Value-position `++`/`--`** (§13.4.2–13.4.5).
+  - `lowerIncrementDecrement` returns the old ToNumeric value and the new value.
+  - Prefix in value position answers the new value, postfix the old one.
+  - Statement position is unchanged.
+- **`true + 1`.** On the lane, `+` over a Boolean and a number boxes both and takes the dynamic `+`, through the same
+  box route as the comparisons (`carrierOperand`).
+
+### Still refused (by name)
+
+- nested function declarations (L0c);
+- a closure writing a captured local (ref cells, own slice);
+- array literals (#7352);
+- `arguments`;
+- `switch` with two `default`s (an early error anyway);
+- a `case` test of no carrier kind.
+
+### Tests and proof
+
+- `tests/issue-7354-l0b-*.test.ts`, one per family: node agreement plus a wrong twin, at top level and in a function.
+  - switch: lazy order logged, fallthrough, `default` first/middle/last, `"1"` vs `1`, NaN never matches.
+  - Extra arguments: side effects in order.
+- The 51 base probes plus the L0a probe sets, base → head: nothing right changes, 0 wrong.
+- Ordinary bytes identical; `check:prepared-bytes` with every difference explained.
+- The 197 targeted rows and the sample through the runner, each new pass with a failing twin; all gates.
+- Quality: from-ast does not grow; no second ladder (the carrier dispatch feeds the existing `emitSwitch`); one arity
+  plan; every arm gated on the lane.
+
+## Slice L0b result (2026-11-26, branch `claude/7354-l0b` from `claude/7354-l0` 8a7f1ada7d)
+
+Every arm is gated on the Prepared lane (`createsFunctionObjects`). `from-ast.ts` 17235 → 17179.
+
+### Built
+
+- **EmptyStatement.** `lowerStmt` returns at one; `lowerStatementList` drops them before it picks the tail. No
+  `statement-shapes.ts`: the predicate is `ts.isEmptyStatement`, so a module for it would have one trivial user.
+- **switch** (`src/ir/switch-dispatch.ts`, new, `switchDiscriminant`).
+  - It owns the choice from-ast made inline: the typed ladder, the string dispatch (moved here unchanged), or (new)
+    the carrier dispatch.
+  - The carrier dispatch keeps the discriminant in an externref slot. Each test, in source order, is lowered inside
+    the previous test's `else`, boxed (`carrierOperand`) and compared by `dyn.eq` (strict). The first match writes the
+    clause index; no match leaves -1. The existing `emitSwitch` ladder runs on that index, so `default` keeps its place.
+  - Taken for a discriminant the typed ladder cannot compare, and for mixed or non-literal tests. Two `default`s and a
+    test of no carrier kind still refuse.
+- **Extra arguments** (`src/ir/direct-call-arity.ts`, new, `directCallArityPlan`). The under-arity plan moved out of
+  from-ast and now covers both directions. Extra arguments are lowered as discarded expressions after the supplied
+  ones. A callee that reads `arguments` keeps the refusal, because the extras are not passed.
+- **A void call used as a value** is the carrier's `undefined` (`voidCallValue`, both call sites).
+- **`null` under a non-reference hint** is the carrier's null (the existing externref-null box).
+- **Value-position `++`/`--`** (`lowerValueUpdate`). `lowerIncrementDecrement` returns the old ToNumeric value and the
+  new value; prefix answers the new one, postfix the old. Only an identifier operand; statement position is unchanged.
+- **`+` that is neither provably numeric nor provably string** (`true + 1`) takes the dynamic `+` over
+  `carrierOperand`. The addition chain no longer builds an empty kind test when neither side may be a string (that
+  threw out of `compile()` in the first cut).
+- **A conditional of differing primitive arms** (`laneMixedConditional`). Number, string, Boolean (checker), `null`
+  and `undefined`/`void` (syntax) of different kinds join on the carrier through the arm lowering the dynamic join
+  already had (`lowerCarrierConditional`, extracted from `tryLowerDynamicConditionalValue`). An arm of unknown kind
+  (`c ? 1 : id(null)`) keeps the refusal: boxing it would change the bytes of conditionals that compile today.
+- **A function's string local stored into again.** Not a from-ast slot change: the lane has no string slot type at
+  from-ast time. The provenance (`rewrittenStringLocal` in `source-dynamic-provenance.ts`) names such a local, the
+  lane resolver hands that to from-ast's existing `localNeedsDynamicCarrier`, and the local counts as carrying. So the
+  local, its function's result and every value it reaches agree on the carrier. A first cut that boxed in
+  `bindLocalName` alone ended in `dyn.string_carrier` at the typed-string return.
+- **`null == undefined`** (cheap, seen in the probes): the null fold now leaves it to the carrier comparison on the
+  lane instead of refusing.
+
+### Still refused or aborting
+
+- Nested function declarations, `log += v` on an outer local inside a function (L0c), array literals (#7352).
+- `arguments` with extra arguments; two `default`s; a conditional arm of unknown kind.
+- A string's own `length` and indices read through the carrier are the run-time abort (they come with arrays, #7352).
+  A reassigned string local is now carrier-held, so `s.length` on it aborts at run time where the function used to be
+  an abort body; base `id("x").length` aborts the same way.
+- `{ ; }` as a block statement in a function prefix (`unexpected statement before tail (got Block)`); blocks are not L0b.
+- `for (var i…) …; return i` (`identifier "i" is not in scope`), independent of `;`.
+
+### Proof
+
+- **Probes**, base → head, one process per set:
+  - The 51 L0b programs (`l0b.json`, base = main a9cdc8857a): refused→right 22, abort→right 18, nothing right
+    changed, 0 wrong. Remaining: the 6 named above.
+  - Extra sets (switch 9, conditional/arguments 11, string locals 7, null 3): all node's answer, with twins, except the
+    named refusals (`arguments` with extras) and the `.length`/`.charAt` aborts.
+  - The L0a and reviewer sets (343 programs), L0a head → L0b head: refused/abort→right 76, refused→abort 2 (`log += …`
+    in an inner function, L0c), nothing right changed, 0 wrong/invalid/exceptions. Base main → L0b head: 0 lost.
+- **Ordinary pipeline.** Identical bytes, main vs head: 62 test262 files (the 22 comparison files plus every fifth
+  targeted L0 row) × default/standalone, and 19 ordinary probes × 2, 13 of them L0b shapes (string/numeric/any switch,
+  `;`, extra and missing arguments, mixed conditionals, `++` values, `true + 1`, a string local, `== null`, a void
+  call's value).
+- **`check:prepared-bytes`**, 804 rows vs the L0a head: 4 differ, all explained, all run:
+  - 179 (`id(1, 2)`) and 203 (`s = s + "q"` in `h`): refused → compiles, returns.
+  - 243 (`return ++x`) and 578 (`v == null` in `q`): an abort body before → `main=2` / returns.
+- **Runner** (CI's IR-path runner, standalone, honest):
+
+  | set | main | L0a | L0b |
+  |---|---:|---:|---:|
+  | sample (411) | 62 | 85 | **87** |
+  | targeted (197) | 16 | 30 | **41** |
+
+  - No pass lost against main or L0a.
+  - New: if S12.5_A10_T1, defineProperties 15.2.3.7-5-b-218 (sample); asi S7.9_A11_T11, S7.9_A9_T5, call 11.2.3-3_1,
+    does-not-equals S11.9.2_A6.2_T1, logical-and S11.11.1_A2.4_T2, prefix-increment S11.4.4_A4_T4, function
+    S13.2.1_A7_T2, switch S12.11_A1_T1 and A1_T3, while S12.6.2_A4_T2, string S8.4_A8 (targeted).
+  - **Twins.** 12 of 13 have a failing twin. Seven come from the generic flip. Five are hand-made, because the generic
+    flip found no `!==`/`if (`; its twins for them were garbage and passed, so they are discarded:
+    `SwitchTest('0') === 6`, `SwitchTest(NaN) === 128`, `if(!function …)`, `return x.p`, `get: undefined`. All 12
+    FAIL. S7.9_A9_T5 has no check (an ASI parse test), so it has no twin.
+- **Tests.** `issue-7354-l0b-statements` 6/6 and `issue-7354-l0b-expressions` 6/6, every program node's answer plus a
+  wrong twin. Rows that L0b lifts were removed or turned into node agreement: m-refusals (F41), d1 (prefix update),
+  p (extra argument), str (reassigned string local), t (`== null`), ty (five non-literal case tests, now node
+  agreement with twins), w (mixed arm, now node agreement).
+  - Each alone, exit 0: l0a-relational 9, l0a-loose-equality 5, d1 42, m-refusals 42, p 25, str 17, t 105, ty 61,
+    w 8, h2 31, t2 7, 7340 66, 7341 91, 7143 3, 7106 prophelper 18, 7106 s1i 3, 3518 cutover 6, 3518 leaf 71, 4502 29.
+  - Red on main and on head alike: 2952-slice6 (16, `type incompatibility when transforming from/to JS`), 4515-wave5
+    (3), 7106-lever-v (2).
+
+### Gates
+
+Exit 0, against the merge base and `LOC_GATE_BASE` = a9cdc8857a: typecheck, LOC, function budget (`lowerCall` held at
+its budget by passing the lane it already computes), coercion sites, oracle ratchet, dead exports, import cycles,
+compiler boundaries (`--mode inventory`; both new modules mixed-needs-split like `switch-case-tests.ts`).
+
+### Not verified
+
+- The full vitest suite (only the files above).
+- Node 25 (Node 22 here).
+
+### L0b review round 1 (PR 7516)
+
+**Wrong value, fixed** (on main already; the decision now lives in `switch-dispatch.ts`). A Boolean discriminant met
+numeric tests as the number 0/1: `var b = true; switch (b) { case 1: … }` chose `case 1`, as did `switch (1 > 2)
+{ case 0: … }` and the function-local form.
+- **Cause.** The numeric ladder took any `i32` discriminant, and a Boolean is an `i32`.
+- **Fix.** On the Prepared lane the ladder takes only an `f64` discriminant. An `i32` one takes the carrier dispatch,
+  whose strict equality never equates a Boolean with a number. An `i32` the carrier cannot box (a Boolean local without
+  the brand, `var b = x > 0`) is the refusal, never the ladder. Off the lane nothing changes.
+- **Mirrors.** `switch (1) { case true: }` and Boolean tests against a Boolean discriminant were refused on main
+  (non-literal tests) and are node's answer on head.
+- **Ordinary pipeline: the same bug, left alone** (its bytes must not change here). `var b = true; switch (b as any)
+  { case 1: return 1; default: return 2; }` returns 1 on the default and standalone targets; JS returns 2.
+  **Follow-up issue to file:** the ordinary pipeline's switch ladder compares a Boolean discriminant as 0/1.
+- Test: `never equates a Boolean discriminant with a number, nor a number with a Boolean test` (top level and in a
+  function, wrong twins). On main these programs give the wrong value.
+
+**Quality.**
+1. One lane predicate, `onPreparedDynamicLane` (`src/ir/prepared-dynamic-lane.ts`), over a resolver member
+   `preparedDynamicLane` next to `createsFunctionObjects` in the lane resolver. The host carries it as
+   `onPreparedDynamicLane()`. Every L0a/L0b lane site uses it, including the comparison lowering, the switch dispatch
+   and the arity plan (which now takes the resolver, not a flag). `from-ast.ts` is back to main's six
+   `createsFunctionObjects(cx.resolver)` sites, all of which ask about function objects.
+2. `conditionalJoinArmFamily` takes `null` (`nullish`) and an optional `typed` fallback. `laneMixedConditional`
+   asks it and `conditionalJoinFamily` (`unknown` = arms of different kinds); its local classifier is gone. A `null`
+   arm still has no dynamic join for the existing callers (`conditionalJoinFamily("dynamic", "nullish")` is
+   `unknown`, as `null` was).
+3. The update docs: `lowerValueUpdate`'s doc, then `UpdatedValues`, then `lowerIncrementDecrement`'s own doc.
+4. Nits: prefix and postfix updates both go through `lowerValueUpdate` in `lowerExpr` (the prefix refusal is back to
+   main's text); `provenAdditiveOperands` answers an `AdditivePlan` (`proofs`, `carrier`); `switchDiscriminant`
+   computes its tests; the arity plan's admission is two plain conditions.
+
+**Proof (round 1).**
+- Probes, ≤ 10 per process, 394 programs (51 L0b + 343 L0a/reviewer) plus the 10 Boolean-switch programs: against
+  the round-0 head, one change (`null-eq@fn` abort → right, the round-0 fix landed after that capture); nothing right
+  changed; 0 wrong/invalid/exceptions. The Boolean programs: 4 wrong on main → right; 4 refused/aborted on main → 3
+  right and 1 abort (the unbranded Boolean local above); the 2 integer switches unchanged.
+- Ordinary bytes identical, main vs head: 24 probe programs × default/standalone, 5 of them Boolean switches.
+- `check:prepared-bytes` identical to the round-0 head.
+- Tests: l0b-statements 7, l0b-expressions 6, l0a-relational 9, l0a-loose-equality 5, ty 61.
+- Gates exit 0, also with `LOC_GATE_BASE` = origin/main (a9cdc8857a). `from-ast.ts` 17175.
+
+### L0b review round 2 (no behaviour change)
+
+- Round 1's claim that the remaining `createsFunctionObjects(cx.resolver)` calls all ask about function objects was
+  false for two: `Number(v)`'s carrier ToNumber and `lowerCall`'s `lane`. Both use `onPreparedDynamicLane` now.
+- One resolver answer. The lane is exactly where closures are function objects, so `preparedDynamicLane` (resolver and
+  host member) and `prepared-dynamic-lane.ts` are gone. `onPreparedDynamicLane` sits next to `createsFunctionObjects`
+  in `function-object-lowering.ts` and reads the same answer under the lane's name; both take one `LaneResolver`
+  type, which `direct-call-arity.ts` shares.
+- `AdditivePlan` is a union: the carrier plan carries no proofs.
+- `check:prepared-bytes` identical to round 1; l0a/l0b test files pass; gates exit 0.
+
+## Slice L0c plan (2026-11-26, branch `claude/7354-l0c` from `claude/7354-l0b` 73576740a0)
+
+Function declarations inside functions and blocks, closures that write captured or module bindings, and the cheap
+`var` leftovers. Every arm is gated on `onPreparedDynamicLane`; `from-ast.ts` (17172 at the base) must not grow.
+
+### Measured (L0b head results: the 197 targeted rows and the 411 sample; 27 probes, `.tmp/l0c.json`)
+
+- **First blocker on 90 runner rows** (targeted + sample):
+
+  | blocker | rows | mostly |
+  |---|---:|---|
+  | `identifier "f"/"x"/… is not in scope` | 37 | annex B function-in-block (`f` read before or outside its block) |
+  | `unsupported body statement FunctionDeclaration` | 25 | annex B, and `function g(){}` inside a function |
+  | `nested func must have a return type annotation` / params annotated | 8 | function declarations inside functions |
+  | `redeclaration of 'f'` | 5 | annex B `var f` beside `function f` |
+  | `assignment to undeclared identifier` | 10 | sloppy implicit globals (`y = 1`): out of scope (needs the global object) |
+  | `compound assign … has no numeric carrier` / `LabeledStatement` / `Block` | 5 | leftovers |
+
+  54 of the 90 are `annexB/` (B.3.3 function-in-block). "What is next behind them" is measured once M1–M4 exist; the
+  probes below show the first layer.
+- **Probes** (27, base = L0b head, all fail today): 12 function-declaration shapes (abort: annotations, `no exact
+  AST-site plan`, `not in scope`), 10 captured-write shapes, 5 leftovers.
+- **Diagnosis of the captured-write refusal** (`nondefaultable reference widening needs a separately authenticated
+  physical post-state`, `ir-program-presentation.ts` `referenceDemand`): the program DOES use the Prepared native ref
+  cells (`native-ref-cell-requirements.ts` → `native-ref-cells.ts`, reserved by the source-closure setup and resolved
+  by `resolveNativeSourceRefCell`). Only the presentation's authenticated native slots
+  (`requireCompletedNativeRealmSlots`) list the source-closure shapes and closure types but not the ref-cell types,
+  so the `__ref_cell_f64` local reads as an unauthenticated reference. Measured with the cell types added there
+  (uncommitted): `x = …`, `x++`, a returned counter, two closures sharing one variable and a write from a nested
+  closure all give node's answer.
+- **Module bindings from a function.** `log = log + v` works; `log += v` and `n++` abort with `undeclared`:
+  `lowerIdentifierAssignment` resolves a script binding through `resolveModuleBinding` when the scope misses it, the
+  compound and update paths do not.
+
+### Mechanism (reuse; no second one)
+
+- **M1 — ref cells are authenticated.** `requireCompletedNativeRealmSlots` (`native-realm.ts`) also lists the
+  source-closure setup's ref-cell types, through one accessor beside `resolveNativeSourceRefCell`
+  (`native-source-closures.ts`). The cells, their reservation and their resolution are the existing ones.
+  - Then: a captured string written in a closure (`mutable closure capture "s" must be a primitive`) takes a cell of
+    the carrier (`externref` inner, already a native cell inner) when the local is the dynamic value on the lane.
+- **M2 — module-binding writes from functions.** One helper that answers the scope binding or, when the scope has
+  none, the resolver's module binding as a `moduleGlobal` binding (with its TDZ check). Plain, compound and update
+  assignment all use it; the plain path's inline copy moves into it. Lives in from-ast beside the write arms (net
+  shrink: the inline copy goes).
+- **M3 — function-level `var` hoisting on the lane, only where needed.** A new module
+  (`src/ir/function-var-hoisting.ts`) answers, per function body, the `var` names (VarDeclaredNames, §10.2.11 step 27)
+  that must exist before their declaration is lowered: declared in a nested statement (`case`, block, `for (var …)`)
+  and used outside it, read before the declaration, or bound to a hoisted function declaration (M4). Each gets the
+  existing uninitialized-`var` slot (`lowerUninitializedVar`: the carrier's `undefined`) at function entry; its
+  declarations become writes. The provenance must agree (`localNeedsDynamicCarrier`, as L0b's string local): a hoisted
+  name is the dynamic value. Any other `var` keeps today's lowering and bytes.
+- **M4 — function declarations in a function body.** Each is hoisted (§10.2.11 step 36): at function entry, in source
+  order, its binding (M3) is assigned the function value of the declaration lowered like a function expression with
+  the declaration's name (the existing closure / function-object path, `dynamicClosureSignature`), so a later
+  declaration of the same name wins. A reference inside any of them to a sibling or to itself reads the binding,
+  which is written after the closures are created, so the capture is a cell (M1); mutual recursion and a call before
+  the declaration therefore see the function.
+  - **Annex B.3.3** (sloppy, as node runs it): a declaration in a block or `case` binds the var name to `undefined`
+    at function entry (M3) and, when the declaration is evaluated, copies the block's function into it; inside the
+    block the name is the block's function, created at block entry. Needs Block statements in a function body
+    (leftover), which this slice adds in the same scope shape the `if` arms use.
+  - The ordinary pipeline's `lowerNestedFunctionDeclaration` (annotated, direct-call) is unchanged off the lane.
+- **Leftovers that fall out:** `var` in a `case` read after the switch and `i` after `for (var i…)` (M3); `{ ; }` and
+  `{ x = 2; }` in a function (the Block arm); a string local from a literal union reassigned (the L0b provenance rule
+  also takes a string-union initializer); nested ternaries whose result has no Prepared contract (the result contract
+  takes the dynamic value when every arm is a primitive; measured separately, may stay out).
+
+### Still refused / aborting (by design)
+
+- Implicit global creation (`y = 1` with no declaration), `with`, `eval`, `arguments` with extra arguments, arrays (A1),
+  wrappers (W2), for-in/`delete` (E1), strict-mode block functions (lexical only; refused by name if met).
+
+### Order, tests, proof
+
+1. M1 + M2 (small, measured above), 2. M3, 3. M4 inside function bodies, 4. annex B blocks, 5. leftovers.
+- Tests `tests/issue-7354-l0c-*.test.ts`: node agreement with a wrong twin, top level and in a function: hoisting,
+  captures, self and mutual recursion, redeclaration, returned functions, `if`/`switch`/block declarations; closure
+  writes (`=`, `+=`, `++`, shared, returned, nested, strings, loop closures with `var`); module-binding `+=`/`++`.
+- Probes base → head (≤ 10 per process): `.tmp/l0c.json` plus the L0a/L0b sets; nothing right may change, 0 wrong.
+- Ordinary bytes identical; `check:prepared-bytes` with every difference explained; runner sample + targeted with
+  twins for every new pass.
+- **Quality criterion:** one ref-cell mechanism (the native cells), one module-binding write lookup, one hoisting
+  predicate module; function declarations are lowered by the closure path, not a second lifting path; `from-ast.ts`
+  does not grow; no `func-budget-allow`.
+
+## Slice L0c result, part 1 (2026-11-27, branch `claude/7354-l0c`; L0b 73bce75aaf merged)
+
+M1, M2 and M4 of the plan (with the part of M3 that M4 needs). Annex B block functions and the `var` leftovers are
+not done yet (next part). `from-ast.ts` 17172 → 17152.
+
+### Built
+
+- **M1.** `requireCompletedNativeRealmSlots` lists the source-closure setup's ref-cell types
+  (`nativeSourceRefCellTypes`, re-checked like `resolveNativeRefCell`). A mutable capture of the dynamic value takes a
+  cell of the carrier: `boxed<dynamic>` in from-ast, `boxed<externref>` in carrier form (`carrierOf`), and the
+  allocation registry re-types the cell site with the closures (`retypeToCarrierForm`). A plain or compound write
+  into such a cell stores the carrier. No change to `lower-generic.ts`: the legalized cell is a scalar cell.
+- **M2.** `laneModuleBinding`: a compound or update write in a function reaches a script binding the scope does not
+  hold. `lowerCompoundAssignment` reads and writes its storage through one `read`/`write` pair.
+- **M4.** A function declaration in a function body with the all-dynamic contract is hoisted
+  (`hoistFunctionDeclarations`): its name and every `var` of the body that a declaration reads or writes
+  (`localDeclarationCaptures`, shared with the provenance) are cells of the carrier bound at entry; the declarations
+  are created through the closure path (`lowerDynamicClosure`, now shared with function expressions) in source order;
+  a `var` declaration of a hoisted name is a write. A call of a function-local declaration reads its binding
+  (`sourceFunctionCallee` takes top-level declarations only); such a declaration makes the program create function
+  values (`programObjects`). An annotated declaration keeps the nested-function lowering.
+- **Size.** The capture analysis moved to `closure-captures.ts` (`analyseClosureCaptures` over a `lookup` host);
+  `heldType` replaces two copies of the "value a binding holds" expression.
+
+### Still refused or aborting
+
+- Annex B function-in-block (54 of the 90 first-blocker rows), `var` declared in a nested statement and read outside
+  it, `{ … }` blocks in a function prefix, a declaration sharing a parameter's name (abort), an object element store
+  in a loop closure.
+
+### Proof
+
+- Probes: the 394 L0a/L0b/reviewer programs + 10 Boolean switches, ≤ 10 per process, L0b head → L0c head:
+  abort→right 32 + 14 (M1/M2 step), nothing right changed, 0 wrong/invalid/exceptions. 27 L0c programs: 20 right
+  (the 7 others above); 10 more function-declaration programs: 9 right, 1 the parameter-name abort. All with twins.
+- Ordinary bytes identical, main vs head: 33 probe programs × default/standalone (closures with captured writes,
+  annotated nested functions, compound module writes) and the 62 test262 files.
+- `check:prepared-bytes` identical to L0b.
+- Runner: targeted 41 → **44** (function-code 10.4.3-1-30-s, 10.4.3-1-42-s; throw S12.13_A3_T6), sample 87 → 87; no
+  pass lost. The 3 new passes have hand-made twins (the generic flip would hit a message string); all 3 fail.
+- Every root test file the branch modifies (17), each alone, exit 0: d1 42, fa 41, h2 31, l0a-loose 5,
+  l0a-relational 9, l0b-expressions 6, l0b-statements 7, l0c-captured-writes 5, l0c-function-declarations 5,
+  m-refusals 42, o-objects 13, p 25, r-provider-census 117, str 17, t 105, ty 61, w 8.
+- Gates exit 0, also with `LOC_GATE_BASE` = origin/main (a9cdc8857a).
+
+### L0c part 1, review round 1
+
+- **A1 (wrong value, fixed).** `localDeclarationCaptures` took a function's `let`/`const` too and hoisted it as
+  `undefined`, losing its TDZ. It now takes `var` declarations only; a nested declaration that reads or writes a
+  `let`/`const` ends at the run-time abort (`typeof x` before `let x`: node `tdz`, ours: abort).
+- **A2 (wrong value, fixed).** "Hoisted" was decided by name, so a block `let x` wrote the function's cell of `var x`.
+  The cell now records the function body it was bound for; a declaration writes it only when it is a `var` of that
+  body. The block `let` refuses as a redeclaration (abort).
+- Quality: orphaned doc comments moved back; `validateExactCapturePlan` lives in `closure-captures.ts`; the stale
+  slice-3 comment is replaced; the dynamic conditional join takes a call through a binding of the dynamic value and
+  `laneMixedConditional` is back to L0b's rule; `hoistFunctionDeclarations` picks its declarations, refuses a
+  parameter's name before lowering, and answers a Set; the capture scan is uncached (no dead parameter) and
+  `enclosingFunctionBody` has no defensive test.
+- Proof: the 404 probes are identical to part 1 (0 wrong); runner targeted 44, sample 87, unchanged; ordinary bytes
+  identical (33 programs × 2); the 17 modified root test files each exit 0 alone; gates exit 0.
+
+### L0c review r3: lost write through a closure created in a nested block (2026-11-27)
+
+- **Wrong value, fixed.** `function t(){ var sum = 1; for (var i = 0; i < 4; i++) { var f = function () { sum = sum * 2; };
+  f(); } return String(sum); }` answered `"1"` (node `"16"`); the same in a `while`, `do`, `if`, `try`/`catch`/`finally`
+  body and two levels deep, for a captured parameter, and for a loop body's `let` read after an inner block. Cause:
+  the closure literal moved its mutable capture into a new cell at the closure (`lowerClosureExpressionWithSignature`,
+  `lowerNestedFuncCall`) and rebound the name in the scope it was lowered in — a block's or loop body's copy — so the
+  enclosing scope kept reading the uncaptured local, and a loop made a fresh cell per iteration.
+- **Rule** (`capturedBindings`, `function-declaration-values.ts`): a binding of a function that a nested function
+  reads or writes has one cell, made where the binding is, before any statement can capture it — a `var` (a cell of
+  the carrier, as a nested declaration's captured `var` already was) and a parameter (a cell of its value) at function
+  entry, a `let` statement's binding where it is bound (per iteration in a loop body). On the Prepared lane a closure
+  only passes that cell (`mutableCaptureCell`); a capture with no cell — a loop head's `let`, a `catch` binding, a
+  parameter kept in a slot — refuses (run-time abort). The ordinary pipeline keeps its in-place cell.
+- **Probes** (vs node, wrong twins fail): right — the two reported programs' loop form, `for`/`while`/`do`/`if`/`try`/
+  `switch` bodies, two levels deep, several closures sharing one `var`, read-and-write, `+=`/`++`/`--`/`=`, a captured
+  parameter in a loop, a `var` declared and captured in the loop body (`"3"`), recursion, a body `let` per iteration
+  (also after an inner block), a closure calling a closure; unchanged right — hoisted mutual recursion, captured writes
+  outside loops, compound member writes, a closure created outside the loop; aborts — a closure kept and called after
+  the loop (`assignment … got closure`), a loop head's `let` written by a closure, `for-in` (no dynamic for-in), a bare
+  block statement and a block function declaration (L0c2). Wrong: 0.
+
+## Slice L0c part 2
+
+Moved to its own issue: [#7554](7554-prepared-block-function-declarations.md) (one issue per PR, 2026-11-27).
+
 ## Slice O2 r1 fix (2026-11-26, branch `claude/7354-o2-fix` from `main` c3b7be667a; PR 7415 merged without it)
 
 - **Blocker fixed: `new` on an accessor function** constructed an object (node: TypeError). IsConstructor is now the

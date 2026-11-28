@@ -14,6 +14,7 @@ import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall, realmConstantRead } from "./realm-static-call.js";
 import { realmConstructorId, type RealmFamily } from "./program/builtin-prototype-keys.js";
+import { isFunctionLocalDeclaration } from "./function-declaration-values.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -51,8 +52,13 @@ export function programObjects(
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
+      isFunctionLocalDeclaration(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
-    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
+    functions ||=
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isAccessor(node) ||
+      isFunctionLocalDeclaration(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };

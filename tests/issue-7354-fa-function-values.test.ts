@@ -17,7 +17,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { abortsAtRunTime, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, agreesWithNode, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -156,46 +156,41 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = (a) => a; f(1);",
       "module-level closure binding 'f' not in module-init Slice 2 scope",
     ],
-    // A mutable capture has no carrier arm yet; (#7354 F1) a closure returned as a dynamic result is a function value
-    // (tests/issue-7354-f1-function-expressions.test.ts), called through a value in slice F2.
-    [
-      "a captured local written after the closure is created",
-      "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
-      'captures non-local binding "x"',
-    ],
+    // (#7354 F1) A closure returned as a dynamic result is a function value
+    // (tests/issue-7354-f1-function-expressions.test.ts), called through a value in slice F2. (#7354 L0c) A captured
+    // `var` written after the closure is created is the function's one cell now
+    // (tests/issue-7354-l0c-captured-writes.test.ts).
     // A written parameter: what the slot does not serve yet, each by its own name.
     [
       "a nested closure reading a written parameter",
       "var f = function (a) { var k = function () { return a; }; a = 2; return k(); }; f(1);",
       'captures non-local binding "a"',
     ],
-    [
-      "a nested closure writing a parameter",
-      "var f = function (a) { var k = function () { a = 5; }; k(); return a; }; f(1);",
-      'mutable closure capture "a" must be a primitive',
-    ],
+    // (#7354 L0c) A nested closure writing a parameter shares the carrier's cell now
+    // (tests/issue-7354-l0c-captured-writes.test.ts).
     [
       "`arguments` aliasing a written parameter",
       "var f = function (a) { a = 2; return arguments[0]; }; f(1);",
-      'identifier "arguments" is not in scope',
+      "arguments object beyond arguments.length",
     ],
     [
       "a closure assigned to a parameter",
       "var f = function (a) { a = function () { return 1; }; return a; }; f(1);",
       'assignment to "a" (dynamic) got closure()->dynamic',
     ],
-    // JavaScript hoists the local; the closure captures only what is bound where it is created.
-    [
-      "a closure reading a local declared after it",
-      "function g() { var k = function () { return x; }; var x = 1; return k(); } g();",
-      'closure g__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
-    ],
+    // (#7354 L0c) A closure reading a local declared after it now reads the hoisted `var` (an agreement test below).
     // (#7354 F1) `+=` on a parameter, `+`, `String(f)` and `typeof` of a function value:
     // tests/issue-7354-f1-*.test.ts.
     // (#7354 H2) A declaration read as a value and written has a mutable home: tests/issue-7354-h2-*.test.ts.
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
   });
+
+  // (#7354 L0c) JavaScript hoists the `var`: a function body binds a local read before its declaration at entry.
+  it("reads a local declared after the closure that reads it", () =>
+    agreesWithNode(
+      "function g() { var k = function () { return x; }; var x = 1; return k(); }\nvar out = String(g());",
+    ));
 
   // (#7354 C2) Sloppy `this` without a receiver would be the global object, which the realm lacks: the run-time abort.
   it("ends a sloppy function value's `this` without a receiver at the run-time abort", () =>

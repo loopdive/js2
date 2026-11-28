@@ -16,7 +16,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { abortBodies, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -182,8 +182,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     [
       "a TDZ ReferenceError",
       "function f() { return x; }\ntry { f(); } catch (e) { if (!e) throw 1; }\nlet x = 1;",
-      // (#7354 O1) The thrown ReferenceError is no carrier kind: the program-wide throw rule refuses it first.
-      "throw of a value outside the dynamic carrier's kinds",
+      // (#7354 L0c) The lane has no ReferenceError to throw, so the TDZ check refuses its function.
+      "TDZ check of 'x' has no Prepared throw in f",
     ],
     [
       "a vector store (the null-vector guard throws a null payload)",
@@ -209,14 +209,11 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     expect(messages(result).join("\n")).toContain(expected);
   });
 
-  // (#7354 O1) The throw rule binds only a program with a catch binding: without one no source code reads a payload,
-  // so a throw the compiler synthesizes meets its own step, not the carrier's kinds.
-  it("leaves a TDZ ReferenceError in a program without a catch to its own refusal", async () => {
-    const result = await compile("function f() { return x; }\nf();\nlet x = 1;", options());
-    expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain(
-      "runtime callable __new_ReferenceError needs runtime function materialization",
-    );
+  // (#7354 L0c) Without a catch too, the TDZ check refuses only its function, whose body is the run-time abort.
+  it("ends a TDZ ReferenceError in a program without a catch at its function's abort", async () => {
+    expect(await abortBodies("function f() { return x; }\nf();\nlet x = 1;")).toEqual([
+      "f: ir/from-ast: TDZ check of 'x' has no Prepared throw in f",
+    ]);
   });
 
   // (#7354 O2) An ordinary object is a kind of the dynamic value, so a thrown object reaches the catch binding as

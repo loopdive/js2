@@ -69,6 +69,7 @@ export const DYNAMIC_VALUE_RUNTIME_FEATURES = Object.freeze([
   "js.value.is_number",
   "js.value.is_string",
   "js.value.strict_eq",
+  "js.value.string_compare",
   "js.value.to_boolean",
   "js.value.undefined",
   "js.value.unsupported",

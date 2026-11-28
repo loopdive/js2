@@ -24,6 +24,7 @@ import { preparedBindingRewritten, scriptVarWrites } from "./module-binding-scri
 import { annexBWritesScriptBinding } from "../shared/annexb-block-functions.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import { syntacticAnnotation } from "./select-expression-structure.js";
+import { isHoistedVar } from "./function-hoisting.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 import { realmConstantRead } from "./realm-static-call.js";
 
@@ -34,6 +35,8 @@ export interface SourceDynamicProvenance {
   readonly scriptVarHome: (declaration: IrModuleBindingDeclaration) => IrScriptVarHome | undefined;
   /** The value of `expression` may be the dynamic value. */
   readonly carries: Carries;
+  /** (#7354 L0b) The resolver's `localNeedsDynamicCarrier`: {@link rewrittenStringLocal} on the lane. */
+  readonly localNeedsDynamicCarrier: (declaration: ts.VariableDeclaration) => boolean;
 }
 
 /**
@@ -85,8 +88,12 @@ export function sourceDynamicProvenance(
       true,
       () =>
         syntacticAnnotation(declaration) === undefined &&
-        (declaration.initializer === undefined || carries(declaration.initializer, declaration)),
+        (declaration.initializer === undefined ||
+          carries(declaration.initializer, declaration) ||
+          localNeedsDynamicCarrier(declaration)),
     );
+  const localNeedsDynamicCarrier = (declaration: ts.VariableDeclaration): boolean =>
+    dynamicCarrier && (rewrittenStringLocal(checker, declaration) || isHoistedVar(declaration, checker));
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
@@ -156,12 +163,30 @@ export function sourceDynamicProvenance(
         return false;
     }
   };
-  return { scriptVarHome, carries: (expression) => carries(expression) };
+  return { scriptVarHome, carries: (expression) => carries(expression), localNeedsDynamicCarrier };
+}
+
+/**
+ * (#7354 L0b) An unannotated function-level local created with a string and stored into again. The lane has no
+ * string slot (its string representation is the program's own type), so such a local lives in the carrier.
+ */
+function rewrittenStringLocal(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
+  const { name, initializer } = declaration;
+  return (
+    ts.isIdentifier(name) &&
+    initializer !== undefined &&
+    syntacticAnnotation(declaration) === undefined &&
+    !isTopLevelStatementDeclaration(declaration) &&
+    !isModuleInitVarList(declaration.parent, "with-for-in-heads") &&
+    (checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.StringLike) !== 0 &&
+    preparedBindingRewritten(checker, name)
+  );
 }
 
 /**
  * The source function declaration with a body that `call` calls directly, if any. (#7354 H2) A call of a rewritten
- * declaration reads its binding, which may hold any value.
+ * declaration reads its binding, which may hold any value; (L0c) so does a call of a declaration inside a function,
+ * whose binding is the carrier's cell.
  */
 export function sourceFunctionCallee(
   checker: ts.TypeChecker,
@@ -170,6 +195,7 @@ export function sourceFunctionCallee(
   const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
   return callee !== undefined &&
     ts.isFunctionDeclaration(callee) &&
+    ts.isSourceFile(callee.parent) &&
     callee.body !== undefined &&
     !preparedBindingRewritten(checker, callee.name!)
     ? callee

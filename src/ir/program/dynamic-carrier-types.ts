@@ -20,6 +20,8 @@ export function containsDynamic(value: unknown): boolean {
 
 export function carrierOf(type: IrType): IrType {
   if (type.kind === "dynamic") return CARRIER;
+  // (#7354 L0c) A mutable capture's cell of the dynamic value holds the carrier.
+  if (type.kind === "boxed") return containsDynamic(type) ? { kind: "boxed", inner: carrierOf(type.inner) } : type;
   if (type.kind !== "closure" && type.kind !== "callable") return type;
   return containsDynamic(type) ? { kind: type.kind, signature: carrierSignature(type.signature) } : type;
 }
@@ -59,13 +61,15 @@ export function carrierClosureSubtype(fn: IrFunction): Pick<IrFunction, "closure
   };
 }
 
-/** Re-type the allocation sites of the legalized closures with the carrier form their `closure.new` now has. */
+/** Re-type the allocation sites of the legalized closures and (#7354 L0c) ref cells with their carrier form. */
 export function legalizeDynamicAllocations(functions: readonly IrFunction[], allocations: AllocSiteRegistry): void {
   for (const fn of functions)
     for (const block of fn.blocks)
       for (const root of block.instrs)
         forEachInstrDeep(root, (instr) => {
           if (instr.kind === "closure.new" && instr.alloc !== undefined && instr.resultType?.kind === "closure")
-            allocations.retypeClosure(instr.alloc, instr.resultType);
+            allocations.retypeToCarrierForm(instr.alloc, instr.resultType);
+          if (instr.kind === "refcell.new" && instr.alloc !== undefined && instr.resultType?.kind === "boxed")
+            allocations.retypeToCarrierForm(instr.alloc, instr.resultType);
         });
 }

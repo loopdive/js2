@@ -1121,6 +1121,10 @@ function planSourceClosureSetup(
       : undefined;
   if (sourceClosures) {
     for (const gap of sourceClosures.gaps) gaps.add(gap.detail, gap.unitId);
+    // (#7354 L0c) A cell type is issued under the closure root a signature declares: a cell whose capturing closure
+    // the lowering never created (it sat in dead code) has none.
+    if (sourceClosures.refCells.length > 0 && sourceClosures.signatures.length === 0)
+      gaps.add("a mutable capture cell needs a closure root, and the program creates no closure");
     for (const unit of sourceClosures.units) {
       const fn = bodies.get(unit.unitId);
       if (fn?.asyncPlan || fn?.asyncRuntime)

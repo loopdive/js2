@@ -43,6 +43,20 @@ import { annexBDeclaringRange, annexBWritesScriptBinding } from "../shared/annex
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
 /**
+ * (#7354 L0c) A function declaration with a body inside a function, not a script's: on the Prepared lane it is a
+ * function value its function makes at entry (from-ast hoists one with the all-dynamic contract), so the program may
+ * create function objects.
+ */
+export function isFunctionLocalDeclaration(node: ts.Node): node is ts.FunctionDeclaration {
+  return ts.isFunctionDeclaration(node) && node.body !== undefined && !ts.isSourceFile(node.parent);
+}
+
+/** The body of the function `node` is declared in, if any. */
+export function enclosingFunctionBody(node: ts.Node): ts.Node | undefined {
+  return (ts.findAncestor(node.parent, ts.isFunctionLike) as ts.FunctionLikeDeclaration | undefined)?.body;
+}
+
+/**
  * The top-level function declarations of a program with one startup source that some identifier of that source reads
  * as a value, or that an Annex B block function writes, in source order. A call's callee is no value read: a call
  * stays the declaration's direct call. (#7354 C2) `new`'s constructor is one: [[Construct]] takes the function object,

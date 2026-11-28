@@ -146,18 +146,9 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     expect(await run(program(3 - answer))).toBe("threw");
   });
 
-  // Loose equality other than a tag test is not lowered (`typeof` comparisons: slice Ty's tests).
+  // (#7354 L0a) Loose equality of two dynamic values is lowered now (tests/issue-7354-l0a-loose-equality.test.ts).
+  // (#7354 L0b) So is `== null` (tests/issue-7354-l0b-expressions.test.ts).
   it.each([
-    [
-      "`== null`",
-      "function q(v) { return v == null; }\nif (q(undefined) !== true) throw 1;",
-      "bare 'null' in non-reference context (f64)",
-    ],
-    [
-      "loose equality",
-      "function q(v, w) { return v == w; }\nif (q(1, 1) !== true) throw 1;",
-      "dynamic operation dyn.eq (loose) has no Prepared intrinsic",
-    ],
     // The other from-ast paths the externref-carrier flag switches on; each still refuses before it matters.
     [
       "a dynamic for-in head",
@@ -304,11 +295,6 @@ describe("#7354 T review round 2 — `&&` / `||` with a typed left and a dynamic
       "function f(b, c) { var r = 0; r = (b > 1) && c; return r; }\nf(5, 7);",
       'assignment to "r" (f64) got dynamic',
     ],
-    [
-      "with a typed number left operand",
-      "function f(n: number, c: any) { return n && c; }\nf(5, 7);",
-      "operator '&&' requires bool operands",
-    ],
     // Should-fix (1): an unannotated result with no Prepared contract names its type, not a later void call.
     [
       "returning `n as unknown`",
@@ -358,12 +344,6 @@ describe("#7354 T review round 3 — an unused `&&` / `||` keeps its right opera
     const throwing = HEAD + at(`${left} ${op} ${right.replace("inc", "boom")}`);
     expect(await run(throwing.replace("@A", op === "&&" ? "1" : "0"))).toBe("threw");
     expect(await run(throwing.replace("@A", op === "&&" ? "0" : "1"))).toBe("returned");
-  });
-
-  it.each(["&&", "||"])("refuses a typed number left operand of an unused `%s` by name", async (op) => {
-    expect(await refusal(`${HEAD}function f(a, b){ (a * 1) ${op} inc(b); return n; } f(1, 1);`)).toContain(
-      `operator '${op}' requires bool operands in f`,
-    );
   });
 });
 

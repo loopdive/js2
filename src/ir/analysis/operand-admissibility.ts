@@ -296,7 +296,7 @@ export function isNumericReaderOperator(op: ts.SyntaxKind): boolean {
   return isRelationalOperator(op) || isNumericArithmeticOperator(op) || isBitwiseOperator(op);
 }
 
-function isBitwiseOperator(op: ts.SyntaxKind): boolean {
+export function isBitwiseOperator(op: ts.SyntaxKind): boolean {
   return (
     op === ts.SyntaxKind.AmpersandToken ||
     op === ts.SyntaxKind.BarToken ||
@@ -705,17 +705,23 @@ export function slotWriteVerdict(slot: OperandFamily, value: OperandFamily): Slo
 /**
  * (#7113) The family of a conditional arm the dynamic join (`m ? m : ''`)
  * takes as written, read syntactically by the selector and by from-ast alike:
- * a primitive literal (`number` / `string` / `boolean`) or a value `void x`
- * (`undefined`). `null` = not such an arm (the other arm must then be the
+ * a primitive literal (`number` / `string` / `boolean`), `null` (`nullish`) or
+ * a value `void x` (`undefined`). (#7354 L0b) `typed` answers an arm the syntax
+ * does not decide. `null` = not such an arm (the other arm must then be the
  * dynamic one, or the conditional is not the join).
  */
-export function conditionalJoinArmFamily(arm: ts.Expression): OperandFamily | null {
+export function conditionalJoinArmFamily(
+  arm: ts.Expression,
+  typed?: (arm: ts.Expression) => OperandFamily | null,
+): OperandFamily | null {
   let e = arm;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return "string";
   if (ts.isNumericLiteral(e)) return "number";
   if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return "boolean";
-  return ts.isVoidExpression(e) ? "undefined" : null;
+  if (e.kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  if (ts.isVoidExpression(e)) return "undefined";
+  return typed?.(e) ?? null;
 }
 
 /**

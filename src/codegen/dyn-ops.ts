@@ -9,7 +9,13 @@ import {
   ensureAnyToExternHelper,
   ensureExternStrictEqHelper,
 } from "./any-helpers.js";
-import { IR_DYN_ADD_FN } from "../shared/contracts/dynamic-add-helper.js";
+import {
+  IR_DYN_ADD_FN,
+  IR_DYN_GE_FN,
+  IR_DYN_GT_FN,
+  IR_DYN_LE_FN,
+  IR_DYN_LT_FN,
+} from "../shared/contracts/dynamic-operator-helpers.js";
 import { ensureExternLooseEqHelper } from "./helpers/loose-equality-to-primitive.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
@@ -30,11 +36,7 @@ import {
   IR_DYN_CALL_VALUE_FN,
 } from "../shared/contracts/dynamic-call-helpers.js";
 
-export { IR_DYN_ADD_FN };
-export const IR_DYN_LT_FN = "__ir_dyn_lt";
-export const IR_DYN_LE_FN = "__ir_dyn_le";
-export const IR_DYN_GT_FN = "__ir_dyn_gt";
-export const IR_DYN_GE_FN = "__ir_dyn_ge";
+export { IR_DYN_ADD_FN, IR_DYN_GE_FN, IR_DYN_GT_FN, IR_DYN_LE_FN, IR_DYN_LT_FN };
 export const IR_DYN_METHOD_CALL_0_FN = "__ir_dyn_method_call_0";
 export const IR_DYN_METHOD_CALL_1_FN = "__ir_dyn_method_call_1";
 export { IR_DYN_CALL_BOX_FN, IR_DYN_CALL_VALUE_FN, IR_DYN_CALL_ARGUMENT_FN };

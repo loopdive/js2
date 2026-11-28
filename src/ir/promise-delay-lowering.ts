@@ -604,30 +604,6 @@ export function tryLowerPromiseDelayConstruction(
   return promise;
 }
 
-export function validateExactCapturePlan(
-  orderedNames: readonly string[],
-  referencedNames: ReadonlySet<string>,
-  ownParams: ReadonlySet<string>,
-  lookup: (name: string) => "local" | "other" | undefined,
-  funcName: string,
-): void {
-  const ordered = new Set(orderedNames);
-  for (const name of referencedNames) {
-    if (ownParams.has(name)) continue;
-    const kind = lookup(name);
-    if (kind !== undefined && (kind !== "local" || !ordered.has(name))) {
-      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
-      throw new Error(`ir/from-ast: exact closure capture plan omitted binding "${name}" (${funcName})`);
-    }
-  }
-  for (const name of orderedNames) {
-    if (lookup(name) !== "local") {
-      // invariant (producer-promise): the prepared exact proof promised this shape — #4502.
-      throw new Error(`ir/from-ast: exact closure capture "${name}" is not a local in scope (${funcName})`);
-    }
-  }
-}
-
 export function exactClosureLiftedName(prefix: string, ordinal: number, expected: string | undefined): string {
   const actual = `${prefix}__closure_${ordinal}`;
   if (expected !== undefined && expected !== actual) {
