@@ -328,9 +328,30 @@ Pins: `tests/issue-7487-prepared-literal-function.test.ts` and `tests/issue-7487
 
 ### Yield (measured)
 
-The real arm passes **27 of the 197** step-past files with the real harness, equal to the step-past bound (27), and
-27 with the stand-in harness (bound 32). The 89 `fnGlobalObject.js` files refuse by item 8's name ("the global
-Function is not pristine") until #7350 B2b and #7354 C2 give a sloppy direct call the global object.
+On the 197 step-past files (`plan/log/7487-function-ctor-yield/files.txt`, real harness, census entry), measured at
+`cbf90122` and identical file by file at `c01fcc38`: **34 pass, 10 fail, 153 compile errors**. Main passes 0 of them.
+The 89 `fnGlobalObject.js` files refuse by item 8's name ("the global Function is not pristine") until #7350 B2b and
+#7354 C2 give a sloppy direct call the global object. (An earlier figure here, 27, was a count at `a39d8da4`.)
+
+**The 10 failures are run-time aborts this arm does not introduce.** Each test reaches code that was already
+unlowerable once its `Function` site compiles:
+
+| files | trap | under the `"refuse"` policy |
+| --- | --- | --- |
+| 13.2-5-s, 13.2-9-s, 13.2-13-s, 13.2-17-s | the census entry's abort-body policy (#7354 U): an unlowerable body becomes `unreachable` when run, by design of the measuring entry | refuses by name: `unsupported tail statement FirstStatement` |
+| 13.2-14-s, 13.2-18-s | a site-naming run-time abort (#7486): `member write 'arguments' of a function needs a sloppy function's own arguments object` | still traps |
+| S15.3.4.4_A2_T2 | the same kind: `member read 'call' of a function needs Function.prototype's properties` | still traps |
+| S15.3.4.4_A1_T1, S15.3.4.3_A1_T1 | the same kind: `new with a 'prototype' that is a function, not an ordinary object` | still traps |
+| S15.5.4.11_A1_T5 | the same kind: `member read 'replace' of a string needs String.prototype's properties` | still traps |
+
+The six site-naming aborts are the dynamic-value legalization's run-time aborts, which a program reaches without any
+`Function` site, under `"refuse"` too. For example:
+
+- `function k(){return 1} var g = k; g.call();`
+- `function C(){} C.prototype = function(){}; new C();`
+- `var zz; var f = function(){ this.zz = 1 }; f(); zz;`, which traps exactly like `var zz; Function("this.zz = 1")(); zz`.
+
+So "every gap keeps a named refusal" holds at select, but not at run time for those shapes.
 
 ### Acceptance, row by row
 
@@ -349,7 +370,8 @@ Measured with the `"refuse"` policy and `skipSemanticDiagnostics` (the test262 l
 
 ### Amended rows: deferred, with their owners
 
-The rows below cannot meet the plan's answer yet. Each keeps a named refusal and none answers wrongly.
+The rows below cannot meet the plan's answer yet. Each refuses at select, or, for the shapes in the yield table above,
+aborts at run time through an existing run-time abort; none answers wrongly.
 
 | row | plan | today | waits on |
 | --- | --- | --- | --- |
@@ -360,6 +382,10 @@ The rows below cannot meet the plan's answer yet. Each keeps a named refusal and
 | `new (Function("this.a = 1"))()` | `a === 1` | refuses: `only direct constructor names supported in slice 4` | C2's direct-construct path |
 | `toString()` | the assembled text | refuses: `needs Function.prototype's properties`, or traps through a `var` like every F1b value | #7350 (Function.prototype) |
 | sloppy `this` (the 89 files) | the global object | refuses by item 8's name | #7350 B2b + #7354 C2 |
+
+Known gap (RV-PR7556): bodies that are valid only in sloppy code, such as `Function("return 010")`, `Function("-->x")`
+and `Function("", "-->x")`, make no source (a TS parse diagnostic, or the conservative HTML-like-comment check), so the
+site keeps today's generic refusal `direct call to "Function" has no exact AST-site plan`.
 
 The follow-up to move `function-source-text.ts` to a neutral leaf (lead, 2026-11-26) is still open.
 
