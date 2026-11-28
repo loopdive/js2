@@ -296,12 +296,17 @@ const ROWS = {
     body: ({ kernel }, tx) => {
       const d = nativeBuiltinFunctionOperands(tx, kernel);
       // (#7561) A held prototype object, (#7574) and the realm's root, is read after the realm's initialization.
+      const { root, intrinsics } = kernel.requests.requirements;
       const value = (id: string): readonly Instr[] | undefined => {
-        if (id === OBJECT_PROTOTYPE_ID && kernel.requests.requirements.root)
+        if (id === OBJECT_PROTOTYPE_ID && root)
           return [{ op: "call", funcIdx: kernel.functions.objectPrototype.handle }];
-        // (#7557) Function.prototype is the bootstrap entry (named by its behavior, aliased by its id).
-        if (id === FUNCTION_PROTOTYPE_ID || kernel.entries.some((entry) => entry.id === id))
-          return [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }];
+        // (#7557) Function.prototype is the bootstrap entry (named by its behavior, aliased by its id): a program
+        // value where the realm seeds it with a function value it holds (its `constructor`, `call`).
+        const held =
+          id === FUNCTION_PROTOTYPE_ID
+            ? intrinsics.some((row) => row.behavior === "function-prototype" && row.properties !== undefined)
+            : kernel.entries.some((entry) => entry.id === id);
+        if (held) return [{ op: "call", funcIdx: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }];
         const object = d.objects.find((row) => row.id === id);
         return (
           object && [

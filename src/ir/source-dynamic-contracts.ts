@@ -324,8 +324,9 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly closureCodeStrictness?: CodeStrictness;
     /**
      * (#7557) Where closures are function objects, some function value exists and the realm may hold a callable
-     * built-in (the program names a realm constructor or a prototype method held by name), a value may be a built-in
-     * the dispatcher reaches: module-init installs the realm's built-in caller.
+     * built-in (the program names a realm constructor, or a prototype method held by name as a value,
+     * `ProgramObjects.methodValues`), a value may be a built-in the dispatcher reaches: module-init installs the
+     * realm's built-in caller.
      */
     readonly realmBuiltinCaller?: () => boolean;
   };
@@ -422,9 +423,7 @@ export function programDynamicContracts(
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
           realmBuiltinCaller: () =>
-            functionObjects &&
-            objects.functions &&
-            (objects.realmFamilies.size > 0 || objects.prototypeMethodNames.size > 0),
+            functionObjects && objects.functions && (objects.realmFamilies.size > 0 || objects.methodValues),
         }
       : {},
     result: (declaration) =>

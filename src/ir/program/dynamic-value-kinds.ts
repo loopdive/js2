@@ -177,6 +177,11 @@ export interface ProgramObjects {
   readonly replacedStatics: ReadonlySet<string>;
   /** (#7557) The prototype methods held by name whose names the source spells (`hasOwnProperty`, `call`, …). */
   readonly prototypeMethodNames: ReadonlySet<string>;
+  /**
+   * (#7557) The source spells `call`, or one of those names other than as the `m` of a call `x.m(…)`: such a method may
+   * be called through a value. A call `x.m(…)` alone answers at its own site (`dynamicPrototypeMethodCall`).
+   */
+  readonly methodValues: boolean;
   /** (#7557) The program may replace `Function.prototype.call` (or a built-in's own `call`). */
   readonly replacesCall: boolean;
 }
@@ -199,6 +204,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   staticValues: new Set<string>(),
   replacedStatics: new Set<string>(),
   prototypeMethodNames: new Set<string>(),
+  methodValues: false,
   replacesCall: false,
 });
 

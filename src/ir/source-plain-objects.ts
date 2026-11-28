@@ -42,6 +42,17 @@ const isMemberName = (node: ts.Identifier): boolean =>
   (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
   ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
 
+/** `node` is the `m` of a call `x.m(…)`, which reads the member only to call it at that site. */
+const isCalledMemberName = (node: ts.Node): boolean => {
+  const access = node.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    access.name === node &&
+    ts.isCallExpression(access.parent) &&
+    access.parent.expression === access
+  );
+};
+
 /**
  * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`),
  * or (#7372 2a) an Annex B block function is made as one (`annexb-block-function-values.ts`).
@@ -57,6 +68,7 @@ export function programObjects(
   let functions = readsDeclarationValue;
   let namesSymbol = false;
   const prototypeMethodNames = new Set<string>();
+  let methodValues = false;
   const realmFamilies = new Set<RealmFamily>();
   const wrappers = new Set<NativeWrapperConstructor>();
   // (#7354 G1) The realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it the same way,
@@ -103,8 +115,10 @@ export function programObjects(
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
-    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && PROTOTYPE_METHOD_NAMES.has(node.text))
+    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && PROTOTYPE_METHOD_NAMES.has(node.text)) {
       prototypeMethodNames.add(node.text);
+      methodValues ||= node.text === "call" || !isCalledMemberName(node);
+    }
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
@@ -119,6 +133,7 @@ export function programObjects(
     functions,
     namesSymbol,
     prototypeMethodNames,
+    methodValues,
     realmFamilies,
     wrappers,
     staticValues: escapes ? new Set(HELD_OBJECT_STATICS) : staticValues,
