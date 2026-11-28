@@ -86,8 +86,9 @@ export async function runPrepared(
  * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns. The
  * realm's RuntimeError class is not this vitest context's, so the trap is matched by its class name. (#7486) With
  * `reason`, the abort is the site with that reason, read as the census reads it (`abortSiteOf`): the options must
- * defer the top-level code, so the instance exists when it traps. `node`: (#7609) a script in a fresh realm, for a
- * program that reads the global object.
+ * defer the top-level code, so the instance exists when it traps. `node` runs the source in node: `freshRealmOut` for
+ * a program that writes a built-in, which must not reach this worker's compiler; (#7609) a script in a fresh realm,
+ * for a program that reads the global object.
  */
 export async function abortsAtRunTime(
   source: string,

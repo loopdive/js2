@@ -1,10 +1,11 @@
 ---
 id: 7470
 title: "Same-named top-level bindings in different files share one module global"
-status: ready
+status: done
+completed: 2026-11-27
 sprint: current
 created: 2026-11-26
-updated: 2026-11-26
+updated: 2026-11-27
 priority: medium
 horizon: m
 feasibility: medium
@@ -49,31 +50,343 @@ Re-keying every reader is out of proportion; per-module re-pointing is the route
 
 ## Implementation Plan
 
-New helper module `src/codegen/source-module-globals.ts` owns the per-module binding table; every site below asks it.
+Verified against 50bce1ba04 (branch `claude/7470-module-bindings`, stacked on #7464 / PR #7490) on 2026-11-26.
+Revision 2 (same day) follows the plan review's blocker: allocation keyed by declaration, one projection.
 
-1. **Registration.** A non-owner module's declaration of a colliding name mints its own global. The hoisted-`var`
-   walk passes its `sourceFile`, because in modules it registers without a declaration.
-2. **Function bodies.** `withSourceModuleGlobals` wraps each module's body pass in the `compileMulti` loop
-   (index.ts).
-3. **Module initialiser.** The same wrapper around each `__module_init` statement (`compileOrderedModuleInitEntry`):
-   one initialiser holds every module's statements.
-4. **Imports.** For every import whose target is a colliding binding, bind the local name to the target module's
-   global via `ctx.oracle.aliasedValueDeclarationOf`: named, renamed, default and re-export chains.
-   `registerImportBindingAliases` (index.ts ~9617) copies the owner's index today.
-5. **Namespace imports.** `src/codegen/module-namespace-value.ts` resolves `ns.g` by bare export name at 4 sites
-   (~250, 743, 807, 1250), the TDZ flag included.
-6. **TDZ flags.** `registerModuleTdzGlobal` and `tdzGlobals` get the same per-module treatment.
-7. **`undefined` seeds.** `moduleF64UndefinedSeedGlobals` looks each module's declarations up by bare name;
-   `emitModuleVarUndefinedSeeds` walks one module only. Both resolve per module.
-8. **IR overlays.** `compileMultiPreparedProgramOverlays` runs after the body loop, and `src/ir/integration.ts` has
-   5 bare-name lookups; they take the same per-module binding.
+### Re-measurement (50bce1ba04, `compileMulti`, gc and standalone answer the same)
 
-Out of scope: `src/codegen-linear` keeps its own name-keyed `moduleGlobals` (9 references) and likely has the same
-defect; file it separately once measured.
+Every row of the table above still reproduces with the same numbers. The extra shapes the acceptance criteria
+name, measured with probe `.tmp/v2.mts` (`c.ts` is `let g = 3; export function h() { return g; }`, `dep.ts` is
+`export let g = 1; export function bump() { g = 2; }`):
 
-A 3-step prototype (steps 1–3) fixed every row above with single-file bytes unchanged, but broke a shape that works
-today: entry imports `g` from dep while a third file also declares `g` — node 20, main 20 (by the shared-global
-accident), prototype 0. Steps 4–5 are therefore part of the minimum change, not follow-ups.
+| shape | node | 50bce1ba04 |
+| --- | --- | --- |
+| entry reads its own `let g: number \| undefined` after writing it, dep reads its own (`dep seed`) | 75 | 77 |
+| `import { g }` from dep, third file `c` declares `g` (both import orders) | 23 | 22 |
+| `import { g as k }` + own `let g = 5` + third file | 253 | 222 |
+| `import d` of `export { g as default }` + own `g` + third file | 253 | 222 |
+| re-export chain `mid: export { g, bump } from "./dep"` + third file | 23 | 22 |
+| `import * as d`, `d.g` + third file | 23 | 22 |
+| `import * as d`, `d.g` + own `g` + third file | 253 | 222 |
+| three files, number / string / number | 71 | trap: `illegal cast` |
+| the prototype's regression shape (`reg.mts`: third file's `g` is `0`, never written) | 20 | 20 |
+| TDZ, both files: a hoisted function reads its own `g` before `let g` runs (`.tmp/tdz.mts`) | -89 | 201 |
+| TDZ in dep only, entry's `g` initialised | 17 | 16 |
+
+The `reg.mts` row passes on HEAD only because the shared global happens to hold the right value; it is the row the
+3-step prototype broke, and it goes into the pin test.
+
+
+### Review points, checked against the code
+
+| # | review point | verdict |
+| --- | --- | --- |
+| 1 | Allocation keyed by declaration; `registerModuleGlobal` (`module-global-registration.ts:237-245`) is the name-keyed culprit; `ProgramAbiGlobalRegistry.moduleBindings` already maps declaration → `{value, tdz}` | Agree. The registry exists whenever `experimentalIR` or `trackIrOutcomes` is set (`index.ts:9876-9888`), and `compileMulti` defaults `experimentalIR` on (`compiler.ts:933`), so today its map is the declaration table in the default lane only. Legacy readers already ask it (`identifier-module-storage.ts:217/238`, `identifiers.ts:903`, `property-access.ts:3547`). |
+| 1 | Delete the #1282 `hasModuleValue` workaround (`program-abi-global-planning.ts:62-77`, `module-global-registration.ts:296/312`) | Agree. It exists only because a TDZ flag found by name could belong to another file's value global; a per-declaration TDZ cannot. |
+| 1 | Keying: a declaration is not a binding | Refinement, not disagreement. `var g; var g;` in one file, and a script `var` merged with a lib `declare var`, are several declarations of ONE binding. The table key is the binding's canonical declaration: the first non-ambient entry of `ctx.oracle.declarationsOf(decl.name)` (oracle, not raw checker). |
+| 2 | One projection with `ownFuncIdxBySource` / `funcBindingsBySource` / `rebindPerSourceGeneratorState` (`index.ts:10214-10345`) | Agree, and it fixes a latent #4133 gap: `__module_init` statements of every file compile in one pass (`ModuleInitMode`), under whichever file's `funcMap` state was last applied. One exception, with reason: `withRuntimeModuleCallableBindings` (`runtime-module-callable-metadata.ts:110`) stays. It swaps 12 callable-metadata maps and 4 sets per TS `namespace` function, a different scope (a nested namespace block, not a file), and the per-file projection re-points only colliding names. |
+| 3 | TDZ per declaration; a colliding `let g` hits the `IrInvariantError` at `integration.ts:6317` on the Prepared path | Partly disagree. The design point holds, but I could not reproduce the throw: on 50bce1ba04 every multi-source `<module-init>` unit stops earlier as `late-preparation-unsupported` at `resolve`, with or without a collision (`.tmp/tdz3.mts`), and the test262 Prepared front door (`prepared-program-required`) is single-file. The check `ctx.tdzLetConstNames.has(name) && !tdzGlobal` is name-keyed, so it would throw once multi-source module-init prepares and one file elides a flag its namesake keeps. The measured TDZ defect is a wrong answer: −89 in node, 201 today (table above). |
+| 4 | Drop the overlay-loop wrap | Agree. Under `experimentalIR` the registry exists, and the 6 lookups in `integration.ts` take the `programAbiGlobals` branch by declaration; the `moduleGlobals.get` arms are the registry-less fallback. Exception: the name check above (step 6). The pin test runs every row with `experimentalIR` on and off; if a row fails only with IR on, its site gets named then. |
+| 5 | Fold all three absolute-index helpers | Agree: `exactRuntimeModuleGlobalIndex` (`declarations.ts:1686`), `absoluteGlobalIndex` (`module-namespace-value.ts:750`), `globalIndex` (`object-model/global-var-binding-exotic.ts:107`) become `absoluteGlobalIdx` beside `localGlobalIdx` (`registry/imports.ts:385`). |
+| 6 | Scoped test262 verdict diffs | Agree; the runner filters with `TEST262_PATH_FILTER` (`scripts/run-test262-vitest.sh:62`). |
+| 7 | `registerVarDeclListGlobals` passes the declaration | Agree (`declarations.ts:3538`). Today a module's hoisted `var` registers with no declaration at all (`isHoistedScriptVar` is false in modules), which is why the old plan needed a `sourceFile` argument. |
+
+### Mechanism
+
+**The table.** One always-on table in `module-global-registration.ts` (a per-context `WeakMap`, like the seed and
+pattern tables already there) owns module-binding allocation:
+
+```
+canonical declaration → { name, source, value: GlobalDef, tdz?: GlobalDef, tdzDecided: boolean }
+any declaration       → its canonical declaration
+```
+
+- `registerModuleGlobal(ctx, name, wasmType, declaration)` looks up the canonical record. It reuses the record's
+  global when one exists, and mints `__mod_<name>` when none does. Every global keeps that name, because the ABI
+  checks it (`program-abi-global-planning.ts:237`, `multi-prepared-module-init-batch.ts:167`).
+- The bare `ctx.moduleGlobals` entry is written only when the name has no entry yet. So the first declarer of a
+  name owns it, as today, and a graph without collisions writes the same entries in the same order: same bytes.
+- Calls without a declaration keep the name-keyed reuse: `__namespace_<pos>_<name>`, reassigned functions
+  (`index.ts:9254`), Annex B, the runtime-eval carriers.
+- `ProgramAbiGlobalRegistry` drops its own `moduleBindings` map and `observeModuleValue`/`observeModuleTdz`/
+  `hasModuleValue`; `moduleBinding(declaration)` reads the table and keeps its liveness filter. The invariants
+  that stay — the `__mod_`/`__tdz_` name check, no contradictory allocator objects, no registration after
+  `planRetained` — move to the table's write, asked of the registry only when it exists.
+
+**The per-file view, derived.** For a file, the names to re-point are:
+
+- its own top-level declarations whose name has more than one record;
+- its import bindings: `ctx.oracle.aliasedValueDeclarationOf` on the import specifier gives the target
+  declaration, which covers named, renamed, default (`export { g as default }`) and re-export chains.
+
+Only names whose bare entry is not the record's global go in, so a graph without collisions projects nothing.
+Nothing is recorded per import; `bindImportedModuleGlobal` from revision 1 is gone.
+
+**One projection.** New module `src/codegen/module-bindings/source-binding-projection.ts` owns `withSourceBindings(ctx, source,
+action)`. It applies, for that file:
+
+- the `funcMap` entries of its own colliding functions and of its function imports (today's `ownFuncIdxBySource` /
+  `importFuncIdxBySource` loop);
+- its native-generator state and the one-way `inlinableFunctions` eviction (today's
+  `rebindPerSourceGeneratorState`);
+- its derived `moduleGlobals` / `tdzGlobals` view.
+
+All of it is restored afterwards. Saved state is held as allocator objects (`GlobalDef`, defined `Func`), never
+as indices, because a late import shifts both index spaces during a body pass (`shiftLateImportIndices`). Today's
+`ownFuncIdxBySource` keeps raw indices across passes, a latent hazard this removes. The restore replaces
+`snapshotNativeGeneratorEndState` / `restoreNativeGeneratorEndState`. After the loop the maps hold the
+collect-and-alias state, not the last file's projection (see "Implementation notes" for the readers that remain
+after the loop). The globals half is `withProjectedModuleGlobals`, which
+`withDirectRuntimeModuleBindings` (`declarations.ts:1759`) also uses in place of its own save/restore loop.
+
+**TDZ per declaration.**
+
+- `registerModuleTdzGlobal(ctx, sourceFile, name)` finds the declaration in that file
+  (`findRuntimeTopLevelDeclaration`, keeping #4018's ambient skip). It mints the flag on that declaration's
+  record. It is a no-op for a name the file does not declare whose name has more than one record.
+- Elision is decided per record, from its own file's `computeElidableTopLevelTdzNames`, instead of by deleting
+  from the graph-global `ctx.tdzLetConstNames`. Non-colliding names keep today's path, so their bytes do not
+  change.
+- `integration.ts:6317` asks the record (`tdzDecided` and no flag means elided) instead of
+  `tdzLetConstNames.has(name)`.
+
+### Ordered steps
+
+1. **Index helper.** Add `absoluteGlobalIdx`; fold the three copies.
+2. **Table.** Add the table to `module-global-registration.ts` and move the registry's binding map onto it.
+   Delete `hasModuleValue` and its two callers. `registerVarDeclListGlobals` passes the declaration.
+3. **Per-declaration TDZ** (registration, elision, `integration.ts:6317`).
+4. **Projection.** Add `source-binding-projection.ts` (classified in `scripts/compiler-boundaries.json` like
+   `module-global-registration.ts`: `mixed-needs-split`, `backend-wasmgc`, owner `3518-coordinator`). Move the
+   four `#3505`/`#4133` helpers out of `index.ts`, wrap each file's body pass with it, and rewrite
+   `withDirectRuntimeModuleBindings` onto its globals half.
+5. **Module initialiser.** `compileOrderedModuleInitEntry` (`declarations.ts:5673`) wraps each statement in
+   `withSourceBindings(statement's file)`.
+6. **Imports, namespaces, default export by declaration.**
+   - `registerImportBindingAliases` (`index.ts:9609-9610`): the flat copy takes the target record's global.
+   - `module-namespace-value.ts`: entries carry the record's `GlobalDef`s, not `globalName`. This covers
+     lines 250, 437, 743, 807-809 and 1250; `rebaseNamespaceGlobalReads` re-resolves through
+     `absoluteGlobalIdx`.
+   - The multi-source deferred `export default <var>` (`index.ts:10393`) resolves the entry's declaration.
+7. **Seeds.**
+   - `moduleF64UndefinedSeedGlobals` and `emitModuleVarUndefinedSeeds` iterate the table's `var`/`let` records of
+     every file, in source order, instead of a bare-name lookup over one file's names.
+   - `moduleVarSlotIsUndefinedSeeded` records seeded `GlobalDef`s and compares the projected global.
+8. **Pin test** `tests/issue-7470-same-named-module-bindings.test.ts`: every row above × gc/standalone ×
+   `experimentalIR` on/off, compared with node.
+
+### #7530 and #7531
+
+- **#7531** (only the last file's `var`s are seeded) falls out of step 7. Iterating table records is the change
+  this plan makes anyway, and the alternative leaves a name walk beside the table. Plan: close it with this PR,
+  with its own pin row.
+- **#7530** (same-named reassigned functions share one live-binding global, `index.ts:9254`) does not fall out.
+  It needs four more steps:
+  1. the table key admits `FunctionDeclaration`;
+  2. `registerReassignedFunctionGlobals` registers per entry of the `reassignedDeclarations` set it already
+     computes;
+  3. `ctx.liveFuncBindingGlobals` (a name set) becomes part of the projected view;
+  4. the prologue's live-binding seed loop (`module-init-prologue.ts`) iterates records under each file's
+     `funcMap` projection.
+
+  The table and the projection are its foundation. Kept separate so the key widens when it has a user.
+
+### Size
+
+**12 files** (revision 1: 10):
+
+- 1 new: `source-binding-projection.ts`.
+- 8 edited sources:
+  - `module-global-registration.ts`
+  - `program-abi-global-planning.ts` (shrinks)
+  - `declarations.ts`
+  - `index.ts` (shrinks: the four helpers move)
+  - `module-namespace-value.ts`
+  - `declarations/module-var-undefined-seed.ts`
+  - `registry/imports.ts`
+  - `object-model/global-var-binding-exotic.ts`
+- 1 IR seam: `src/ir/integration.ts`, one check.
+- `scripts/compiler-boundaries.json`, the pin test, this issue.
+
+No context-type change. Estimate: +350 / −250 lines in `src/`.
+
+### Risks
+
+- **More declarations in the table.** Passing the declaration for a module's hoisted and nested `var` puts more
+  declarations in the table, and IR readers may treat a recorded declaration as a module binding. Checked by the
+  byte comparison and by the scoped `TEST262_COMPILER_PATH=ir` diff.
+- **Bodies emitted outside their file's pass** see the collect end state. Known: method trampolines (no binding
+  reads) and namespace getters (step 6 makes them declaration-exact). Any other one the pin test finds is wrapped
+  in `withSourceBindings(declaration's file)`.
+- **Writes to a projected name during a pass are undone by the restore.** Registration happens before any
+  projection. `closures.ts:1192` promotes a function-local TDZ flag into `tdzGlobals` under the local's name: a
+  pin row covers a closure over a function-local `let g` in a colliding file.
+- **Restore semantics for `funcMap`.** A file's pass now starts from the collect end state, not from the
+  previous file's projection. That can change bytes of multi-file graphs, which is acceptable: single-file bytes
+  stay gated, and the `compileMulti` tests are the check.
+
+### Validation
+
+- **Pin test.** Fails on 50bce1ba04 (except the `reg.mts` row) and passes after.
+- **Single-file bytes.** 240 test262 files × gc/standalone (`.tmp/hash.mts`, `.tmp/sample2.txt`), base vs new,
+  identical.
+- **Scoped test262 verdict diffs, base vs new, per test.** `TEST262_PATH_FILTER` over `language/module-code`,
+  `language/import` and `language/export`. Run on standalone (`TEST262_TARGET=standalone`), then again with
+  `TEST262_COMPILER_PATH=ir`. No pass becomes non-pass.
+- **`compileMulti` tests.** 283 test files call it; run the related subset locally (#4133, #3505, #2930, #6669,
+  #6684, namespace, lodash). CI runs the rest.
+- **lodash-es.** `scripts/generate-npm-compat-report.mjs --only lodash-es` (no write),
+  `tests/lodash-es-e2e.test.ts` and `tests/issue-6985-lodash-es-o4.test.ts`, before and after.
+- **Gates, unpiped.**
+  - loc and func budget, also with `LOC_GATE_BASE` = `origin/main` and = the #7490 tip;
+  - coercion sites, oracle ratchet, dead exports, import cycles;
+  - compiler boundaries with `--base HEAD^1` and `--base origin/main`;
+  - prettier on the changed files;
+  - `node scripts/equivalence-gate.mjs` once at the end.
+
+### Code-quality acceptance criterion
+
+- **One allocation authority.** The declaration table in `module-global-registration.ts` decides module-binding
+  storage. `ctx.moduleGlobals` / `ctx.tdzGlobals` are a per-file view derived from it. The registry reads the
+  table and owns no second map.
+- **One per-file projection** (`withSourceBindings`) for `funcMap`, generator state, `moduleGlobals` and
+  `tdzGlobals`, sharing its globals primitive with the namespace projection. The only other mechanism left is
+  `withRuntimeModuleCallableBindings`, kept for the reason given above.
+- **One `absoluteGlobalIdx`.** No index-holding saved state.
+- No budget grants, no dead parameters, no branches for states the table cannot reach.
+
+## Implementation notes (2026-11-27)
+
+Where the code departs from revision 2 of the plan, and why:
+
+- **The binding key is scope + name, not an oracle-canonical declaration.** A module scope holds one binding per
+  name, and every Script shares one global environment record, so `(module SourceFile | Script realm, name)`
+  identifies a binding exactly: `var g; var g;` and a `var` merged with a lib `declare var` both collapse to one
+  binding, as the oracle key would have done, without an oracle query per registration. Every declaration is then
+  mapped to its binding.
+- **Three new files instead of one.** Each holds one concern, and each has several users:
+  - `module-binding-table.ts` is the table itself, pure data. The plan put it in `module-global-registration.ts`.
+    But `ProgramAbiGlobalRegistry` must read it, and `module-global-registration.ts` is inside the 708-file import
+    SCC (a cycle of files that all import each other; it imports `expressions/identifiers.ts`), while
+    `program-abi-global-planning.ts` is outside it. Reading the table from there would pull the registry into the
+    SCC and fail the `check:import-cycles` ratchet. It is a leaf with 6 importers.
+  - `global-space.ts` is the defined-global twin of `func-space.ts`: `absoluteGlobalIdx` and `definedGlobalAt`.
+    The plan put the folded index helper in `registry/imports.ts`, but that module is inside the SCC too, and
+    importing it would pull in `object-model/global-var-binding-exotic.ts` (kept out of the SCC on purpose) and the
+    projection module. Measured: one such edge grew the largest SCC from 708 to 709 files. It has 7 importers.
+  - `source-binding-projection.ts` is the planned per-file projection.
+- **The shared projection primitive is `moduleNameState` / `setModuleNameState`.** The plan called it
+  `withProjectedModuleGlobals`. `withDirectRuntimeModuleBindings` and `withSourceBindings` both use it. A name with
+  more than one binding is captured as its binding object, so a TDZ flag that binding receives while another view is
+  applied is still restored.
+- **End state after the body loop.** The maps now hold the collect-and-alias state, not the last file's projection.
+  - The readers left after the loop that use a user binding's bare name are the entry's function exports and the
+    deferred `export default <var>`.
+  - The exports bind their function index during the entry's collect pass, not after the loop, so they are
+    unaffected.
+  - The deferred default export now resolves the entry's own binding.
+- **The TDZ field is named `tdzOmitted`.** Set when a binding of a colliding name needs no flag, either because its
+  module elides it or because it is not lexical. The registry exposes it, and `integration.ts:6317` tests it, so
+  `src/ir` does not import the codegen table.
+- **One extra edit for #7531.** `moduleInitPrologueMayEmit` (`declarations/module-init-prologue.ts`) asks about
+  every file's `var`s, now that the seed walks them all.
+- **The pin test runs the namespace rows with the IR path on only.** With the IR path off, `import * as d` +
+  `d.bump()` throws even in a graph without a collision, both before and after this change. That is a separate
+  defect, not yet filed.
+
+## Results (2026-11-27)
+
+Measured on a6c397ab5d (#7490 at b9fa72a84f, merged with origin/main), with and without this change.
+
+### Pin test
+
+`tests/issue-7470-same-named-module-bindings.test.ts`: 23 rows × gc/standalone × IR on/off (namespace rows IR on
+only), 88 cases. Each row is compared with node 22's answer for the same sources.
+
+| | base | new |
+| --- | --- | --- |
+| cases passing | 4 (the "third file never written" row, ×4) | 88 |
+
+| shape | node | base | new |
+| --- | --- | --- | --- |
+| `let g: number \| undefined`, dep writes its own | 46 | 66 | 46 |
+| `let g = 0` / `var g = 0` | 6 / 6 | 66 / 66 | 6 / 6 |
+| `let g = 1` / `let g = 2` and `const` | 12 | 11 | 12 |
+| string-typed `let` | 1 | 0 | 1 |
+| number in one file, string in the other | 16 | trap: `illegal cast` | 16 |
+| closure / class method reading its own module's `g` | 36 | 33 | 36 |
+| each module's `undefined` seed | 75 | 77 | 75 |
+| named import + third file (both orders) | 23 | 22 | 23 |
+| named import, third file never written | 20 | 20 | 20 |
+| renamed import beside an own `g` | 253 | 222 | 253 |
+| default import of `export { g as default }` | 253 | 222 | 253 |
+| re-export chain | 23 | 22 | 23 |
+| namespace `d.g` + third file / + own `g` | 23 / 253 | 22 / 222 | 23 / 253 |
+| three files: number / string / number | 71 | trap: `illegal cast` | 71 |
+| TDZ in both modules | -89 | 201 | -89 |
+| TDZ in one module only | 17 | 16 | 17 |
+| closure over a function-local `let g` in a colliding file | 142 | 141 | 142 |
+| (#7531) a non-last module's `var` reads `undefined` | 11 | 1 | 11 |
+
+### Other checks
+
+- **Single-file bytes: identical.** 389 test262 files × gc/standalone = 778 compiles, base vs new, 0 differences:
+  the 240-file sample plus 149 module-goal files (`flags: [module]`, with `export`/`import`, no fixture) from
+  `language/module-code`, `language/export` and `language/import`.
+- **compileMulti tests: no new failures.** All 260 test files that call `compileMulti` were run on base and new.
+  - The 48 directly related files (#4133, #3505, #2930, #2931, #6669, #6684, #3364, #4204, #1282, #4018, #4182,
+    namespace, lodash, …) give the same 34 failures on both, and 337 passes.
+  - The other 212 files: every failure that appeared only on new disappeared once the QuickJS eval adapter was built
+    for the new compiler bundle. What remains is a subset of base's failures. 3 tests (#6834) fail on base only.
+  - The failures common to both are environment failures: missing FYI fixtures, packages and the full test262 lanes.
+- **lodash-es: no change.**
+  - The upstream suite (`tests/dogfood/lodash-upstream-suite.mjs --package=lodash-es`) compiles and validates on
+    both. The binary shrinks from 3,241,627 to 3,229,910 bytes.
+  - It passes 0/62 on both, because this container does not provide the `js2wasm:runtime-eval` import.
+  - `tests/lodash-es-e2e.test.ts`, `tests/issue-6985-lodash-es-o4.test.ts` and
+    `tests/issue-3995-lodash-es-global-builtin-alias.test.ts` pass, with 12 passed and 2 skipped.
+- **Equivalence gate:** `node scripts/equivalence-gate.mjs` exits 0. There are no new regressions: 4,849 pass and 20 fail, against 22 known failures in the baseline, 2 of which now pass.
+- **Scoped test262 diff, per test** (`language/module-code|language/import|language/export`, 731 verdicts):
+  - standalone: 437 pass before and after, 0 status changes;
+  - `TEST262_COMPILER_PATH=ir`: 176 pass before and after, 0 status changes.
+
+### Review fixes (2026-11-28)
+
+A review blocked the PR on a renamed export and found two older defects in the same code. Seven rows were added to
+the pin test, now 31 rows and 120 cases (31 rows × 4 configurations, minus the 2 namespace-import rows on each target with the IR path off). All but the `as k` row failed before these fixes, on gc and standalone, with
+the IR path on and off:
+
+| shape | node | before | after |
+| --- | --- | --- | --- |
+| `let x; export { x as g }`, imported as `g`, third file declares `g` | 23 | CE: `module TDZ global g has no exact allocator object` | 23 |
+| the same with `const x` | 23 | throws (TDZ) | 23 |
+| `export { x as default }` imported as `g` | 23 | CE (same) | 23 |
+| `export { x as g } from "./dep"` re-export | 23 | CE (same) | 23 |
+| `export { g as k } from "./dep"` re-export | 23 | 23 | 23 |
+| entry imports `a`'s `f`; `b` declares its own `f` | 12 | 22 (inlined `b`'s `f`) | 12 |
+| `let g` here, `class g` in the other module | 63 | NaN (no global for `let g`) | 63 |
+
+- **Nested views.** `__module_init` compiles once, under the last module's view, and each of its statements runs
+  under its own module's view. A view was applied on top of the outer one, so a name the outer view projected and the
+  inner one did not (c's `g`, which collides with nothing) kept the entry's projection to dep's `x`. c's `let g = 3`
+  then wrote `x`. `withSourceBindings` now lifts the outer view before applying the inner one, and re-applies it after.
+- **TDZ registration under a view.** `registerModuleTdzGlobal` runs for every name in every module. Under a view
+  that shows `g` as dep's `x`, the bare TDZ entry is `x`'s flag; the module declares no `g`, so the call now leaves
+  the entries alone instead of rejecting or re-allocating them.
+- **Imported functions.** A view clears the inlinable entry of a function name that two or more modules declare as
+  their own (`collectMultiIrFunctionNameCollisions`), whether this module declares or imports it.
+- **Classes.** A top-level binding skips its global only when the same-named class is in its own module.
+- `export default <var>` resolution is one helper, `exportDeferredDefaultGlobals` (`global-export-fixup.ts`), used by
+  the single-file and multi-file paths. The duplicate `moduleGlobalAt` was folded into `global-space.ts`.
+- `source-binding-projection.ts` stays its own module: the table is storage, the projection is view handling. The
+  largest import SCC stays at 708 files.
+- A function whose name two modules declare is no longer inlined into a module that imports it: the inliner records
+  no function identity, so that name's entry cannot be trusted under a view. Every other name keeps its inlining, so
+  collision-free multi-file graphs are byte-identical to main (5 graphs × gc/standalone × IR on/off = 20 compiles
+  against main 16fe9ca936; an earlier cut that cleared every imported name changed 6 of them).
+- Validation: single-file bytes identical against origin/main (389 files × gc/standalone, 0 differences); the
+  scoped standalone test262 run (731 verdicts) has 0 status changes against the previous run; the 48 related
+  `compileMulti` test files have no new failures (31 failures, all also in the previous run's 34).
 
 ## Acceptance criteria
 
@@ -83,5 +396,7 @@ accident), prototype 0. Steps 4–5 are therefore part of the minimum change, no
 - The test files that call `compileMulti` stay green.
 - lodash-es (97 top-level names declared in more than one file, e.g. `objectProto` ×30) compiles and validates
   before and after; its npm-compat test results do not regress.
-- Code quality: one helper owns the per-module table; no second keying scheme beside `moduleGlobals`; no budget
-  grants.
+- No pass becomes non-pass in a scoped test262 run of `language/module-code`, `language/import` and
+  `language/export`, on standalone and on `TEST262_COMPILER_PATH=ir`.
+- Code quality: one declaration-keyed table owns module-binding storage and the bare-name maps are a per-file view
+  of it; one per-file projection; no budget grants.

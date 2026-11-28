@@ -4,6 +4,12 @@
  * the receiver's kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]], [[Set]] or
  * [[Delete]] for an object ((#7354 G1) an error included), and for a primitive what its pristine wrapper answers. A key
  * a built-in prototype holds (the realm's prototypes do not hold it yet) or a computed key refuses by name.
+ *
+ * (#7561) Where the program can obtain a wrapper prototype (`ProgramObjects.wrappers`) it can change it, so a
+ * primitive of that kind reads through the realm's prototype (§7.3.2 GetV: [[Get]] with the primitive as receiver),
+ * and a write meeting a key on it is the run-time abort (§10.1.9.2 step 2.b, a setter's call, is #7350 B3b-2). A
+ * String object's index keys are virtual and the realm lacks them (#7350 B3c): where one may exist, an array-index key
+ * on an object is the run-time abort.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
@@ -16,7 +22,9 @@ import {
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
   objectPrototypeMethodId,
+  WRAPPER_OF_PRIMITIVE,
 } from "./builtin-prototype-keys.js";
+import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
 import { MEMBER_ACCESS_ARM, article, type CarrierKind } from "./dynamic-value-kinds.js";
 import { BOOLEAN, booleanConst } from "./dynamic-value-chains.js";
 import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
@@ -39,6 +47,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
   /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsFamily`). */
   readonly errors: boolean;
+  /** (#7561) The wrapper kinds whose prototype the program can obtain (`ProgramObjects.wrappers`). */
+  readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -100,6 +110,12 @@ interface Access {
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
+/** (#7561) The string a constant call argument holds: a once-boxed constant, or its carrier. */
+export function constantArgumentOf(definitions: ReadonlyMap<IrValueId, IrInstr>, value: IrValueId): string | undefined {
+  const definition = definitions.get(value);
+  return constantKeyOf(definitions, definition?.kind === "coerce.to_externref" ? definition.value : value);
+}
+
 /** The string a once-boxed constant `key` holds, if it is one. */
 export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key: IrValueId): string | undefined {
   const box = definitions.get(key);
@@ -118,6 +134,29 @@ function constantKey(b: MemberAccessBuilders, site: MemberSite): string {
   const miss = ctor === undefined ? undefined : identityOnlyKeyRefusal(ctor, key);
   return miss === undefined ? key : gap(miss);
 }
+
+/** (#7561) The realm prototype a primitive of `kind` reads through, where the program can obtain it. */
+function heldPrototype(b: MemberAccessBuilders, kind: CarrierKind): string | undefined {
+  const wrapper = WRAPPER_OF_PRIMITIVE[kind as keyof typeof WRAPPER_OF_PRIMITIVE];
+  return wrapper !== undefined && b.wrappers.has(wrapper) ? `%${wrapper}.prototype%` : undefined;
+}
+
+/**
+ * (#7561) The realm holds a wrapper constructor's `prototype` only where the program reads it (`pinnedWrapperMembers`),
+ * so its write and its delete refuse as a key the constructor's row lacks (`identityOnlyKeyRefusal`).
+ */
+function unreadPrototype(b: MemberAccessBuilders, recv: IrValueId, name: string): void {
+  const ctor = realmConstructorOf(recv, b.definitions);
+  if (ctor?.family === "wrapper" && name === "prototype")
+    gap(`${ctor.name}.prototype is not reachable on this path yet (#7350 B3bc)`);
+}
+
+/** (#7561) An array-index key on an object that may be a String object, whose index properties the realm lacks. */
+const stringObjectIndex = (b: MemberAccessBuilders, name: string): boolean =>
+  b.wrappers.has("String") && isArrayIndexKey(name);
+/** The (#7486) reason of that access's run-time abort. */
+const stringObjectIndexReason = (operation: string) =>
+  `${operation} of an object that may be a String object: needs its index properties`;
 
 /**
  * The access a receiver of one of `kinds` cannot have, and what the realm lacks for it: "member read 'toFixed' of a
@@ -188,6 +227,10 @@ const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
 export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, result: IrValueId): IrInstr[] {
   const site = memberSite(instr);
   const name = constantKey(b, site);
+  // (#7561) A wrapper constructor's `prototype` is read only and non-configurable: the realm's prototype object.
+  const ctor = realmConstructorOf(instr.recv, b.definitions);
+  if (ctor?.family === "wrapper" && name === "prototype" && b.wrappers.has(ctor.name))
+    return b.realmIntrinsic(`%${ctor.name}.prototype%`, result);
   // (#7354 P1) A method the realm's Object.prototype holds: an object's or a function's read finds it through the
   // realm's [[Get]]; a primitive's wrapper prototype lacks it, and no program can change one (M1), so its read answers
   // Object.prototype's own. The value is a function object, so the function kind must be admitted.
@@ -196,6 +239,17 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     gap(`member read '${name}' in a program that creates no function value`);
   if (b.errors && V8_ERROR_KEYS.has(name))
     gap(`member read '${name}' (V8's own error property) where a value may be an error`);
+  // (#7354 C2) [[Get]] on the chain from `base`: a key Object.prototype holds is found by `js.object.has` only on the
+  // object's own or source-built chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's,
+  // which the realm lacks ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
+  const objectRead = (base: IrValueId, kind: CarrierKind, r: IrValueId, abort: Abort): IrInstr[] => {
+    const get = (s: IrValueId) => [realmCall("js.object.get", [base, instr.key, instr.recv], s)];
+    if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
+    const found = b.fresh();
+    const absent = (s: IrValueId) =>
+      abort(`member read '${name}' of ${article(kind)} without it: Object.prototype's own, which the realm lacks`, s);
+    return [realmCall("js.object.has", [base, instr.key], found), b.branch(found, get, absent, r, b.carrier)];
+  };
   /** A primitive's read of a key its wrapper lacks: Object.prototype's method, or else absent. */
   const inherited = (r: IrValueId): IrInstr[] =>
     method !== undefined
@@ -216,23 +270,30 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
         );
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
-      return stringOwnKey(kind, name) ?? (reachable.has(name) ? `${WRAPPER[kind]}.prototype's properties` : undefined);
+      return (
+        stringOwnKey(kind, name) ??
+        (reachable.has(name) && heldPrototype(b, kind) === undefined
+          ? `${WRAPPER[kind]}.prototype's properties`
+          : undefined)
+      );
     },
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
-    // (#7354 C2) A key Object.prototype holds: `js.object.has` finds it only on the object's own or source-built
-    // chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's, which the realm lacks
-    // ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
-    object: (r, abort) => {
-      const get = (s: IrValueId) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s)];
-      if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
-      const found = b.fresh();
-      const absent = (s: IrValueId) =>
-        abort(`member read '${name}' of an object without it: Object.prototype's own, which the realm lacks`, s);
-      return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, absent, r, b.carrier)];
-    },
+    object: (r, abort) =>
+      stringObjectIndex(b, name)
+        ? abort(stringObjectIndexReason(access.operation), r)
+        : objectRead(instr.recv, "object", r, abort),
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
-    primitive: (_kind, r) => inherited(r),
+    // (#7561) [[Get]] on the held prototype, with the primitive as receiver.
+    primitive: (kind, r) => {
+      const prototype = heldPrototype(b, kind);
+      if (prototype === undefined) return inherited(r);
+      const base = b.fresh();
+      return [
+        ...b.realmIntrinsic(prototype, base),
+        ...objectRead(base, kind, r, (reason, s) => b.abort(instr, reason, s)),
+      ];
+    },
   };
   return memberAccess(b, site, access, result);
 }
@@ -248,6 +309,7 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
 export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): IrInstr[] {
   const site = memberSite(instr);
   const name = constantKey(b, site);
+  unreadPrototype(b, instr.recv, name);
   const unread = (r: IrValueId): IrInstr => b.intrinsic(instr, "js.value.undefined", [], r);
   const set = (): { readonly ok: IrValueId; readonly instr: IrInstr } => {
     const ok = b.fresh();
@@ -276,10 +338,26 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
-    object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
+    object: (r, abort, throwTypeError) =>
+      stringObjectIndex(b, name)
+        ? abort(stringObjectIndexReason(access.operation), r)
+        : putValue("object", r, throwTypeError),
     function: (r, throwTypeError) => putValue("function", r, throwTypeError),
-    primitive: (kind, r, throwTypeError) =>
-      instr.sloppy === true ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
+    primitive: (kind, r, throwTypeError) => {
+      const absent = (s: IrValueId) =>
+        instr.sloppy === true ? [unread(s)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, s);
+      const prototype = heldPrototype(b, kind);
+      if (prototype === undefined) return absent(r);
+      // (#7561) A key on the held prototype's chain may be a setter or read only (#7350 B3b-2): the run-time abort.
+      const [base, found] = [b.fresh(), b.fresh()];
+      const held = (s: IrValueId) =>
+        b.abort(instr, `${access.operation} of ${article(kind)} whose prototype chain holds the key`, s);
+      return [
+        ...b.realmIntrinsic(prototype, base),
+        realmCall("js.object.has", [base, instr.key], found),
+        b.branch(found, held, absent, r, b.carrier),
+      ];
+    },
   };
   return memberAccess(b, site, access, b.fresh());
 }
@@ -296,6 +374,7 @@ export function dynamicMemberDelete(b: MemberAccessBuilders, instr: Call, strict
   const [recv, key] = instr.args as [IrValueId, IrValueId];
   const site: MemberSite = { instr, recv, key, label: instr.target.name };
   const name = constantKey(b, site);
+  unreadPrototype(b, recv, name);
   const ordinaryDelete = (kind: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] => {
     if (!strict) return [realmCall("js.object.delete", [recv, key], r)];
     const deleted = b.fresh();
@@ -311,7 +390,10 @@ export function dynamicMemberDelete(b: MemberAccessBuilders, instr: Call, strict
     missing: (kind) => (kind === "function" ? functionOwnKeyGap(name) : undefined) ?? stringOwnKey(kind, name),
     nullishMessage: () => "Cannot convert undefined or null to object",
     unread: (r) => booleanConst(false, r),
-    object: (r, _abort, throwTypeError) => ordinaryDelete("object", r, throwTypeError),
+    object: (r, abort, throwTypeError) =>
+      stringObjectIndex(b, name)
+        ? abort(stringObjectIndexReason(access.operation), r)
+        : ordinaryDelete("object", r, throwTypeError),
     function: (r, throwTypeError) => ordinaryDelete("function", r, throwTypeError),
     primitive: (_kind, r) => [booleanConst(true, r)],
   };

@@ -682,6 +682,16 @@ import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
+import { exportDeferredDefaultGlobals } from "./global-export-fixup.js";
+import { moduleBindingOf } from "./module-bindings/module-binding-table.js";
+import {
+  noteImportedSourceFunction,
+  ownSourceFunctionIdx,
+  recordSourceModuleBindingView,
+  snapshotSourceFunctionBindings,
+  withSourceBindings,
+} from "./module-bindings/source-binding-projection.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import { optionalFieldFlag } from "./object-model/struct-optional-widen.js"; // (#6867)
@@ -6168,41 +6178,7 @@ export function generateModule(
     // Collect ref.func targets so the binary emitter can add a declarative element segment
     collectDeclaredFuncRefs(ctx);
 
-    // Resolve deferred `export default <variable>` for module globals (#1108).
-    // Must run AFTER compileDeclarations — string-constant imports added during
-    // body compilation shift numImportGlobals, so indices aren't final until now.
-    if (ctx.deferredDefaultGlobalExport) {
-      const varName = ctx.deferredDefaultGlobalExport;
-      const globalName = `__mod_${varName}`;
-      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-      if (localIdx >= 0) {
-        const absIdx = ctx.numImportGlobals + localIdx;
-        const alreadyExported = ctx.mod.exports.some(
-          (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
-        );
-        if (!alreadyExported) {
-          ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
-          ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
-        }
-      }
-      ctx.deferredDefaultGlobalExport = undefined;
-    }
-    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
-      const localIdx = ctx.mod.globals.indexOf(value);
-      if (localIdx < 0) {
-        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
-        continue;
-      }
-      if (ctx.mod.exports.some((e) => e.name === "default")) {
-        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
-        continue;
-      }
-      ctx.mod.exports.push({
-        name: "default",
-        desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
-      });
-    }
-    ctx.deferredDefaultExpressionExports?.clear();
+    exportDeferredDefaultGlobals(ctx, ast.sourceFile);
 
     // Copy metadata for .d.ts / helper generation — only include actually-used extern classes
     const importNames = mod.imports.map((imp) => imp.name);
@@ -9409,17 +9385,12 @@ function registerModuleClassStaticAssignments(ctx: CodegenContext, sourceFiles: 
  * function bodies compile (which reference the local names). For each import
  * binding it follows the checker alias to the target declaration's name and
  * copies the resolution entries onto the local name. Function bindings are
- * also returned per source so body compilation can restore the checker-selected
+ * also noted per source so body compilation can restore the checker-selected
  * target after another module's same-named declaration occupied the flat
  * compatibility map.
  */
-function registerImportBindingAliases(
-  ctx: CodegenContext,
-  sourceFiles: readonly ts.SourceFile[],
-  ownFuncIdxBySource?: ReadonlyMap<ts.SourceFile, ReadonlyMap<string, number>>,
-): ReadonlyMap<ts.SourceFile, ReadonlyMap<string, number>> {
+function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
   const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
-  const funcBindingsBySource = new Map<ts.SourceFile, Map<string, number>>();
   const aliasOneBinding = (sourceFile: ts.SourceFile, localId: ts.Identifier): void => {
     const localName = localId.text;
     let sym: ts.Symbol | undefined;
@@ -9600,21 +9571,18 @@ function registerImportBindingAliases(
     // `return_call` to itself.
     const exactTargetFuncIdx = targetFunctionDeclaration
       ? (sourceFunctionHandleForDeclaration(ctx, targetFunctionDeclaration) ??
-        ownFuncIdxBySource?.get(targetFunctionDeclaration.getSourceFile())?.get(targetName))
+        ownSourceFunctionIdx(ctx, targetFunctionDeclaration.getSourceFile(), targetName))
       : undefined;
     const fnIdx = targetFunctionDeclaration ? (exactTargetFuncIdx ?? ctx.funcMap.get(targetName)) : undefined;
     if (fnIdx !== undefined) {
       ctx.funcMap.set(localName, fnIdx);
-      let sourceBindings = funcBindingsBySource.get(sourceFile);
-      if (!sourceBindings) {
-        sourceBindings = new Map();
-        funcBindingsBySource.set(sourceFile, sourceBindings);
-      }
-      sourceBindings.set(localName, fnIdx);
+      noteImportedSourceFunction(ctx, sourceFile, localName, fnIdx);
     }
     const closure = ctx.closureMap.get(targetName);
     if (closure !== undefined && !ctx.closureMap.has(localName)) ctx.closureMap.set(localName, closure);
-    const modGlobal = ctx.moduleGlobals.get(targetName);
+    // (#7470) The target's own binding, not whichever module holds its bare name.
+    const targetBinding = moduleBindingOf(ctx, decl);
+    const modGlobal = targetBinding ? absoluteGlobalIdx(ctx, targetBinding.value) : ctx.moduleGlobals.get(targetName);
     if (modGlobal !== undefined && !ctx.moduleGlobals.has(localName)) ctx.moduleGlobals.set(localName, modGlobal);
     const optParams = ctx.funcOptionalParams.get(targetName);
     if (optParams !== undefined && !ctx.funcOptionalParams.has(localName)) {
@@ -9655,93 +9623,6 @@ function registerImportBindingAliases(
       // Namespace import (`import * as ns`) resolves to a module object, not a
       // single function/global binding — nothing to alias here.
     }
-  }
-  return funcBindingsBySource;
-}
-
-/**
- * Compile multiple typed source files into a single WasmModule IR.
- * All source files share the same codegen context (funcMap, structMap, etc.).
- * Only functions exported from the entry file become Wasm exports.
- */
-type OwnNativeGenSnapshot = Map<string, import("./context/types.js").NativeGeneratorInfo | undefined>;
-
-/**
- * (#3505) Per-source native-generator binding snapshot, taken right after that
- * source's collect pass (the only moment the bare name-key is known to hold
- * either this source's registration — decl matches — or a foreign one, when
- * this source's plan bailed). The generator twin of the #4133 funcMap
- * snapshot: `ctx.nativeGenerators` is name-keyed and last-wins, so with two
- * modules declaring `function* g` every consumer resolved to whichever
- * registration survived (test262 instn-uniq-env-rec: the entry generator
- * resumed the fixture's empty state machine). `undefined` records "this
- * source's own decl has NO native registration" and must CLEAR the key during
- * that source's bodies so its calls take the legacy path instead of borrowing
- * another module's state machine.
- */
-function snapshotOwnNativeGenerators(
-  ctx: CodegenContext,
-  sf: ts.SourceFile,
-  collidingFuncNames: ReadonlySet<string>,
-): OwnNativeGenSnapshot {
-  const ownGens: OwnNativeGenSnapshot = new Map();
-  for (const stmt of sf.statements) {
-    if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body || !stmt.asteriskToken) continue;
-    const name = stmt.name.text;
-    if (!collidingFuncNames.has(name)) continue;
-    const info = ctx.nativeGenerators.get(name);
-    ownGens.set(name, info && info.decl === stmt ? info : undefined);
-  }
-  return ownGens;
-}
-
-/**
- * (#3505) Collect-loop end state of every colliding generator name, so the
- * per-source re-binding inside the bodies loop can be undone: the finalizer
- * walkers after that loop must observe exactly the registry the collect pass
- * left behind (a cleared key would drop a registered generator's dispatch arm).
- */
-function snapshotNativeGeneratorEndState(
-  ctx: CodegenContext,
-  ownNativeGenBySource: ReadonlyMap<ts.SourceFile, OwnNativeGenSnapshot>,
-): OwnNativeGenSnapshot {
-  const endState: OwnNativeGenSnapshot = new Map();
-  for (const ownGens of ownNativeGenBySource.values()) {
-    for (const name of ownGens.keys()) {
-      if (!endState.has(name)) endState.set(name, ctx.nativeGenerators.get(name));
-    }
-  }
-  return endState;
-}
-
-/**
- * (#3505) Point each colliding generator name at THIS source's own native
- * registration (or clear it when this source's decl has none) for the duration
- * of its body compilation, and drop foreign name-keyed `ctx.inlinableFunctions`
- * entries — an earlier module's tiny factory registered under a colliding name
- * would otherwise be inlined into this module's call sites (that inline — not
- * funcMap — is how a fixture's generator factory reached the entry module).
- * This source's own body compile re-registers its own version if it qualifies.
- */
-function rebindPerSourceGeneratorState(
-  ctx: CodegenContext,
-  ownGens: OwnNativeGenSnapshot | undefined,
-  ownFuncIdx: ReadonlyMap<string, number> | undefined,
-): void {
-  for (const [name, info] of ownGens ?? []) {
-    if (info) ctx.nativeGenerators.set(name, info);
-    else ctx.nativeGenerators.delete(name);
-  }
-  for (const name of ownFuncIdx?.keys() ?? []) {
-    ctx.inlinableFunctions.delete(name);
-  }
-}
-
-/** (#3505) Undo the per-source generator re-binding (see the snapshots above). */
-function restoreNativeGeneratorEndState(ctx: CodegenContext, endState: OwnNativeGenSnapshot): void {
-  for (const [name, info] of endState) {
-    if (info) ctx.nativeGenerators.set(name, info);
-    else ctx.nativeGenerators.delete(name);
   }
 }
 
@@ -9879,6 +9760,11 @@ function compileMultiPreparedProgramOverlays(
   frameStage(ctx, "ir-overlay");
 }
 
+/**
+ * Compile multiple typed source files into a single WasmModule IR.
+ * All source files share the same codegen context (funcMap, structMap, etc.).
+ * Only functions exported from the entry file become Wasm exports.
+ */
 export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOptions): GeneratedCodegenModule {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
@@ -10211,40 +10097,18 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     //
     // The slots already exist and bodies are compiled ONE SOURCE AT A TIME, so
     // the fix does not need the 282-set/1780-get re-key the full issue describes:
-    // snapshot each source's own binding here, then re-apply it before that
-    // source's bodies compile. Every `funcMap.get` site — including the ~117
-    // internal-helper lookups in `object-runtime.ts` — is untouched.
+    // snapshot each source's own binding here (with its #3505 native generators),
+    // then project it while that source compiles (`withSourceBindings`). Every
+    // `funcMap.get` site — including the ~117 internal-helper lookups in
+    // `object-runtime.ts` — is untouched.
     const collidingFuncNames = collectMultiIrFunctionNameCollisions(multiAst.sourceFiles);
-    const ownFuncIdxBySource = new Map<ts.SourceFile, Map<string, number>>();
-    // (#3505) The same per-source re-binding, for `ctx.nativeGenerators` and
-    // `ctx.inlinableFunctions` — see snapshotOwnNativeGenerators /
-    // rebindPerSourceGeneratorState below.
-    const ownNativeGenBySource = new Map<
-      ts.SourceFile,
-      Map<string, import("./context/types.js").NativeGeneratorInfo | undefined>
-    >();
 
     prepareIdentityPreservingStructuralParams(ctx, multiAst.sourceFiles);
     profilePhase("collect-declarations", () => {
       for (const sf of multiAst.sourceFiles) {
         const isEntry = sf === multiAst.entryFile;
         collectDeclarations(ctx, sf, isEntry);
-        if (collidingFuncNames.size === 0) continue;
-        // Immediately after THIS source's collect pass, `funcMap` still holds
-        // this source's index for every name it declares — a later source has
-        // not overwritten it yet. That is the only moment the per-source binding
-        // is observable without changing `collectDeclarations`.
-        const own = new Map<string, number>();
-        for (const stmt of sf.statements) {
-          if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
-          const name = stmt.name.text;
-          if (!collidingFuncNames.has(name)) continue;
-          const idx = ctx.funcMap.get(name);
-          if (idx !== undefined) own.set(name, idx);
-        }
-        if (own.size > 0) ownFuncIdxBySource.set(sf, own);
-        const ownGens = snapshotOwnNativeGenerators(ctx, sf, collidingFuncNames);
-        if (ownGens.size > 0) ownNativeGenBySource.set(sf, ownGens);
+        snapshotSourceFunctionBindings(ctx, sf, collidingFuncNames);
       }
     });
     // #2847: make initial boolean brands visible while bodies are emitted;
@@ -10284,7 +10148,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // imports whose LOCAL name differs from the imported target's declaration name)
     // so their reads and calls resolve to the target instead of the graceful-null
     // default. Runs after collectDeclarations (targets registered), before bodies.
-    const importFuncIdxBySource = registerImportBindingAliases(ctx, multiAst.sourceFiles, ownFuncIdxBySource);
+    registerImportBindingAliases(ctx, multiAst.sourceFiles);
+    for (const sf of multiAst.sourceFiles) recordSourceModuleBindingView(ctx, sf);
     settleRuntimeEvalGlobalBindings(ctx); // (#7632) Nothing after this may add an eval-visible name or retype its global.
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
@@ -10311,7 +10176,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       sealedVars: new Set(ctx.sealedVars),
       nonExtensibleVars: new Set(ctx.nonExtensibleVars),
     };
-    const nativeGenEndState = snapshotNativeGeneratorEndState(ctx, ownNativeGenBySource);
     // (#1058) Batch throw-message string imports until the bodies are done.
     beginDeferredStringConstants(ctx);
     profilePhase("bodies", () => {
@@ -10330,28 +10194,17 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         // `ModuleInitMode`. This is what made the 146-source ESLint graph
         // quadratic in both time and retained function bodies.
         const moduleInitMode: ModuleInitMode = index === lastIndex ? "full" : index === 0 ? "discover" : "skip";
-        // (#4133) Point every colliding name at THIS source's own slot for the
-        // duration of its body compilation, so its calls resolve to its own
-        // function instead of whichever module happened to register last.
-        // Iterating in the same order as the collect loop leaves the map in the
-        // same last-wins end state it had before, so exports and the finalizers
-        // that run after this loop observe exactly what they observed before.
-        for (const [name, idx] of ownFuncIdxBySource.get(sf) ?? []) {
-          ctx.funcMap.set(name, idx);
-        }
-        // An import is the lexical binding for this source even when its local
-        // spelling equals an unrelated module's declaration.
-        for (const [name, idx] of importFuncIdxBySource.get(sf) ?? []) {
-          ctx.funcMap.set(name, idx);
-        }
-        rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
-        profilePhase(sf.fileName, () => {
-          if (multiPreparedProgram) multiPreparedProgram.compileBodySource(sf, moduleInitMode);
-          else compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode);
-        });
+        // (#4133, #7470) Show every colliding name as THIS source's own binding
+        // (or its import's target) while its bodies compile, then restore the
+        // collect-time view for the next source and the finalizers.
+        profilePhase(sf.fileName, () =>
+          withSourceBindings(ctx, sf, () => {
+            if (multiPreparedProgram) multiPreparedProgram.compileBodySource(sf, moduleInitMode);
+            else compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode);
+          }),
+        );
       }
     });
-    restoreNativeGeneratorEndState(ctx, nativeGenEndState);
 
     frameStage(ctx, "bodies");
 
@@ -10389,43 +10242,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("declared-func-refs", () => collectDeclaredFuncRefs(ctx));
     frameStage(ctx, "collectDeclaredFuncRefs");
 
-    // Resolve deferred `export default <variable>` for module globals (#1108).
-    // Must run AFTER compileDeclarations — string-constant imports added during
-    // body compilation shift numImportGlobals, so indices aren't final until now.
-    profilePhase("deferred-default-exports", () => {
-      if (ctx.deferredDefaultGlobalExport) {
-        const varName = ctx.deferredDefaultGlobalExport;
-        const globalName = `__mod_${varName}`;
-        const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-        if (localIdx >= 0) {
-          const absIdx = ctx.numImportGlobals + localIdx;
-          const alreadyExported = ctx.mod.exports.some(
-            (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
-          );
-          if (!alreadyExported) {
-            ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
-            ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
-          }
-        }
-        ctx.deferredDefaultGlobalExport = undefined;
-      }
-      for (const value of ctx.deferredDefaultExpressionExports ?? []) {
-        const localIdx = ctx.mod.globals.indexOf(value);
-        if (localIdx < 0) {
-          reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
-          continue;
-        }
-        if (ctx.mod.exports.some((e) => e.name === "default")) {
-          reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
-          continue;
-        }
-        ctx.mod.exports.push({
-          name: "default",
-          desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
-        });
-      }
-      ctx.deferredDefaultExpressionExports?.clear();
-    });
+    profilePhase("deferred-default-exports", () => exportDeferredDefaultGlobals(ctx, multiAst.entryFile));
 
     // Copy metadata for .d.ts / helper generation
     profilePhase("copy-module-metadata", () => {

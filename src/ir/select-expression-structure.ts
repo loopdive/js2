@@ -337,40 +337,6 @@ export function functionObjectMemberCallIsBuildable(
   return undefined;
 }
 
-export function identifierIsValueReference(node: ts.Identifier): boolean {
-  const parent = node.parent;
-  if (!parent) return true;
-  if (
-    (ts.isVariableDeclaration(parent) ||
-      ts.isParameter(parent) ||
-      ts.isBindingElement(parent) ||
-      ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isPropertySignature(parent) ||
-      ts.isMethodSignature(parent)) &&
-    parent.name === node
-  ) {
-    return false;
-  }
-  if (
-    (ts.isPropertyAccessExpression(parent) ||
-      ts.isPropertyAssignment(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent)) &&
-    parent.name === node
-  ) {
-    return false;
-  }
-  if (ts.isLabeledStatement(parent) && parent.label === node) return false;
-  if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return false;
-  return true;
-}
-
 export function expressionIsDefinitelyBoolean(expression: ts.Expression): boolean {
   let candidate = expression;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;

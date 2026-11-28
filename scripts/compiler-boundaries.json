@@ -6967,6 +6967,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/module-bindings/global-space.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/global-var-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7872,6 +7880,14 @@
     },
     {
       "path": "src/codegen/mixed-return-widening.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/module-bindings/module-binding-table.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9952,6 +9968,14 @@
     },
     {
       "path": "src/codegen/smi-box-fast-path.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/module-bindings/source-binding-projection.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -16954,6 +16978,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-realm-wrappers.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -17438,6 +17467,21 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-builtin-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-tag.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-types.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/dynamic-value-kinds.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -17494,6 +17538,14 @@
       "destination": "frontend-ts",
       "owner": "7354-prepared-path",
       "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/realm-member-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source scan of the keys a program may write on a realm object (#7350, the write half of builtin-global-binding.ts's member rule); moves with builtin-global-binding.ts under frontend/ts."
     },
     {
       "path": "src/ir/realm-static-call.ts",

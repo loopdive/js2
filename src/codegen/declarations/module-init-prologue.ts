@@ -152,7 +152,7 @@ export function moduleInitPrologueForcesInit(ctx: CodegenContext, sourceFile: ts
  */
 export function moduleInitPrologueMayEmit(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
   if (moduleInitPrologueForcesInit(ctx, sourceFile)) return true;
-  if (scriptVarBindingNames(sourceFile).size > 0) return true;
+  if ((ctx.callableSourceFiles ?? [sourceFile]).some((source) => scriptVarBindingNames(source).size > 0)) return true;
   if (ctx.sourceIsModule) return false;
   return ctx.topLevelFunctionNames.size > 0 || (ctx.globalObjectVarBindings?.size ?? 0) > 0;
 }

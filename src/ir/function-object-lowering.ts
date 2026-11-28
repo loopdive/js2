@@ -52,6 +52,8 @@ export interface FunctionObjectLoweringHost {
   readonly createsFunctionObjects: () => boolean;
   /** (#7354 O1) The identifier reads the unchanged global built-in of its name (`builtin-global-binding.ts`). */
   readonly isPristineGlobal: (identifier: ts.Identifier) => boolean;
+  /** (#7350) The member rule (`foldsBuiltinMember`): a fold of `X.k`, the identifier being `X`, reads the built-in. */
+  readonly foldsBuiltinMember: (identifier: ts.Identifier) => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;

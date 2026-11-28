@@ -41,7 +41,7 @@ export interface BuiltinFunctionEntryOperands {
 }
 export interface BuiltinFunctionBodyOperands extends Pick<
   RealmFamilyOperands,
-  "createWithPrototype" | "text" | "objects"
+  "createWithPrototype" | "text" | "objects" | "wrapperAllocation"
 > {
   readonly rootTypeIdx: number;
   readonly realmTypeIdx: number;
