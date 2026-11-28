@@ -12615,7 +12615,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies. Debt (#7628): exactPreparedAccessorExpressionKey imports key-values.ts (destination frontend-ts); it leaves ir-core with the frontend half, and ir-core receives the exact key as a string."
     },
     {
       "path": "src/ir/class-definition-expressions.ts",
@@ -17538,6 +17538,14 @@
       "destination": "frontend-ts",
       "owner": "7354-prepared-path",
       "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/key-values.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "One evaluator of a key expression's values (#7628); moves with realm-member-writes.ts under frontend/ts. Debt: class-accessor-safety.ts (destination ir-core) imports it for exactPreparedAccessorExpressionKey; ir-core may not import frontend-ts, so that caller's key reading moves to the frontend with it."
     },
     {
       "path": "src/ir/realm-member-writes.ts",

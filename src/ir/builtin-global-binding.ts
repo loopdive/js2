@@ -2,9 +2,9 @@
 /**
  * (#7354 O1) Whether an identifier reads the global built-in its name names, unchanged: the checker's symbol is
  * declared in lib files only (#7350: or by an expando statement on it), no source declares a binding of that name at
- * any level (a `var`, `let`, `const`, `function`, `class`, parameter or pattern element: the checker resolves a
- * script's top-level `function Object(){}` reference to the lib's symbol, so the declaration is looked for by name),
- * and no source assigns the name:
+ * any level (a `var`, `let`, `const`, `function`, `class`, parameter, pattern element, import, enum, namespace, …:
+ * the checker resolves a script's top-level `function Object(){}` reference to the lib's symbol, so the declaration is
+ * looked for by name), and no source assigns the name:
  * `Object = …`, a compound assignment, `++` / `--`, `delete`, a destructuring target, or a write through a
  * global-object alias (`globalThis.Object = …`).
  * The one answer for "this is the global `Object`" of the native statics' call form and of the flow rule beside it.
@@ -20,12 +20,11 @@ import {
   skipOuterExpressions,
 } from "../shared/binding-writes.js";
 import {
-  freshnessOf,
   memberWrites,
   objectCreateCallee,
   realmWrittenKeys,
-  type Freshness,
   type MemberWrite,
+  type NameBinding,
 } from "./realm-member-writes.js";
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
@@ -56,10 +55,80 @@ function targetNames(written: ts.Expression, into: Set<string>): void {
     targetNames(target.left, into);
 }
 
-/** The names a binding pattern or name declares. */
-function boundNames(name: ts.BindingName, bind: (name: string) => void): void {
-  if (ts.isIdentifier(name)) bind(name.text);
-  else for (const element of name.elements) if (!ts.isOmittedExpression(element)) boundNames(element.name, bind);
+const FRESH: NameBinding = { kind: "fresh" };
+const ANY: NameBinding = { kind: "any" };
+
+/**
+ * The declarations whose `name` binds no value: a member key, a type, an export name, a meta property. Soundness rests
+ * on one invariant: the list never holds a kind that binds a value. A kind missing from it only costs precision (its
+ * name records `any`); a value-binding kind added to it would let that name hold a value the scan never sees. In
+ * `tests/issue-7350-slice1-expando-escape.test.ts`, the #7628 stop rows of an enum, a namespace and
+ * `import p = require(…)` fail when their kind is listed here (the guard of the invariant), and the CTL row of an
+ * interface and a type alias fails when those leave it (the list's precision).
+ */
+const BINDS_NO_VALUE: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.PropertyAssignment,
+  ts.SyntaxKind.ShorthandPropertyAssignment,
+  ts.SyntaxKind.PropertyDeclaration,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+  ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.MethodSignature,
+  ts.SyntaxKind.EnumMember,
+  ts.SyntaxKind.InterfaceDeclaration,
+  ts.SyntaxKind.TypeAliasDeclaration,
+  ts.SyntaxKind.TypeParameter,
+  ts.SyntaxKind.PropertyAccessExpression,
+  ts.SyntaxKind.ExportSpecifier,
+  ts.SyntaxKind.NamespaceExport,
+  ts.SyntaxKind.MetaProperty,
+  ts.SyntaxKind.JsxAttribute,
+  ts.SyntaxKind.ImportAttribute,
+]);
+
+/** A variable of a for-in / for-of head: it holds the loop's values, whatever its (Annex B) initializer. */
+function isLoopHeadVariable(declaration: ts.VariableDeclaration): boolean {
+  const list = declaration.parent;
+  return (ts.isForInStatement(list.parent) || ts.isForOfStatement(list.parent)) && list.parent.initializer === list;
+}
+
+/**
+ * The binding `name` declares, or `undefined` when it declares none. A function or class name is `fresh`, a variable
+ * with an initializer outside a loop head stores it, and every other declaration (a parameter, a pattern element, a
+ * `catch` variable, an import, an enum, a namespace, …) may hold any value.
+ */
+function declaredBinding(name: ts.Identifier): NameBinding | undefined {
+  const declaration = name.parent;
+  if (!("name" in declaration) || declaration.name !== name || BINDS_NO_VALUE.has(declaration.kind)) return undefined;
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isFunctionExpression(declaration) ||
+    ts.isClassDeclaration(declaration) ||
+    ts.isClassExpression(declaration)
+  )
+    return FRESH;
+  if (ts.isVariableDeclaration(declaration) && declaration.initializer && !isLoopHeadVariable(declaration))
+    return { kind: "initializer", value: declaration.initializer };
+  return ANY;
+}
+
+/** The value an assignment `x op= e` stores in `x`: `e` through a chain of `=`, `e` for a logical assignment. */
+function assignedValue(assignment: ts.BinaryExpression): ts.Expression {
+  switch (assignment.operatorToken.kind) {
+    case ts.SyntaxKind.EqualsToken: {
+      const right = skipOuterExpressions(assignment.right);
+      return ts.isBinaryExpression(right) && right.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ? assignedValue(right)
+        : assignment.right;
+    }
+    case ts.SyntaxKind.BarBarEqualsToken:
+    case ts.SyntaxKind.AmpersandAmpersandEqualsToken:
+    case ts.SyntaxKind.QuestionQuestionEqualsToken:
+      return assignment.right;
+    default:
+      return assignment;
+  }
 }
 
 /**
@@ -79,63 +148,65 @@ function keepsValue(reference: ts.Identifier): boolean {
 }
 
 /**
- * One walk over `sourceFiles`: `taken`, every name they declare (at any level) or assign; (#7350) `escaped`, every
- * name some reference of which lets its value escape ({@link keepsValue}); `writes`, the stores and definitions they
- * make (`memberWrites`); `freshNames`, the names only ever bound to a fresh value, by freshness; `createCallees`, the
- * `Object` of every `Object.create(…)` call.
+ * One walk over `sourceFiles`: `bindings`, every binding and assignment of a name, by text ({@link declaredBinding},
+ * the implicit `arguments` of every function that is no arrow function, assignments, `++` / `--`, `delete` and for-in /
+ * for-of targets); (#7350) `escaped`, every name some reference of which lets its value escape ({@link keepsValue});
+ * `writes`, the stores and definitions they make (`memberWrites`); `createCallees`, the `Object` of every
+ * `Object.create(…)` call.
  */
 function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
-  readonly taken: ReadonlySet<string>;
+  readonly bindings: ReadonlyMap<string, readonly NameBinding[]>;
   readonly escaped: ReadonlySet<string>;
   readonly writes: readonly MemberWrite[];
-  readonly freshNames: ReadonlyMap<string, Freshness>;
   readonly createCallees: readonly ts.Identifier[];
 } {
-  const declared = new Set<string>();
-  const assigned = new Set<string>();
-  const mayHoldAny = new Set<string>();
-  const created = new Set<string>();
+  const bindings = new Map<string, NameBinding[]>();
   const escaped = new Set<string>();
   const writes: MemberWrite[] = [];
   const createCallees: ts.Identifier[] = [];
-  const declare = (name: string, freshness: Freshness | undefined): void => {
-    declared.add(name);
-    if (freshness === undefined) mayHoldAny.add(name);
-    else if (freshness === "created") created.add(name);
+  const bind = (name: string, binding: NameBinding): void => {
+    const list = bindings.get(name);
+    if (list) list.push(binding);
+    else bindings.set(name, [binding]);
   };
-  const declareAny = (name: string): void => declare(name, undefined);
+  const targetsAny = (target: ts.Expression): void => {
+    const names = new Set<string>();
+    targetNames(target, names);
+    names.forEach((name) => bind(name, ANY));
+  };
+  const assigns = (target: ts.Expression, value: ts.Expression): void => {
+    const name = skipOuterExpressions(target);
+    if (ts.isIdentifier(name)) bind(name.text, { kind: "assigned", value });
+    else targetsAny(target);
+  };
   const visit = (node: ts.Node): void => {
     // A type names no value; `extends X` is an expression and is visited.
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
-    if (ts.isIdentifier(node) && !isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
+    if (ts.isIdentifier(node)) {
+      const binding = declaredBinding(node);
+      if (binding) bind(node.text, binding);
+      if (!isNonReferenceName(node) && !keepsValue(node)) escaped.add(node.text);
+    }
     memberWrites(node, (write) => writes.push(write));
     const createCallee = ts.isCallExpression(node) ? objectCreateCallee(node) : undefined;
     if (createCallee) createCallees.push(createCallee);
-    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isFunctionExpression(node)) && node.name)
-      declare(node.name.text, "fresh");
-    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name))
-      declare(node.name.text, node.initializer && freshnessOf(node.initializer));
-    else if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
-      boundNames(node.name, declareAny);
-    else if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) targetNames(node.left, assigned);
+    if (ts.isFunctionLike(node) && !ts.isArrowFunction(node) && "body" in node && node.body) bind("arguments", ANY);
+    if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) assigns(node.left, assignedValue(node));
     else if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     )
-      targetNames(node.operand, assigned);
-    else if (ts.isDeleteExpression(node)) targetNames(node.expression, assigned);
+      assigns(node.operand, node);
+    else if (ts.isDeleteExpression(node)) targetsAny(node.expression);
     else if (
       (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       !ts.isVariableDeclarationList(node.initializer)
     )
-      targetNames(node.initializer, assigned);
+      targetsAny(node.initializer);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  const freshNames = new Map<string, Freshness>();
-  for (const name of declared)
-    if (!mayHoldAny.has(name) && !assigned.has(name)) freshNames.set(name, created.has(name) ? "created" : "fresh");
-  return { taken: new Set([...declared, ...assigned]), escaped, writes, freshNames, createCallees };
+  return { bindings, escaped, writes, createCallees };
 }
 
 interface BuiltinGlobalFacts {
@@ -154,11 +225,11 @@ function builtinGlobalFacts(checker: ts.TypeChecker, sourceFiles: readonly ts.So
   const known = programFacts.get(sourceFiles);
   if (known) return known;
   const libOnly = makeIrAmbientBindingPredicate(checker, "every-but-expando");
-  const { taken, escaped, writes, freshNames, createCallees } = bindingFacts(sourceFiles);
-  const pristine = (identifier: ts.Identifier) => !taken.has(identifier.text) && libOnly(identifier);
+  const { bindings, escaped, writes, createCallees } = bindingFacts(sourceFiles);
+  const pristine = (identifier: ts.Identifier) => !bindings.has(identifier.text) && libOnly(identifier);
   // An `Object.create(…)` result is fresh while `create` folds: `Object` pristine and never escaping, `create` unwritten.
   const createIsBuiltin = !escaped.has("Object") && createCallees.every(pristine);
-  const writtenKeys = realmWrittenKeys(writes, freshNames, createIsBuiltin);
+  const writtenKeys = realmWrittenKeys(writes, bindings, createIsBuiltin);
   const facts: BuiltinGlobalFacts = {
     pristine,
     foldsBuiltinMember: (identifier) => {
@@ -196,17 +267,18 @@ export function pristineBuiltinGlobal(
  * - a call of `getOwnPropertyDescriptors`, `values`, `entries`, or `getOwnPropertyDescriptor` by a key that is no
  *   literal, as a member: as every key of its operand (it hands out a key writer's value).
  * Counted as a write of every key on any object: any other spelling of those names (`var d = Object.defineProperty`,
- * `.call`, a string), `with`, and a reference to `Reflect`. So no write of `X.k` escapes the count by a route that
- * never spells `X` (`X.prototype.constructor`, `(1).constructor`, `this` in a method `X` inherits, a re-export), and a
- * fold of a writable member (an `Object` static's call form, `Number.isNaN`, a `Math` method, …) reads the built-in,
- * except by the routes below. A non-writable, non-configurable constant (`Number.MAX_VALUE`) folds wherever the name
- * is pristine: a write of it fails.
- * Not yet seen: a key writer read by a key that is no literal (`Object["define" + "Property"](X, "k", d)`,
- * `` Object[`define${p}`] ``, `var {[k]: d} = Object`, `Object[n]` over `getOwnPropertyNames(Object)`), and code the
- * runtime-eval provider or the `Function` constructor runs (#7503); a literal eval site's text (#7363) is a program
- * source and is seen. Not counted: built-ins that write
- * an object's index keys or `length` (`Array.prototype.push.call(X, v)`, an array method's species result): no folded
- * member is one, and a constructor's `length` is not writable.
+ * `.call`, a string), `with`, any spelling of `Reflect` (`globalThis.Reflect`, `this["Reflect"]`), and (#7628) a read
+ * by a key that is no literal (`Object["define" + "Property"]`, `` Object[`define${p}`] ``, `var {[k]: d} = Object`,
+ * `Object[n]` over `getOwnPropertyNames(Object)`) unless its key's values are known and name no key writer
+ * (`key-values.ts`; a name is known when every binding of it stores a value the evaluator reads). So no write of `X.k`
+ * escapes the count by a route that never spells `X` (`X.prototype.constructor`, `(1).constructor`, `this` in a method
+ * `X` inherits, a re-export), and a fold of a writable member (an `Object` static's call form, `Number.isNaN`, a `Math`
+ * method, …) reads the built-in, except by the routes below. A non-writable, non-configurable constant
+ * (`Number.MAX_VALUE`) folds wherever the name is pristine: a write of it fails.
+ * Not yet seen: code the runtime-eval provider or the `Function` constructor runs (#7503); a literal eval site's text
+ * (#7363) is a program source and is seen. Not counted: built-ins that write an object's index keys, `length` or
+ * `lastIndex` (`Array.prototype.push.call(X, v)`, an array method's species result): no folded member is one, and a
+ * constructor's `length` is not writable.
  */
 export function foldsBuiltinMember(
   checker: ts.TypeChecker,

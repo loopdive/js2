@@ -1,10 +1,11 @@
 ---
 id: 7628
 title: "Computed-key and reflective member writers are unseen by the realm write scan"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-11-28
 updated: 2026-11-28
+completed: 2026-11-28
 priority: high
 horizon: m
 feasibility: medium
@@ -503,3 +504,72 @@ in `mutate3.py`.
 | 6 must not ship | Listed under Acceptance → Quality: the `RULE` switch, the SCRATCH comments, the `(b as {value})` cast (v3 narrows on `kind`), and the old sets beside `bindings` (v3 drops `declared`, `assigned`, `mayHoldAny`, `created`, `freshNames` and `boundNames`). |
 | 7 class-expression freshness | Kept as planned: a class-expression name is `fresh` (accepted widening). |
 | re-measure | Rows: base 43 / 56 differ, v2 4 / 56, v3 0 / 56. Census on v3: carriers 230, o411 84, 0 changed rows, 0 lost, 0 new crashes, so the broader `any` rule costs no yield on either list. Gate inputs hold no enum, namespace or loop-head initializer (`scan-fixture.mts`). |
+
+## Implementation result (2026-11-28)
+
+Implemented on `claude/7628-realm-write-scan`, base `8af55d2f4d` (the approved plan merged with `origin/main`
+`e17578f79b`, which holds #7350 slice 1). `v3.patch` applied cleanly (the four files were unchanged since
+`b7cfc6257f`); the shipped code is `v3.patch` with the scratch removed and these structural changes:
+
+- `src/ir/key-values.ts` (169 lines): the evaluator is split into `keyValues`, `unaryValues` and `binaryValues`;
+  `SOME_NUMBER`, `LONG_STRING`, the cap and the writer-name length are module-private; a capped `union` is exported
+  so `nameKeyValues` does not see the cap. Exports: `KeyValue`, `KeyValues`, `keyValues`, `exactKey`, `widen`, `union`.
+- `src/ir/realm-member-writes.ts`: `MemberWrite = MemberStore | { computedKey }`; the arm is `computedReadKey`
+  (with `isPatternKey`), first in `memberWrites`' chain; `isWriterName` (`KEY_WRITERS` and `Reflect`) is the one
+  predicate of the mention arm and of the key check; `nameKeyValues` is the dependency-indexed worklist over
+  `StoredName` candidates (no non-null assertion); `computedReadsNameNoWriter` is the final check; `freshNames`
+  derives freshness from `bindings`. `Freshness` / `freshnessOf` are no longer exported (no outside user).
+- `src/ir/builtin-global-binding.ts`: `bindings` is the single record (`declared`, `assigned`, `mayHoldAny`,
+  `created`, `freshNames`, `boundNames` gone; `pristine` reads `bindings.has`). The casts are gone:
+  `"name" in declaration && declaration.name === name` and `"body" in node && node.body`. `BINDS_NO_VALUE`'s doc
+  states the soundness invariant and names the rows that guard it.
+- `src/ir/class-accessor-safety.ts`: `literalOnlyComputedKeyValue` / `LiteralComputedKeyValue` deleted;
+  `exactPreparedAccessorExpressionKey` is `exactKey(keyValues(expression))`.
+- `scripts/compiler-boundaries.json`: the new `key-values.ts` entry and the `class-accessor-safety.ts` `nextBoundary`,
+  as written under "Target structure".
+
+Deviation from the domain table: shifts and bitwise operators give `SOME_NUMBER` even for two exact numbers (as in
+`v3.patch`, the measured code). Making them exact would change the accessor key (`[1 << 2]`), which the equivalence
+below pins to the old reader.
+
+**Measured** (base `8af55d2f4d`, a `git archive` copy in `.tmp/`, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804, diff empty (744 bytes, 59 refused, 1 threw on both).
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline, slice 1's 180 files × default and standalone, `assert.js` + `sta.js`: 360 / 360 identical
+  (339 bytes, 21 CE on both).
+- Census `--harness real`: carriers 819 → 819 of 1,977, o411 118 → 118 of 411; 0 gained, 0 lost, 0 new crashes,
+  0 changed rows on either list. (The pass counts are above the plan's 230 / 84 because main moved since
+  `b7cfc6257f`.)
+- Accessor equivalence (`accessor-equiv.mts`, base reader vs shipped `exactKey(keyValues(e))`): 53,869 files,
+  4,756,986 expressions, 1,213,753 defined, 0 mismatches.
+- Rows: `rows3.mts` 0 / 56 differ on head, 43 / 56 on base. In the test, 56 #7628 rows (the six former `it.fails`
+  rows, 37 stop rows, 12 keep / CTL rows, the real-prelude row).
+- Mutations (each applied to the shipped code, the #7628 rows run, then restored):
+
+  | mutation | rows that fail |
+  | --- | --- |
+  | drop the computed-read check | 41 of 43 stop rows (all but `globalThis.Reflect`, `this["Reflect"]`) |
+  | N1: a loop-head variable stores its initializer | the two for-in initializer rows |
+  | N2: `EnumDeclaration` / `ModuleDeclaration` / `ImportEqualsDeclaration` in `BINDS_NO_VALUE` | the enum / namespace / `import =` row, one each |
+  | CTL: interface and type alias record `any` | the interface + type alias CTL row |
+  | worklist: a change re-queues no reader | past the cap (two-letter growth), the compound assignment |
+  | every import kind in `BINDS_NO_VALUE` | import + by-text var, `import =` + by-text var |
+  | no implicit `arguments` | `arguments` |
+  | a name with no record holds no value | undeclared name |
+  | both of the last two | the two import rows, `import =` + by-text var, undeclared name |
+  | drop the rebound names | `globalThis["p"]`, `defineProperty(this)`, `assign(this)` |
+  | postfix `++` / `--` is no number | compareArray, the loop sum, the real prelude |
+  | `Reflect` counted only as a reference | `globalThis.Reflect`, `this["Reflect"]` |
+  | `Reflect` no writer name in the key domain | `"Ref" + "lect"` |
+  | no `LONG_STRING` | the long chain |
+  | no cap | the product row; the two-letter growth row runs the worker out of memory |
+
+- Tests: 38 files (slice 1, B3a, B3b-0, the 7 B3a pin files, O1 ×2, O2 ×2, O2b, 3518 closure signatures, 3783, G1 ×4,
+  7564, 7118, #7363 ×6, #7609 ×3, and the `class-accessor-safety` users' tests: 3522 ×3, 3520 ×2, 5318 r4, 3529):
+  1,367 pass, 16 fail. The same 16 fail on the base copy (3520 unit identity 5, 5318 r4 4, 7354 T 4, Str2 1,
+  7363 A4 1, 3518 native realm 1): pre-existing on main, not this change.
+- Gates exit 0: loc, func (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet, dead exports,
+  typecheck, import cycles, compiler boundaries inventory (`--base HEAD^1` and `--base origin/main`). No budget grant.
+- Not done here: the adversarial review (CLAUDE.md, before the hold is released) and the follow-up issues named in
+  the plan (codegen constant-string evaluators; `pristine` and global-object rebinding), whose ids come from the lead.

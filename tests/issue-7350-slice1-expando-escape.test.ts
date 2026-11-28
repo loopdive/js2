@@ -12,6 +12,8 @@
 // Each program computes `out` and is checked against node, with a wrong answer that must throw
 // (tests/helpers/prepared-node-agreement.ts); a refused one is pinned by its refusal, next to a twin without the write
 // whose fold still answers node's value.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { foldsBuiltinMember, pristineBuiltinGlobal } from "../src/ir/builtin-global-binding.js";
@@ -36,11 +38,15 @@ const positions = (body: string): readonly (readonly [string, string])[] => [
   ["inside a function", `function run() {\n${body}\nreturn out;\n}\nvar out = run();`],
 ];
 
+/** A program: one script, or sources by path whose `./entry.*` one is the entry (`.ts` for TS declarations). */
+type Sources = string | Readonly<Record<string, string>>;
+
 /** The two answers for the `name` read by the program's last statement, `name.member(1);`, after `source`. */
-function facts(source: string, name: string, member = "isNaN"): { pristine: boolean; fold: boolean } {
-  const ast = analyzeMultiSource({ "./entry.js": `${source}\n${name}.${member}(1);` }, "./entry.js", undefined, {
-    allowJs: true,
-  });
+function facts(source: Sources, name: string, member = "isNaN"): { pristine: boolean; fold: boolean } {
+  const files: Record<string, string> = typeof source === "string" ? { "./entry.js": source } : { ...source };
+  const entry = Object.keys(files).find((file) => file.startsWith("./entry."))!;
+  files[entry] += `\n${name}.${member}(1);`;
+  const ast = analyzeMultiSource(files, entry, undefined, { allowJs: true });
   const last = ast.entryFile.statements.at(-1) as ts.ExpressionStatement;
   const callee = (last.expression as ts.CallExpression).expression as ts.PropertyAccessExpression;
   const id = callee.expression as ts.Identifier;
@@ -210,10 +216,8 @@ describe("#7350 slice 1 — a write of the key stops the fold, whatever reaches 
     expect(facts(source, name, member)).toEqual({ pristine: true, fold: false });
   });
 
-  // Not yet seen (#7628): a key writer reached by a key the source does not spell. The naive rule (any non-literal
-  // key writes every key) costs 14 carrier and 43 o411 passes, because the harness's own `a[i]` reads would stop every
-  // fold. These rows flip when #7628 closes the route.
-  it.fails.each([
+  // #7628: a key writer reached by a key the source does not spell (review RV-PR7549, round 2).
+  it.each([
     ["a computed read of a key writer", 'Object["define" + "Property"]((1).constructor, "isNaN", {value: 1});'],
     [
       "a template key with a substitution",
@@ -292,6 +296,136 @@ describe("#7350 slice 1 — a write of the key stops the fold, whatever reaches 
     ],
   ])("%s keeps the fold", (_label, source, name, member) => {
     expect(facts(source, name, member)).toEqual({ pristine: true, fold: true });
+  });
+});
+
+// #7628: a read by a key that is no literal writes every key on any object, unless the key's values are known
+// (`src/ir/key-values.ts`) and name no key writer. `≈` is `(1).constructor, "isNaN", {value: 1}`; no stop row spells
+// a writer name as a literal, which would stop it by the mention arm instead.
+describe("#7628 — a read by a key that is no literal", () => {
+  const D = '(1).constructor, "isNaN", {value: 1}';
+  // compareArray's shape in assert.js: `b[i]` and `a[i]` are call arguments, `a` and `b` parameters, `i` an `i++`.
+  const COMPARE =
+    "function cmp(a, b) { for (var i = 0; i < a.length; i++) { if (!same(b[i], a[i])) return false; } return true; }" +
+    " function same(x, y) { return x === y; } cmp([1], [1]);";
+  const ROOT = join(__dirname, "..");
+  const TEST262 = existsSync(join(ROOT, "test262", "harness", "assert.js"));
+  const twoFiles = (entry: string, m: string): Sources => ({ "./entry.js": entry, "./m.js": m });
+
+  it.each<readonly [string, Sources]>([
+    ["Reflect off the global object", 'globalThis.Reflect.set((1).constructor, "isNaN", 1);'],
+    ["Reflect by a literal key off this", 'this["Reflect"].set((1).constructor, "isNaN", 1);'],
+    ["Reflect by a computed key", 'globalThis["Ref" + "lect"].set((1).constructor, "isNaN", 1);'],
+    [
+      "an imported name",
+      twoFiles(`import { q as p } from "./m.js"; Object["define" + p](${D});`, 'export var q = "Property";'),
+    ],
+    [
+      "an imported name beside a var of its text",
+      twoFiles(
+        `import { q as p } from "./m.js"; Object["define" + p](${D});`,
+        'export var q = "Property"; var p = "Xyz";',
+      ),
+    ],
+    ["an undeclared name", `Object["define" + suffix](${D});`],
+    [
+      "arguments beside a var of its text",
+      `var arguments = "Xyz"; function f() { arguments.toString = function () { return "define" + "Property"; }; Object[arguments](${D}); } f();`,
+    ],
+    ["a name past the cap", 'var s = ""; s = s + "x"; s = s + "y"; ({})[s];'],
+    [
+      "a product past the cap",
+      `var p = "a0"; ${Array.from({ length: 8 }, (_, i) => `p = "a${i + 1}";`).join(" ")} ({})[p + p + p];`,
+    ],
+    [
+      "a fresh receiver's inherited writer",
+      'var g = ({})["__define" + "Getter__"]; g.call((1).constructor, "isNaN", function () {});',
+    ],
+    ["a nested pattern key", `var [{["define" + "Property"]: d}] = [Object]; d(${D});`],
+    ["a for-of head's pattern key", `for (var {["define" + "Property"]: d} of [Object]) d(${D});`],
+    ["a parameter default's pattern key", `function f({["define" + "Property"]: d} = {}) { d(${D}); } f(Object);`],
+    ["a name assigned as this.p", `var p = "Xyz"; this.p = "Property"; Object["define" + p](${D});`],
+    [
+      "a name rebound by a global-object store",
+      `var p = "Xyz"; globalThis["p"] = "Property"; Object["define" + p](${D});`,
+    ],
+    [
+      "a name rebound by defineProperty(this)",
+      `var i = 0; Object.defineProperty(this, "i", {value: "define" + "Property"}); Object[i](${D});`,
+    ],
+    ["a name rebound by assign(this)", `var i = 0; Object.assign(this, {i: "define" + "Property"}); Object[i](${D});`],
+    ["a compound assignment", `var t = ""; t += "define"; t += "Property"; Object[t](${D});`],
+    ["a number name assigned a string", `var i = 0; i = "define" + "Property"; Object[i](${D});`],
+    ["compareArray beside a parameter i", `${COMPARE} function g(i) { return i; }`],
+    [
+      "super by a computed key",
+      `class C extends Object { static m() { return super["define" + "Property"]; } } C.m()(${D});`,
+    ],
+    ["an optional element access", `Object?.["define" + "Property"](${D});`],
+    ["a for-in head that is no declaration", `var k; for (k in {["define" + "Property"]: 0}) Object[k](${D});`],
+    ["a catch variable", `try { throw "define" + "Property"; } catch (p) { Object[p](${D}); }`],
+    ["a chained assignment", `var a = "x", b = "y"; a = b = "define" + "Property"; Object[a](${D});`],
+    ["a conditional key part", `var c = 1; Object[(c ? "define" : "get") + "Property"](${D});`],
+    ["a conditional key", 'var c = 1; ({})[c ? "a" : "b"];'],
+    ["a logical assignment", `var p = ""; p ||= "define" + "Property"; Object[p](${D});`],
+    ["a string plus some number", 'var n = 0; n++; ({})["k" + n];'],
+    ["a template of some number", "var n = 0; n++; ({})[`k${n}`];"],
+    ["an escape in a literal", `Object["\\x64efine" + "Property"](${D});`],
+    ["a for-in variable's initializer", `for (var p = "Xyz" in {Property: 0}) Object["define" + p](${D});`],
+    ["a for-in variable over a computed key", `for (var k = "Xyz" in {["define" + "Property"]: 0}) Object[k](${D});`],
+    ["a for-of variable", `for (var k of ["define" + "Property"]) Object[k](${D});`],
+    [
+      "a namespace",
+      {
+        "./entry.ts": `namespace p { export function toString() { return "Property"; } } (Object as any)["define" + p](${D}); var p = "Xyz";`,
+      },
+    ],
+    [
+      "an enum",
+      {
+        "./entry.ts": `enum q { A } (q as any).toString = function () { return "Property"; }; (Object as any)["define" + q](${D}); var q = "Xyz";`,
+      },
+    ],
+    [
+      "import = beside a var of its text",
+      {
+        "./entry.ts": `import p = require("./m"); (Object as any)["define" + p](${D});`,
+        "./m.ts": 'export = { toString() { return "Property"; } }; var p = "Xyz";',
+      },
+    ],
+  ])("%s stops the fold", (_label, source) => {
+    expect(facts(source, "Number")).toEqual({ pristine: true, fold: false });
+  });
+
+  it.each<readonly [string, Sources]>([
+    ["compareArray's shape", COMPARE],
+    ["reads by a number name", "var a = [1]; var i = 0; var x = a[i]; var y = [1][i + 1]; x; y;"],
+    ["a sum over a loop", "var arr = [1, 2]; var s = 0; for (var j = 0; j < arr.length; j++) s += arr[j];"],
+    ["a key that names no writer", '({})["is" + "Finite"];'],
+    ["a chained assignment of no writer", 'var a = "x", b = "y"; a = b = "is" + "Finite"; ({})[a]; ({})[b];'],
+    ["a long chain", 'var s = ""; for (var j = 0; j < 100; j++) s = s + "x"; ({})[s];'],
+    ["a long literal", `({})[${Array.from({ length: 200 }, (_, i) => `"k${i}"`).join(" + ")}];`],
+    ["a var read before its initializer", '({})["define" + p]; var p = "X";'],
+    // Controls: the declaration stops a stop row above, not the program around it.
+    ["an initializer outside a loop head", `for (var p = "Xyz"; false; ) Object["define" + p](${D});`],
+    ["a var in a TS source", { "./entry.ts": `var p = "Xyz"; (Object as any)["define" + p](${D});` }],
+    [
+      "an interface and a type alias beside vars of their text",
+      {
+        "./entry.ts": `interface p { a: 1 } type q = string; var p = "Xyz", q = "Abc"; (Object as any)["define" + p + q](${D});`,
+      },
+    ],
+    [
+      "an enum of another name",
+      { "./entry.ts": `enum E { A } var p = "Xyz"; (Object as any)["define" + p](${D}); E.A;` },
+    ],
+  ])("%s keeps the fold", (_label, source) => {
+    expect(facts(source, "Number")).toEqual({ pristine: true, fold: true });
+  });
+
+  it.skipIf(!TEST262)("the real assert.js + sta.js prelude keeps the fold", () => {
+    const prelude = ["assert.js", "sta.js"].map((file) => readFileSync(join(ROOT, "test262", "harness", file), "utf8"));
+    expect(facts(prelude.join("\n"), "Number")).toEqual({ pristine: true, fold: true });
   });
 });
 
