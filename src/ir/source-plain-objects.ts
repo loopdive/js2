@@ -11,15 +11,11 @@
  * `String` as a callee or the intercepted `Object.prototype.toString.call(v)` reaches none.
  */
 import { ts } from "../ts-api.js";
+import { isNonReferenceName } from "../shared/binding-writes.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall, realmConstantRead } from "./realm-static-call.js";
 import { realmConstructorId, type RealmFamily } from "./program/builtin-prototype-keys.js";
 import { isScriptThis } from "./this-binding.js";
-
-/** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
-const isMemberName = (node: ts.Identifier): boolean =>
-  (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
-  ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
 
 /**
  * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`),
@@ -42,7 +38,7 @@ export function programObjects(
   // read, nor (#7350 B3a) the receiver of a constant the front end folds (`realmConstantRead`).
   const familyRead = (node: ts.Identifier): RealmFamily | undefined => {
     const family = realmConstructorId(node.text)?.family;
-    if (family === undefined || isMemberName(node) || !isPristineGlobal(node)) return undefined;
+    if (family === undefined || isNonReferenceName(node) || !isPristineGlobal(node)) return undefined;
     const access = node.parent;
     const folded = ts.isPropertyAccessExpression(access) && realmConstantRead(access, isPristineGlobal) !== undefined;
     return folded ? undefined : family;
@@ -55,7 +51,7 @@ export function programObjects(
       ts.isFunctionExpression(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
-    namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
+    namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isNonReferenceName(node);
     globalObject ||= isScriptThis(node);
     ts.forEachChild(node, visit);
   };

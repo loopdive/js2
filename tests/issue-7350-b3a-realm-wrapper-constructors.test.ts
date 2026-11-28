@@ -108,8 +108,8 @@ describe("#7350 B3a — what the identity rows lack refuses by name or aborts", 
     ],
     ["a static's read", "var p = Number.isNaN;", "Number.isNaN is not reachable on this path yet (#7350 B3bc)"],
     ["a static's call", "var p = String.fromCharCode(65);", "String.fromCharCode is not reachable on this path yet"],
-    // The write's own route refuses its receiver first.
-    ["a write of a key it lacks", "Boolean.prototype = 1;", 'identifier "Boolean" is not in scope'],
+    // (#7350 slice 1) The statement is an expando, which no longer makes `Boolean` non-pristine: the key refuses.
+    ["a write of a key it lacks", "Boolean.prototype = 1;", "Boolean.prototype is not reachable on this path yet"],
     ["new String", 'var w = new String("a");', "new String (a wrapper object; #7350 B3bc)"],
     ["new Number", "var w = new Number(1);", "new Number (a wrapper object; #7350 B3bc)"],
     ["new Boolean", "var w = new Boolean(1);", "new Boolean (a wrapper object; #7350 B3bc)"],

@@ -1476,3 +1476,200 @@ All three are measured on the branch.
   (`--base HEAD^1` and `--base origin/main`).
 - With `LOC_GATE_BASE=origin/main`, the loc and func gates fail, but only on files this branch does not touch:
   `src/codegen/*` and `src/ir/from-ast.ts` (+2). Main has moved past the base.
+
+### Slice 1 result (2026-11-27, branch `claude/7350-expando-escape` on main `2af9fc6e7c`)
+
+**Built** (one code commit):
+
+- *Expando fix.* `makeIrAmbientBindingPredicate` gains the quantifier `"every-but-expando"`: `"every"`, except that a
+  JS property declaration on the name (`X.k = v;`, `X["k"] = v;`, `Object.defineProperty(X, "k", d);`) does not count
+  against "lib only". It reuses `isJsPropertyDeclarationTarget` (`shared/binding-writes.ts`, already imported). Only
+  `pristineBuiltinGlobal` asks it.
+- *Escape rule.* `builtin-global-binding.ts` walks the sources once (`bindingFacts`, which replaces
+  `boundOrWrittenNames`) for two facts: the names declared or assigned (as before), and the names some reference of
+  which escapes (`keepsValue`). A reference keeps the value when it is a callee, the object of a member read that is no
+  store target (`occurrenceIsWriteTarget`: assignment, compound, `++` / `--`, `delete`, destructuring, for-in / for-of)
+  and is not `__defineGetter__` / `__defineSetter__`, a `typeof` operand, or the right side of `instanceof`. Type
+  positions are skipped; `extends X` counts. The new export `builtinMembersFold(checker, sourceFiles)` answers
+  "pristine and never escapes", from the same cached facts as `pristineBuiltinGlobal`.
+- *The folds that ask it:* the resolver's `foldsBuiltinMembers` (`source-dynamic-contracts.ts`), read by from-ast's
+  `isAmbientReceiver` (Math methods, the static predicates `Number.isNaN` / `isFinite` / `Object.is`,
+  `JSON.stringify`, the unadmitted-`defineProperty` check), and the host's `foldsMembers`
+  (`FunctionObjectLoweringHost`), read by `realm-static-call.ts` for the `Object` statics' call form and the pristine
+  `Math` call; `realmBuiltinOperand` takes both answers (`RealmGlobals`). Number's constants (`realmConstantRead`),
+  the realm read of a name and the Error constructor's argument exemption keep the pristine answer.
+- `realm-static-call.ts` gets the fact through its host interface; no new import edge, no new `src/` file.
+- `tests/issue-7350-slice1-expando-escape.test.ts` (65 tests): the two facts per spelling; the expando statement forms
+  for `eval`, `Object`, `Error`, `String`, `Number`, `Boolean`; S8.5_A9's shape, constants beside writes, Error's
+  expandos and alias write against node with a wrong twin; every escape spelling of `Number.isNaN` refusing by name; the
+  non-escaping folds still answering node's value. Mutation check: with `foldsBuiltinMembers` wired to the pristine
+  answer, 3 of the rows fail (alias write, write through a parameter, a write in an uncalled function).
+
+**Deviations from the plan:**
+
+- *The expando acceptance is a fourth quantifier, not a change of `"every"`.* `"every"` serves about twenty
+  lib-only consumers in both pipelines (`select-object-statics`, `object-create-call`, `ambient-intrinsics`' Math and
+  static values, RegExp statics, `builtin-proto-member`, …) that fold writable members without the escape fact. Changing
+  `"every"` would admit, for example, `Object.create = f; Object.create(null)` to the native fold there, and would change
+  ordinary-pipeline bytes. On the Prepared path the realm names are read through `pristineBuiltinGlobal`
+  (`realmIntrinsicRead`, `realm-static-call.ts`), so that one predicate is where the fix is needed.
+- *B3a's pin of `Boolean.prototype = 1;`* changes from `identifier "Boolean" is not in scope` to
+  `Boolean.prototype is not reachable on this path yet (#7350 B3bc)`: the statement is an expando.
+- *What an escaping member does today:* every wrapper row and `Number.isNaN` refuse by name at the identity row
+  (`X.k is not reachable on this path yet`); `Object`, `eval` and `Math` are no values on this path, so their member
+  writes refuse as `identifier "X" is not in scope`; an alias write of `String` / `Boolean` keeps B3a's run-time abort.
+  No row folds. B3b-1 turns the identity refusals into reads through the realm.
+- `prepare-number-conversion.ts`'s own `canonical()` lib-file test is not relaxed, so a program with an expando on
+  `String` / `Number` / `Boolean` loses the source-bound conversion plan for `X(v)` (the call reaches the realm's
+  value). No census row is affected; relax it with B3b-1 if a row needs it.
+
+**Holes for #7503** (its issue file is on `origin/claude/prepared-eval-a7`; S2 adds these rows there):
+
+- A reference through the global object (`globalThis.Number`, `this.Number`, a global-object alias) is not seen by
+  the escape walk.
+- Code run by eval or the `Function` constructor is not walked. **Once S2's A4 lands (pristine `eval`), the escape walk
+  must cover eval sources**, as `bindingFacts` covers the program's files; A4's planned `DeleteExpression` edit to
+  `boundOrWrittenNames` now goes into `bindingFacts`' visit (the expando fix also widens A4's pristine `eval`: an
+  expando on `eval` no longer disqualifies it).
+- A route that names no `X`: `X.prototype.constructor`, `(1).constructor`, `"".constructor`, `({}).constructor`. All
+  refuse or abort today (no wrapper prototype is reachable; `.constructor` on a string refuses); B3b-1 makes them
+  reachable and must treat a `constructor` read off a held prototype as an escape of its constructor.
+
+**Measured** (base `2af9fc6e7c`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804 identical (744 bytes, 59 refused, 1 threw on both); the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline: 110 test262 files (30 whose source has an expando statement on a realm name or `Math`, plus 80
+  carriers), each compiled with `assert.js` + `sta.js` at the default and the standalone target: 220 / 220 identical.
+- Census (`prepared-census.mts --harness real`):
+
+  | list | base pass | head pass | gained | lost | new crashes |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | carriers (1,977) | 228 | 229 | 1 (`S8.5_A9.js`) | 0 | 0 |
+  | o411 (411) | 83 | 83 | 0 | 0 | 0 |
+
+  On carriers the only changed row is `S8.5_A9.js`; on o411 no row changes.
+- Tests: the new test, B3a's test, B3b-0's test and the 7 B3a pin files pass. `tests/issue-2856-module-bindings.test.ts`
+  fails 14 rows on base and head alike (ordinary pipeline, unrelated).
+- Gates exit 0: loc, func (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet, dead exports,
+  typecheck, import cycles, compiler boundaries (`--base HEAD^1` and `--base origin/main`).
+
+**After review RV-PR7549** (2026-11-27, on `795a5945fe`; #7502 not yet merged, so no merge of main here):
+
+- *1, BLOCK, the escape rule was unsound: fixed.* "No reference of `X` escapes" did not stop a write of `X.k` by a
+  route that never spells `X`: `X.prototype.constructor`, an instance's `constructor`, `this` in a method or getter `X`
+  inherits from `Function.prototype` / `Object.prototype`, an `export { X }`. The rule is now the *member rule*: `X.k`
+  folds when `X` is pristine, no reference of `X` escapes, **and no write in the program may store or define the key
+  `k` on a realm object** (new module `src/ir/realm-member-writes.ts`). A write is a store target `o.k` / `o["k"]`
+  (assignment, compound, `++` / `--`, `delete`, destructuring, for-in / for-of) or a key writer called as a member
+  (`defineProperty`, `defineProperties`, `assign`, `__defineGetter__`, `__defineSetter__`; keys from its literal
+  operands). A computed key, any other mention of a key writer, `with` and a reference to `Reflect` write every key.
+  A write reaches no realm object only when its receiver is a fresh value (a literal, a function or class expression)
+  or a name every binding of which holds one, that nothing assigns and that no reaching write names as a key (a
+  top-level binding is a global-object property); the largest such set is found by dropping names until none is
+  written. The key is what makes it cheap: the harness writes `this.message`, `assert.throws`, … but never a folded
+  key. The routes a)–d) and their twins are pinned (`facts` rows: 26 stop the fold, 7 keep it); the doc of
+  `foldsBuiltinMember` states the guarantee. The name rule is kept beside it: dropping it would widen folds and change
+  bytes, a separate change.
+- *2, BLOCK, duplicated predicate: folded.* `isNonReferenceName` now lives in `src/shared/binding-writes.ts` with
+  closure-signature-flow's explicit parent-kind list (one guard added: a node without a parent is a reference). It
+  replaces closure-signature-flow's copy, builtin-global-binding's (which matched an export specifier and a binding
+  element's key by `name` / `propertyName`, finding 1d), function-local-var's `isIdentifierReference`,
+  select-expression-structure's `identifierIsValueReference` (7 uses in `select.ts`) and source-plain-objects'
+  `isMemberName`. The twins' differences were not deliberate: each list was a subset of the others (getter, setter,
+  property-declaration, qualified-name and enum-member names; labels and declaration names in source-plain-objects,
+  whose `familyRead` already excluded them through `isPristineGlobal`). Bytes unchanged (below).
+- *3, nit, four names: fixed.* One name, `foldsBuiltinMember`, for the export, the facts field, the resolver hook,
+  the contracts field, the host field and the realm-static-call parameters. It is singular now that the fact is per
+  member.
+- *4, nit, `binds` rebuilt per call: fixed.* `isLib` and `binds` are built once per predicate.
+- *Test changes outside this issue.* Three `#7354 O2` ToPropertyDescriptor rows used a `logged(d, k, v)` helper that
+  defines a computed key on a parameter; that may write any key on any object, so no `Object` static folds beside it.
+  The helper is now an object literal of logging getters (same read order checked). `#7354 O1` (13) used
+  `defineProperties(n, n)` with `n` from `Object.create` (not a fresh value to the scan); its map is now `5`, which
+  likewise defines nothing. `Object.create(…)` as a fresh value was left out: it needs the member rule's own answer for
+  `Object.create` (a fixed point over two facts) for one test row.
+
+**Measured after the review** (base `795a5945fe`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804 identical (744 bytes, 59 refused, 1 threw); the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline: the 110 files of slice 1 plus 70 with getters, setters, labels or a declaration named `Symbol`
+  (the folded predicate's differences), `assert.js` + `sta.js`, default and standalone: 360 / 360 identical.
+- Census (`--harness real`): carriers 229 → 229, o411 83 → 83; 0 gained, 0 lost, 0 new crashes, no row changes.
+  `S8.5_A9.js` keeps passing: `Number.NaN` is a constant and folds on the pristine answer.
+- Tests: slice 1's test (98), B3a's, B3b-0's, the 7 B3a pin files and the folded predicate's callers'
+  (closure signatures, function-local var, G1, O1, O2, O2b, #7564 Math, #7118): 22 files, 781 tests pass.
+- Gates exit 0: loc, func, coercion sites, oracle ratchet, dead exports, typecheck, import cycles, compiler boundaries
+  (`--base HEAD^1` and `--base origin/main`; `realm-member-writes.ts` classified beside `builtin-global-binding.ts`).
+  With `LOC_GATE_BASE=origin/main` (`ad10f474ca`) func passes and loc fails only on `src/ir/program-physical-plan.ts`
+  (+1), which this branch does not touch: main has moved past the base.
+
+**After review RV-PR7549, round 2** (2026-11-28, on `e104f5a5a0`; review of `716f742e04`: BLOCK, soundness). The
+member rule missed a key writer called without its name being spelled. Lead's calls, in order:
+
+- *1(b), landed: readers of an operand's values.* `getOwnPropertyDescriptors`, `values`, `entries` and
+  `getOwnPropertyDescriptor` join `KEY_WRITERS` as readers (`{ target: 0 }`): a call as a member counts as a write of
+  every key **on its operand**, so a fresh operand (a literal, a fresh name) still folds; any other spelling writes
+  every key on any object, as for the writers. `getOwnPropertyDescriptor` by a literal key (`readKey`) writes nothing:
+  it hands out that key's value only, which holds a key writer only under the writer's own name (itself a counted
+  mention) or after a write of every key. `getOwnPropertyNames` and `keys` are left out: they hand out names, which
+  reach a value only through a computed read (rule a), a descriptor read or `Reflect`. Without the literal-key case,
+  (b) cost 8 carriers and 1 o411 pass (`getOwnPropertyDescriptor/15.2.3.3-4-191`, `-194`, `-196` … `-201`:
+  `Object.getOwnPropertyDescriptor(Number, "MAX_VALUE")`); with it, nothing.
+- *1(a), measured, NOT landed: a read by a key that is no literal* (`o[k]`, `` o[`a${b}`] ``, `var {[k]: d} = o`,
+  `({[k]: d} = o)`, counted as a write of every key on any object; any receiver may inherit a key writer). Census, base
+  `e104f5a5a0`, (a) on top of the landed head: carriers 229 → 215 (−14: the 8 `getOwnPropertyDescriptor/15.2.3.3-4-*`
+  rows above and `defineProperty/15.2.3.6-3-5`, `-6`, `-7`, `-10`, `-11`, `-12`, now the run-time abort), o411
+  83 → 40 (−43: `Object.create` / `defineProperty` / `defineProperties` / `getOwnPropertyDescriptor` / `Math` rows,
+  now `"Object"` / `"Math"` not in scope or the abort). Cause: `assert.js`'s `compareArray` reads `b[i]` and `a[i]`,
+  so every test262 program writes every key and no writable member folds (checked: the `assert.js` + `sta.js` prelude
+  alone defeats `Math.abs`'s fold; without that one line it folds). Left for the lead's decision; until then the doc
+  of `foldsBuiltinMember` lists the route under "Not yet seen". The patch and its six test rows are kept out of the
+  branch.
+- *2, landed: `Object.create(…)` results are fresh* (`Freshness = "fresh" | "created"`, `freshnessOf`,
+  `objectCreateCallee`). A created value, or a name only ever bound to fresh or created values, is fresh while
+  `create` folds: every `Object` it is read off is pristine, `Object` never escapes, and no reaching write names
+  `create`. The last is part of `realmWrittenKeys`' fixed point (the created values are dropped with the names until
+  nothing written rebinds them). A helper's parameter is never fresh. O1 (13) is back to its original input
+  (`Object.defineProperties(n, n)`) and agrees with node; its original-shape refusal pin (`e104f5a5a0`) is removed, as
+  it pinned the same input to a refusal that no longer happens and the row itself now covers it.
+- *3, nit, landed:* `KEY_WRITERS`' doc says that matching every spelling of a member name (a declaration's, a
+  string's) is an intended over-approximation.
+- *Tests* (`issue-7350-slice1-expando-escape`, 111): stop rows for the descriptor routes (values of
+  `getOwnPropertyDescriptors(Object)`, a descriptor read by a computed key, a held reader) and for created values
+  (`create` written, directly and by a route that names no `Object`; `Object` escaping; `Object` declared; a parameter
+  given a created value); keep rows for fresh operands and an iterator's `values()`, literal-key descriptor reads,
+  own names only, writes on a created value, a created map. Mutation checks: without the readers 3 stop rows fail;
+  without the created-value conditions 4 more fail; with (a) removed from its patch, exactly its 6 rows fail.
+
+**Measured after round 2** (base `e104f5a5a0`, a `git archive` copy, vs head):
+
+- `prepared-byte-identity.mts`: 804 / 804 identical (744 bytes, 59 refused, 1 threw); the diff is empty.
+- `prove-emit-identity`: 60 / 60 identical.
+- Ordinary pipeline: the same 180 files, `assert.js` + `sta.js`, default and standalone: 360 / 360 identical.
+- Census (`--harness real`):
+
+  | list | base pass | head pass | gained | lost | new crashes |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | carriers (1,977) | 229 | 229 | 0 | 0 | 0 |
+  | o411 (411) | 83 | 83 | 0 | 0 | 0 |
+  | carriers, with (a) | 229 | 215 | 0 | 14 | 0 |
+  | o411, with (a) | 83 | 40 | 0 | 43 | 0 |
+
+  No row changes on the landed head. Without `readKey`, (b) alone measured carriers 221, o411 82.
+- Tests: the same 22 files, 797 tests pass.
+- Gates exit 0: loc, func, coercion sites, oracle ratchet, dead exports, typecheck, import cycles, compiler boundaries
+  (`--base HEAD^1` and `--base origin/main`). With `LOC_GATE_BASE=origin/main` (`91ed0c420c`) loc fails on
+  `src/ir/program-physical-plan.ts` (+1) and func on `from-ast.ts::lowerBinary` (+8): neither changes in this round;
+  main has moved past the branch (no merge of main here, #7502 not yet merged).
+
+**Fallback for 1(a), chosen by the lead (2026-11-28).** The naive rule costs −14 carrier and −43 o411 passes. Its
+six routes are therefore listed under "Not yet seen" in the `foldsBuiltinMember` doc and pinned as `it.fails` rows
+(fold = false) in `tests/issue-7350-slice1-expando-escape.test.ts`. They are tracked as #7628
+(`plan/issues/7628-realm-write-scan-computed-key-writers.md`), which B3b-1 (#7561) depends on.
+
+**Merge with main after #7502 (2026-11-28).** #7502's `DeleteExpression` arm is now in `bindingFacts`' visit and
+goes into `assigned`, so `delete eval` still lands in `taken`. `GLOBAL_ALIASES` stays exported for #7502's
+`ownThisEscapes`. The `foldsBuiltinMember` doc's eval line follows S2's wording, minus the `globalThis` clause,
+which the write scan now covers.

@@ -17496,6 +17496,14 @@
       "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
     },
     {
+      "path": "src/ir/realm-member-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source scan of the keys a program may write on a realm object (#7350, the write half of builtin-global-binding.ts's member rule); moves with builtin-global-binding.ts under frontend/ts."
+    },
+    {
       "path": "src/ir/realm-static-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
