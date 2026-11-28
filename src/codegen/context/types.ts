@@ -2686,9 +2686,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     /** (#4307) `(externref) -> externref` closure→carrier wrap helper. */
     wrapHelperFuncIdx?: number;
   };
-  /** Runtime-eval global-object push/pull helpers have been reserved/filled. */
+  /** Runtime-eval global-object push/pull helpers have been reserved; they are filled once the bindings are settled. */
   runtimeEvalGlobalSyncReserved?: boolean;
-  runtimeEvalGlobalSyncFilled?: boolean;
+  runtimeEvalGlobalBindingsSettled?: boolean;
   /** Runtime guard: 1 only while execution is crossing the linked provider. */
   runtimeEvalProviderActiveGlobalIdx?: number;
   /** This unit consumes linked runtime eval and therefore needs mutable global
