@@ -3,12 +3,14 @@
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js";
 
 export type IrModuleInitTarget = "host" | "standalone" | "wasi";
-export type IrModuleInitInvocationKind = "none" | "wasm-start" | "deferred-export" | "wasi-start-export";
+/** `called`: startup never runs the init; its call site does, once per call (a literal eval's source, #7363). */
+export type IrModuleInitInvocationKind = "none" | "wasm-start" | "deferred-export" | "wasi-start-export" | "called";
 
 export interface IrModuleInitInvocationPolicy {
   readonly target: IrModuleInitTarget;
   readonly kind: IrModuleInitInvocationKind;
-  readonly exactlyOnce: true;
+  /** False exactly for `called`. */
+  readonly exactlyOnce: boolean;
 }
 
 export type IrModuleBindingDeclarationKind = "var" | "let" | "const";

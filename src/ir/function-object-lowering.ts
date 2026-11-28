@@ -52,6 +52,8 @@ export interface FunctionObjectLoweringHost {
   readonly createsFunctionObjects: () => boolean;
   /** (#7354 O1) The identifier reads the unchanged global built-in of its name (`builtin-global-binding.ts`). */
   readonly isPristineGlobal: (identifier: ts.Identifier) => boolean;
+  /** (#7350) The member rule (`foldsBuiltinMember`): a fold of `X.k`, the identifier being `X`, reads the built-in. */
+  readonly foldsBuiltinMember: (identifier: ts.Identifier) => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
@@ -135,6 +137,19 @@ function isConstructorFunction(fn: ts.FunctionLikeDeclaration): boolean {
   );
 }
 
+/** SetFunctionName's name of a source function; a computed key the compiler cannot evaluate refuses by name. */
+function ownFunctionName(fn: Parameters<typeof emitFunctionObjectInit>[2]): string {
+  const key =
+    ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
+  if (key === undefined)
+    throw new IrUnsupportedError(
+      "type-resolution-unsupported",
+      "build",
+      "the name of a function under a computed key needs the key's value",
+    );
+  return (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
+}
+
 /**
  * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
  * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate, the §15.1.5 count the legacy metadata uses), `name`
@@ -150,25 +165,20 @@ function isConstructorFunction(fn: ts.FunctionLikeDeclaration): boolean {
  * Function.prototype's %ThrowTypeError% accessor. The strictness is the program's (`closureCodeStrictness`); where
  * it has no answer for such a function the function refuses by name, since a guess would answer a sloppy function's
  * `caller` with the accessor's TypeError.
+ *
+ * (#7487) `name`, when given, is the name SetFunctionName gives instead of the function's own: a dynamic function's
+ * is `"anonymous"`.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
   resolver: Pick<IrFromAstResolver, "closureCodeStrictness"> | undefined,
+  name: string = ownFunctionName(fn),
 ): void {
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
   if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
-  const key =
-    ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
-  if (key === undefined)
-    throw new IrUnsupportedError(
-      "type-resolution-unsupported",
-      "build",
-      "the name of a function under a computed key needs the key's value",
-    );
-  const name = (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   const isConstructor = isConstructorFunction(fn);
   const ownsCaller = isConstructor && !functionCodeStrict(fn, resolver);
   builder.emitCall(

@@ -17,8 +17,8 @@ import {
   moduleBindingOfGlobal,
   moduleBindingsNamed,
   scopedModuleBinding,
-} from "./module-binding-table.js";
-import { absoluteGlobalIdx } from "./global-space.js";
+} from "./module-bindings/module-binding-table.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 
 const TOP_LEVEL_LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;

@@ -13,9 +13,9 @@ import { ensureLateImport, flushLateImportShifts } from "./expressions/late-impo
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { absoluteGlobalIdx } from "./global-space.js";
-import { type ModuleBinding, moduleBindingOf } from "./module-binding-table.js";
-import { moduleBindingState } from "./source-binding-projection.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
+import { type ModuleBinding, moduleBindingOf } from "./module-bindings/module-binding-table.js";
+import { moduleBindingState } from "./module-bindings/source-binding-projection.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { withRuntimeModuleCallableBindings } from "./runtime-module-callable-metadata.js";

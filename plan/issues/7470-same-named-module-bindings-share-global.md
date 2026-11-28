@@ -122,7 +122,7 @@ any declaration       → its canonical declaration
 Only names whose bare entry is not the record's global go in, so a graph without collisions projects nothing.
 Nothing is recorded per import; `bindImportedModuleGlobal` from revision 1 is gone.
 
-**One projection.** New module `src/codegen/source-binding-projection.ts` owns `withSourceBindings(ctx, source,
+**One projection.** New module `src/codegen/module-bindings/source-binding-projection.ts` owns `withSourceBindings(ctx, source,
 action)`. It applies, for that file:
 
 - the `funcMap` entries of its own colliding functions and of its function imports (today's `ownFuncIdxBySource` /

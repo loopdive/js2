@@ -42,8 +42,13 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
-import { realmBuiltinOperand } from "./realm-static-call.js";
-import { pristineBuiltinGlobal, scriptVarOfRealmGlobal } from "./builtin-global-binding.js";
+import { realmBuiltinOperand, type RealmGlobals } from "./realm-static-call.js";
+import {
+  foldsBuiltinMember,
+  GLOBAL_ALIASES,
+  pristineBuiltinGlobal,
+  scriptVarOfRealmGlobal,
+} from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -59,12 +64,18 @@ import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { irDynamicDeleteHelperName } from "../shared/contracts/dynamic-delete-helper.js";
 import { preparedBindingRewritten } from "./module-binding-script-var.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { AnnexBBlockFunction } from "../shared/annexb-block-functions.js";
 import { scriptBlockFunctions } from "./annexb-block-function-values.js";
 import type { CodeStrictness } from "./from-ast.js";
-import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
+import {
+  isReceiverBindingFunction,
+  ownThisEscapes,
+  readsAmbientThisGlobal,
+} from "../shared/body-references-own-this.js";
+import { isScriptThis } from "./this-binding.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -253,21 +264,21 @@ function sourceDynamicClosureSignature(
 
 /**
  * (#7354 Fa) A script `var` that holds its function-expression initializer from its declaration on: a top-level
- * statement's declarator of the program's only source, whose binding nothing else writes
- * (`preparedBindingRewritten`, which sees every write on this path). from-ast keeps the closure on the binding's
- * module-init scope entry when it lowers the store, so only module-init code after the declaration, outside every
- * function, sees it: there the slot holds exactly that closure, and a call through the name is the closure's direct
- * call.
+ * statement's declarator of the program's only startup source (`programDynamicContracts`), whose binding nothing
+ * else writes (`preparedBindingRewritten`, which sees every write on this path). from-ast keeps the closure on the
+ * binding's module-init scope entry when it lowers the store, so only module-init code after the declaration, outside
+ * every function, sees it: there the slot holds exactly that closure, and a call through the name is the closure's
+ * direct call.
  */
 function staticFunctionValue(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
   declaration: ts.VariableDeclaration,
 ): boolean {
   const { name, initializer } = declaration;
   if (
-    sourceFiles.length !== 1 ||
+    startupSources.length !== 1 ||
     !initializer ||
     !ts.isFunctionExpression(initializer) ||
     !sourceDynamicClosureSignature(policy, initializer) ||
@@ -324,6 +335,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly createsFunctionObjects?: () => boolean;
     /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
     readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
+    /** (#7350) `foldsBuiltinMember`: the member rule, a fold of `X.k` (the identifier is `X`) reads the built-in. */
+    readonly foldsBuiltinMember?: (identifier: ts.Identifier) => boolean;
     /**
      * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
@@ -333,9 +346,24 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicCompoundMemberWrites?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
     readonly closureCodeStrictness?: CodeStrictness;
+    /**
+     * (#7471) The helper a `delete` of a member calls: its enclosing code's strictness, the rule a dynamic PutValue's
+     * failure follows (unknown code is strict, as there).
+     */
+    readonly dynamicDeleteSymbol?: (site: ts.DeleteExpression) => string;
+    /** (#7471) A function-local object reaches a delete as the raw externref, which is the carrier's value. */
+    readonly dynamicDeleteBoxesExternref?: () => boolean;
     /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
     readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
+    /** (#7609) A `this` of script code reads the realm's global object (`isScriptThis`). */
+    readonly globalObjectThis?: (expr: ts.Expression) => boolean;
   };
+  /**
+   * (#7363 A4) Some sloppy function binds ambient `this`, which a plain call makes the global object, and lets it
+   * escape (`ownThisEscapes`): a global-object value may then write any global, which `pristineBuiltinGlobal` does not
+   * see. Admission asks it (`refuseUnadmittedLiteralEvalSites`); no lowering does.
+   */
+  readonly ambientThisMayBeGlobal: boolean;
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
    * a function on the native lane whose closures are function objects and that reads its own `this`, the strictness
@@ -368,26 +396,33 @@ export interface RefusalOwners {
 
 /**
  * `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. `input` is
- * the producer's: its checker, policy and the compiler's answer to the strictness of a piece of code.
+ * the producer's: its checker, policy and the compiler's answer to the strictness of a piece of code. (#7363 A3)
+ * `startupSources` are the sources startup runs, every one but the literal dynamic-code sources (#7487). The answers
+ * that need the program's only script to run first are asked over them: the script-var homes
+ * (`irOwnedScriptVarHome`), the function declarations read as values, the Annex B block functions and the static
+ * function values. Every other answer here reads the whole program. (#7487) `literalFunctionSites`: the program has a
+ * literal `Function` site, which makes a value of its source's declaration as a declaration read as a value does.
  */
 export function programDynamicContracts(
   input: {
     readonly checker: ts.TypeChecker;
     readonly policy: SourcePolicy;
-    readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+    readonly codeStrictness?: (node: ts.Node) => boolean;
   },
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
+  startupSources: readonly ts.SourceFile[] = sourceFiles,
+  { literalFunctionSites = false }: { readonly literalFunctionSites?: boolean } = {},
 ): ProgramDynamicContracts {
   const { checker, policy } = input;
   // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
-  const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
-  const blockFunctions = functionObjects ? scriptBlockFunctions(sourceFiles) : [];
+  const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, startupSources) : [];
+  const blockFunctions = functionObjects ? scriptBlockFunctions(startupSources) : [];
   const objects = programObjects(
     sourceFiles,
-    functionDeclarationValues.length > 0 || blockFunctions.length > 0,
+    functionDeclarationValues.length > 0 || blockFunctions.length > 0 || (functionObjects && literalFunctionSites),
     pristineBuiltinGlobal(checker, sourceFiles),
   );
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
@@ -400,13 +435,11 @@ export function programDynamicContracts(
       ? { functionCodeStrict, ambientThisStrict: functionCodeStrict }
       : { functionCodeStrict };
   };
-  const bindsReceiver = (node: ts.Node): boolean =>
-    (ts.isFunctionExpression(node) && codeStrictness(node).ambientThisStrict !== undefined) ||
-    ts.forEachChild(node, bindsReceiver) === true;
-  const closuresBindReceivers = functionObjects && sourceFiles.some(bindsReceiver);
+  const receivers = receiverBindings(sourceFiles, codeStrictness);
   const provenance = sourceDynamicProvenance(
     checker,
-    sourceFiles,
+    startupSources,
+    pristineBuiltinGlobal(checker, sourceFiles),
     nativeDynamicLane(policy),
     (declaration, carries) => sourceDynamicResult(checker, policy, declaration, carries) !== undefined,
     (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter)?.kind === "dynamic",
@@ -416,6 +449,7 @@ export function programDynamicContracts(
     functionDeclarationValues,
     blockFunctions,
     codeStrictness,
+    ambientThisMayBeGlobal: receivers.ambientThisMayBeGlobal,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
       ? {
@@ -424,13 +458,17 @@ export function programDynamicContracts(
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
-            !closuresBindReceivers && staticFunctionValue(checker, policy, sourceFiles, declaration),
-          closuresBindReceivers: () => closuresBindReceivers,
+            !receivers.closuresBindReceivers && staticFunctionValue(checker, policy, startupSources, declaration),
+          closuresBindReceivers: () => receivers.closuresBindReceivers,
           dynamicCompoundMemberWrites: () => true,
           createsFunctionObjects: () => functionObjects,
           isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
+          foldsBuiltinMember: foldsBuiltinMember(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
+          dynamicDeleteSymbol: (site) => irDynamicDeleteHelperName(input.codeStrictness?.(site) !== false),
+          dynamicDeleteBoxesExternref: () => true,
           dynamicForInPlan: () => FOR_IN_PLAN,
+          globalObjectThis: isScriptThis,
         }
       : {},
     result: (declaration) =>
@@ -461,6 +499,32 @@ export function programDynamicContracts(
         converts,
       ),
   };
+}
+
+/**
+ * One pass over every non-arrow function-like. (#7354 C2) `closuresBindReceivers`: some function expression binds its
+ * own `this` from the dispatcher's receiver (`ambientThisStrict`, defined only where functions are values). (#7363
+ * A4) `ambientThisMayBeGlobal`: some function that is not known strict reads its ambient `this` and lets it escape.
+ * That one is judged from the code's own strictness, whether or not functions are values: a sloppy plain call gives
+ * the global object too, and only the run-time trap in sloppy `dyn.current_this` stops it today (#7503).
+ */
+function receiverBindings(
+  sourceFiles: readonly ts.SourceFile[],
+  codeStrictness: CodeStrictness,
+): { readonly closuresBindReceivers: boolean; readonly ambientThisMayBeGlobal: boolean } {
+  let closuresBindReceivers = false;
+  let ambientThisMayBeGlobal = false;
+  const visit = (node: ts.Node): void => {
+    if (isReceiverBindingFunction(node)) {
+      const { functionCodeStrict, ambientThisStrict } = codeStrictness(node);
+      closuresBindReceivers ||= ts.isFunctionExpression(node) && ambientThisStrict !== undefined;
+      ambientThisMayBeGlobal ||=
+        functionCodeStrict !== true && readsAmbientThisGlobal(node) && ownThisEscapes(node, GLOBAL_ALIASES);
+    }
+    ts.forEachChild(node, visit);
+  };
+  sourceFiles.forEach(visit);
+  return { closuresBindReceivers, ambientThisMayBeGlobal };
 }
 
 /**
@@ -497,7 +561,7 @@ function refuseImplicitDynamicFlows(
   roots: readonly ts.Node[],
   carries: Carries,
   aborted: RefusalOwners["aborted"],
-  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+  globals: RealmGlobals,
   converts: (call: ts.CallExpression) => boolean,
 ): void {
   const any = checker.getAnyType();
@@ -505,7 +569,7 @@ function refuseImplicitDynamicFlows(
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
     const exempt = (e: ts.Expression) =>
-      passedOn(e) || converted || (ts.isCallExpression(e) && converts(e)) || realmBuiltinOperand(e, isPristineGlobal);
+      passedOn(e) || converted || (ts.isCallExpression(e) && converts(e)) || realmBuiltinOperand(e, globals);
     if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
@@ -639,7 +703,10 @@ function legalizeSourceDynamicValues(
       roots,
       carries,
       owners.aborted,
-      pristineBuiltinGlobal(checker, sourceFiles),
+      {
+        isPristineGlobal: pristineBuiltinGlobal(checker, sourceFiles),
+        foldsBuiltinMember: foldsBuiltinMember(checker, sourceFiles),
+      },
       converts,
     );
   legalizeDynamicAllocations(legalized, allocations);

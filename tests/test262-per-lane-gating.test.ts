@@ -281,7 +281,7 @@ describe("test262 per-lane gating — workflow wiring", () => {
     expect(s).toContain('if [ "$RUN_STANDALONE" != "false" ]');
   });
 
-  it("the weekly legacy matrix cannot cascade-skip through `changes`, which does not run on schedule (#7551)", () => {
+  it("the daily legacy matrix cannot cascade-skip through `changes`, which does not run on schedule (#7551)", () => {
     expect(job("test262-shard-mg")).toContain("if: false");
     const shardJob = job("test262-shard");
     expect(shardJob).toMatch(/if: \|\n\s+!cancelled\(\) &&/);
@@ -309,6 +309,9 @@ describe("test262 per-lane gating — workflow wiring", () => {
   it("each lane's steps are gated on that lane", () => {
     const host = "env.HOST_RAN == 'true'";
     const standalone = "env.STANDALONE_RAN == 'true'";
+    // (#7537) Whole-corpus gates also need the full scope: a completed-editions
+    // push run has no whole-corpus counts.
+    const standaloneFull = "env.STANDALONE_RAN == 'true' && env.LEGACY_SCOPE == 'full'";
     const expected: Array<[string, string]> = [
       ["Merge JS-host test262 JSONL results", host],
       ["Build merged JS-host test262 report", host],
@@ -316,8 +319,9 @@ describe("test262 per-lane gating — workflow wiring", () => {
       ["Compile-time regression guard (#1942, #3447)", host],
       ["Merge standalone test262 JSONL results", standalone],
       ["Build merged standalone test262 report", standalone],
-      ["Standalone pass-count high-water floor (#2097)", standalone],
-      ["Standalone regression guard (#1897)", standalone],
+      ["Standalone pass-count high-water floor (#2097)", standaloneFull],
+      ["Standalone regression guard (#1897)", standaloneFull],
+      ["Per-edition conformance ratchet (no completed edition may regress)", standalone],
     ];
     for (const [name, guard] of expected) {
       expect(stepIf("merge-report", name), name).toBe(guard);

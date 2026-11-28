@@ -12,7 +12,7 @@ import type { IrSelection } from "../ir/select.js";
 import type { FuncHandle, Instr, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, CodegenOptions } from "./context/types.js";
-import { liveFunctionBindings } from "./module-binding-table.js";
+import { liveFunctionBindings } from "./module-bindings/module-binding-table.js";
 import { preallocateModuleInitCallable } from "./declarations.js";
 import { moduleInitChunksRequired } from "../shared/module-init-chunk-plan.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";

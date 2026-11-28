@@ -9,26 +9,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { compile } from "../../src/index.ts";
-
-const INTERP_FILES = [
-  "types.ts",
-  "opcodes.ts",
-  "encoder.ts",
-  "runtime-ops.ts",
-  "eval-environment.ts",
-  "emitter.ts",
-  "loop.ts",
-  "dynamic-function.ts",
-];
+import { INTERP_FILES, stripModuleSyntax } from "../../scripts/runtime-eval-provider.mjs";
 
 const EMITTER_ONLY_FILES = ["types.ts", "opcodes.ts", "encoder.ts", "eval-environment.ts", "emitter.ts"];
-
-function stripModuleSyntax(source) {
-  return source
-    .replace(/^import[\s\S]*?;\n/gm, "")
-    .replace(/^export \{[^;]+;\n/gm, "")
-    .replace(/\bexport (?=(?:type|interface|class|const|function)\b)/g, "");
-}
 
 function providerSource() {
   const interpreter = INTERP_FILES.map((name) => stripModuleSyntax(readFileSync(resolve("src/interp", name), "utf8")));

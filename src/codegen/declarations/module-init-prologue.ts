@@ -29,11 +29,11 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
 import { emitScriptGlobalFunctionBindings } from "../global-function-bindings.js"; // (#4394) §9.1.1.4.18
 import { emitScriptGlobalVarBindings } from "../global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
 import { emitThrowJsError } from "../js-errors.js";
-import { liveFunctionBindings } from "../module-binding-table.js";
+import { liveFunctionBindings } from "../module-bindings/module-binding-table.js";
 import { addFuncType } from "../registry/types.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { scriptVarBindingNames } from "../source-scan-predicates.js";
-import { withSourceBindings } from "../source-binding-projection.js";
+import { withSourceBindings } from "../module-bindings/source-binding-projection.js";
 import {
   emitModuleF64UndefinedSeeds,
   emitModuleVarUndefinedSeeds,

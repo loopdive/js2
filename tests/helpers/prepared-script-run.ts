@@ -38,10 +38,19 @@ const messages = (result: { errors: readonly { message: string }[] }) => result.
 
 /**
  * Diagnostics the checker reports on legal sloppy script code that do not stop the compile: a read before the
- * first store, and a repeated `var` whose declarators the checker types differently (`var x = 1; var x;`).
+ * first store, a repeated `var` whose declarators the checker types differently (`var x = 1; var x;`), (#7375) an
+ * arithmetic operand of a non-number type (`x *= "3"`), and a comparison of types the checker sees as disjoint.
  */
-const TOLERATED =
-  /^(Variable '\w+' is used before being assigned\.|Subsequent variable declarations must have the same type\. .*)$/;
+const TOLERATED = new RegExp(
+  [
+    "Variable '\\w+' is used before being assigned\\.",
+    "Subsequent variable declarations must have the same type\\. .*",
+    "The (left|right)-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type\\.",
+    "This comparison appears to be unintentional because the types '\\w+' and '\\w+' have no overlap\\.",
+  ]
+    .map((pattern) => `^${pattern}$`)
+    .join("|"),
+);
 
 /** Run `source`'s module-init: `returned`, or `threw` when it threw a Wasm exception. */
 export async function runPreparedScript(

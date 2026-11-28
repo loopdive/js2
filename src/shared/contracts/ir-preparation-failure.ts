@@ -197,7 +197,10 @@ export type IrUnsupportedCode =
   | "abi-signature-parity"
   | "new-target-threading"
   | "static-class-member"
-  | "module-init-legacy-coupling";
+  | "module-init-legacy-coupling"
+  // (#7363 A4, #7487) A literal dynamic-code site whose global `eval` or `Function` may not be the realm's built-in: a
+  // select-time refusal of the program (`literal-dynamic-code.ts`).
+  | "literal-eval-site-unsupported";
 
 export type IrInvariantCode =
   | "unknown-function-ref"

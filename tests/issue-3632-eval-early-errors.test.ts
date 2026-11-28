@@ -4,7 +4,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { createNewFunctionShim } from "../src/runtime-eval.js";
 import { ts } from "../src/ts-api.js";
-import { foldedEvalEarlyError } from "../src/codegen/expressions/eval-early-errors.js";
+import { SLOPPY_SCRIPT_GOAL, staticEarlyError } from "../src/frontend/eval/early-errors.js";
 
 const LANES = [
   { name: "host", target: undefined },
@@ -27,7 +27,10 @@ async function compileAndRun(
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   imports.setExports?.(instance.exports as Record<string, Function>);
   return {
-    imports: result.imports.map((entry) => `${entry.module}::${entry.name}`),
+    // The binary's own imports: `result.imports` lists host imports only, not the runtime-eval provider's module.
+    imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map(
+      (entry) => `${entry.module}::${entry.name}`,
+    ),
     value: (instance.exports as { test(): number }).test(),
     warnings: result.errors.filter((error) => error.severity === "warning").map((error) => error.message),
   };
@@ -95,7 +98,9 @@ describe("#3632 folded eval Script early errors", () => {
       `
         export function test(): number {
           const direct = eval("var public = 1; 3");
-          const indirect = (0, eval)("var public = 2; 4");
+          // An indirect eval that declares a global var belongs to the runtime-eval provider (#7106 A2c,
+          // providerOwnsEvalDeclarations), so this folded-only test's indirect row uses a strict-reserved name as a label.
+          const indirect = (0, eval)("implements: { break implements; } 4");
           const loop = eval("while (true) { break; } 5");
           const labelled = eval("LOCAL: { break LOCAL; } 6");
           return direct + indirect + loop + labelled;
@@ -116,9 +121,11 @@ describe("#3632 folded eval Script early errors", () => {
   });
 
   it("keeps property names legal while rejecting orphan control statements", () => {
-    expect(foldedEvalEarlyError(parsedEval(`"use strict"; ({ public: 1 }).public;`), true)).toBeUndefined();
-    expect(foldedEvalEarlyError(parsedEval(`LOCAL: while (true) { continue LOCAL; }`), false)).toBeUndefined();
-    expect(foldedEvalEarlyError(parsedEval(`break CALLER;`), false)).toMatch(/Undefined break target/);
-    expect(foldedEvalEarlyError(parsedEval(`continue CALLER;`), false)).toMatch(/Undefined continue target/);
+    expect(
+      staticEarlyError(parsedEval(`"use strict"; ({ public: 1 }).public;`), { ...SLOPPY_SCRIPT_GOAL, strict: true }),
+    ).toBeUndefined();
+    expect(staticEarlyError(parsedEval(`LOCAL: while (true) { continue LOCAL; }`), SLOPPY_SCRIPT_GOAL)).toBeUndefined();
+    expect(staticEarlyError(parsedEval(`break CALLER;`), SLOPPY_SCRIPT_GOAL)).toMatch(/Undefined break target/);
+    expect(staticEarlyError(parsedEval(`continue CALLER;`), SLOPPY_SCRIPT_GOAL)).toMatch(/Undefined continue target/);
   });
 });

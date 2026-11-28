@@ -203,13 +203,13 @@ import {
   registerModuleTdzGlobal,
   scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
-import { absoluteGlobalIdx } from "./global-space.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import {
   moduleNameState,
   type ModuleNameState,
   setModuleNameState,
   withSourceBindings,
-} from "./source-binding-projection.js";
+} from "./module-bindings/source-binding-projection.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";

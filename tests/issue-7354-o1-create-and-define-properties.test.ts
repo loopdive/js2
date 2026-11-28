@@ -29,6 +29,8 @@ describe("#7354 O1 — Object.defineProperties and Object.create", () => {
     [
       // (`Object.create(null)` as a program's only use of `Object` is the bounded #3518 plan's, prepare-object-create.ts.)
       "(13) a program whose only objects come from the native statics",
+      // (#7350 review RV-PR7549) `n` holds an `Object.create(…)` result, a fresh object while `create` folds, so the
+      // held map defines nothing on a realm object.
       "var n = Object.create(null); Object.defineProperties(n, n); n.v = 3; var out = String(n.v);",
     ],
     [

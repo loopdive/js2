@@ -24,7 +24,7 @@ import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
-import { liveFunctionBindings } from "./module-binding-table.js";
+import { liveFunctionBindings } from "./module-bindings/module-binding-table.js";
 
 export interface MultiPreparedModuleInitCensusInput {
   readonly multiAst: MultiTypedAST;

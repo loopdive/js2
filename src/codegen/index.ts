@@ -678,16 +678,16 @@ import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals, registerLiveFunctionGlobal } from "./module-global-registration.js";
-import { absoluteGlobalIdx } from "./global-space.js";
+import { absoluteGlobalIdx } from "./module-bindings/global-space.js";
 import { exportDeferredDefaultGlobals } from "./global-export-fixup.js";
-import { type LiveFunctionKind, moduleBindingOf } from "./module-binding-table.js";
+import { type LiveFunctionKind, moduleBindingOf } from "./module-bindings/module-binding-table.js";
 import {
   noteImportedSourceFunction,
   ownSourceFunctionIdx,
   recordSourceModuleBindingView,
   snapshotSourceFunctionBindings,
   withSourceBindings,
-} from "./source-binding-projection.js";
+} from "./module-bindings/source-binding-projection.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import { optionalFieldFlag } from "./object-model/struct-optional-widen.js"; // (#6867)
@@ -14222,13 +14222,7 @@ export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 // (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
-export {
-  ensureIrDynamicDeleteHelper,
-  IR_DYN_DELETE_SLOPPY_HELPER,
-  IR_DYN_DELETE_STRICT_HELPER,
-  irDeleteSiteIsStrict,
-  irDynamicDeleteHelperName,
-} from "./ir-dynamic-delete.js";
+export { ensureIrDynamicDeleteHelper, irDeleteSiteIsStrict } from "./ir-dynamic-delete.js";
 // (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
 export {
   ensureIrDynamicInstanceOfHelper,

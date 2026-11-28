@@ -12,11 +12,12 @@ import { describe, expect, it } from "vitest";
 //
 // (#7551) That loop no longer exists. The merge queue gates on the IR current
 // edition against the measurement of the exact base commit, never against the
-// legacy baseline. The legacy baseline is promoted by the WEEKLY test262-sharded
-// schedule (the full run) after its gates pass, and refresh-baseline.yml is
-// dispatch-only: it promotes without gates, so running it on a timer between
-// weekly audits would bank a regression unexamined. An age-based staleness
-// alert backstops a weekly promotion that does not land.
+// legacy baseline. The legacy baseline is promoted by the DAILY test262-sharded
+// schedule (the full run; weekly under #7551, daily since #7537) after its
+// gates pass, and refresh-baseline.yml is dispatch-only: it promotes without
+// gates, so running it on a timer between daily audits would bank a
+// regression unexamined. An age-based staleness alert backstops a daily
+// promotion that does not land.
 //
 // SCOPE LIMIT, unchanged: a workflow disabled in the Actions UI is not
 // represented in the repository and cannot be asserted here.
@@ -25,20 +26,22 @@ describe("#4350 — the baseline keeps exactly one scheduled refresher", () => {
   const sharded = read("test262-sharded.yml");
   const refresh = read("refresh-baseline.yml");
 
-  it("promotes from the weekly test262-sharded schedule, after its gates", () => {
+  it("promotes from the daily test262-sharded schedule, after its gates, never on push", () => {
     const cron = sharded.match(/schedule:\n(?:\s+#.*\n)*\s+- cron:\s*"([^"]+)"/);
     expect(cron, "test262-sharded.yml must declare a cron schedule").not.toBeNull();
     const [minute, hour, dom, month, dow] = (cron?.[1] ?? "").split(/\s+/);
-    // Weekly (owner decision 2026-11-26): one fixed weekday, at a fixed off-the-hour minute.
+    // Daily (owner decision 2026-11-27), at a fixed off-the-hour minute.
     expect(minute).toMatch(/^\d+$/);
+    expect(Number(minute) % 30).not.toBe(0);
     expect(hour).toMatch(/^\d+$/);
-    expect([dom, month]).toEqual(["*", "*"]);
-    expect(dow).toMatch(/^[0-6]$/);
+    expect([dom, month, dow]).toEqual(["*", "*", "*"]);
 
     const promote = sharded.slice(sharded.indexOf("\n  promote-baseline:\n"));
     const condition = promote.slice(promote.indexOf("if: |"), promote.indexOf("    name:"));
     expect(condition).toContain("github.event_name == 'schedule'");
     expect(condition).toContain("needs.merge-report.result == 'success'");
+    // (#7537) A push measures only the completed editions: it must never promote.
+    expect(condition).not.toContain("'push'");
   });
 
   it("keeps refresh-baseline.yml as a manual lever only, with no timer", () => {
@@ -47,7 +50,7 @@ describe("#4350 — the baseline keeps exactly one scheduled refresher", () => {
     expect(refresh).not.toMatch(/- cron:/);
   });
 
-  it("backstops a weekly promotion that does not land with an age-based alert", () => {
+  it("backstops a daily promotion that does not land with an age-based alert", () => {
     const alert = read("baseline-floor-staleness-alert.yml");
     expect(alert).toContain("MAX_FLOOR_AGE_HOURS:");
     expect(alert).toMatch(/- cron:\s*"23 \* \* \* \*"/);

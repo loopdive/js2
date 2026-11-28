@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
-import { createPreparedFrontendBoundary } from "./compiler/prepared-pipeline-boundary.js";
+import { createPreparedFrontendBoundary, sourceEarlyErrors } from "./compiler/prepared-pipeline-boundary.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -47,6 +47,7 @@ import {
   type PreparedIrPipelinePresentationResult,
 } from "./compiler/ir-program-presentation.js";
 import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
+import type { IrWholeProgramPreparationInput } from "./ir/program-preparation.js";
 import { preparedNumberFormatOptions, preparedPresentationPolicy } from "./compiler/prepared-provider-census.js";
 import { preparedCodeStrictness } from "./compiler/prepared-code-strictness.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
@@ -552,6 +553,25 @@ function diagnosticSeverity(diag: ts.Diagnostic, checker: ts.TypeChecker): "warn
  */
 function singleSourceHasHardTypeErrors(ast: Pick<TypedAST, "checker" | "diagnostics">): boolean {
   return ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
+}
+
+/**
+ * (#7363) The compile gates of a JavaScript entry, asked for one source of an analyzed graph: a syntax error outside
+ * `TOLERATED_SYNTAX_CODES`, a hard TypeScript error, or an ES early error. The strict Prepared entry admits a literal
+ * eval text only when this is false for it.
+ */
+export function sourceFailsCompileGates(
+  source: ts.SourceFile,
+  ast: Pick<MultiTypedAST, "checker" | "diagnostics" | "syntacticDiagnostics">,
+  options: CompileOptions,
+): boolean {
+  return (
+    ast.syntacticDiagnostics.some(
+      (d) => d.category === 1 && d.file === source && !TOLERATED_SYNTAX_CODES.has(d.code),
+    ) ||
+    ast.diagnostics.some((d) => d.file === source && isHardTypeScriptDiagnostic(d, ast.checker)) ||
+    sourceEarlyErrors(source, options).some((error) => error.severity !== "warning")
+  );
 }
 
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
@@ -1135,7 +1155,7 @@ function runPipeline(input: PipelineInput): CompileResult {
  * abort-body policy (#7354 U, `ir/abort-bodies.ts`) and records its functions.
  */
 export function runPreparedIrPipelinePresentation(
-  input: PipelineInput,
+  input: PipelineInput & Pick<IrWholeProgramPreparationInput, "literalDynamicCodeSources">,
   unlowerableBodies?: AbortBodies,
 ): PreparedIrPipelinePresentationResult {
   const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
@@ -1181,13 +1201,18 @@ export function runPreparedIrPipelinePresentation(
   };
   const prepared = prepareIrProgramPresentation({
     preparation: {
-      sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],
+      // (#7363, #7487) A single-source program is its entry and the sources of its literal dynamic-code sites.
+      sourceFiles: multiAst?.sourceFiles ?? [
+        entryAst.sourceFile,
+        ...(snapshot.literalDynamicCodeSources ?? []).map((row) => row.source),
+      ],
       entrySource: entryAst.sourceFile,
       checker: entryAst.checker,
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
       codeStrictness: preparedCodeStrictness(options.inferModuleStrictArguments),
       unlowerableBodies,
+      literalDynamicCodeSources: snapshot.literalDynamicCodeSources,
     },
     backendOptions,
     output: {

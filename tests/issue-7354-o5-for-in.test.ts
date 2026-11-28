@@ -23,7 +23,6 @@ import {
   type ForInKeysOperands,
 } from "../src/runtime/wasmgc/values/own-key-walk-bodies.js";
 import { isModuleInitVarList, type ScriptVarModel } from "../src/shared/var-declaration-lists.js";
-import { compile } from "../src/test262/test262-prepared-entry.js";
 import { ts } from "../src/ts-api.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
@@ -76,31 +75,16 @@ describe("#7377 — for-in over a dynamic receiver, script-level heads", () => {
         "var o = { a: 1 }; for (var m in o) { out += m; o.b = 1; } out += '|' + m;",
       ].join("\n"),
     ],
+    [
+      // (R5) The loop tests liveness before it writes the head, so a key deleted before its visit never reaches it.
+      "skips a key deleted before it is visited, the head keeping the last visited key",
+      [
+        "var out = ''; var o = { a: 1, b: 2, c: 3 };",
+        "for (var k in o) { out += k; delete o.b; } out += '|' + k + '|' + o.b;",
+        "var p = { a: 1, b: 2 }; for (var m in p) { delete p.b; } out += '|' + m;",
+      ].join("\n"),
+    ],
   ])("%s", (_label, body) => agreesWithNode(body, true, runnerOptions()), SLOW);
-});
-
-// (R5) `delete` has no lowering on the path yet (pinned below), so no program can remove a key mid-loop: the order is
-// pinned on the module-init's code instead. The loop tests liveness, and only its live branch writes the script var.
-describe("#7377 — the head is written after the liveness test", () => {
-  it(
-    "writes the script var only in the live branch",
-    async () => {
-      const result = await compile("var o = { a: 1 }; for (var k in o) {}", { ...runnerOptions(), emitWat: true });
-      expect(result.errors.map((error) => error.message)).toEqual([]);
-      const wat = result.wat ?? "";
-      const init = wat.slice(
-        wat.indexOf("(func $<module-init>"),
-        wat.indexOf("\n  (func", wat.indexOf("(func $<module-init>") + 1),
-      );
-      const loop = init.slice(init.indexOf("(loop"));
-      const [beforeLive, live] = [loop.slice(0, loop.indexOf("(if")), loop.slice(loop.indexOf("(if"))];
-      // The liveness call decides the branch; nothing is stored before it.
-      expect(beforeLive).toMatch(/call \d+\s*$/);
-      expect(beforeLive).not.toContain("global.set");
-      expect(live).toMatch(/^\(if\s+\(then\s+local\.get \d+\s+global\.set \d+/);
-    },
-    SLOW,
-  );
 });
 
 describe("#7377 — the run-time abort for a primitive receiver", () => {
@@ -137,8 +121,6 @@ describe("#7377 — refusals by name", () => {
       'var o = { a: 1 }; let k = ""; for (k in o) {}',
       'assignment to module binding "k" (string) got dynamic',
     ],
-    // R5 pin: `delete` has no lowering on this path yet, so the deleted-key case cannot run.
-    ["a delete in the body", "var o = { a: 1, b: 2 }; for (var k in o) { delete o.b; }", "delete has no IR lowering"],
     // R1 pin: a Symbol-keyed descriptor cannot be named here, so the walk's Symbols are pinned on a kernel fixture.
     [
       "a Symbol-keyed defineProperties",

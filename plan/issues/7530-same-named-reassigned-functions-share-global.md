@@ -14,6 +14,9 @@ task_type: bugfix
 area: codegen
 goal: core-semantics
 related: [7470]
+loc-budget-allow:
+  # 2026-11-28 (#7530): +2 in withDirectRuntimeModuleBindings, which keeps the name's live-function kind across a namespace projection (plan step at declarations.ts:1748); the save/restore loop lives in that driver, so the line cannot move to a module
+  - src/codegen/declarations.ts
 ---
 
 # #7530 — same-named reassigned functions share one live-binding global

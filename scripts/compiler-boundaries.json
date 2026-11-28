@@ -1924,6 +1924,10 @@
   ],
   "moves": [
     {
+      "from": "src/interp/function-source-text.ts",
+      "to": "src/shared/contracts/function-source-text.ts"
+    },
+    {
       "from": "src/ir/nested-stackification.ts",
       "to": "src/ir/analysis/nested-stackification.ts"
     },
@@ -2039,6 +2043,14 @@
       "destination": "ir-core",
       "owner": "7354-prepared-path",
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/this-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend `this` binding (a function's entry receiver, a method's self, script-level this as the global object) and the script-this predicate the Prepared program scan shares; moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/arguments-object.ts",
@@ -2416,6 +2428,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/shared/contracts/function-source-text.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-preparation-failure.ts",
       "state": "clean",
       "layer": "foundation"
@@ -2442,6 +2459,11 @@
     },
     {
       "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-delete-helper.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -5801,12 +5823,28 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/expressions/eval-early-errors.ts",
+      "path": "src/frontend/eval/early-errors.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
+      "destination": "frontend-ts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
+    },
+    {
+      "path": "src/frontend/eval/script.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
+    },
+    {
+      "path": "src/frontend/eval/declaration-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure eval-source syntax over a foreign SourceFile (#7363), shared by the legacy fold and the IR; isolate the TypeScript dependency before certifying the complete frontend boundary."
     },
     {
       "path": "src/codegen/expressions/eval-inline.ts",
@@ -6929,7 +6967,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/global-space.ts",
+      "path": "src/codegen/module-bindings/global-space.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -7849,7 +7887,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/module-binding-table.ts",
+      "path": "src/codegen/module-bindings/module-binding-table.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9937,7 +9975,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/source-binding-projection.ts",
+      "path": "src/codegen/module-bindings/source-binding-projection.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -11862,14 +11900,6 @@
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
     },
     {
-      "path": "src/interp/function-source-text.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "foundation",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Import-free CreateDynamicFunction source text shared by the interpreter and the compile-time Function fold; it becomes a foundation module once the runtime-eval provider build stops concatenating src/interp."
-    },
-    {
       "path": "src/interp/dynamic-function.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12773,6 +12803,22 @@
     },
     {
       "path": "src/ir/effects.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/literal-dynamic-code.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/literal-dynamic-code-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -17472,6 +17518,14 @@
       "destination": "frontend-ts",
       "owner": "7354-prepared-path",
       "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/realm-member-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source scan of the keys a program may write on a realm object (#7350, the write half of builtin-global-binding.ts's member rule); moves with builtin-global-binding.ts under frontend/ts."
     },
     {
       "path": "src/ir/realm-static-call.ts",

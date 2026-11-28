@@ -5,10 +5,10 @@
 // Each program runs against node twice, with the test262 runner's options: its answer returns, a wrong one throws.
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
-  abortBodies,
   abortsAtRunTime,
   agreesWithNode,
   preparedOptions,
+  refusal,
   runnerOptions,
   yieldToRpc,
 } from "./helpers/prepared-node-agreement.js";
@@ -26,8 +26,14 @@ const T =
 const grow = (target: string, value: string) =>
   Array.from({ length: 50 }, (_, index) => `${target}.k${index} = ${value};`).join(" ");
 /** A descriptor object `d` whose fields are getters that log their own name. */
-const LOGGED =
-  "var log = ''; function logged(d, k, v){ Object.defineProperty(d, k, {enumerable: true, get: function(){ log = log + k + ','; return v; }}); }";
+/**
+ * An object literal whose fields are getters that log their key, in `fields`' order, after `var log = '';`. (#7350
+ * review RV-PR7549) A literal, not a `logged(d, k, v)` helper that defines a computed key on a parameter: such a
+ * helper may write any key on any object, a realm constructor's among them, so no `Object` static folds beside it.
+ */
+const logged = (fields: readonly (readonly [string, string])[]): string =>
+  `{${fields.map(([key, value]) => `get ${key}(){ log = log + '${key},'; return ${value}; }`).join(", ")}}`;
+const LOG = "var log = '';";
 
 describe("#7354 O2 — the getter's receiver", () => {
   it.each([
@@ -208,19 +214,37 @@ describe("#7354 O2 — ToPropertyDescriptor reads each field once, in order", ()
   it.each([
     [
       "enumerable, configurable, value, writable, then get, set",
-      `${LOGGED} var d = {}; logged(d, 'writable', true); logged(d, 'value', 1); logged(d, 'configurable', true); logged(d, 'enumerable', true);` +
-        " var e = {}; logged(e, 'set', undefined); logged(e, 'get', function(){ return 2; }); var o = {};" +
+      `${LOG} var d = ${logged([
+        ["writable", "true"],
+        ["value", "1"],
+        ["configurable", "true"],
+        ["enumerable", "true"],
+      ])};` +
+        ` var e = ${logged([
+          ["set", "undefined"],
+          ["get", "function(){ return 2; }"],
+        ])}; var o = {};` +
         " Object.defineProperty(o, 'p', d); Object.defineProperty(o, 'q', e); var out = log + String(o.p) + String(o.q);",
     ],
     [
       "a get that is no function throws when get is processed, before set is read",
-      `${T} ${LOGGED} var d = {}; logged(d, 'set', undefined); logged(d, 'get', 5); logged(d, 'configurable', true); var o = {};` +
+      `${T} ${LOG} var d = ${logged([
+        ["set", "undefined"],
+        ["get", "5"],
+        ["configurable", "true"],
+      ])}; var o = {};` +
         " var out = t(function(){ Object.defineProperty(o, 'p', d); }) + log + String(o.hasOwnProperty('p'));",
     ],
     [
       "a set that is no function; get and value together",
-      `${T} ${LOGGED} var d = {}; logged(d, 'set', 'no'); logged(d, 'get', function(){}); var e = {}; logged(e, 'get', function(){});` +
-        " logged(e, 'value', 1); var o = {}; var out = t(function(){ Object.defineProperty(o, 'p', d); }) + t(function(){" +
+      `${T} ${LOG} var d = ${logged([
+        ["set", "'no'"],
+        ["get", "function(){}"],
+      ])};` +
+        ` var e = ${logged([
+          ["get", "function(){}"],
+          ["value", "1"],
+        ])}; var o = {}; var out = t(function(){ Object.defineProperty(o, 'p', d); }) + t(function(){` +
         " Object.defineProperty(o, 'q', e); }) + log + String(o.hasOwnProperty('p'));",
     ],
     [
@@ -321,6 +345,37 @@ describe("#7354 O2 — `new` on an accessor function", () => {
 });
 
 describe("#7354 O2 — what stays an abort or a refusal", () => {
+  // (#7350 RV-PR7549) The original shape of the three ToPropertyDescriptor rows above: a `logged(d, k, v)` helper that
+  // defines a computed key on a parameter may write any key on any object, so no `Object` static folds beside it.
+  // Pinned so the lost yield stays visible.
+  const LOGGED =
+    "var log = ''; function logged(d, k, v){ Object.defineProperty(d, k, {enumerable: true, get: function(){ log = log + k + ','; return v; }}); }";
+  it(
+    "the logged() helper, enumerable … then get, set: refuses",
+    async () =>
+      expect(
+        await refusal(
+          `${LOGGED} var d = {}; logged(d, 'writable', true); logged(d, 'value', 1); logged(d, 'configurable', true);` +
+            " logged(d, 'enumerable', true); var e = {}; logged(e, 'set', undefined); logged(e, 'get', function(){ return 2; });" +
+            " var o = {}; Object.defineProperty(o, 'p', d); Object.defineProperty(o, 'q', e); var out = log + String(o.p) + String(o.q);",
+          runnerOptions(),
+        ),
+      ).toMatch(/identifier "Object" is not in scope/),
+    SLOW,
+  );
+  it.each([
+    [
+      "a get that is no function",
+      `${T} ${LOGGED} var d = {}; logged(d, 'set', undefined); logged(d, 'get', 5); logged(d, 'configurable', true); var o = {};` +
+        " var out = t(function(){ Object.defineProperty(o, 'p', d); }) + log + String(o.hasOwnProperty('p'));",
+    ],
+    [
+      "a set that is no function; get and value together",
+      `${T} ${LOGGED} var d = {}; logged(d, 'set', 'no'); logged(d, 'get', function(){}); var e = {}; logged(e, 'get', function(){});` +
+        " logged(e, 'value', 1); var o = {}; var out = t(function(){ Object.defineProperty(o, 'p', d); }) + t(function(){" +
+        " Object.defineProperty(o, 'q', e); }) + log + String(o.hasOwnProperty('p'));",
+    ],
+  ])("the logged() helper, %s: the run-time abort", async (_, body) => abortsAtRunTime(body, runnerOptions()), SLOW);
   it(
     "a typed closure (not dispatchable) as a descriptor's getter: its call is the abort, not a catchable TypeError",
     async () => {
@@ -360,13 +415,16 @@ describe("#7354 O2 — what stays an abort or a refusal", () => {
       ),
     SLOW,
   );
-  // A void function declaration's last statement takes the expression path, which defers a member compound.
+  // A void function declaration's last statement used to take the expression path, which deferred a member compound
+  // to the function's abort. On main d145642247 it lowers, and the getter and setter each run once (as for o.x += 1 at
+  // module level above); this row pins that answer against node.
   it(
-    "o.x += v on an accessor as a function declaration's last statement: the function's body is the abort",
-    async () => {
-      const bodies = await abortBodies("var o = {get x(){ return 1; }, set x(v){}}; function f(q){ q.x += 1; } f(o);");
-      expect(bodies.some((row) => row.startsWith("f: "))).toBe(true);
-    },
+    "o.x += v on an accessor as a function declaration's last statement: one getter and one setter call",
+    async () =>
+      agrees(
+        "var c = { s: '' }; var o = {get x(){ c.s += 'g'; return 1; }, set x(v){ c.s += 's' + v; }};" +
+          " function f(q){ q.x += 1; } f(o); var out = c.s;",
+      ),
     SLOW,
   );
 });

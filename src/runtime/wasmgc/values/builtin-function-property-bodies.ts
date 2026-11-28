@@ -34,14 +34,60 @@ function bag(d: BuiltinFunctionPropertyOperands): Instr[] {
 function entryField(d: BuiltinFunctionPropertyOperands, local: number, fieldIdx: number): Instr[] {
   return [...nonnull(local), { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx }];
 }
-/** (#7350 B3a) Whether the realm holds an entry the catalog models only as an identity. */
+/** (#7609) Whether the realm holds an ordinary object the catalog models only as an identity (the global object). */
+const holdsIdentityOnlyObject = (d: Pick<BuiltinFunctionPropertyOperands, "objects">): boolean =>
+  d.objects.some((object) => object.identityOnly);
+/** (#7350 B3a) Whether the realm holds an entry or (#7609) an object the catalog models only as an identity. */
 const holdsIdentityOnly = (d: BuiltinFunctionPropertyOperands): boolean =>
-  d.entries.some((entry) => entry.identityOnly);
+  d.entries.some((entry) => entry.identityOnly) || holdsIdentityOnlyObject(d);
+/** The run-time abort where the object `object` leaves is identity-only (`BUILTIN_IDENTITY_ONLY_FLAG`). */
+function abortIfIdentityOnly(
+  d: Pick<BuiltinFunctionPropertyOperands, "objectTypeIdx">,
+  object: readonly Instr[],
+): Instr[] {
+  return [
+    ...object,
+    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+    n(BUILTIN_IDENTITY_ONLY_FLAG),
+    { op: "i32.and" },
+    { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
+  ];
+}
+/**
+ * (#7609) The seal of what the realm does not model of the ordinary object `object` leaves, beyond its own
+ * properties: its own keys, its extensibility and its [[Prototype]] link. Emitted only where the realm holds an
+ * identity-only object.
+ */
+export function abortIfUnmodelled(
+  d: Pick<BuiltinFunctionPropertyOperands, "objects" | "objectTypeIdx">,
+  object: readonly Instr[],
+): Instr[] {
+  return holdsIdentityOnlyObject(d) ? abortIfIdentityOnly(d, object) : [];
+}
+/**
+ * The own entry of `key` in the ordinary object (a function's bag, or an object) the externref `storage` leaves.
+ * (#7609) Where the realm holds an identity-only object this is the kernel's own find, so a miss in one aborts.
+ */
+export function findInStorage(
+  d: Pick<BuiltinFunctionPropertyOperands, "objects" | "objectTypeIdx" | "findOwn" | "findOrdinary">,
+  storage: readonly Instr[],
+  key: Instr,
+): Instr[] {
+  return holdsIdentityOnlyObject(d)
+    ? [...storage, key, call(d.findOwn)]
+    : [
+        ...storage,
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: d.objectTypeIdx },
+        key,
+        call(d.findOrdinary),
+      ];
+}
 /**
  * The own entry of `key` in the object's storage (a function's bag), or null. (#7350 B3a) A miss in an identity-only
  * bag (`BUILTIN_IDENTITY_ONLY_FLAG`) is unknown, so it aborts: every own query (the lookup of [[Get]], [[HasProperty]]
  * and [[Set]], HasOwnProperty, [[GetOwnProperty]], a define) passes here, and none may answer absent or create the
- * property. The test is emitted only where the realm holds such an entry.
+ * property. The test is emitted only where the realm holds such an entry or (#7609) object.
  */
 export function buildBuiltinFunctionFindOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
   if (!holdsIdentityOnly(d)) return { locals: [], body: [...bag(d), get(1), call(d.findOrdinary)] };
@@ -54,17 +100,7 @@ export function buildBuiltinFunctionFindOwn(d: BuiltinFunctionPropertyOperands):
       call(d.findOrdinary),
       { op: "local.tee", index: entry },
       { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: empty,
-        then: [
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(BUILTIN_IDENTITY_ONLY_FLAG),
-          { op: "i32.and" },
-          { op: "if", blockType: empty, then: [{ op: "unreachable" }] },
-        ],
-      },
+      { op: "if", blockType: empty, then: abortIfIdentityOnly(d, bag(d)) },
       get(entry),
     ],
   };
@@ -195,7 +231,9 @@ export function buildBuiltinFunctionOwnDescriptor(d: BuiltinFunctionPropertyOper
     ],
   };
 }
+/** (#7609) A miss in an identity-only bag is unknown here as in {@link buildBuiltinFunctionFindOwn}: the abort. */
 export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
+  const unknownMiss = holdsIdentityOnly(d) ? abortIfIdentityOnly(d, nonnull(2)) : [];
   return {
     locals: [
       { name: "bag", type: { kind: "ref_null", typeIdx: d.objectTypeIdx } },
@@ -209,7 +247,7 @@ export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands
       call(d.findOrdinary),
       { op: "local.tee", index: 3 },
       { op: "ref.is_null" },
-      { op: "if", blockType: empty, then: [n(1), { op: "return" }] },
+      { op: "if", blockType: empty, then: [...unknownMiss, n(1), { op: "return" }] },
       ...nonnull(2),
       { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
       n(flags.sealed),
@@ -246,30 +284,29 @@ export function buildBuiltinFunctionDeleteOwn(d: BuiltinFunctionPropertyOperands
     ],
   };
 }
+/** (#7609) An identity-only object's extensibility is unknown: the run-time abort. */
 export function buildBuiltinFunctionExtensibility(
   d: BuiltinFunctionPropertyOperands,
   prevent: boolean,
 ): BuiltinFunctionDefinition {
-  return {
-    locals: [],
-    body: prevent
-      ? [
-          ...bag(d),
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(flags.nonExtensible),
-          { op: "i32.or" },
-          { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(1),
-        ]
-      : [
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(flags.nonExtensible),
-          { op: "i32.and" },
-          { op: "i32.eqz" },
-        ],
-  };
+  const body: Instr[] = prevent
+    ? [
+        ...bag(d),
+        ...bag(d),
+        { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        n(flags.nonExtensible),
+        { op: "i32.or" },
+        { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        n(1),
+      ]
+    : [
+        ...bag(d),
+        { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+        n(flags.nonExtensible),
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+      ];
+  return { locals: [], body: [...abortIfUnmodelled(d, bag(d)), ...body] };
 }
 /** Own data assignment only: 2 needs prototype [[Set]], 3 needs accessor invocation. */
 export function buildBuiltinFunctionWriteOwn(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
@@ -328,7 +365,10 @@ export function buildBuiltinFunctionWriteOwnStrict(d: BuiltinFunctionPropertyOpe
     ],
   };
 }
-/** Complete ordinary own-key order, including the full unsigned array-index domain and Symbols. */
+/**
+ * Complete ordinary own-key order, including the full unsigned array-index domain and Symbols. (#7609) Where the realm
+ * holds an identity-only object, an identity-only bag's keys are unknown: the run-time abort.
+ */
 export function buildBuiltinFunctionOwnKeys(d: BuiltinFunctionPropertyOperands): BuiltinFunctionDefinition {
   const order = (left: number, right: number): Instr[] => [...nonnull(left), ...nonnull(right), call(d.keyBefore)];
   return {
@@ -341,6 +381,7 @@ export function buildBuiltinFunctionOwnKeys(d: BuiltinFunctionPropertyOperands):
       { name: "result", type: { kind: "externref" } },
     ],
     body: [
+      ...abortIfUnmodelled(d, bag(d)),
       ...bag(d),
       { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 1 },
       set(1),

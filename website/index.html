@@ -1,11 +1,6 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <script>
-      const initialIrQuery = new URLSearchParams(location.search);
-      if (initialIrQuery.has("ir") && initialIrQuery.get("ir") === "1")
-        document.documentElement.classList.add("t262-ir-pending");
-    </script>
     <style>
       .t262-ir-pending #compat-pass-rate,
       .t262-ir-pending #compat-pass-rate-label,
@@ -30,6 +25,13 @@
         base.href = location.hostname === "loopdive.github.io" ? "/js2wasm/" : "/";
         document.head.appendChild(base);
       })();
+    </script>
+    <!-- Plain script (not a module), loaded after <base> so its relative src
+         resolves, and early so this hide-until-hydrated check and the inline
+         page scripts below call window.t262ViewState synchronously. -->
+    <script src="./components/t262-view-state.js"></script>
+    <script>
+      if (window.t262ViewState.read().ir) document.documentElement.classList.add("t262-ir-pending");
     </script>
     <title>JS² — Ahead-of-time JavaScript to WebAssembly compiler</title>
     <meta
@@ -1919,6 +1921,7 @@
                 <span>Strict mode</span>
               </label>
             </div>
+            <p id="conformance-ir-status" role="status" hidden></p>
             <p id="conformance-ir-provenance" role="status" hidden></p>
           </div>
           <div class="diagram-panel">
@@ -4670,9 +4673,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
     <script type="module" src="./components/t262-charts.js"></script>
     <script type="module" src="./components/perf-benchmark-chart.js"></script>
     <script src="./components/trend-chart.js"></script>
-    <!-- Plain script (not a module) so the inline page scripts below can call
-         window.t262ViewState synchronously. -->
-    <script src="./components/t262-view-state.js"></script>
     <script type="module" src="./components/t262-conformance-trend.js"></script>
 
     <script>
@@ -4683,6 +4683,11 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       // draws it, as a background series.
       const HOST_LANE_SELECTED = false;
       window.t262ViewState.bindIrToggle(document.getElementById("conformance-ir-toggle"));
+      window.t262ViewState.applyIrStatus(
+        "./benchmarks/results",
+        "standalone",
+        document.getElementById("conformance-ir-status"),
+      );
       const showIrProvenance = (measured, mode, report) => {
         const node = document.getElementById("conformance-ir-provenance");
         if (!IR_SELECTED) {
@@ -4692,10 +4697,18 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         }
         node.hidden = false;
         const filename = mode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-        node.textContent = measured
-          ? (report ? window.t262ViewState.irMeasurementLabel(report, mode) : `IR requested · ${mode} · measured`) +
-            ` · benchmarks/results/${filename}`
-          : `IR requested · ${mode} · unmeasured`;
+        if (!measured) {
+          node.textContent = `IR requested · ${mode} · unmeasured`;
+          return;
+        }
+        window.t262ViewState.showIrProvenance(
+          node,
+          (report ? window.t262ViewState.irMeasurementLabel(report, mode) : `IR requested · ${mode} · measured`) +
+            ` · benchmarks/results/${filename}`,
+          mode === "host"
+            ? "./benchmarks/results/test262-editions.json"
+            : "./benchmarks/results/test262-standalone-editions.json",
+        );
       };
       if (IR_SELECTED) {
         const view = window.t262ViewState.read();
@@ -4726,9 +4739,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           window.__conformanceHeadlineHydrated = true;
           const mode = "standalone";
           showIrProvenance(false, mode);
-          window.t262ViewState.irStatus("./benchmarks/results", mode).then((reason) => {
-            if (reason) message.textContent = `IR conformance is unmeasured. ${reason}`;
-          });
           document
             .getElementById("conformance-edition-timeline")
             .setAttribute(

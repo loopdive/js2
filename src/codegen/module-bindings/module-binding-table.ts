@@ -14,9 +14,9 @@
  * A function declaration has a binding only once it is live (#7530): its name is reassigned, or eval code may rebind
  * it, so reads go through its `__mod_<name>` global instead of the function's static index.
  */
-import type { GlobalDef } from "../ir/types.js";
-import type { ts } from "../ts-api.js";
-import type { CodegenContext } from "./context/types.js";
+import type { GlobalDef } from "../../ir/types.js";
+import type { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
 import { absoluteGlobalIdx } from "./global-space.js";
 
 export type ModuleBindingDeclaration = ts.VariableDeclaration | ts.BindingElement | ts.FunctionDeclaration;

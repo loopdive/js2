@@ -220,8 +220,10 @@ export const RUNTIME_EVAL_REFUSAL_CANARY_SOURCE = `
 /** Expected `probe()` value for RUNTIME_EVAL_REFUSAL_CANARY_SOURCE. */
 export const RUNTIME_EVAL_REFUSAL_CANARY_EXPECTED = 21;
 
-/** Import-clean interpreter sources, in initializer order. */
-/** The interpreter sources the provider concatenates, in initialization order (also tests/issue-2928.test.ts). */
+/**
+ * The import-clean sources the provider concatenates, in initialization order, relative to src/interp; an entry may be
+ * an import-free shared leaf outside it. Shared by tests/issue-2928.test.ts and tests/interp/runtime-function-link-probe.mjs.
+ */
 export const INTERP_FILES = [
   "types.ts",
   "opcodes.ts",
@@ -230,7 +232,7 @@ export const INTERP_FILES = [
   "eval-environment.ts",
   "emitter.ts",
   "loop.ts",
-  "function-source-text.ts",
+  "../shared/contracts/function-source-text.ts",
   "dynamic-function.ts",
 ];
 

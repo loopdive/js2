@@ -4,8 +4,8 @@
  * that must outlive such a shift holds the allocator-owned `GlobalDef` and asks for its index when it emits. A leaf,
  * so modules kept outside the import SCC can use it.
  */
-import type { GlobalDef } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { GlobalDef } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
 
 /** The current absolute index of `global`, or `undefined` when it is no longer in the module. */
 export function absoluteGlobalIdx(ctx: CodegenContext, global: GlobalDef): number | undefined {
