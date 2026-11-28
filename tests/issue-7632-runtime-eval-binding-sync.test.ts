@@ -25,40 +25,46 @@ function watFunction(wat: string, name: string): string {
   return "";
 }
 
-/** The index of a defined `(global $name …)`; the module imports no globals. */
+/** The index of `(global $name …)` in the global index space: imported globals first, then defined ones. */
 function watGlobalIndex(wat: string, name: string): number {
-  const globals = wat.split("\n").filter((line) => /^\s*\(global \$/.test(line));
-  return globals.findIndex((line) => line.trimStart().startsWith(`(global $${name} `));
+  const globals = wat
+    .split("\n")
+    .filter((line) => /^\s*\(global \$/.test(line) || /^\s*\(import "[^"]*" "[^"]*" \(global /.test(line));
+  return globals.findIndex((line) => line.includes(`(global $${name} `));
 }
+
+const LANES = [
+  ["gc", {}],
+  ["gc, IR off", { experimentalIR: false }],
+  ["standalone", { target: "standalone" }],
+  ["standalone, IR off", { target: "standalone", experimentalIR: false }],
+] as const;
 
 describe("#7632 runtime-eval binding sync", () => {
   // Red on main with the IR on ("could not allocate its exact singleton support"); the IR-off rows are controls.
-  it.each([
-    ["gc", {}],
-    ["gc, IR off", { experimentalIR: false }],
-    ["standalone", { target: "standalone" }],
-    ["standalone, IR off", { target: "standalone", experimentalIR: false }],
-  ] as const)("compiles a declaration-time Function seed with an eval-visible helper (%s)", async (_, options) => {
+  it.each(LANES)("compiles a declaration-time Function seed with an eval-visible helper (%s)", async (_, options) => {
     const result = await compile(SOURCE, { fileName: "u.ts", skipSemanticDiagnostics: true, ...options });
     expect(result.errors.filter((e) => e.severity === "error")).toEqual([]);
     expect(result.success).toBe(true);
   });
 
-  it("pushes and pulls the live binding of `d`, not its static closure", async () => {
+  // Red on main in every lane: with the IR off the module compiles, but its pull writes nothing back.
+  it.each(LANES)("pushes and pulls the live binding of `d`, not its static closure (%s)", async (_, options) => {
     const result = await compile(SOURCE, {
       fileName: "u.ts",
       skipSemanticDiagnostics: true,
-      target: "standalone",
       emitWat: true,
+      ...options,
     });
     const wat = result.wat ?? "";
     const live = watGlobalIndex(wat, "__mod_d");
     const staticClosure = watGlobalIndex(wat, "__fn_closure_d");
     expect(live).toBeGreaterThanOrEqual(0);
+    expect(staticClosure).toBeGreaterThanOrEqual(0);
     const push = watFunction(wat, "__runtime_eval_push_globals");
     const pull = watFunction(wat, "__runtime_eval_pull_globals");
     expect(pull).toMatch(new RegExp(`global\\.set ${live}\\b`));
     expect(push).toMatch(new RegExp(`global\\.get ${live}\\b`));
-    if (staticClosure >= 0) expect(push).not.toMatch(new RegExp(`global\\.get ${staticClosure}\\b`));
+    expect(push).not.toMatch(new RegExp(`global\\.get ${staticClosure}\\b`));
   });
 });

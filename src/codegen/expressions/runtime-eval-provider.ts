@@ -213,7 +213,6 @@ function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string, param
 }
 
 function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
-  if (ctx.runtimeEvalGlobalSyncReserved) return;
   const typeIdx = addFuncType(ctx, [], [], "$runtime_eval_global_sync_type");
   for (const name of [RUNTIME_EVAL_PUSH_GLOBALS, RUNTIME_EVAL_PULL_GLOBALS]) {
     const funcIdx = mintDefinedFunc(ctx);
