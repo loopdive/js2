@@ -447,7 +447,8 @@ export function isStoreTarget(target: ts.Expression): boolean {
 
 /**
  * True when `target` is the left side of `||=`, `&&=` or `??=`: a store target whose old value is also the
- * expression's value when the assignment does not store.
+ * expression's value when the assignment does not store. For `&&=` that old value is a falsy one, so a reader that
+ * treats the target as a read over-counts harmlessly: a writer function is always truthy, and `&&=` never returns it.
  */
 export function isLogicalAssignmentTarget(target: ts.Expression): boolean {
   const root = storingRootOf(target);
