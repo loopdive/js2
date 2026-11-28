@@ -404,3 +404,21 @@ Pins moved (each a shape this slice changes): `issue-7354-t2` (Array is a value)
 (Array.prototype is obtainable), `issue-7354-m-refusals` and `issue-7354-u-abort-bodies` (a constant number key is a
 key; their rows now use a computed key), `issue-7354-u-prelude` (compareArray.format lowers),
 `issue-3518-ordinary-object-callable-contracts` (has-brand).
+
+### Review r2 (found by the other lane, 2026-11-27)
+
+- **A call of a value that is not callable was skipped where its result was unread.** In a program with no source
+  function, `n.valueOf = 7; n.valueOf();` (inside a `try`) gave no TypeError; node throws it. The reordered fallback of
+  `dynamicPrototypeMethodCall` is right (identity tests, then the run-time abort), but the chain is one value `if` whose
+  arms are pure tests and the abort intrinsic, and DCE drops a value `if` with an unread result unless `effectsOf` of
+  its buffers writes: the abort kept itself only at the top level. The rule now lives in one place,
+  `src/ir/analysis/effects.ts` `isSideEffecting`: a buffer-bearing instruction that runs the run-time abort is kept,
+  as the abort is (`isRunTimeAbort`). The wrappers slice is not affected: without a source function it refuses the
+  call (`… in a program that creates no function value`), with one the dispatcher throws the TypeError.
+- **Negative zero reached an array's `length`** (`new Array(-0)`, `a.length = -0`, a `length` defined as `-0`): the
+  one length check, `requireArrayLength` in `realm-array-bodies.ts`, now leaves ToUint32's answer (+0) in its local.
+  An element keeps `-0`.
+- Rows in `tests/issue-7352-arrays.test.ts`: the four non-callable programs agree with node where a dispatcher exists;
+  without one, the three a built-in test reaches (wrapper `valueOf` / `toString`) end at the run-time abort and the
+  array's `join` refuses (no test answers it, so the no-dispatcher refusal applies); arguments are evaluated before the TypeError; a callable own `valueOf`
+  is called; the three `length` programs and the element control in one agreement.

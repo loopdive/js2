@@ -80,6 +80,53 @@ try { var a = Array(); a.length = 4294967296; } catch (e) { out += e.name; }`,
 describe("#7352 — Array as a realm value agrees with node", () => {
   it.each(VALUES)("%s (at module level)", async (_label, body) => agrees(body), SLOW);
   it.each(VALUES.slice(0, 4))("%s (inside a function)", async (_label, body) => agrees(inFunction(body)), SLOW);
+  it(
+    "an array's length is never negative zero; an element keeps it",
+    () =>
+      agrees(`var a = Array(1, 2, 3), b = Array(1), c = Array(1); a.length = -0;
+Object.defineProperty(b, "length", {value: -0}); c[0] = -0;
+var out = String(1 / new Array(-0).length) + String(1 / a.length) + String(1 / b.length) + String(1 / c[0]);`),
+    SLOW,
+  );
+});
+
+// Review r2: a call whose callee is not callable throws the TypeError where a dispatcher exists, and without one (no
+// source function) ends at the run-time abort, whether or not its result is read; it is never skipped.
+describe("#7352 — a call of a value that is not callable", () => {
+  const NOT_CALLABLE: readonly (readonly [string, string])[] = [
+    ["an own valueOf of a wrapper, unread", "var n = new Number(3); n.valueOf = 7; n.valueOf();"],
+    ["an own valueOf of a wrapper, as an initializer", "var n = new Number(3); n.valueOf = 7; var x = n.valueOf();"],
+    ["a prototype's toString, unread", 'String.prototype.toString = null; new String("s").toString();'],
+    ["an own join of an array, unread", "var a = Array(1); a.join = 1; a.join();"],
+  ];
+  const caught = (statements: string) =>
+    `var out = "none"; try { ${statements} } catch (e) { out = String(e instanceof TypeError); }`;
+  it.each(NOT_CALLABLE)("%s: the TypeError", async (_label, statements) => agrees(caught(statements)), SLOW);
+  it.each(NOT_CALLABLE.slice(0, 3))(
+    "%s: the run-time abort without a source function",
+    async (_label, statements) => abortsAtRunTime(caught(statements), runnerOptions(), freshRealmOut),
+    SLOW,
+  );
+  // Without a source function a call no built-in test answers refuses at compile time: no dispatcher exists.
+  it("an own join of an array, unread: refuses without a source function", async () => {
+    expect(await refusal(caught(NOT_CALLABLE[3]![1]), runnerOptions())).not.toBe("");
+  });
+  it(
+    "the arguments are evaluated before the TypeError",
+    () =>
+      agrees(
+        "var n = new Number(3), r = 0; n.valueOf = 7; try { n.valueOf(r = 5); } catch (e) {} var out = String(r);",
+      ),
+    SLOW,
+  );
+  it(
+    "a callable own valueOf is called",
+    () =>
+      agrees(
+        "var n = new Number(3), r = 0; n.valueOf = function () { r = 9; return 9; }; n.valueOf(); var out = String(r);",
+      ),
+    SLOW,
+  );
 });
 
 describe("#7352 — what PR A leaves out refuses or aborts", () => {

@@ -60,7 +60,10 @@ const empty = { kind: "empty" } as const;
 /** Every field of a data descriptor present: writable, enumerable, configurable and value specified. */
 const WHOLE = flags.writableSpecified | flags.enumerableSpecified | flags.configurableSpecified | flags.hasValue;
 
-/** The RangeError unless the f64 in `local` is an array length: ToUint32(n) = n, an integer in 0 .. 2^32 - 1. */
+/**
+ * The RangeError unless the f64 in `local` is an array length: ToUint32(n) = n, an integer in 0 .. 2^32 - 1; then
+ * `local` holds ToUint32(n), which is +0 for -0.
+ */
 function requireArrayLength(d: RealmArrayOperands, local: number): Instr[] {
   return [
     get(local),
@@ -77,6 +80,10 @@ function requireArrayLength(d: RealmArrayOperands, local: number): Instr[] {
     { op: "i32.and" },
     { op: "i32.eqz" },
     { op: "if", blockType: empty, then: d.throwRangeError("Invalid array length") },
+    get(local),
+    f64(0),
+    { op: "f64.add" },
+    set(local),
   ];
 }
 
