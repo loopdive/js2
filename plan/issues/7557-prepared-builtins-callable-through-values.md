@@ -1,10 +1,11 @@
 ---
 id: 7557
 title: "Prepared path: built-ins callable through values, `Function` as a realm value, `Function.prototype.call`"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-27
-updated: 2026-11-27
+updated: 2026-11-28
+completed: 2026-11-28
 priority: high
 horizon: l
 feasibility: hard
@@ -82,6 +83,84 @@ edges stay at 10; every new `src/` file in `scripts/compiler-boundaries.json`.
 **Acceptance.** Node agreement with wrong twins for the cases of the brief; refusals/aborts for the out-of-scope ones;
 never a wrong value, invalid Wasm or exception out of `compile()`; propertyHelper's line 31 stops at `bind`; programs
 that hold no callable built-in byte-identical to the base; prelude ≤ +8 KB and ≤ +0.7 s; ordinary pipeline identical.
+
+### Result (2026-11-28)
+
+**The one route.** `dynamicBuiltinCall` (`src/ir/program/dynamic-builtin-call.ts`) is the body of the realm's built-in
+caller: the `call` rung, then `heldBuiltinRungs` (`dynamic-prototype-methods.ts`), the one list of identity tests of
+every built-in a value may be. The dispatcher's built-in arm (`closure-method-body.ts`, before: `unreachable`) calls it
+with the callee, the call's `this` and an argument vector. A method call `o.m(v)` tests the rungs named `m` at its
+site; a detached call tests the rungs that read no `this` (`Array.isArray`, the statics) at its site, because only the
+site knows its constant arguments (the key a query of the root pins); everything else reaches the caller. The
+name-gated arms of `Array.isArray` (#7352) and of the statics (#7580) in `dynamicPrototypeMethodCall` are gone: both
+are rows of the list. Without a source function no dispatcher exists and the site tests every rung, then aborts.
+
+**What works** (each agrees with node, with a wrong twin that throws; `tests/issue-7557-function-call.test.ts`):
+
+- `Function`: `typeof`, identity, `Function.prototype` (held, `typeof` "function", called through a value it answers
+  `undefined`), `.constructor`, `.length`, `.name`; `instanceof Function` for source functions, closures, held
+  built-ins and `Function.prototype` itself (false); writes to `Function.prototype` and the root seen through functions.
+- `f.call(thisArg, …args)`: source functions and closures (none, fewer, more arguments than parameters), strict
+  callees see `thisArg` as passed, `call` held as a value, `call` of `call`, a function's own `call`, an object's own
+  `call` method, a non-callable receiver (TypeError, after the arguments are evaluated).
+- Built-ins through `call` and under another name: `Object.prototype.hasOwnProperty.call(o, k)` (any `this`),
+  `Object.prototype.toString.call(v)` held as a value, the wrappers' and `Error.prototype`'s conversion methods (their
+  TypeError for a wrong receiver), `Array.isArray.call(…)`, a static through `call` or passed on,
+  `({ f: Object.defineProperty }).f(o, k, d)`, `o.myValueOf = Number.prototype.valueOf`, `n.isA = Array.isArray`.
+- A replaced `Function.prototype.call` (direct, through an alias, a parameter, `defineProperty`) is the program's: the
+  call goes by identity; the folded object tag aborts instead (`ProgramObjects.replacesCall`).
+- `new` of a held built-in without [[Construct]] throws the TypeError (`heldNonConstructors`; review r1).
+
+**What refuses or aborts** (each is a row of the test file):
+
+| case | outcome |
+| --- | --- |
+| `Function(…)`, `new Function(…)` | refuses (dynamic code, the eval lane) |
+| `f.apply`, `f.bind` read off a function; `Function.prototype(…)` by name | refuses |
+| `Function.prototype.call.bind(…)` (propertyHelper.js line 31); `Function.prototype.toString` | run-time abort |
+| a sloppy callee given `undefined`, `null` or a primitive as `this` | run-time abort (no global object value, no boxing on this base) |
+| more than three arguments after `thisArg` | run-time abort |
+| `Array.prototype.join.call(a)` (a held value without a body) | run-time abort |
+| an own-property query of the root or `Function.prototype` through `call` (its key is not a constant in the caller), or of a key the realm does not seed (`Function.prototype.hasOwnProperty("toString")`) | run-time abort |
+| a call through a value in a program without a source function, where the callee is none of the held built-ins (`call` included) | run-time abort |
+| `.call` on a local the front end types as a closure (`function run() { var f = function () {}; f.call(o); }`), on a number or string literal, `Function.x = v`, `delete Function.prototype.call`, a computed-key write | refuses (front-end limits of the base, unchanged) |
+
+**Review r1 findings carried.**
+
+- `new` of a built-in: `heldNonConstructors` + `dynamicConstruct`; test "new of a held built-in that has no
+  [[Construct]]", P1's "a method as a constructor".
+- `Function.prototype`'s own properties: seeded with the function values the realm holds (`heldMemberProperties`); a
+  key the realm lacks aborts (`unlessUnheldOwnKey`, `FUNCTION_PROTOTYPE_UNHELD_KEYS`); probes `hasOwnProperty("call")`
+  true, `("qq")` false, `("toString")` abort.
+- The stale tests: P1's detached calls and its constructor row now assert node; F1 / F1b read `apply` where they read
+  `call`; M1 and T2 drop `Function`; #7352's and #7580's "moved under another name" abort rows are node agreements here.
+
+**Cost.** The caller exists only where a source function exists and the realm may hold a callable built-in the program
+can call through a value: it names a realm constructor, spells `call`, or spells a held prototype method other than as
+the `m` of `x.m(…)` (`ProgramObjects.methodValues`). `js.object.intrinsic` answers `Function.prototype` only where the
+realm seeds it. Eight Prepared programs, base → head: seven byte-identical; the `assert.js` + `sta.js` prelude (it
+spells `call`) 90,125 → 93,404 B (+3,279), median compile of 3 at load 5: 7.34 s → 7.88 s.
+
+**Measured** (base 565b217792 → head).
+
+- propertyHelper.js's four lines (31–34), each alone: base refuses (`identifier "Function" is not in scope`); head
+  compiles and stops at the run-time abort at `bind`; without `bind` the same lines agree with node. The 12
+  `Object/defineProperty` tests that include the harness: base all stop at `Function`; head none does (6
+  `dyn.publish_argc` (#7562), 2 `null` under an f64 hint, 2 empty-array escapes, 1 `Math.pow`, 1 `JSON`).
+- Probes against node in a fresh realm: 93 (49 right with failing twins, 18 refused, 26 aborted, 0 wrong, 0 invalid,
+  0 exceptions out of `compile()`).
+- test262: `built-ins/Function/prototype/call/` (47 files) 0 → 9 pass; a 40-file sample of `built-ins/Function/`
+  0 → 0 pass (6 more compile and abort); the 87-row sample 19 → 21 pass. No pass lost; every failure on head is the
+  run-time abort.
+- Ordinary pipeline: 48 binaries (24 programs, two targets) byte-identical.
+- `src/ir/from-ast.ts` 17,393 → 17,388 lines. Source diff: 26 files, +917 / −174. No split.
+- Mined from `claude/7354-a1b`: `realm-builtin-caller.ts` (43 lines) and `builtin-caller-bodies.ts` (114) unchanged,
+  `dynamic-builtin-call.ts` (101 lines, 25 rewritten); `NATIVE_PROTOTYPE_METHODS` from PR 7480. The rest is new on the
+  #7561 method-by-identity model.
+
+**Not done here.** `bind`, `apply` (#7560). A member access on a closure-typed local (`f.call` inside a function whose
+`f` is a local function expression) still refuses in the front end; it stops 2 of the 47 `call` files and is the next
+blocker for `call` inside test functions.
 
 ## Old branch `claude/7354-a1b` (affccb6fe4): problem, plan, results, review r1
 
