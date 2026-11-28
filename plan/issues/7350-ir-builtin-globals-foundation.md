@@ -1938,3 +1938,383 @@ Measuring B3c first is not needed: it is measured above.
 4. **Session B's areas.** B3b-2 needs none of them. The chain above `%X.prototype%` is Object.prototype (#7561
    item 2, `Object` as a value), not the global object or descriptor semantics.
 5. **l420** was not re-run here. The slice table's 0 for it is from the B3a run.
+
+## Implementation Plan — B3e: Number.prototype.toString(radix) (2026-11-28, on main 330caff2a8)
+
+B3e is §21.1.3.6 `Number.prototype.toString(radix)` on the Prepared path, and the `%RangeError%` it throws.
+#7561 (B3b-1) left it here on purpose, in its decision 3: "`Number.prototype.toString(radix)` and `%RangeError%`
+holding stay with #7350 (row 20 becomes an abort or a refusal by name, as on W2)". On main that row is the run-time
+abort `Number.prototype.toString with a radix`, and `tests/issue-7561-wrappers.test.ts` pins it ("aborts toString
+with a radix").
+
+### Measured (2026-11-28, main `330caff2a8`)
+
+The worktree's `src/`, `tests/` and `scripts/` are identical to `330caff2a8` (`git diff 330caff2a8 HEAD --stat --
+src tests scripts` is empty). The baseline census is the B3b-2 run above, reused: `.tmp/main-carriers.jsonl`,
+`.tmp/main-o411.jsonl`, scratch, not committed.
+
+**First stop at the radix site.** The field is the census row's `abort.detail` (the run-time abort site that
+trapped, `trapFrame: "__js_value_unsupported_at"`, `siteFrame: "__module_init_chunk_0"`). The reason string is
+`Number.prototype.toString with a radix`.
+
+```bash
+python3 -c "import json; print(sum((json.loads(l).get('abort') or {}).get('detail') == 'Number.prototype.toString with a radix' for l in open('.tmp/main-carriers.jsonl')))"   # 40
+# the same over .tmp/main-o411.jsonl: 0. No other field of either file names a radix.
+```
+
+| list | rows | first stop at the radix site | of which RangeError rows | pass behind the stub | next stop of the rest |
+| --- | ---: | ---: | ---: | ---: | --- |
+| carriers (`plan/samples/7350-b3bc/carriers.txt`) | 1,977 | **40** (all `fail`) | 4 (`S15.7.4.2_A3_T01`–`T04`) | **40 / 40** | none |
+| o411 (`plan/samples/7354-o411.txt`) | 411 | **0** | 0 | — | — |
+
+The 40 rows are all in `built-ins/Number/prototype/toString/`:
+
+- `S15.7.4.2_A1_T02`, `A1_T03`: radix `10` and `undefined`;
+- `S15.7.4.2_A2_T01`–`A2_T34`: radix 2 to 36 (every radix but 10);
+- `S15.7.4.2_A3_T01`–`A3_T04`: radix `1`, `37`, `null`, `0`, each inside `try { …; throw new Test262Error(…) }
+  catch (e) {}`.
+
+Each A1/A2 row formats only `0`, `-1`, `1`, `NaN`, `+Infinity` and `-Infinity`, on `Number.prototype` and on
+`new Number(…)`. Those values read the same in every radix.
+
+The A3 rows **do not observe the RangeError**. Their `catch (e) {}` also catches the `Test262Error` thrown when no
+error comes, so they pass whatever the call does, as long as it returns or throws a catchable error. No row of
+either list checks that the error is a RangeError. The RangeError arm is a correctness requirement and has no yield.
+
+**Upper bound (stub, measured).** A `git archive 330caff2a8` copy in `.tmp/stub-b3e`, with `node_modules` and
+`test262` symlinked. The one abort in `dynamic-builtin-methods.ts` (`wrapperMethodTest`) is replaced by an
+environment switch: `B3E_STUB=text` gives ToString (radix 10), `B3E_STUB=throw` gives a catchable TypeError.
+
+```bash
+B3E_STUB=text  npx tsx scripts/ir-census/prepared-census.mts --files .tmp/b3e-radix-all.txt --out .tmp/b3e-stub-text.jsonl  --harness real --jobs 3 --tree .tmp/stub-b3e
+B3E_STUB=throw npx tsx scripts/ir-census/prepared-census.mts --files .tmp/b3e-radix-a3.txt  --out .tmp/b3e-stub-throw.jsonl --harness real --jobs 3 --tree .tmp/stub-b3e
+```
+
+- `text`: 40 / 40 pass.
+- `throw`, on the 4 A3 rows: 4 / 4 pass.
+
+So the yield is **+40 carriers, +0 o411**, an upper bound that is measured. A correct implementation reaches it,
+because every A1/A2 value prints the same in every radix and the A3 rows accept any catchable throw.
+
+**The other rows of the directory** (carriers, on main; not this slice's yield):
+
+- `S15.7.4.2_A1_T01` already passes.
+- `S15.7.4.2_A4_T01`, `T02`, `T05` (thisNumberValue's TypeError, not RangeError: the B3bc text at l585 and l761
+  calls `S15.7.4.2_A4_*` the RangeError rows, which is wrong) trap in `__call_fn_method_0`. Their second block calls
+  the method under another name (`s2.myToString = Number.prototype.toString; s2.myToString()`). That is the
+  dispatcher's built-in arm, which `dynamicPrototypeMethodCall` reaches only for a method read under its own name. A
+  probe shows that the same call under the name `toString` already throws the TypeError on main.
+- `A4_T03` and `T04` are compile errors (`unknown class "Date"` / `"Object"`).
+
+**Latent rows** (measured): files of either list that call `.toString(<arg>)` outside these 40. There are 8
+carriers and 2 o411. All stop earlier, at compile time (`globalThis` not in scope 7, `unknown class "Object"` 2,
+`.toLocaleUpperCase` 1). Their `.toString(16)` calls are on typed numbers (site 3 below), so B3e does not move them.
+
+**Probes** (`.tmp/b3e-probe.mts`, runner options, the census's compile options, a function value in the program).
+Node is a fresh `vm` realm.
+
+| program | node | main |
+| --- | --- | --- |
+| `new Number(255).toString(16)` | `ff` | abort (site 1) |
+| `Number.prototype.toString(16)` | `0` | abort (site 1) |
+| `new Number(255).toString(10)` / `(undefined)` / `(16.9)` / `("16")` | `255` / `255` / `ff` / `ff` | abort (site 1) |
+| `new Number(255).toString(null / NaN / Infinity / -0)`, caught, `e instanceof RangeError` | `true` | abort (site 1) |
+| `new Number(-255).toString(16)`, `(0.5).toString(2)`, `(-0).toString(2)` | `-ff`, `0.1`, `0` | abort (site 1) |
+| `s.toString = Number.prototype.toString; s.toString(1)` on a String object | TypeError | **agrees**: thisNumberValue comes first already |
+| `(255).toString(16)`, `var n = 255; n.toString(16)` | `ff` | refusal: `method call .toString(...) on f64 not in slice 4` (site 3) |
+| `(255).toString()`, `n.toString()` (no radix) | `255` | the **same refusal**: site 3 is not about the radix |
+| `var o = {v: 255}; o.v.toString(16)` (no wrapper in the program) | `ff` | abort: `member read 'toString' of a number needs Number.prototype's properties` (#7561's rule, not B3e) |
+| radix `{ valueOf() { return 2 } }`, and this-before-radix with a `valueOf` radix | `11111111` / TypeError, `valueOf` not called | refusal: `a dynamic value flows into () => number without a conversion` (a function-valued property in an object literal, not B3e) |
+
+**Formatter precision against node** (measured: `.tmp/b3e-fmt.mjs` transcribes `__sh_num_toString_radix` and compares
+it with node's `Number.prototype.toString` for 22 values × 34 radices):
+
+- It agrees on every integer of magnitude ≤ 2^53 − 1, on ±0, NaN and ±Infinity, in every radix.
+- It agrees on non-integers in radices 2, 4, 8, 16 and 32, except below about 1e-30, where node prints more than its
+  100-digit cap (5e-324, 1.5e-300).
+- It **disagrees** on every non-integer in the other 29 radices. It prints all 100 digits (`(0.5).toString(3)`:
+  `0.111…1`, 100 digits), where V8 stops at the shortest digits that read back
+  (`0.1111111111111111111111111111111112`).
+- It **traps** (`__num_fmt_trap`, uncatchable) on integers above 2^53 − 1 (`(1e21).toString(16)`; node:
+  `3635c9adc5dea00000`).
+
+None of the 40 rows formats such a value. 430 of 748 (value, radix) pairs agree.
+
+**Size and compile time of holding `%RangeError%`** (measured on the stub, `.tmp/b3e-size.mts`, median of 5
+compiles). Each file is compiled as is, and with `var __heldRangeError = RangeError;` appended, which makes the realm
+hold `%RangeError%` and `%RangeError.prototype%`:
+
+| row | bytes | + RangeError held | Δ bytes | Δ compile time (median of 5) |
+| --- | ---: | ---: | ---: | ---: |
+| `S15.7.4.2_A2_T01` | 111,736 | 112,636 | +900 | −8.2 % |
+| `S15.7.4.2_A2_T16` | 111,752 | 112,652 | +900 | +0.4 % |
+| `S15.7.4.2_A3_T01` | 113,355 | 114,250 | +895 | +3.0 % |
+| `S15.7.4.2_A1_T02` | 111,751 | 112,651 | +900 | −15.0 % |
+| `S15.7.4.2_A1_T01` | 110,310 | 111,210 | +900 | +15.6 % |
+
+- **Bytes:** about 900 B, well under the B3 gate of 4 KB. This is an upper bound: it includes the appended global
+  write.
+- **Compile time:** the deltas run from −15 % to +16 % on 5.5 to 7.4 s compiles, so they are noise. **The time cost
+  is not measured.** It is expected to be small, because the hold adds two realm objects and their few properties.
+- **Rows that make no radix call pay nothing, by construction.** The hold is triggered by the legalization's
+  `js.object.create-error` use (below), and only the radix arm emits that use. The 804-program proving corpus has
+  no `toString(<arg>)` at all (searched in `tests/fixtures/prepared-proving-programs.json`).
+- **Not measured: the radix arm's own bytes per call site.** Estimate: 200 to 500 B per site (a ToNumber chain, a
+  range test, two formatter calls and a throw), so 1.6 to 4 KB for a row with 8 sites such as `A2_T01`. If the
+  branch measures more than 4 KB on such a row, the arm is shared as one function per program instead (open
+  question 3).
+
+### Sites, and what replaces each
+
+| # | site on main | today | B3e |
+| --- | --- | --- | --- |
+| 1 | `src/ir/program/dynamic-builtin-methods.ts` `wrapperMethodTest`, the `radix` arm (line 74–80) | where the call passes an argument and the primitive is a number: `b.abort(…, "Number.prototype.toString with a radix")` | `numberToStringRadix` (below): §21.1.3.6 steps 2–6 on the thisNumberValue that `js.object.wrapper-data` already answered |
+| 2 | same file, `wrapperMethodTest`'s and `conversionMethodTests`' `radix: boolean`; `dynamic-prototype-methods.ts:136`, `instr.args.length > 2` | a flag: "the call passes an argument" | the argument itself (`radix?: IrValueId`, `instr.args[2]`). The arm reads it, so the flag and its second derivation go |
+| 3 | `src/ir/from-ast.ts` `tryLowerNumberToStringCall` / `throwMethodCallNotInSlice` (`method call .toString(...) on f64 not in slice 4`) | a typed-number receiver's `.toString(…)` refuses, **with or without a radix** | **not in B3e.** It is the typed-primitive receiver wall, which #7561 also left alone (B3b-2's open question 3). 0 first stops on both lists. Recorded as an acceptance-criteria refusal row, so it cannot regress silently |
+| 4 | `src/ir/program/dynamic-realm-calls.ts` `typeError` | the legalization's one synthesized error | `realmError(b, ctor, message)` throws a realm error built by a contract. `typeError` keeps its contract (`js.object.create-type-error`, so the bytes of every program that throws one do not change). The new RangeError uses `js.object.create-error` with RangeError's selector. Both share one throw tail |
+| 5 | `src/ir/program/native-realm-requirements.ts` `HELD_FAMILIES`, the Error row | `%Error%`, `%TypeError%`, `Error.prototype.toString` once the family is used; any other NativeError only where an intrinsic read names it | the Error row gains `pinned`: each `js.object.create-error` use pins the constructor of its selector. This is condition 2's "per-member pin with whole-family trigger", the same shape as `pinnedWrapperMembers` |
+| 6 | `tests/issue-7561-wrappers.test.ts:200` | "aborts toString with a radix" | moves into B3e's agreement suite. The abort row goes |
+
+`grep -rn "with a radix" src` on main finds sites 1 and 2 only (and two legacy `src/codegen/` comments, which are not
+touched).
+
+### The algorithm (site 1)
+
+`numberToStringRadix(b, instr, x, radix)` is the answer of the `toString` test where the primitive is a number and
+the call passed `radix`. `x` is thisNumberValue, which `wrapper-data` has already checked and answered (step 1,
+`thisValue` in `buildWrapperDataDefinition`). §21.1.3.6:
+
+1. *(done)* x = thisNumberValue(this). A String object or any other non-Number receiver has already thrown the
+   TypeError here, before the radix is read.
+2. If `radix` is `undefined`, radixMV = 10. The test is `b.anyKind(instr, ["undefined"], radix, …)`, as
+   `dynamicErrorConstruction` tests its message. Where the radix's kinds exclude `undefined`, there is no test.
+3. Otherwise radixMV = ToIntegerOrInfinity(radix). That is `b.toNumber` (the program's ToNumber, which runs a
+   `valueOf` / `toString`, so its throw is catchable), then the range test.
+4. If radixMV is not in 2–36, throw a RangeError (`realmError`, message `toString() radix must be between 2 and 36`,
+   V8's).
+   - The test is `n >= 2 && n < 37` on ToNumber's f64 n, with no `f64.trunc`: ToIntegerOrInfinity of n lies in
+     [2, 36] exactly when n does, for NaN, ±0, ±Infinity and fractions alike. NaN fails both compares, which is
+     ToIntegerOrInfinity(NaN) = 0.
+   - The formatter floors the radix itself (`Math.floor(radix)` in `__sh_num_toString_radix`), and for n ≥ 2 that
+     equals ToIntegerOrInfinity.
+5. If radixMV = 10 (`n >= 10 && n < 11`), return ToString(x): the `format` arm, `PREPARED_NUMBER_TO_STRING`, the
+   same call `stringOf`'s number arm writes. This is not the radix body, whose base-10 fraction digits are not
+   ToString's.
+6. Otherwise return Number::toString(x, radixMV), the native formatter's radix body (below), or the named abort for
+   the values it gets wrong (hazards).
+
+The radix is read once. `undefined` skips ToNumber, and every other value is converted exactly once (`toNumber` on
+the once-evaluated SSA value).
+
+**The formatter call.** The radix body `__sh_num_toString_radix(f64, f64) -> string` already exists in every
+Prepared module that formats a number. It is the support batch's `implementation` (`formatter-support.ts`
+`numberFormatRadixSupportDeclarations`). `number_toString` already calls it, through `radix-thunk`, for every safe
+integer. The arm's step-5 call to `PREPARED_NUMBER_TO_STRING` makes the unit a formatter demand owner, so the batch is
+present wherever the arm is. **The plan does not write a second formatter body, and the slice changes no
+`src/runtime/`, `src/stdlib/` or `src/codegen/` file.** How the IR names the radix body is open question 1:
+
+- **(a) preferred:** call the batch's support ref (`numberFormatRadixSupportDeclarations(sourceId).implementation.ref`)
+  directly;
+- **(b)** a second row on the formatter's closed contract.
+
+### Hazards
+
+- **Order of thisNumberValue and the radix coercion.** thisNumberValue is `wrapper-data`'s, inside the test's
+  `instrs`, before `answer` runs, so the radix's `valueOf` is never called for a non-Number receiver. Measured on
+  main: `s.toString = Number.prototype.toString; s.toString(1)` on a String object throws the TypeError. The
+  criterion row uses a `valueOf` radix that records the call, and it must not run. That row needs the object-literal
+  method refusal (probe table) gone first. Until then, the row uses a radix object built by `new Number(2)`, whose
+  ToNumber is the realm's `valueOf`.
+- **Radix values.**
+
+  | radix | node |
+  | --- | --- |
+  | `undefined` | 10 |
+  | `null` | ToNumber 0 → RangeError |
+  | `NaN` | 0 → RangeError |
+  | `±Infinity` | RangeError |
+  | `16.9` | 16 |
+  | `-0` | 0 → RangeError |
+  | `"16"` | 16 |
+  | `new Number(2)` and a `valueOf` object | 2 |
+  | a `valueOf` that throws | its error, catchable, before any formatting |
+  | a Symbol | not a Prepared value today |
+
+  Every one is a criterion row.
+- **Values.**
+  - Negative numbers: `-` and the magnitude.
+  - `-0`: `"0"` (the body's `abs === 0`).
+  - NaN / ±Infinity: before the radix's digits (the body's first three lines). Like V8, the radix is still validated
+    first: `NaN.toString(1)` throws the RangeError.
+  - Integers up to 2^53 − 1: they agree with node (measured).
+- **Precision of fraction digits.** For a non-integer x in a radix that is not a power of 2, and for any |x| > 2^53
+  − 1, the body disagrees with node or traps (measured above). B3e does **not** fix the formatter. Its shared body
+  is pinned by sha256 in `prepare-number-format.ts` / `runtime-support.ts`, and the legacy standalone lane uses it
+  too, so a fix changes the ordinary pipeline's bytes. B3e emits a **named run-time abort** ahead of the call where
+  the answer would be wrong:
+  - `Number.prototype.toString(radix) of a non-integer in a radix that is not a power of 2`;
+  - `… of an integer beyond 2^53 - 1`.
+
+  The test is `x !== floor(x)` or `|x| > 2^53 − 1`, plus a power-of-2 test on the floored radix, which is a 5-entry
+  compare. A non-integer in a power-of-2 radix calls the body. Its sub-1e-30 miss stays an open question (2), not an
+  abort.
+
+  The formatter fix is a separate issue, to be filed with the PR: port V8's `DoubleToRadixCString` (shortest digits
+  by delta, and integers above 2^53 by repeated division of a double, as V8 does), with node agreement over the
+  748-pair matrix. When it lands, the abort goes.
+- **A catchable RangeError, not a trap.**
+  - The error is the realm's (`js.object.create-error` → `%RangeError.prototype%`), thrown under the program's one
+    exception tag, so a source `catch` catches it.
+  - `e instanceof RangeError` holds where the program reads `RangeError`. The constructor is then named and held, so
+    it is the same object.
+  - `e.name === "RangeError"` (inherited from `%RangeError.prototype%`) and `e.message` hold as in V8.
+  - The A3 rows pass even with a wrong class, so the class is checked by the criterion rows only.
+- **Holding.**
+  - The pin is derived from the IR's `create-error` uses, never from source, so the legalization's decision and the
+    realm's holding cannot disagree (`heldFamilies`' rule).
+  - A program that throws the RangeError but never catches it still holds `%RangeError%`. That costs about 900 B,
+    once per program.
+  - `errorCreate` is reserved only where `%Error%` is held. The create-error use triggers the whole family, so it is.
+  - Today's `create-error` uses come from `dynamicErrorConstruction`, whose constructor is already named, so the pin
+    adds nothing to any program that compiles today.
+- **Kinds.** The answer is a string, so `b.kinds.learn` gives the result the string kind on every path but the throw
+  and the abort.
+
+### Target modules and layers (`scripts/compiler-boundaries.json`)
+
+| module | layer, state | change |
+| --- | --- | --- |
+| `src/ir/program/dynamic-builtin-methods.ts` | ir-program, clean | sites 1–2: `numberToStringRadix` beside `errorToString` (a sibling arm in the same shape: a builder of an `Arm`), `radix?: IrValueId`; `BuiltinMethodBuilders` gains `toNumber`, which `conversionBuilders` and the legalization already have |
+| `src/ir/program/dynamic-prototype-methods.ts` | ir-program, clean | passes `instr.args[2]` |
+| `src/ir/program/dynamic-value-chains.ts` | ir-program, clean | `toPrimitive`'s `builtins` passes `toNumber` too (no radix there) |
+| `src/ir/program/dynamic-realm-calls.ts` | ir-program, clean | site 4: `realmError` and the shared throw tail; `typeError` becomes one call of it |
+| `src/ir/program/native-realm-requirements.ts` | ir-program, clean | site 5: the Error row's `pinned` |
+| `tests/issue-7350-b3e-number-radix.test.ts` (new), `tests/issue-7561-wrappers.test.ts` | tests | criteria; site 6 |
+
+There is no new `src/` file and no new import edge: everything stays inside `ir-program`, and `ir-program →
+runtime-contracts` already exists. There is no change to `src/ir/from-ast.ts`, `src/codegen/`, `src/stdlib/`,
+`src/runtime/` or `src/backend/`. Option (b) of open question 1 would add `src/ir/runtime/native-async-callables.ts`
+(ir-runtime, clean) and `src/backend/wasmgc/program/native-number-format.ts` (backend-wasmgc).
+
+**Reuses:**
+
+- the native formatter's radix body and ToString's `PREPARED_NUMBER_TO_STRING`;
+- `wrapper-data`'s thisNumberValue;
+- the program's ToNumber (`toNumber`);
+- `anyKind` / `branch` / `kindChain`;
+- `js.object.create-error` and the realm's `errorCreate`;
+- the held-family table's `pinned` hook.
+
+**Removes:**
+
+- the radix abort and its reason;
+- the `radix: boolean` flag and its second derivation (`instr.args.length > 2`);
+- the throw sequence `typeError` would otherwise duplicate for RangeError (one tail);
+- the "aborts toString with a radix" row.
+
+If option (b) is taken, it also folds the 11 literal `"async.native.number-to-string"` comparisons (listed by `grep
+-rn '"async.native.number-to-string"' src`) into one predicate.
+
+**Does not add:**
+
+- a second formatter;
+- a per-radix body;
+- a `ToIntegerOrInfinity` helper with one user (the range test needs no truncation);
+- any source-side rule for holding.
+
+### Acceptance criteria
+
+Correctness, in `tests/issue-7350-b3e-number-radix.test.ts`. Each row runs at module level and inside a function,
+each with a wrong twin that must fail in the same run:
+
+- `agreesWithNode(…, runnerOptions())` (`tests/helpers/prepared-node-agreement.ts`):
+  - receivers: `Number.prototype` itself, `new Number(v)`, a Number wrapper reached through a variable, and the method
+    read off `Number.prototype` and assigned to a Number wrapper's own `toString`;
+  - values `0`, `-0`, `1`, `-1`, `255`, `-255`, `2**53 - 1`, `NaN`, `±Infinity`;
+  - radices `2`, `8`, `10`, `16`, `36`, `undefined`, `16.9`, `"16"`, `new Number(2)`;
+  - `0.5` and `-255.5` in radix 2 and 16 (power-of-2 fractions);
+  - the shapes of `S15.7.4.2_A1_T02`, `A1_T03`, `A2_T01`, `A2_T16`, `A2_T34` and `A3_T01`–`A3_T04` behind the real
+    prelude (`withPrelude`, as in `tests/issue-7561-wrappers.test.ts`).
+- `throwsAsNode`, plus a catch that answers `e instanceof RangeError`, `e.name` and `e.message`: radix `1`, `37`, `0`,
+  `null`, `NaN`, `Infinity`, `-Infinity`, `-0`. Also `NaN.toString(1)` on a wrapper (the radix is validated before the
+  NaN short-circuit), and a String object calling Number.prototype.toString with radix `1` (TypeError first, not
+  RangeError).
+- `abortsAtRunTime(…, reason)`: `new Number(0.5).toString(3)` and `new Number(1e21).toString(16)` (the two named
+  aborts), each with a twin in radix 2 that agrees.
+- A recorded refusal: `(255).toString(16)` and `n.toString()` keep `method call .toString(...) on f64 not in slice 4`
+  (site 3, out of scope).
+
+Byte identity:
+
+- `scripts/prepared-byte-identity.mts`: 804 / 804 identical, base `330caff2a8` (a `git archive` copy) vs head. No
+  proving program calls `toString(<arg>)`, so none can change. A change is a defect, not an explanation.
+- `prove-emit-identity`: 60 / 60. The ordinary pipeline: the 180 files of slice 1, default and standalone, 360 / 360.
+  No `src/codegen/`, `src/stdlib/` or `src/runtime/` file changes.
+
+Census, base vs head, on carriers and o411:
+
+- 0 rows lost, 0 new crashes, 0 new compile errors;
+- expected +40 carriers (the 40 listed above), +0 o411;
+- any other change is listed row by row.
+
+Suites: #7561's, B3a's, B3b-0's and slice 1's pass, and so does `tests/issue-7354-*` for errors (G1).
+
+Code quality:
+
+- One arm for §21.1.3.6, a sibling of `errorToString`, parameterised by the argument value, not by a flag.
+- One throw tail for TypeError and RangeError. `typeError`'s emitted instructions are unchanged.
+- One pin rule shape for the Error and wrapper families.
+- No new formatter, no duplicated `"async.native.number-to-string"` literal, no branch for a case that cannot occur:
+  the radix's `undefined` test exists only where its kinds include `undefined`.
+- `dynamic-builtin-methods.ts` stays under 300 lines. No function over 60 lines. No `func-budget-allow` /
+  `loc-budget-allow`.
+- A fresh-context adversarial review gets the diff and this section. Its verdict goes in the PR body.
+
+### Size
+
+Estimates:
+
+- about 60 to 80 source lines added and 15 removed:
+  - `numberToStringRadix` ~35;
+  - `realmError` ~10 net;
+  - the Error row's `pinned` ~8;
+  - the flag-to-value change ~5;
+  - the two named-abort guards ~10;
+- about 200 test lines.
+
+`dynamic-builtin-methods.ts` goes from 191 to about 235 lines. No grant.
+
+### Recommendation
+
+**Take it.** Its measured yield is 40 carriers (an upper bound, measured; a correct implementation reaches it), the
+second-largest first stop on the carriers list after `.call` / `.apply` (G4 / #7349 S7, 53). The o411 yield is 0. The
+slice is small, stays in one layer, writes no formatter, and turns an uncatchable abort into the specification's
+answer, apart from two named aborts that the formatter fix later removes.
+
+### Risks and open questions for the plan reviewer
+
+1. **How the IR calls the radix body.**
+   - (a) Call the support batch's `implementation.ref` from a primary unit. That needs no new feature, but whether
+     validation (`validation.ts`, `runtime-support.ts` `assertIrRuntimeSupport`, the `batch.calls` occurrences) and
+     the physical plan accept a primary call to a support callable is **not verified**. The first step of the branch
+     is a 10-line probe of it.
+   - (b) A second row on the formatter's closed contract (`js.number.to-string-radix`, `(f64, f64) -> string`), bound
+     to `radix-body` in the physical plan. That touches the demand scan, `native-number-format-requirements.ts` and
+     the provider census, and it folds the 11 duplicated feature literals into one predicate.
+
+   The plan prefers (a), and (b) if (a) is refused.
+2. **Precision.** The two named aborts make the slice correct but not complete. The reviewer may prefer fixing the
+   formatter first: it is a separate change to a shared, sha-pinned body that alters the legacy standalone output of
+   every fractional `toString(radix)`. That output is wrong today, so by "foundations first" it is not preserved, but
+   it does not belong in this slice. The sub-1e-30 miss in power-of-2 radices (100-digit cap) is left as is: no row
+   or probe reaches it.
+3. **Arm size.** The arm's per-site bytes are an estimate. If a row with 8 sites grows more than 4 KB, the arm
+   becomes one shared function per program, `(x, radix) -> string`, called from each site. That would be a design
+   change, reviewed again.
+4. **The typed-number wall (site 3).** `(255).toString(16)` and even `(255).toString()` refuse in `from-ast.ts`. It
+   has 0 first stops on both lists, and the 10 latent rows above stop earlier. Fixing it means boxing the receiver
+   into the dynamic arm under `from-ast.ts`'s no-growth rule, which is its own issue once a census shows yield.
+5. **B3bc text.** l585 and l761 call `S15.7.4.2_A4_*` the RangeError rows. They are the TypeError rows. The RangeError
+   rows are `A3_*`. Their T01, T02 and T05 trap in the dispatcher (a method read under another name), not in B3e.
+6. **Scope.** No Math, arrays, descriptor semantics, `with` or global object. `%RangeError%` is held through the
+   Error family only.
