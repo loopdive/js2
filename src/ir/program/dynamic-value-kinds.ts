@@ -164,8 +164,7 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
  * way to `@@toPrimitive` and `@@toStringTag`, (G1, #7350 B3a) the realm constructor families it names as values
  * (built-in function values; an Error constructor makes objects), and (#7561) the wrapper kinds whose objects it can
  * obtain (`new X(…)`, `X.prototype`): only such a program can hold a wrapper or change a wrapper prototype.
- * (#7580) The `Object` statics a value read may reach (`staticValues`), and those whose folded call may be stale
- * (`replacedStatics`, the escape rule of `source-plain-objects.ts`).
+ * (#7580) The `Object` statics a value read may reach (`staticValues`).
  */
 export interface ProgramObjects {
   readonly present: boolean;
@@ -174,7 +173,6 @@ export interface ProgramObjects {
   readonly realmFamilies: ReadonlySet<RealmFamily>;
   readonly wrappers: ReadonlySet<NativeWrapperConstructor>;
   readonly staticValues: ReadonlySet<string>;
-  readonly replacedStatics: ReadonlySet<string>;
   /** (#7557) The prototype methods held by name whose names the source spells (`hasOwnProperty`, `call`, …). */
   readonly prototypeMethodNames: ReadonlySet<string>;
   /**
@@ -202,7 +200,6 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   realmFamilies: new Set<RealmFamily>(),
   wrappers: new Set<NativeWrapperConstructor>(),
   staticValues: new Set<string>(),
-  replacedStatics: new Set<string>(),
   prototypeMethodNames: new Set<string>(),
   methodValues: false,
   replacesCall: false,

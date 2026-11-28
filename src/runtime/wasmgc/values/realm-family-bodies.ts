@@ -18,7 +18,7 @@ import {
   objectFlags,
 } from "./ordinary-object-descriptor-common.js";
 import { kernelGetInto } from "./kernel-get-body.js";
-import { BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
+import { BUILTIN_FIXED_FLAG, BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
 /** A family property: a string, (#7350 B3a) a number, or a realm entry or object by catalog id. */
 export interface RealmFamilyProperty {
@@ -46,6 +46,8 @@ export interface RealmFamilyOperands {
     readonly properties: readonly RealmFamilyProperty[];
     /** (#7350 B3a) The catalog models only the entry's identity (`NativeRealmIntrinsic.identityOnly`). */
     readonly identityOnly?: true;
+    /** (#7580) The entry's own properties never change (`NativeRealmIntrinsic.fixed`). */
+    readonly fixed?: true;
   }[];
   /** The family's ordinary objects, each after the one it links to (`object-prototype`: the realm's). */
   readonly objects: readonly {
@@ -133,8 +135,9 @@ function define(d: RealmFamilyOperands, target: readonly Instr[], property: Real
 }
 
 /**
- * The members' own properties (on their bags), then the objects', then (#7574) the root's; last, (#7350 B3a) the identity mark on the bag of
- * each identity-only member, once nothing more is defined on it.
+ * The members' own properties (on their bags), then the objects', then (#7574) the root's; last, once nothing more is
+ * defined on it, (#7350 B3a) the identity mark on the bag of each identity-only member and (#7580) the fixed mark on
+ * each fixed one's.
  */
 export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
   const bag = (entry: RealmFamilyOperands["entries"][number]): Instr[] => [
@@ -148,9 +151,10 @@ export function realmFamilySeed(d: RealmFamilyOperands): Instr[] {
       object.properties.flatMap((property) => define(d, [global(object.global)], property)),
     ),
     ...d.rootProperties.flatMap((property) => define(d, [global(d.objectPrototype)], property)),
-    ...d.entries.flatMap((entry) =>
-      entry.identityOnly ? markObjectFlag(d.objectTypeIdx, bag(entry), BUILTIN_IDENTITY_ONLY_FLAG) : [],
-    ),
+    ...d.entries.flatMap((entry) => [
+      ...(entry.identityOnly ? markObjectFlag(d.objectTypeIdx, bag(entry), BUILTIN_IDENTITY_ONLY_FLAG) : []),
+      ...(entry.fixed ? markObjectFlag(d.objectTypeIdx, bag(entry), BUILTIN_FIXED_FLAG) : []),
+    ]),
   ];
 }
 

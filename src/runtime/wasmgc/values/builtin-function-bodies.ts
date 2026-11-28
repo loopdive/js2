@@ -39,6 +39,8 @@ export interface BuiltinFunctionEntryOperands {
   readonly properties: RealmFamilyOperands["entries"][number]["properties"];
   /** (#7350 B3a) The catalog models only this entry's identity: a miss among its own properties aborts. */
   readonly identityOnly?: true;
+  /** (#7580) The entry's own properties never change: a define, an effective [[Set]] or delete aborts. */
+  readonly fixed?: true;
 }
 export interface BuiltinFunctionBodyOperands extends Pick<
   RealmFamilyOperands,

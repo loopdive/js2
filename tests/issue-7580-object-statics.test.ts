@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7580 — `Object` statics as values on the Prepared path: `defineProperty`, `getOwnPropertyDescriptor`, `create`,
-// `defineProperties` and `getOwnPropertyNames` read as values (identity, `typeof`, `name`, `length`), stored and passed,
-// and called through the value with the direct call's answer whatever the receiver. The escape rule: a folded call of
-// a static the program may have replaced reads the static and answers by identity, so a replaced static is never
-// answered by the fold (the run-time abort instead).
+// `defineProperties` and `getOwnPropertyNames` read as values (identity, `typeof`, `name`, `length`), stored and
+// passed, and called through the value with the direct call's answer whatever the receiver. A folded call reads no
+// static, so no program may change one: a write that would take effect on `Object` is the run-time abort, whatever
+// route reached `Object` (an alias, the root's `constructor`, a descriptor's `value`).
 //
 // Each program computes `out` and is checked against node in a fresh realm, with a wrong answer that must throw
 // (tests/helpers/prepared-node-agreement.ts). Every program calls a function expression, as the test262 harness does.
@@ -89,6 +89,22 @@ var out = String(e.writable) + String(e.enumerable) + String(e.configurable) + S
     'var never = function (x) { x.defineProperty = 0; }, o = {};\nObject.defineProperty(o, "a", { value: 2 });\nvar out = String(o.a);',
   ],
   [
+    "Object.create(p, map) through an alias writes no static",
+    `var O = Object, q = O.create(O.prototype, { create: { value: function () { return "f"; } } });
+var out = typeof Object.create(null) + typeof q.create + String(O.create === Object.create);`,
+  ],
+  [
+    "a static's write through an alias in a never-called function leaves the folded call right",
+    "var O = Object, never = function () { O.create = 0; };\nvar out = typeof Object.create(null) + typeof O;",
+  ],
+  [
+    "Array.isArray replaced through a descriptor's value is the program's (its call reads the member)",
+    `var g = function (k) { return Object.getOwnPropertyDescriptor(Array.prototype, k); };
+var e = g("construc" + "tor");
+Object.defineProperties(e.value, { isArray: { value: function () { return "f"; } } });
+var out = String(Array.isArray(Array(1, 2)));`,
+  ],
+  [
     "a shadowing parameter named Object is the user's binding",
     "var run = function (Object) { return Object.defineProperty; };\nvar out = String(run({ defineProperty: 5 }));",
   ],
@@ -114,8 +130,36 @@ var out = "ok";`;
   );
 });
 
+// The root's `constructor` read under a key the source does not spell: `Object`, by no alias and no reflective name.
+const UNSPELLED = `function g(k) { return Object.getOwnPropertyDescriptor(Object.prototype, k); }
+var e = g("construc" + "tor");
+`;
+const F = 'function () { return "f"; }';
+
 describe("#7580 — a replaced static is never answered by the fold", () => {
   it.each([
+    [
+      "defined by a defineProperties map on a descriptor's value, then called",
+      `${UNSPELLED}Object.defineProperties(e.value, { create: { value: ${F} } });\nvar out = typeof Object.create(null);`,
+    ],
+    [
+      "defined the same way after the calling function is made",
+      `${UNSPELLED}var run = function () { return String(Object.getOwnPropertyDescriptor({ a: 1 }, "a")); };
+Object.defineProperties(e.value, { getOwnPropertyDescriptor: { value: ${F} } });
+var out = run();`,
+    ],
+    [
+      "assigned on a descriptor's value, then called",
+      `${UNSPELLED}var C = e.value; C.defineProperty = ${F};\nvar out = String(Object.defineProperty({}, "a", {}));`,
+    ],
+    [
+      "defined through a held static on an alias, then called",
+      `var d = Object.defineProperty, O = Object;\nd(O, "create", { value: ${F} });\nvar out = typeof Object.create(null);`,
+    ],
+    [
+      "defined on the root's constructor, then called",
+      `var C = ({}).constructor;\nObject.defineProperty(C, "create", { get: function () { return ${F}; } });\nvar out = typeof Object.create(null);`,
+    ],
     [
       "written through an alias, then called",
       'var O = Object; O.defineProperty = function () { return "f"; };\nvar out = String(Object.defineProperty({}, "a", {}));',

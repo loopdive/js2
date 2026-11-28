@@ -10,13 +10,13 @@
  * (`wrappers`), (#7352, #7574) Array's or the root through its family (`realmFamilies`). A receiver the front end
  * folds (a native `Object` static's call, the intercepted `Object.prototype.toString.call(v)`) reaches none.
  *
- * (#7580) The escape rule: a call `Object.m(…)` keeps the folded built-in unless the program may have replaced
- * `Object.m` when it runs. That needs the `object` family (without it no code obtains `Object`: the root's
- * `constructor` comes with the family) and a route that writes `m` on it: a member named `m` written, deleted or
- * defined on any object, a reflective route (`constructor`, `Reflect`, …), code the walk cannot see, or `Object`
- * handed on (`var O = Object`, `f(Object)`, `Object[k]`). A write under a name the source does not spell reaches
- * `Object` only through one of these (`d(Object, k, v)` hands it on). Each is a question of the shared walk
- * (`intrinsic-prototype-writes.ts`), asked of every source file.
+ * (#7580) A call `Object.m(…)` is answered by the folded built-in without reading `Object.m`. The invariant that
+ * makes this right is the kernel's, not this walk's: no run-time write reaches a static of `Object`, because the
+ * kernel aborts every define, and every [[Set]] or delete that would take effect, on `%Object%`
+ * (`NativeRealmIntrinsic.fixed`), whatever route obtained the object (an alias, the root's `constructor` under any
+ * key, a descriptor's `value`). The walk decides only precision: which statics a call through a value may be
+ * (`staticValues`), every held one where `Object` is handed on (`var O = Object`, `f(Object)`), else those a read
+ * names.
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
@@ -123,11 +123,6 @@ export function programObjects(
   };
   sourceFiles.forEach(visit);
   const escapes = sourceFiles.some((file) => sourceLetsIntrinsicEscape(file, "Object"));
-  const replaces = (name: string): boolean =>
-    escapes ||
-    sourceFiles.some(
-      (file) => sourceWritesMemberNamed(file, name) || sourceNamesReflectiveRoute(file) || sourceRunsDynamicCode(file),
-    );
   return {
     present: present || realmFamilies.has("error"),
     functions,
@@ -137,7 +132,6 @@ export function programObjects(
     realmFamilies,
     wrappers,
     staticValues: escapes ? new Set(HELD_OBJECT_STATICS) : staticValues,
-    replacedStatics: new Set(realmFamilies.has("object") ? HELD_OBJECT_STATICS.filter(replaces) : []),
     // (#7557) A `call` member written anywhere, dynamic code, or, where the program can obtain Function.prototype, a
     // reflective route or a write under an unspelled name.
     replacesCall: sourceFiles.some(

@@ -12,12 +12,7 @@ import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-ca
 import { nativeObjectStatic, objectStaticId } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import {
-  builtinMethodChain,
-  identityTest,
-  unlessUnheldOwnKey,
-  type BuiltinMethodTest,
-} from "./dynamic-builtin-methods.js";
+import { identityTest, unlessUnheldOwnKey, type BuiltinMethodTest } from "./dynamic-builtin-methods.js";
 import { constantArgumentOf } from "./dynamic-member-access.js";
 import { MEMBER_ACCESS_ARM, holdsFamily, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
@@ -56,26 +51,15 @@ export function toPropertyKey(b: ObjectStaticBuilders, instr: IrInstr, value: Ir
 }
 
 /**
- * The legalized `Object.<name>(…args)` into the call's result: the static's algorithm, or (#7580) where the program may
- * have replaced the static (`replacedStatics`, the escape rule), a call of the member `Object` holds now: the
- * algorithm where it is the realm's static, else the run-time abort, never the folded answer.
+ * The legalized `Object.<name>(…args)` into the call's result: the static's algorithm, without a read of the static
+ * ((#7580) the kernel lets no program change one: `NativeRealmIntrinsic.fixed`).
  */
-export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] {
-  if (!b.program.objects.replacedStatics.has(name)) return objectStatic(b, instr, name, instr.args, instr.result!);
-  const [object, text, key, method] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
-  const test = () => objectStaticTest(b, instr, name, method, instr.args);
-  return [
-    ...b.realmIntrinsic("%Object%", object),
-    b.text(name, text),
-    carried(text, key),
-    realmCall("js.object.get", [object, key, object], method),
-    ...builtinMethodChain(b, [test], (r) => b.abort(instr, r), CARRIER)(instr.result!),
-  ];
-}
+export const dynamicObjectStatic = (b: ObjectStaticBuilders, instr: Call, name: NativeObjectStatic): IrInstr[] =>
+  objectStatic(b, instr, name, instr.args, instr.result!);
 
 /**
  * (#7580) Whether `callee` is the realm's `Object.<name>`, answering its algorithm over `args` (`this` is not
- * read), each argument the call lacks `undefined`: the identity row of the folded call and of a call through a value.
+ * read), each argument the call lacks `undefined`: the identity row of a call through a value.
  */
 export function objectStaticTest(
   b: ObjectStaticBuilders,

@@ -40,7 +40,13 @@ import {
   type NativeStringValueReservations,
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
-import { familyObjects, familyProperties, heldMemberProperties, isRootMethod } from "./native-realm-families.js";
+import {
+  familyObjects,
+  familyProperties,
+  heldMemberProperties,
+  holdsFixedProperty,
+  isRootMethod,
+} from "./native-realm-families.js";
 import {
   fillNativeRealmArrays,
   nativeRealmArrayInventory,
@@ -351,6 +357,7 @@ function beginRealm(
         ? { properties: heldMemberProperties(row, values) }
         : {}),
       ...(row.identityOnly ? { identityOnly: true as const } : {}),
+      ...(holdsFixedProperty(row) ? { fixed: true as const } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(

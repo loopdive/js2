@@ -36,6 +36,13 @@ export interface NativeRealmIntrinsic {
    * aborts it (`BUILTIN_IDENTITY_ONLY_FLAG`).
    */
   readonly identityOnly?: readonly string[];
+  /**
+   * (#7580) The own properties (statics) whose call the Prepared path answers without reading them
+   * (`src/ir/realm-static-call.ts`), which holds only while each is the realm's. Where a realm holds one, the kernel
+   * aborts a define on the row, and a [[Set]] or a delete that would take effect (`BUILTIN_FIXED_FLAG`); where it
+   * holds none, a write of one misses the identity row, which aborts already.
+   */
+  readonly fixed?: readonly string[];
   /** (#7350 B3b-0) A wrapper prototype's [[StringData]], [[NumberData]] or [[BooleanData]] (§22.1.3, §21.1.3, §20.3.3). */
   readonly primitiveData?: string | number | boolean;
   /** (#7352) An Array exotic object: %Array.prototype% is itself an array (§23.1.3). */
@@ -668,7 +675,8 @@ function catalog(): readonly NativeRealmIntrinsic[] {
       "function-prototype",
     ),
     callable(throwTypeError, "", 0, "ThrowTypeError", ["TypeError"], [], false, "throw-type-error"),
-    // (#7574) Held with itself, identity-only: a realm holds its `prototype` and (#7580) the statics it holds as values.
+    // (#7574) Held with itself, identity-only: a realm holds its `prototype` and (#7580) the statics it holds as
+    // values, none of which a program can change (`fixed`).
     {
       ...callable(
         "%Object%",
@@ -685,6 +693,7 @@ function catalog(): readonly NativeRealmIntrinsic[] {
         "native",
       ),
       identityOnly: ["length", "name", "prototype", ...HELD_OBJECT_STATICS],
+      fixed: HELD_OBJECT_STATICS,
       heldWith: "%Object%",
     },
     // (#7557) Identity-only; its call (dynamic code) refuses.
