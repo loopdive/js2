@@ -133,6 +133,14 @@ function errorToString(b: ChainBuilders, instr: IrInstr, receiver: IrValueId, pr
     );
 }
 
+/** §20.1.3.6 Object.prototype.toString's answer: the tag of `receiver`. */
+const tagAnswer =
+  (b: ChainBuilders, program: LegalizationProgram, instr: IrInstr, receiver: IrValueId): Arm =>
+  (r) => {
+    const tag = b.fresh();
+    return [...objectTagOf(b, program, instr, receiver, tag), carried(tag, r)];
+  };
+
 /**
  * (#7574) Object.prototype's `toString` (§20.1.3.6, the tag of `receiver`) and `valueOf` (§20.1.3.7: ToObject of an
  * object is itself; a primitive `this` reaches it only through a wrapper prototype written to hold it, the run-time
@@ -148,10 +156,7 @@ function objectPrototypeMethodTest(
 ): BuiltinMethodTest {
   const answer: Arm =
     name === "toString"
-      ? (r) => {
-          const tag = b.fresh();
-          return [...objectTagOf(b, program, instr, receiver, tag), carried(tag, r)];
-        }
+      ? tagAnswer(b, program, instr, receiver)
       : (r) =>
           b.kindChain(
             instr,
@@ -196,57 +201,57 @@ export function conversionMethodTests(
 }
 
 /**
- * (#7557) `test`, answering only where the `call` its method holds is the realm's (§20.2.3.3 through [[Get]], so an
- * own `call` of the method counts as much as a replaced `Function.prototype.call`); any other is the run-time abort.
+ * (#7557) `answer` where the `call` that `holder` holds is the realm's (§20.2.3.3, read through [[Get]]: an own `call`
+ * of a method counts as much as a replaced `Function.prototype.call`); any other is the run-time abort.
  */
-function throughRealmCall(
-  b: BuiltinMethodBuilders,
-  instr: IrInstr,
-  method: IrValueId,
-  test: BuiltinMethodTest,
-): BuiltinMethodTest {
+function throughRealmCall(b: ChainBuilders, instr: IrInstr, holder: IrValueId, answer: Arm): Arm {
   const [text, key, callee] = [b.fresh(), b.fresh(), b.fresh()];
-  const realms = () => identityTest(b, instr, FUNCTION_CALL_ID, callee, test.answer);
-  return {
-    ...test,
-    answer: (r) => [
-      b.text("call", text),
-      carried(text, key),
-      realmCall("js.object.get", [method, key, method], callee),
-      ...builtinMethodChain(b, [realms], (s) => b.abort(instr, s), CARRIER)(r),
-    ],
-  };
+  const realms = () => identityTest(b, instr, FUNCTION_CALL_ID, callee, answer);
+  return (r) => [
+    b.text("call", text),
+    carried(text, key),
+    realmCall("js.object.get", [holder, key, holder], callee),
+    ...builtinMethodChain(b, [realms], (s) => b.abort(instr, s), CARRIER)(r),
+  ];
 }
 
 /**
- * `Object.prototype.toString.call(v)` (`dyn.object_tag`) into its result, by identity: the method the root holds as
- * `toString` (the realm's tag of `v`; (#7574) where the program can obtain the root, any method of the table above),
- * called through the `call` that method holds ({@link throughRealmCall}). Any other method is the run-time abort.
+ * `Object.prototype.toString.call(v)` (`dyn.object_tag`) into its result, by identity. (#7574) Where the program can
+ * obtain the root, the method is the one the root holds as `toString`, answered by the table above, called through the
+ * `call` that method holds ({@link throughRealmCall}); any other method is the run-time abort. Elsewhere no program
+ * value is the method: it is the realm's, and its `call` is the one Function.prototype holds.
  */
 export function dynamicObjectTag(
   b: BuiltinMethodBuilders,
   program: LegalizationProgram,
   instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
 ): IrInstr[] {
-  const [root, text, key, method, tag] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
-  const tests = holdsFamily(program, "object")
-    ? conversionMethodTests(b, instr, program, "toString", method, instr.value)
-    : [() => objectPrototypeMethodTest(b, instr, program, "toString", method, instr.value)];
+  const [holder, text, key, method, tag] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
   // Every method of the table answers a string.
   b.kinds.learn(tag, ["string"]);
-  return [
-    ...b.realmIntrinsic(OBJECT_PROTOTYPE_ID, root),
-    b.text("toString", text),
-    carried(text, key),
-    realmCall("js.object.get", [root, key, root], method),
-    ...builtinMethodChain(
-      b,
-      tests.map((test) => () => throughRealmCall(b, instr, method, test())),
-      (r) => b.abort(instr, r),
-      CARRIER,
-    )(tag),
+  const tagged = (read: IrInstr[], call: Arm): IrInstr[] => [
+    ...read,
+    ...call(tag),
     ...b.stringOf(instr, tag, instr.result!),
   ];
+  if (!holdsFamily(program, "object"))
+    return tagged(
+      b.realmIntrinsic(FUNCTION_PROTOTYPE_ID, holder),
+      throughRealmCall(b, instr, holder, tagAnswer(b, program, instr, instr.value)),
+    );
+  const tests = conversionMethodTests(b, instr, program, "toString", method, instr.value).map((test) => () => {
+    const held = test();
+    return { ...held, answer: throughRealmCall(b, instr, method, held.answer) };
+  });
+  return tagged(
+    [
+      ...b.realmIntrinsic(OBJECT_PROTOTYPE_ID, holder),
+      b.text("toString", text),
+      carried(text, key),
+      realmCall("js.object.get", [holder, key, holder], method),
+    ],
+    builtinMethodChain(b, tests, (r) => b.abort(instr, r), CARRIER),
+  );
 }
 
 /**

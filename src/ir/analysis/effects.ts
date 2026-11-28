@@ -40,7 +40,7 @@
 // alters emission for regex-using functions and therefore needs its own
 // equivalence-proven slice, not the slice-1 byte-identical move.
 
-import { forEachNestedBuffer, type IrInstr, type IrValueId } from "../core/nodes.js";
+import { forEachInstrDeep, forEachNestedBuffer, type IrInstr, type IrValueId } from "../core/nodes.js";
 
 /**
  * Per-instruction effect summary. (#1982 introduced this as `SchedFx`,
@@ -463,6 +463,9 @@ export function verifyEmissionSchedule(
   return out;
 }
 
+/** The Prepared run-time abort (`js.value.unsupported`, the legalization's `abort` builder). */
+const isRunTimeAbort = (i: IrInstr): boolean => i.kind === "intrinsic" && i.id === "js.value.unsupported";
+
 /**
  * DCE facet: side-effecting instructions are always kept regardless of use
  * count. (#2134 slice 1: moved VERBATIM from `passes/dead-code.ts` — an
@@ -533,7 +536,7 @@ export function isSideEffecting(i: IrInstr, cache: Map<IrInstr, IrEffects> = new
     // (#7354 O1) The Prepared run-time abort (`js.value.unsupported`, the legalization's `abort` builder): reordering
     // it among pure instructions is harmless, so its effect facet stays pure, but it must run even where nothing reads
     // its text, or an operation the realm cannot do (a define, a link) would silently be skipped.
-    (i.kind === "intrinsic" && i.id === "js.value.unsupported") ||
+    isRunTimeAbort(i) ||
     // #6921: ToNumber (§7.1.4 → ToPrimitive) and loose `==` with an Object
     // operand (§7.2.14 steps 10-11) run user `valueOf`/`toString` and may
     // throw, so an unused result must still execute. Strict `dyn.eq`
@@ -659,5 +662,12 @@ export function isSideEffecting(i: IrInstr, cache: Map<IrInstr, IrEffects> = new
   });
   if (!runsBuffers) return false;
   const fx = effectsOf(i, cache);
-  return fx.writesHeap || fx.writeSlots.size > 0;
+  if (fx.writesHeap || fx.writeSlots.size > 0) return true;
+  // (#7557) The abort's effect facet is pure (above), so `effectsOf` does not see one in a buffer; it must run there
+  // as at the top, or a value `if` whose arms only answer or abort is dropped with an unread result.
+  let aborts = false;
+  forEachInstrDeep(i, (nested) => {
+    aborts ||= isRunTimeAbort(nested);
+  });
+  return aborts;
 }
