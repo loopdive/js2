@@ -62,6 +62,11 @@ Measured on 2026-11-28 with node v22.23.5, on `ada18e6bb6` (head of PR #7558) an
 | `iter_fn_decl` (per iteration) | the same, with `function k() { return g; } fs.push(k);` in the loop body | 245 | throws | throws |
 | `iter_no_outer_read` (guard) | the same loop, outer `g` read only after the loop | 245 | 245 | 245 |
 | `iter_no_outer` (guard) | the same loop with `h`, no outer binding | 245 | 245 | 245 |
+| `fnv_no_outer` (block function as a value) | `for (…) { let h = i + 4; function k() { return h; } fs.push(k); } return fs[0]()*10 + fs[1]()` | 45 | 44 | 44 |
+| `fnv_outer_after` | the same with outer `let g` and `g`, read after the loop | 245 | 244 | 244 |
+| `fnv_call_and_value` | `c = c*10 + k(); fs.push(k);` in the same iteration; `return c*100 + fs[0]()*10 + fs[1]()` | 4545 | 4544 | 4544 |
+| `fnv_call_mut_value` | the same with `k` returning `h++` | 4556 | 4567 | 4567 |
+| `fnv_identity` | `function k() { return i } fs.push(k)`; `fs[0] === fs[1] ? 1 : 2` | 2 | 1 | 1 |
 | `m_import_before` | `import { g }`, then `s_let_before`'s body | 25 | 5 | 5 |
 | `m_import_switch` | `import { g }`, then `sw_case_let_early`'s body | 25 | 5 | 5 |
 | (gap-2 rows of #7620) | two sibling blocks / loop body / TDZ before a block `let` | 25 | 5 / 21 / throws | same |
@@ -168,14 +173,48 @@ like any shadow. Nothing name-keyed exists outside the block.
    - **A nested-block declaration's cell is minted at its block's entry, never at function top.**
      - Inside a loop body, block entry runs once per iteration, so each iteration gets a fresh cell (the spec creates a
        fresh block environment on every evaluation of the body).
-     - `iter_fn_decl` needs this: a hoisted `function k` that captures the body's `g` must see `4` from the first
-       iteration's closure and `5` from the second.
+     - `iter_fn_decl` and the `fnv_*` rows need this: a block `function k` that captures the body's binding must
+       see `4` in the first iteration and `5` in the second.
      - The minting moves into step 2's block-entry install (`reinstallPreHoistedLetConstBinding` gains the "mint the
        cell if the record is captured" arm).
      - `emitEagerCaptureBoxes` skips nested-block records, so no cell for them exists at function top.
      - The hoisted function's capture resolves the record (step 4 above), and its call site forwards the current
        iteration's cell through `eagerCaptureCellForCall` (`eager-capture-box.ts:69`). That helper is already keyed
        by slot.
+   - **A block function's closure value is materialized at block entry, beside the cell mint, once per evaluation of
+     the block.** §14.2.2 BlockDeclarationInstantiation instantiates a block's function declarations when the block
+     is entered.
+     - **What today does** (WAT of `fnv_call_mut_value`, `.tmp/p7620/fnv.wat`):
+       - the cell `$__boxed_h` is minted once at function top (`local.get 1; struct.new 45; local.set 3`), and each
+         iteration only `struct.set`s it;
+       - the closure value is memoised once per function in `$__fnmemo_k`. That memo is name-keyed
+         (`fctx.nestedFnClosureMemos: Map<funcName, local>`) and built lazily on the first value use by
+         `emitMemoizedNestedFnClosure` (`closures/funcref-as-closure.ts:143`).
+       - Both pushed values are therefore one object over one cell: 4567 for the mutating row, 1 for the identity
+         row.
+     - **The change.** At block entry, `preallocateBlockScopedSlots` (`index.ts:13472`) does three things for the
+       block's own declarations, in this order:
+       1. mint a fresh cell for each nested-block `let`/`const` record that a function captures;
+       2. install those records (step 2);
+       3. build the closure object of each direct-child `FunctionDeclaration` record (B2's declaration-keyed record
+          for the block function) over the cells just minted, and store it in that record's value slot.
+     - **Building the closure** reuses `emitMemoizedNestedFnClosure`'s construction sequence: the
+       `struct.new` of funcref, arity, bag and captures. It skips the null-memo guard, and the record's value slot
+       is the target in place of the name-keyed memo. The construction is split out of the guard, so the guarded lazy
+       path (body-level functions) and the eager block-entry path share it; there is no second copy.
+       `fctx.nestedFnClosureMemos` stops holding block functions.
+     - **Captures of a nested-block declaration by a block function are always by cell**, mutable or not. The
+       closure is built at block entry, before the captured `let` is initialized, so a value capture would copy the
+       TDZ hole. The cell is read when the function runs. This is the reason `fnv_no_outer` reads 44 today: a value
+       capture snapshotted at the first use.
+   - **How a direct call `k()` and the value `k` share the cell.**
+     - The lifted `$k` is compiled once at function entry by `hoistFunctionDeclarations`. Its capture is a cell
+       parameter, resolved by declaration (step 4).
+     - A direct call `k()` in the block passes the cell that `localMap` holds for the captured name. That is the cell
+       installed at this block entry, forwarded by `eagerCaptureCellForCall` as today.
+     - The value `k` is the closure object built at this block entry, holding the same cell.
+     - So in one iteration the call and the value read and write one cell, and the next iteration gets a new cell and
+       a new closure. `fnv_call_and_value` (4545) and `fnv_call_mut_value` (4556) pin this.
    - `iter_outer_read` is the B1 cause inside a loop: the early read hits the block slot's TDZ flag.
      `iter_no_outer_read` already passes, which shows that today's arrow-closure cell is minted at the declaration,
      per iteration. Step 2 must keep that placement for arrows.
@@ -346,8 +385,14 @@ and is not a body-level binding.
   - An adversarial review verdict goes in the PR body.
 - **Bytes.** The mechanical gate (a)–(c) above passes on the corpus, on gc and standalone. The canonical-diff list is
   attached to the PR, and the lead signs off the byte change.
-- **Per-iteration pins.** `iter_outer_read` and `iter_fn_decl` go red → green (245). `iter_no_outer_read` and
-  `iter_no_outer` stay green.
+- **Per-iteration pins.**
+  - `iter_outer_read` and `iter_fn_decl` go red → green (245).
+  - `fnv_no_outer` (45), `fnv_outer_after` (245), `fnv_call_and_value` (4545), `fnv_call_mut_value` (4556) and
+    `fnv_identity` (2) go red → green.
+  - `iter_no_outer_read` and `iter_no_outer` stay green.
+  - The `fnv_*` rows were measured on `ada18e6bb6` and origin/main `41645f5711`; both give the "ours" values above.
+  - The PRV-7620 reviewer reported 55 for a block-function-value shape. Mine gives 44 for the immutable capture and 67
+    for the mutating one; all of them are one shared closure.
 - **No test262 regression.** Scoped per-test diff over `language/block-scope`, `language/statements/switch`,
   `language/statements/class` and `annexB/language` on standalone: no pass → fail.
 - **Related suites green.**

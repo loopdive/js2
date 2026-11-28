@@ -81,23 +81,29 @@ Measured on 2026-11-28 on origin/main `c00c91962d`, the head at the time. Line n
   - `makeIrPlanningAuthority` (`index.ts:2968`) is passed `options?.experimentalIR`.
   - `initializeMultiPreparedProgram` sets `irProgramCallableCutoverEnabled` from `!!options?.experimentalIR`
     (`multi-prepared-callable-orchestration.ts:160`).
-  - `overlayEnabled` is `!!options?.experimentalIR` (`multi-prepared-program.ts:464`).
+  - `overlayEnabled` is `!!options?.experimentalIR && !ctx.fast` (`multi-prepared-program.ts:464`).
 - **The second, coupled gate.** `multi-prepared-program.ts:466` seals the body boundary for the "identity context
   without IR" case:
   `if (options?.trackIrOutcomes === true && options.experimentalIR !== true) owner.sealBodyBoundary();`.
   Its condition repeats the first gate's telemetry half.
   - Measured: un-gating only the two `index.ts` sites makes **every** IR-off `compileMulti` fail, 55 of 55 probe
     graphs, with `multi-prepared-program:completion-order: owner is collecting, expected body-boundary-sealed`.
-  - So `:466` becomes `if (options?.experimentalIR !== true) owner.sealBodyBoundary();`.
+  - So `:466` asks the value two lines above it, instead of re-deriving one: `if (!overlayEnabled)
+    owner.sealBodyBoundary();`. `overlayEnabled` is hoisted into a local that both the owner argument and the seal
+    use.
+  - This adds one case the throwaway patch did not test: `fast` mode with `experimentalIR` on, where the overlay is
+    already off and the owner now seals. The byte gate's IR-on × `fast` lane covers it.
 
 **Change.** Three conditions:
 
 1. `index.ts:5426` builds the context unconditionally.
 2. `index.ts:9884` builds the context unconditionally.
-3. `multi-prepared-program.ts:466` seals whenever the IR overlay is off.
+3. `multi-prepared-program.ts:466` seals whenever `overlayEnabled` is false.
 
-A throwaway patch with exactly these three edits (since reverted) made every row of the Measured table answer like
+A throwaway patch (since reverted) made every row of the Measured table answer like
 node with IR off: `nsImport_bump` 23, `import * as d; d.f()` 5, TS `namespace` 5. No `trackIrOutcomes` is needed.
+Its third edit was the equivalent `options?.experimentalIR !== true`. It differs from `!overlayEnabled` only in
+`fast` mode.
 
 ### Readers that change
 
@@ -157,16 +163,20 @@ Probe: `.tmp/p7620/idhash.mts`.
   `N0_nsReassignedFn`, `N_nsReassignedFnOwnF`, `N0c_nsNoCall`, `Na_thirdFileF`, `N0_noReassign`, `ns_cycle_read`, and
   `y-cases` `N0`, `Nb_entry_own_f`, `Na_third_file_f`, `N_value`, `N_no_reassign`, `N0_before_swap`, `Y_ns`.
   These are the intended diffs: the namespace object or static member call now resolves.
-- **The IR-on lane is unaffected by construction.** It already builds the context; edit 3 changes nothing when
-  `experimentalIR` is on.
-- **Compile time** for this corpus, one run each: 3 min 10 s base, 3 min 27 s patched, about +9 %. A single run is
-  noisy; the PR re-measures on the gate corpus below.
+- **Success set: equal.** No program that compiles on the base fails on the patched compiler. The count of
+  "compiles only on the base" is 0 in each corpus: playground 0, test262 sample 0, graphs 0, on gc and standalone.
+  Every compile error is a compile error on both.
+- **The IR-on lane is unaffected by construction.** It already builds the context. Edit 3 changes nothing when the
+  overlay is enabled, except `fast` mode (see above).
+- **Compile time** for this corpus, one run each, IR off: 3 min 10 s base, 3 min 27 s patched, about +9 %. A single
+  run is noisy, so the acceptance asks for a proper measurement.
 
-### Not measured
+### Not measured (the implementer measures these; see the acceptance criteria)
 
-- The #7470 389-file sample. Its file list was not available in this worktree; the PR runs it.
+- S7's 389-file sample.
 - lodash-es.
 - The full equivalence suite.
+- Compile time over three or more runs.
 
 ## Acceptance criteria
 
@@ -175,17 +185,26 @@ Probe: `.tmp/p7620/idhash.mts`.
   - It is red on the base: the IR-off rows throw.
   - It is green after the fix.
   - Every row answers the same with and without `trackIrOutcomes`.
+- **Equivalence suite first.** `node scripts/equivalence-gate.mjs` is the most important gate. It runs both on the
+  base and on the change, and must report no new failure.
+- **Success-set equality.** Every program that compiles on the base still compiles. The PR reports the count of
+  programs that compile only on the base, per corpus; each count must be 0.
 - **gc output byte-identical** for programs that use no namespace function call, base vs new, gc and standalone, IR
-  off and on:
-  - the #7470 single-file corpus (389 files);
+  off and on, plus IR on with `fast`:
+  - S7's 389-file sample: S7's `.tmp/sample3.txt` (the copy #7530's plan names `.tmp/7530/sample3.txt`), the #7470
+    single-file corpus;
   - the playground examples;
   - the test262 block-scope/switch sample above;
   - `tests/equivalence/`;
   - #7470's multi-file graphs.
 
   The expected diffs are listed in the PR: graphs with a namespace call of a function, as in the 15 above.
+- **Compile time.** At least 3 runs each for base and new, on the corpus above. Report IR off and IR on separately,
+  with the median and range. The IR-on delta must be about 0. The IR-off delta is reported against the measured
+  single-run +9 %.
 - **Code quality.**
-  - One predicate governs "identity context present, IR overlay off": the three conditions above, with no new flag.
+  - One predicate governs "identity context present, IR overlay off": `overlayEnabled`, reused at `:466`, with no
+    new flag.
   - No IR-only branch is added, and no second declaration → function map.
   - The budget gates pass.
   - An adversarial review verdict goes in the PR body.

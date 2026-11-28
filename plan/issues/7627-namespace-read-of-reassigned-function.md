@@ -15,7 +15,7 @@ goal: core-semantics
 parent: 7620
 depends_on: [7530, 7625]
 blocked_by: 7530
-related: [7620, 7530, 7622]
+related: [7620, 7530, 7622, 7630]
 ---
 
 # #7627 — calls of a reassigned function reach the original body
@@ -134,22 +134,35 @@ none of #7530's regions.
 
 ### One predicate
 
-New `liveFunctionBindingOf(ctx, declaration): ModuleBinding | undefined` in `src/codegen/module-binding-liveness.ts`,
-a small leaf module next to `module-binding-table.ts`. It returns `moduleBindingOf(ctx, declaration)` when that
-binding has `liveFunction === "assigned"`.
+Two exports in `src/codegen/module-binding-liveness.ts`, a small new leaf module next to `module-binding-table.ts`:
+
+- `liveFunctionBindingOf(ctx, declaration): ModuleBinding | undefined` returns `moduleBindingOf(ctx, declaration)`
+  when that binding has `liveFunction === "assigned"`. Sites 1–4 use it.
+- `isLiveFunctionDeclaration(ctx, declaration): boolean` is true for either kind (`"assigned"` or `"eval"`).
+  `exactImportedTopLevelFunction` uses it (PRV-7620 round 3: this variant is chosen now).
+
+**Why a leaf module, not `module-binding-table.ts`.** `module-binding-table.ts` is #7530's region: it owns
+`ModuleBinding`, `markLiveFunctionBinding` and `liveFunctionBindings`. This issue only reads that file. The predicate
+is a query over the table, not part of it. A leaf module beside it imports `moduleBindingOf` and nothing else, so it
+adds no import cycle. The table stays the one owner of the data.
 
 - **Why `"assigned"` only.** An `"eval"` binding (a function a dynamic `Function`/`eval` source may rebind) is already
   routed by the runtime-eval arm (`hasLiveFunctionBinding`). lodash-es has about 475 of them (#7530's census).
   Widening those calls would change lodash's bytes and speed with no measured gain. Eval-only calls keep their path.
 - **Users.**
   - `exactImportedTopLevelFunction` (`identifiers.ts:878`) replaces its `ctx.reassignedFunctionDeclarations` test with
-    the predicate. That is a one-line swap, so `identifiers.ts` does not grow. Eval-only declarations keep declining
-    there too: the line becomes `liveFunctionBindingOf(…) || moduleBindingOf(…)?.liveFunction === "eval"`, or a second
-    exported `isLiveFunctionDeclaration`. The PR picks one, and there is no second copy.
-  - The three sites below.
-- **Why not the existing WeakSet.** `ctx.reassignedFunctionDeclarations` (`context/types.ts:3196`) already holds both
-  kinds. The predicate reads #7530's binding instead, so liveness has one source, as #7530 intends. Migrating the
-  WeakSet's other ten readers is out of scope; they are listed for a follow-up.
+    `isLiveFunctionDeclaration`. That is a one-line swap, so `identifiers.ts` does not grow. Eval-only declarations
+    keep declining there, as today.
+  - Sites 1–4 below use `liveFunctionBindingOf`.
+- **The existing WeakSet stays a second liveness source, for now.**
+  - `ctx.reassignedFunctionDeclarations` (`context/types.ts:3196`) holds both kinds. After this issue its other ten
+    readers still ask it (`ir-overlay-preparation.ts`, `multi-prepared-module-init-census.ts`, `module-namespace-value.ts`,
+    `function-member-closure-planning.ts`, `ir-imported-call-planning.ts` ×2, `ir-prepared-free-functions.ts`,
+    `property-access.ts`, `identifiers.ts:1173`).
+  - Folding them onto the binding and deleting the WeakSet is
+    [#7630](7630-retire-reassigned-function-declarations-weakset.md), filed unclaimed as the follow-up.
+  - Until then the two sources agree by construction: #7530 marks a binding live for exactly the declarations its
+    scan adds to the WeakSet.
 
 ### Site 1, A2-ns call (`calls.ts:2800`, `tryRuntimeNamespaceMemberCall`)
 
@@ -174,13 +187,28 @@ binding has `liveFunction === "assigned"`.
   import alias, the same resolution `bindingIsImmutablePropertyCallableAlias` (`:326-331`) uses.
 - The live value is the same dynamic call `tryEmitInlineDynamicCall(ctx, fctx, expr, true)` the runtime-eval arm
   uses, reading the binding's global. This extends that arm's condition; it is not a new arm.
+- **The predicate route subsumes the closure-state route for `"assigned"` declarations.**
+  - Today a call to a reassigned function reaches the live value only through state that depends on compile order:
+    the closure path (`compileClosureCall`, `call-identifier.ts:1766`) once that state exists. That route is why Y5
+    works and Y does not.
+  - With site 3, every call whose callee declaration has an `"assigned"` binding takes the live route at `:1554`,
+    before that closure arm is reached. So for those declarations the closure arm is never needed.
+  - The plan therefore bypasses it for them: the closure arm's condition gains `&& !liveFunctionBindingOf(…)`. If
+    instrumentation shows the arm serves only these declarations, the arm is deleted instead.
+  - Other closures (arrow-valued `const`s, captured callables) keep it.
+- **The first commit instruments Y's cause** before changing behaviour. It logs, for each identifier call to a
+  declaration in `ctx.reassignedFunctionDeclarations`, which arm emitted it (direct `funcMap`, closure, or runtime
+  eval) and what closure state existed at that point. The output is recorded in the PR, and the logging is removed.
+  This confirms or replaces the hypothesis in Causes.
 - `call-identifier.ts` is over the threshold. The condition joins `hasLiveFunctionBinding`'s existing call, and the
   import-alias resolution is a call to the shared helper, so the edit is net zero.
 
 ### Site 4, inliner (`function-body.ts:172`, `registerInlinableFunction`)
 
 A function whose declaration has a live binding is never registered as inlinable. This is a guard next to the existing
-rest-param and capture guards. Without it, a caller compiled before site 3 applies could still copy a direct call.
+rest-param and capture guards. Inlining copies the declaration's **original body** into the caller (that is how
+Y-single folds to a constant), and a reassigned function's current value need not be that body. A live function is
+never inlinable, whatever the call site does.
 
 **Pipeline.** Legacy codegen. The IR's imported-call planning already declines reassigned targets
 (`ir-imported-call-planning.ts:61/99`, `ir-prepared-free-functions.ts:522`), and the IR refuses the rows' units.
@@ -206,8 +234,11 @@ rest-param and capture guards. Without it, a caller compiled before site 3 appli
   - **Controls stay green:** by-name, no-reassignment (IR on), Y3, Y5, Y-single reassigner-first, Y-single
     `main`-first.
 - **Code quality.**
-  - One liveness predicate (`liveFunctionBindingOf`), read from #7530's binding, used at all four sites and by
-    `exactImportedTopLevelFunction`. No duplicated liveness test, and no new name-keyed set.
+  - One liveness module (`module-binding-liveness.ts`) with two queries over #7530's binding:
+    `liveFunctionBindingOf` at the four sites, and `isLiveFunctionDeclaration` at `exactImportedTopLevelFunction`.
+    No duplicated liveness test, and no new name-keyed set.
+  - The closure arm is bypassed or deleted for `"assigned"` declarations, per site 3.
+  - The WeakSet's remaining readers are left to #7630, which is linked.
   - Each fix sits next to its sibling: site 1 on `tryRuntimeNamespaceMemberCall`'s decline line; site 2 beside the
     `var`/`let` live arm; site 3 in `hasLiveFunctionBinding`'s condition; site 4 beside the inliner's existing guards.
   - No edits to #7530's regions: `module-binding-table.ts`, `source-binding-projection.ts`, `registerModuleGlobal`'s
