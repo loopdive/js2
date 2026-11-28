@@ -287,13 +287,51 @@ Compile time, 3 interleaved runs per side (base, new, base, new, ...), median (r
   runs overlap, and the paired per-run deltas are -2.4 %, +13.7 %, +1.6 %. A second implementer's jobs shared the
   4 cores for part of run 3.
 
+### Follow-up: where the IR-off byte changes come from (2026-11-28, base origin/main `4aa8ea4c46`)
+
+The lead chose to keep IR-off gc output byte-identical outside the 15 namespace graphs. Each remaining IR-off
+change was traced to one reader with a temporary env-gated toggle: switching off only that reader on the new
+compiler restores the base sha256 for exactly the programs it owns. A clean base worktree at `4aa8ea4c46` was the
+comparison.
+
+| IR-off change | reader | what it reads | answer on base: IR off / IR off + `trackIrOutcomes` / IR on | answer with the change |
+| --- | --- | --- | --- | --- |
+| 2 class setter tests + probe `a1.ts`: unannotated setter parameter `(ref null 6)` → `externref` | `resolveClassAccessorParameterType` (`class-bodies.ts`), branch `terminal?.containingTerminalOwnerId !== undefined` | `ctx.irPlanningIdentityContext` | pass / pass / pass | pass |
+| 2 `class/dstr` tests: wrapper order | `compileExactAmbientShadowedModuleBinding` (#2176, `expressions/identifiers.ts`) | `ctx.programAbiGlobals?.moduleBinding(declaration)` (Program ABI session) | **throw** / pass / pass | pass |
+| runtime-eval interpreter, +174 bytes | `declarationOwnsHandle` (`named-this-call.ts`, #3796) | `ctx.programAbiSourceCallables.identityContext`, the registry the namespace readers use | **throw** / pass / pass (repro below) | pass |
+
+- **Setter.** CodegenContext has no "IR is on" signal. `experimentalIR` lives only in `CodegenOptions`
+  (`context/types.ts:277`), and `createCodegenContext` copies no IR flag into the context. The selector's result
+  does not exist yet when the reader runs: the reader runs inside `collectDeclarations` (`index.ts:5869`), and
+  `planIrOverlay` runs later (`index.ts:5985`). So the only gate available is a new context field, which the lead
+  must approve first.
+- **Wrapper order is a real fix, not luck.** In the two `dstr` tests, TypeScript resolves the script's
+  `let length = "outer"` to lib's ambient `length`. Without the session, #2176's exact read falls through to
+  `tryEmitAmbientRegistryCollisionRead`, which reads `globalThis.length`. That materializes the native globalThis
+  seed early, which is why the wrapper order moves. Deleting only the
+  `assert.sameValue(length, "outer", …)` line makes base IR off pass. Base IR off + `trackIrOutcomes` passes, so on
+  the base the diagnostic flag changes the answer: the bug class of this issue.
+- **Interpreter.** The one new function is `__named_this_call_finishNodeAt_214`, the receiver trampoline for
+  acorn's `finishNodeAt.call(this, …)`. Repro: `function f() { return this.v; } f.call({ v: 7 }) === 7` throws on
+  base IR off, passes on base IR off + `trackIrOutcomes` and IR on, and passes with the change. It is the same
+  registry lookup as the namespace fix, so no gate can keep it and the namespace fix apart without an IR signal.
+- **Compile time (IR off, test262 block-scope + switch, 512 compiles).**
+  - 5 interleaved runs per side: base 141.7 / 156.2 / 162.0 / 153.3 / 171.8 s, new 148.1 / 172.3 / 177.1 /
+    192.5 / 187.8 s. Median 156.2 → 177.1 s (+13 %); new is slower in all 5 pairs. Not noise.
+  - The identity build is not the cost: inventory 0.1 s, identity context 0.0 s, session and context creation 0.2 s
+    over the 168 compiles that reach `generateModule`.
+  - A CPU profile (one run per side, 144.7 → 166.6 s) puts the growth in Program ABI finalization, which now runs
+    for IR-off compiles. `eliminateDeadLayoutAndPlanProgramAbi` grows +3.1 s; inside it `ProgramAbiSession.publish`
+    takes 3.9 s (`buildSealedAbi` 2.7, `bindAndPublish` 2.3, `materializeTypeContract` 1.9, `sealPlan` 1.6,
+    inclusive). Garbage collection grows +5.3 s. Nothing in an IR-off compile consumes the published ABI except the
+    namespace and receiver lookups, which need the session only to answer `handleForUnit`.
+
 ### Open
 
-- **IR-off bytes are not identical outside namespace calls**: the 4 class programs and the interpreter above. Two of
-  them are fixes (throw → pass). The setter-parameter change keeps the answer but changes the ABI, because
-  `resolveClassAccessorParameterType` treats "context exists" as "IR may promote this setter". Gating it needs an
-  "IR on" signal in `CodegenContext`, which does not exist today and the plan's quality rule forbids adding as a new
-  flag here. Needs a decision: accept, or follow-up issue.
+- **Blocked on a lead decision: IR-off bytes are not identical outside namespace calls** (see the follow-up
+  above). Gating the setter reader needs an "IR is on" field in `CodegenContext`, which does not exist. Gating the
+  other two readers would keep two known wrong IR-off answers that `trackIrOutcomes` already fixes on the base.
+- Program ABI finalization now runs in IR-off compiles (+13 % on the test262 sample). Not addressed.
 - Other direct `ctx.irPlanningIdentityContext` readers (`async-*-planning.ts`, `prepared-class-body-cutover.ts`,
   `compiler-support-abi.ts`, `program-abi-fnctor-producer.ts`) were not audited one by one; the 490-file sample is
   the evidence for them.
