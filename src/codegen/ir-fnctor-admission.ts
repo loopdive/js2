@@ -11,6 +11,7 @@
  */
 
 import { ts, forEachChild } from "../ts-api.js";
+import { aliasedSymbolAt } from "../shared/aliased-symbol.js";
 import type {
   IrFnctorAdmission,
   IrFnctorPropagationAdmissionResolver,
@@ -51,18 +52,8 @@ export function irFnctorArgumentProjectionRouteIsActive(
   );
 }
 
-function aliasedSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined {
-  const symbol = checker.getSymbolAtLocation(node);
-  if (!symbol || (symbol.flags & ts.SymbolFlags.Alias) === 0) return symbol;
-  try {
-    return checker.getAliasedSymbol(symbol);
-  } catch {
-    return undefined;
-  }
-}
-
 function symbolOwnsDeclaration(checker: ts.TypeChecker, node: ts.Identifier, declaration: ts.Node): boolean {
-  const symbol = aliasedSymbol(checker, node);
+  const symbol = aliasedSymbolAt(checker, node);
   if (!symbol) return false;
   return (symbol.getDeclarations() ?? []).some((candidate) => candidate === declaration);
 }
@@ -87,7 +78,7 @@ function hasNoEscape(checker: ts.TypeChecker, site: ts.NewExpression): boolean {
   if (ts.isElementAccessExpression(parent) && parent.expression === value) return true;
   if (!ts.isVariableDeclaration(parent) || parent.initializer !== value || !ts.isIdentifier(parent.name)) return false;
   const binding = parent.name;
-  const symbol = aliasedSymbol(checker, binding);
+  const symbol = aliasedSymbolAt(checker, binding);
   if (!symbol) return false;
   let ownerFunction: ts.FunctionLikeDeclaration | undefined;
   for (let ancestor: ts.Node | undefined = parent.parent; ancestor; ancestor = ancestor.parent) {
@@ -104,7 +95,7 @@ function hasNoEscape(checker: ts.TypeChecker, site: ts.NewExpression): boolean {
     let found = false;
     const scan = (candidate: ts.Node): void => {
       if (found) return;
-      if (ts.isIdentifier(candidate) && candidate !== binding && aliasedSymbol(checker, candidate) === symbol) {
+      if (ts.isIdentifier(candidate) && candidate !== binding && aliasedSymbolAt(checker, candidate) === symbol) {
         found = true;
         return;
       }
@@ -118,7 +109,7 @@ function hasNoEscape(checker: ts.TypeChecker, site: ts.NewExpression): boolean {
       if (referencesBinding(node)) nestedFunctionUse = true;
       return;
     }
-    if (ts.isIdentifier(node) && aliasedSymbol(checker, node) === symbol && node !== binding) {
+    if (ts.isIdentifier(node) && aliasedSymbolAt(checker, node) === symbol && node !== binding) {
       const use = node.parent;
       if (
         !(ts.isPropertyAccessExpression(use) && use.expression === node) &&

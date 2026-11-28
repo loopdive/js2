@@ -122,6 +122,8 @@ import {
 import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
+import { moduleNamespaceSourceOf } from "./module-namespace-value.js";
+import { aliasedSymbolAt } from "../shared/aliased-symbol.js";
 import {
   tryCompileNativeDisposableStackAnyDisposedGet,
   tryCompileNativeDisposableStackDisposedGet,
@@ -3415,7 +3417,7 @@ function isAmbientDeclarationContext(node: ts.Node): boolean {
 }
 
 interface RuntimeNamespaceFunctionValueReceiver {
-  /** `import * as ns` projects the source file's direct function exports. */
+  /** A module namespace binding projects the source file's direct function exports. */
   readonly sourceModule: boolean;
   /** Every runtime block belonging to one merged `namespace N` symbol. */
   readonly moduleBlocks: ReadonlySet<ts.ModuleBlock>;
@@ -3425,25 +3427,15 @@ function runtimeNamespaceFunctionValueReceiver(
   ctx: CodegenContext,
   identifier: ts.Identifier,
 ): RuntimeNamespaceFunctionValueReceiver | undefined {
-  const directDeclaration = ctx.oracle.valueDeclarationOf(identifier);
-  if (directDeclaration !== undefined && ts.isNamespaceImport(directDeclaration)) {
-    return { sourceModule: true, moduleBlocks: new Set() };
-  }
+  if (moduleNamespaceSourceOf(ctx, identifier) !== undefined) return { sourceModule: true, moduleBlocks: new Set() };
 
   // A local merged namespace can have several ModuleDeclarations, while a
   // named import binds an ImportSpecifier whose checker alias points at those
   // declarations. Resolve the symbol once and retain every executable block;
   // choosing only valueDeclaration would make `N.second` depend on which
   // declaration TypeScript happened to nominate for the merged symbol.
-  let symbol = ctx.checker.getSymbolAtLocation(identifier);
+  const symbol = aliasedSymbolAt(ctx.checker, identifier);
   if (symbol === undefined) return undefined;
-  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-    try {
-      symbol = ctx.checker.getAliasedSymbol(symbol);
-    } catch {
-      return undefined;
-    }
-  }
   const moduleBlocks = new Set<ts.ModuleBlock>();
   for (const declaration of [symbol.valueDeclaration, ...(symbol.declarations ?? [])]) {
     if (

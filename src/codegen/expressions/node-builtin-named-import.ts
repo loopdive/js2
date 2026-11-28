@@ -29,10 +29,12 @@ export function bindingIsNodeBuiltinNamedImport(decl: ts.Declaration | undefined
   const importClause = namedImports.parent;
   if (!ts.isImportClause(importClause)) return false;
   const importDecl = importClause.parent;
-  if (!ts.isImportDeclaration(importDecl)) return false;
-  const specifier = importDecl.moduleSpecifier;
-  if (!ts.isStringLiteral(specifier)) return false;
-  return isNodeBuiltin(specifier.text);
+  return ts.isImportDeclaration(importDecl) && isNodeBuiltinSpecifier(importDecl.moduleSpecifier);
+}
+
+/** Is `specifier` a string-literal module specifier naming a Node builtin (`"path"`, `"node:path"`)? */
+export function isNodeBuiltinSpecifier(specifier: ts.Expression | undefined): specifier is ts.StringLiteral {
+  return specifier !== undefined && ts.isStringLiteral(specifier) && isNodeBuiltin(specifier.text);
 }
 
 /**

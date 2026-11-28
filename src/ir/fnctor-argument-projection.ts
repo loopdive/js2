@@ -9,6 +9,7 @@
  */
 
 import { forEachChild, ts } from "../ts-api.js";
+import { aliasedSymbolAt } from "../shared/aliased-symbol.js";
 import type { IrSourceId, IrUnitId } from "./identity.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { _propagationCore, type IrUnitTypeMap, type LatticeType } from "./propagate.js";
@@ -125,18 +126,8 @@ const CONSTRUCTOR_PROOF_KEYS = Object.freeze([
 ] as const);
 const SORTED_CONSTRUCTOR_PROOF_KEYS = Object.freeze([...CONSTRUCTOR_PROOF_KEYS].sort());
 
-function aliasedSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined {
-  const symbol = checker.getSymbolAtLocation(node);
-  if (!symbol || (symbol.flags & ts.SymbolFlags.Alias) === 0) return symbol;
-  try {
-    return checker.getAliasedSymbol(symbol);
-  } catch {
-    return undefined;
-  }
-}
-
 function symbolOwnsDeclaration(checker: ts.TypeChecker, node: ts.Identifier, declaration: ts.Node): boolean {
-  const symbol = aliasedSymbol(checker, node);
+  const symbol = aliasedSymbolAt(checker, node);
   if (!symbol) return false;
   return (symbol.getDeclarations() ?? []).some((candidate) => {
     if (candidate === declaration) return true;
@@ -274,7 +265,7 @@ function expressionResolutionAgainstTarget(
   const visit = (node: ts.Node): void => {
     if (referencesTarget) return;
     if (ts.isIdentifier(node)) {
-      const symbol = aliasedSymbol(checker, node);
+      const symbol = aliasedSymbolAt(checker, node);
       if ((symbol?.getDeclarations() ?? []).some((declaration) => declaration === target)) {
         referencesTarget = true;
         return;

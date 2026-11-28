@@ -5,10 +5,12 @@ import type { GlobalDef, ValType, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { emitCachedFuncClosureAccess, ensureFuncClosureSingleton } from "./closures.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
+import { isNodeBuiltinSpecifier } from "./expressions/node-builtin-named-import.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isNodeBuiltin, normalizeNodeBuiltin } from "../import-resolver.js";
+import { normalizeNodeBuiltin } from "../import-resolver.js";
+import { aliasedSymbolAt } from "../shared/aliased-symbol.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -175,7 +177,7 @@ function hostMemberOf(
   specifier: ts.Expression | undefined,
   binding: ts.ImportSpecifier | ts.ExportSpecifier,
 ): { moduleName: string; propertyName: string } | undefined {
-  if (specifier === undefined || !ts.isStringLiteral(specifier) || !isNodeBuiltin(specifier.text)) return undefined;
+  if (!isNodeBuiltinSpecifier(specifier)) return undefined;
   return {
     moduleName: normalizeNodeBuiltin(specifier.text),
     propertyName: (binding.propertyName ?? binding.name).text,
@@ -313,17 +315,6 @@ function cacheMap(ctx: CodegenContext): WeakMap<object, NamespaceObjectCache> {
 }
 
 /**
- * (#5330) The module specifier a namespace import names, or `undefined` when it
- * is not a plain string literal.
- */
-function namespaceImportSpecifier(declaration: ts.NamespaceImport): string | undefined {
-  const importDeclaration = declaration.parent.parent;
-  if (!ts.isImportDeclaration(importDeclaration)) return undefined;
-  const specifier = importDeclaration.moduleSpecifier;
-  return ts.isStringLiteral(specifier) ? specifier.text : undefined;
-}
-
-/**
  * The source file a symbol names when it IS an ES module (as opposed to a
  * TypeScript `namespace` block, which also carries the Module flags but has no
  * module namespace object of its own).
@@ -332,40 +323,23 @@ function moduleSourceFile(symbol: ts.Symbol): ts.SourceFile | undefined {
   return symbol.declarations?.find((node): node is ts.SourceFile => ts.isSourceFile(node));
 }
 
-function namespaceFunctionExports(
-  ctx: CodegenContext,
-  declaration: ts.NamespaceImport,
-): readonly NamespaceExport[] | undefined {
-  // (#5330) `import * as path from 'path'` — a namespace import OF a Node
-  // builtin is served by the host module thunk (`__node_<mod>`), never by a
-  // synthesized object. This optimizer asks the CHECKER for the module's
-  // exports, and with no `@types/node` in the program a BARE builtin specifier
-  // resolves to nothing at all: `getExportsOfModule` answers `[]`, which is an
-  // empty-but-truthy list, so the namespace was materialized as
-  // `__new_plain_object()` with no properties. `path.join` was then genuinely
-  // undefined ("join is not a function"), `path.sep` undefined, and
-  // `String(path)` `[object Object]` — while the module still imported
-  // `__node_path` for nothing. The `node:`-prefixed spelling escaped only by
-  // accident: the injected ambient `declare module "node:path"` gives it ONE
-  // export whose sole declaration lives in a `.d.ts`, which trips the
-  // mutable-value decline below and falls through to the host binding.
-  // Decline for the whole family, up front, for the actual reason.
-  //
-  // This does NOT affect a user module that RE-EXPORTS builtin members
-  // (`export { join } from 'node:path'`): that namespace belongs to the user
-  // module, and its entries keep the `host-member` lowering below.
-  const specifier = namespaceImportSpecifier(declaration);
-  if (specifier !== undefined && isNodeBuiltin(specifier)) return undefined;
-  let moduleSymbol = ctx.checker.getSymbolAtLocation(declaration.name);
-  if (!moduleSymbol) return undefined;
-  if ((moduleSymbol.flags & ts.SymbolFlags.Alias) !== 0) {
-    try {
-      moduleSymbol = ctx.checker.getAliasedSymbol(moduleSymbol);
-    } catch {
-      return undefined;
-    }
+/**
+ * The ES module whose namespace `identifier` imports: `import * as ns`, or a
+ * named or default import of a re-exported namespace (`export * as ns`,
+ * `import * as ns; export { ns }`, `export default ns`, `export = ns`). The
+ * checker's alias chain already resolves renames and `export *` hops to the
+ * module itself.
+ */
+export function moduleNamespaceSourceOf(ctx: CodegenContext, identifier: ts.Identifier): ts.SourceFile | undefined {
+  const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (
+    declaration === undefined ||
+    !(ts.isNamespaceImport(declaration) || ts.isImportSpecifier(declaration) || ts.isImportClause(declaration))
+  ) {
+    return undefined;
   }
-  return moduleSymbolNamespaceExports(ctx, moduleSymbol, new Set());
+  const target = ctx.oracle.aliasedValueDeclarationOf(identifier);
+  return target !== undefined && ts.isSourceFile(target) ? target : undefined;
 }
 
 /**
@@ -562,23 +536,19 @@ function runtimeSurfaceCache(ctx: CodegenContext): WeakMap<ts.Symbol, RuntimeNam
   return cache;
 }
 
+/** The executable block of a TypeScript `namespace N { … }` outside a declaration file. */
+function runtimeNamespaceBlockOf(declaration: ts.Declaration): ts.ModuleBlock | undefined {
+  return ts.isModuleDeclaration(declaration) &&
+    declaration.body !== undefined &&
+    ts.isModuleBlock(declaration.body) &&
+    !declaration.getSourceFile().isDeclarationFile
+    ? declaration.body
+    : undefined;
+}
+
 function canonicalRuntimeNamespaceSymbol(ctx: CodegenContext, identifier: ts.Identifier): ts.Symbol | undefined {
-  let symbol = ctx.checker.getSymbolAtLocation(identifier);
-  if (!symbol) return undefined;
-  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-    try {
-      symbol = ctx.checker.getAliasedSymbol(symbol);
-    } catch {
-      return undefined;
-    }
-  }
-  return symbol.declarations?.some(
-    (declaration) =>
-      ts.isModuleDeclaration(declaration) &&
-      declaration.body !== undefined &&
-      ts.isModuleBlock(declaration.body) &&
-      !declaration.getSourceFile().isDeclarationFile,
-  )
+  const symbol = aliasedSymbolAt(ctx.checker, identifier);
+  return symbol?.declarations?.some((declaration) => runtimeNamespaceBlockOf(declaration) !== undefined)
     ? symbol
     : undefined;
 }
@@ -681,14 +651,8 @@ function runtimeNamespaceFunctionSurface(
 
   const moduleBlocks = new Set<ts.ModuleBlock>();
   for (const declaration of symbol.declarations ?? []) {
-    if (
-      ts.isModuleDeclaration(declaration) &&
-      declaration.body !== undefined &&
-      ts.isModuleBlock(declaration.body) &&
-      !declaration.getSourceFile().isDeclarationFile
-    ) {
-      moduleBlocks.add(declaration.body);
-    }
+    const block = runtimeNamespaceBlockOf(declaration);
+    if (block !== undefined) moduleBlocks.add(block);
   }
 
   const mutableKeys = new Set<string>();
@@ -1352,19 +1316,21 @@ function emitNamespaceObject(
 }
 
 /**
- * Materialize a stable enumerable namespace object when every runtime export is
- * an immutable function compiled into this module. Mixed/mutable namespaces
- * decline until live-binding getter cells are available.
+ * The namespace object a module-namespace import binding reads. It is the
+ * module's one object, shared with every other route to that module.
  */
 export function tryEmitCompiledModuleNamespaceObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
   identifier: ts.Identifier,
 ): ValType | undefined {
-  const declaration = ctx.oracle.valueDeclarationOf(identifier);
-  if (declaration === undefined || !ts.isNamespaceImport(declaration)) return undefined;
-  const exports = namespaceFunctionExports(ctx, declaration);
-  return exports ? emitNamespaceObject(ctx, fctx, declaration, exports, true) : undefined;
+  const sourceFile = moduleNamespaceSourceOf(ctx, identifier);
+  if (sourceFile === undefined) return undefined;
+  // (#5330) A Node builtin's namespace is the host module object
+  // (`__node_<mod>`), even when its specifier resolves to a package source file.
+  const importDeclaration = ts.findAncestor(ctx.oracle.valueDeclarationOf(identifier), ts.isImportDeclaration);
+  if (isNodeBuiltinSpecifier(importDeclaration?.moduleSpecifier)) return undefined;
+  return tryEmitModuleNamespaceObjectForSource(ctx, fctx, sourceFile);
 }
 
 /**
