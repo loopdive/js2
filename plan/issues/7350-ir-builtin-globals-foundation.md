@@ -1676,6 +1676,8 @@ which the write scan now covers.
 
 ## Implementation Plan — B3b-2 (2026-11-28, on main 330caff2a8)
 
+**Parked: yield 0 on 330caff2a8** (lead decision, 2026-11-28). No carrier or o411 row stops first at the B3b-2 site, and replacing the abort with step 2.b's answer changes none of the 302 failing rows; the plan below is kept for when a measured row needs it.
+
 B3b-2 is the **write half** of a primitive's member access through a held wrapper prototype. B3b-1 landed as #7561,
 which already took the read half (#7561 decision 2: a primitive of a kind whose prototype the program can obtain,
 `ProgramObjects.wrappers`, reads through `%X.prototype%` with the primitive as receiver), so B3b-1's interim
