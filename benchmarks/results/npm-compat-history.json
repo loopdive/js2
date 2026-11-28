@@ -54538,6 +54538,29 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-11-28T10:20:56.230Z",
+      "sourceRevision": "4aa8ea4c4637aed3f0c7831ee364bd5817c28db5",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHost": {},
+          "standalone": {
+            "static": 0.5183127065103186,
+            "dynamic": 0.013329515851149344
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.00048423312122659163
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
