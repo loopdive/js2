@@ -29,13 +29,7 @@ import {
   type RealmFamily,
 } from "./program/builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
-import {
-  sourceLetsIntrinsicEscape,
-  sourceMayWriteUnspelledMember,
-  sourceNamesReflectiveRoute,
-  sourceRunsDynamicCode,
-  sourceWritesMemberNamed,
-} from "../shared/intrinsic-prototype-writes.js";
+import { sourceLetsIntrinsicEscape } from "../shared/intrinsic-prototype-writes.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -132,13 +126,5 @@ export function programObjects(
     realmFamilies,
     wrappers,
     staticValues: escapes ? new Set(HELD_OBJECT_STATICS) : staticValues,
-    // (#7557) A `call` member written anywhere, dynamic code, or, where the program can obtain Function.prototype, a
-    // reflective route or a write under an unspelled name.
-    replacesCall: sourceFiles.some(
-      (file) =>
-        sourceWritesMemberNamed(file, "call") ||
-        sourceRunsDynamicCode(file) ||
-        (realmFamilies.has("function") && (sourceNamesReflectiveRoute(file) || sourceMayWriteUnspelledMember(file))),
-    ),
   };
 }

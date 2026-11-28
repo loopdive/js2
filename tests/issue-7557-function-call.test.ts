@@ -210,8 +210,13 @@ describe("#7557 — what ends at the run-time abort", () => {
       'var f = function () {}; Object.prototype.hasOwnProperty.call(Function.prototype, "call");',
     ],
     [
-      "the object tag where Function.prototype.call may be replaced",
+      "the object tag through a replaced Function.prototype.call",
       'var g = function () { return "g"; }; Function.prototype.call = g;\nvar v = g(); Object.prototype.toString.call(v);',
+    ],
+    [
+      "the object tag through an own call of the method, defined under a computed key",
+      `var v = {}, k = "ca"; Object.defineProperty(Object.prototype.toString, k + "ll", { value: function () {} });
+Object.prototype.toString.call(v);`,
     ],
     [
       "an object made from a constructor whose prototype is a function",

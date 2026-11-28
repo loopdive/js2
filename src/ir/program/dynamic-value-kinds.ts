@@ -180,8 +180,6 @@ export interface ProgramObjects {
    * be called through a value. A call `x.m(…)` alone answers at its own site (`dynamicPrototypeMethodCall`).
    */
   readonly methodValues: boolean;
-  /** (#7557) The program may replace `Function.prototype.call` (or a built-in's own `call`). */
-  readonly replacesCall: boolean;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -202,7 +200,6 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   staticValues: new Set<string>(),
   prototypeMethodNames: new Set<string>(),
   methodValues: false,
-  replacesCall: false,
 });
 
 /**

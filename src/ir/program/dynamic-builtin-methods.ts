@@ -13,6 +13,7 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import {
   ERROR_TO_STRING_ID,
+  FUNCTION_CALL_ID,
   FUNCTION_PROTOTYPE_ID,
   FUNCTION_PROTOTYPE_UNHELD_KEYS,
   IS_ARRAY_ID,
@@ -195,24 +196,42 @@ export function conversionMethodTests(
 }
 
 /**
- * `Object.prototype.toString.call(v)` (`dyn.object_tag`) into its result: the tag of `v`; (#7574) where the program can
- * obtain the root it can write its `toString`, so the call is of the method the root holds, answered by the table
- * above, and any other method is the run-time abort. (#7557) Where the program may replace `Function.prototype.call`
- * (`ProgramObjects.replacesCall`), the call may be of another function: the run-time abort, never the fold.
+ * (#7557) `test`, answering only where the `call` its method holds is the realm's (§20.2.3.3 through [[Get]], so an
+ * own `call` of the method counts as much as a replaced `Function.prototype.call`); any other is the run-time abort.
+ */
+function throughRealmCall(
+  b: BuiltinMethodBuilders,
+  instr: IrInstr,
+  method: IrValueId,
+  test: BuiltinMethodTest,
+): BuiltinMethodTest {
+  const [text, key, callee] = [b.fresh(), b.fresh(), b.fresh()];
+  const realms = () => identityTest(b, instr, FUNCTION_CALL_ID, callee, test.answer);
+  return {
+    ...test,
+    answer: (r) => [
+      b.text("call", text),
+      carried(text, key),
+      realmCall("js.object.get", [method, key, method], callee),
+      ...builtinMethodChain(b, [realms], (s) => b.abort(instr, s), CARRIER)(r),
+    ],
+  };
+}
+
+/**
+ * `Object.prototype.toString.call(v)` (`dyn.object_tag`) into its result, by identity: the method the root holds as
+ * `toString` (the realm's tag of `v`; (#7574) where the program can obtain the root, any method of the table above),
+ * called through the `call` that method holds ({@link throughRealmCall}). Any other method is the run-time abort.
  */
 export function dynamicObjectTag(
   b: BuiltinMethodBuilders,
   program: LegalizationProgram,
   instr: Extract<IrInstr, { kind: "dyn.object_tag" }>,
 ): IrInstr[] {
-  if (program.objects.replacesCall) {
-    const aborted = b.fresh();
-    b.kinds.learn(aborted, ["string"]);
-    return [...b.abort(instr, aborted), ...b.stringOf(instr, aborted, instr.result!)];
-  }
-  if (!holdsFamily(program, "object")) return objectTagOf(b, program, instr, instr.value, instr.result!);
   const [root, text, key, method, tag] = [b.fresh(), b.fresh(), b.fresh(), b.fresh(), b.fresh()];
-  const tests = conversionMethodTests(b, instr, program, "toString", method, instr.value);
+  const tests = holdsFamily(program, "object")
+    ? conversionMethodTests(b, instr, program, "toString", method, instr.value)
+    : [() => objectPrototypeMethodTest(b, instr, program, "toString", method, instr.value)];
   // Every method of the table answers a string.
   b.kinds.learn(tag, ["string"]);
   return [
@@ -220,7 +239,12 @@ export function dynamicObjectTag(
     b.text("toString", text),
     carried(text, key),
     realmCall("js.object.get", [root, key, root], method),
-    ...builtinMethodChain(b, tests, (r) => b.abort(instr, r), CARRIER)(tag),
+    ...builtinMethodChain(
+      b,
+      tests.map((test) => () => throughRealmCall(b, instr, method, test())),
+      (r) => b.abort(instr, r),
+      CARRIER,
+    )(tag),
     ...b.stringOf(instr, tag, instr.result!),
   ];
 }
