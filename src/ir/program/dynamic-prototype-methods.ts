@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 P1, G1) The dynamic-value legalization of a call of a prototype method the realm holds (an Object.prototype
- * method of `NATIVE_OBJECT_PROTOTYPE_METHODS`, `Error.prototype.toString` where the program holds the Error family):
+ * method of `NATIVE_OBJECT_PROTOTYPE_METHODS`, and the conversion methods of `conversionMethodTests`:
+ * `Error.prototype.toString` where the program holds the Error family, (#7561) a wrapper's `valueOf` / `toString`):
  * `o.m(v)` is F2's [[Get]] of `m` on the once-evaluated receiver, then the
  * dispatcher's call with the receiver as `this`. Where the callee is that [[Get]], the call is the method's own
  * algorithm when the value read is the realm's built-in (an own property, a user prototype's method or a write to `m`
@@ -15,30 +16,25 @@
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import { closureMethodArity } from "../core/closure-invocation-callables.js";
-import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
-import { ERROR_TO_STRING_ID, nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
-import { constantKeyOf } from "./dynamic-member-access.js";
+import { nativeObjectPrototypeMethod, objectPrototypeMethodId } from "./builtin-prototype-keys.js";
+import {
+  builtinMethodChain,
+  conversionMethodTests,
+  identityTest,
+  unlessStringObject,
+} from "./dynamic-builtin-methods.js";
+import { constantArgumentOf, constantKeyOf } from "./dynamic-member-access.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { BOOLEAN, CARRIER, booleanConst, carried } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
-import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
+import { toPropertyKey, type ObjectStaticBuilders } from "./dynamic-object-statics.js";
 import { functionChainAnswer } from "./dynamic-error-constructors.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
 const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
 
-/** A realm method this module writes: an Object.prototype method by name, or (#7354 G1) `Error.prototype.toString`. */
-export type RealmMethod = NativeObjectPrototypeMethod | "Error.prototype.toString";
-
-/**
- * The method `call` calls, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a populated name on its receiver;
- * `toString` only where `errors` (the program holds the Error family).
- */
-export function prototypeMethodOfCall(
-  call: Call,
-  definitions: ReadonlyMap<IrValueId, IrInstr>,
-  errors: boolean,
-): RealmMethod | undefined {
+/** The name `call` calls, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a constant key on its receiver. */
+function methodNameOfCall(call: Call, definitions: ReadonlyMap<IrValueId, IrInstr>): string | undefined {
   if (closureMethodArity(call.target.name) === undefined) return undefined;
   const uncoerced = (value: IrValueId): IrValueId => {
     const definition = definitions.get(value);
@@ -46,14 +42,8 @@ export function prototypeMethodOfCall(
   };
   const callee = definitions.get(uncoerced(call.args[1]!));
   if (callee?.kind !== "dyn.member_get" || callee.recv !== uncoerced(call.args[0]!)) return undefined;
-  const name = constantKeyOf(definitions, callee.key);
-  if (name === "toString" && errors) return "Error.prototype.toString";
-  return name === undefined ? undefined : nativeObjectPrototypeMethod(name);
+  return constantKeyOf(definitions, callee.key);
 }
-
-/** The catalog id of `method`. */
-const methodId = (method: RealmMethod): string =>
-  method === "Error.prototype.toString" ? ERROR_TO_STRING_ID : objectPrototypeMethodId(method);
 
 /** `value`, the realm's Boolean of `test`, boxed into the carrier `result`. */
 function boxed(b: ObjectStaticBuilders, instr: Call, test: (value: IrValueId) => IrInstr[], result: IrValueId) {
@@ -82,8 +72,12 @@ function ownProperty(
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_ACCESS_ARM[kind]) {
       case "object":
-      case "function":
-        return boxed(b, instr, (s) => b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), s), r);
+      case "function": {
+        const own = (s: IrValueId) =>
+          boxed(b, instr, (t) => b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), t), s);
+        const known = argument === undefined ? "undefined" : constantArgumentOf(b.definitions, argument);
+        return unlessStringObject(b, instr, b.program, receiver, known, own)(r);
+      }
       default:
         return kind === "number" || kind === "boolean"
           ? boxed(b, instr, constant(false), r)
@@ -92,7 +86,7 @@ function ownProperty(
   };
   return [
     // A missing argument is `undefined`, whose ToString is "undefined".
-    ...(argument === undefined ? [b.text("undefined", text)] : b.stringOf(instr, argument, text)),
+    ...(argument === undefined ? [b.text("undefined", text)] : toPropertyKey(b, instr, argument, text)),
     carried(text, key),
     // The receiver is no `undefined` or `null` (the module doc), so the chain runs over its other kinds.
     ...b.kindChain(instr, receiver, result, arm, b.kinds.kindsOf(receiver).filter(isObjectCoercible), CARRIER),
@@ -119,21 +113,29 @@ function prototypeOf(b: ObjectStaticBuilders, instr: Call, result: IrValueId): I
 }
 
 /**
- * The legalized call: the method's algorithm when the callee is the realm's own method, else the call as it was.
- * (#7354 G1) Error.prototype.toString is the realm's own (§20.5.3.4, `js.object.error-to-string`): its receiver is
- * the [[Get]]'s, an object, as no primitive's wrapper prototype reaches it.
+ * The legalized `o.m(…)`, where `m` may be a method the realm holds: each such method's algorithm where the callee is
+ * it (`builtinMethodChain`), else the call as it was; `undefined` for any other call.
  */
-export function dynamicPrototypeMethodCall(b: ObjectStaticBuilders, instr: Call, method: RealmMethod): IrInstr[] {
-  const [builtin, same] = [b.fresh(), b.fresh()];
-  const algorithm = (r: IrValueId): IrInstr[] =>
-    method === "Error.prototype.toString"
-      ? [realmCall("js.object.error-to-string", [instr.args[0]!], r)]
-      : method === "isPrototypeOf"
-        ? prototypeOf(b, instr, r)
-        : ownProperty(b, instr, method, r);
-  return [
-    ...b.realmIntrinsic(methodId(method), builtin),
-    b.intrinsic(instr, "js.value.strict_eq", [instr.args[1]!, builtin], same),
-    b.branch(same, algorithm, (r) => [{ ...instr, result: r, resultType: CARRIER }], instr.result!, CARRIER),
+export function dynamicPrototypeMethodCall(
+  b: ObjectStaticBuilders,
+  instr: Call,
+  definitions: ReadonlyMap<IrValueId, IrInstr>,
+): IrInstr[] | undefined {
+  const name = methodNameOfCall(instr, definitions);
+  if (name === undefined) return undefined;
+  const [receiver, callee] = instr.args as [IrValueId, IrValueId];
+  const method = nativeObjectPrototypeMethod(name);
+  const algorithm =
+    (held: NonNullable<typeof method>) =>
+    (r: IrValueId): IrInstr[] =>
+      held === "isPrototypeOf" ? prototypeOf(b, instr, r) : ownProperty(b, instr, held, r);
+  const tests = [
+    ...(method === undefined
+      ? []
+      : [() => identityTest(b, instr, objectPrototypeMethodId(method), callee, algorithm(method))]),
+    ...conversionMethodTests(b, instr, b.program, name, callee, receiver, instr.args.length > 2),
   ];
+  if (tests.length === 0) return undefined;
+  const call = (r: IrValueId): IrInstr[] => [{ ...instr, result: r, resultType: CARRIER }];
+  return builtinMethodChain(b, tests, call, CARRIER)(instr.result!);
 }

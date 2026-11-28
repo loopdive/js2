@@ -13,9 +13,11 @@ import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
+import { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import { ERROR_TO_STRING_ID, realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { realmIntrinsicSelector } from "./builtin-prototype-keys.js";
+import { conversionMethodTests } from "./dynamic-builtin-methods.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -23,16 +25,11 @@ import {
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   carrierKindOf,
-  holdsFamily,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 
-/** The dynamic value's carrier, the native externref. */
-export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
-
-/** The Boolean the realm's tests and `delete` answer (the chains' `TEST_RESULT` is unbranded). */
-export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+export { BOOLEAN, CARRIER, carried } from "./dynamic-value-types.js";
 
 /** The constant Boolean `value` into `result`. */
 export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
@@ -40,14 +37,6 @@ export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
   value: { kind: "bool", value },
   result,
   resultType: BOOLEAN,
-});
-
-/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
-export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
-  kind: "coerce.to_externref",
-  value,
-  result,
-  resultType: CARRIER,
 });
 
 const STRING: IrType = Object.freeze({ kind: "string" });
@@ -321,17 +310,6 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     result: r,
     resultType: F64,
   });
-  /** (#7354 G1) The realm's Error.prototype.toString, recognised by identity (`ordinary-to-primitive.ts`). */
-  const errorToString = (instr: IrInstr) => ({
-    is: (method: IrValueId, r: IrValueId): IrInstr[] => {
-      const builtin = fresh();
-      return [
-        ...builders.realmIntrinsic(ERROR_TO_STRING_ID, builtin),
-        intrinsic(instr, "js.value.strict_eq", [method, builtin], r),
-      ];
-    },
-    answer: (object: IrValueId, r: IrValueId): IrInstr[] => [realmCall("js.object.error-to-string", [object], r)],
-  });
   /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
   const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);
   const toPrimitive = (
@@ -351,7 +329,8 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
         : undefined,
       isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
-      ...(holdsFamily(program, "error") ? { errorToString: errorToString(instr) } : {}),
+      builtins: (name: string, method: IrValueId, object: IrValueId) =>
+        conversionMethodTests({ ...builders, stringOf }, instr, program, name, method, object),
       ...(program.objects.functions ? {} : { builtinOnly: (r: IrValueId) => builders.abort(instr, BUILTIN_ONLY, r) }),
     };
     return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);

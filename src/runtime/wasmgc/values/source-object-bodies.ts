@@ -256,10 +256,10 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
 }
 
 /**
- * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the value `selector` names (`NATIVE_VALUE_INTRINSICS`),
- * read once the realm is initialized: a built-in function object through its entry's getter, (#7609) the global object
- * from its global. `values` holds the selectors the realm has; the caller passes only selectors whose value the realm
- * holds (it holds what is named).
+ * (#7354 P1, G1) `js.object.intrinsic(selector) -> externref`: the realm value `selector` names
+ * (`NATIVE_VALUE_INTRINSICS`), read once the realm is initialized: a built-in function object through its entry's
+ * getter, (#7561) a prototype object and (#7609) the global object from its global. `values` holds what the realm has;
+ * the caller passes only selectors the realm holds (it holds what is named).
  */
 export function buildSourceObjectIntrinsicDefinition(d: {
   readonly values: readonly { readonly selector: number; readonly value: readonly Instr[] }[];

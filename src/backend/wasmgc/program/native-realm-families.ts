@@ -50,6 +50,7 @@ export function familyObjects(
     .map((row) => ({
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
+      ...(row.primitiveData === undefined ? {} : { primitiveData: row.primitiveData }),
       // A family's ordinary objects hold no accessor in the catalog.
       properties: familyProperties(row, entryOf, false),
       ...(row.identityOnly ? { identityOnly: true as const } : {}),

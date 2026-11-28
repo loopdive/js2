@@ -14,7 +14,8 @@ import { ts } from "../ts-api.js";
 import { isNonReferenceName } from "../shared/binding-writes.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall, realmConstantRead } from "./realm-static-call.js";
-import { realmConstructorId, type RealmFamily } from "./program/builtin-prototype-keys.js";
+import { realmConstructorId, type RealmConstructor, type RealmFamily } from "./program/builtin-prototype-keys.js";
+import type { NativeWrapperConstructor } from "../runtime/contracts/native-realm-catalog.js";
 import { isScriptThis } from "./this-binding.js";
 
 /**
@@ -33,19 +34,28 @@ export function programObjects(
   let namesSymbol = false;
   let globalObject = false;
   const realmFamilies = new Set<RealmFamily>();
+  const wrappers = new Set<NativeWrapperConstructor>();
   // (#7354 G1) The family of the realm constructor `node` reads as the unchanged global (`identifier-read.ts` reads it
   // the same way, through `realmIntrinsicRead`): a member name, a label or a binding of the same spelling is no such
   // read, nor (#7350 B3a) the receiver of a constant the front end folds (`realmConstantRead`).
-  const familyRead = (node: ts.Identifier): RealmFamily | undefined => {
-    const family = realmConstructorId(node.text)?.family;
-    if (family === undefined || isNonReferenceName(node) || !isPristineGlobal(node)) return undefined;
+  const constructorRead = (node: ts.Identifier): RealmConstructor | undefined => {
+    const ctor = realmConstructorId(node.text);
+    if (ctor === undefined || isNonReferenceName(node) || !isPristineGlobal(node)) return undefined;
     const access = node.parent;
     const folded = ts.isPropertyAccessExpression(access) && realmConstantRead(access, isPristineGlobal) !== undefined;
-    return folded ? undefined : family;
+    return folded ? undefined : ctor;
   };
   const visit = (node: ts.Node): void => {
-    const family = ts.isIdentifier(node) ? familyRead(node) : undefined;
-    if (family !== undefined) realmFamilies.add(family);
+    const ctor = ts.isIdentifier(node) ? constructorRead(node) : undefined;
+    if (ctor !== undefined) realmFamilies.add(ctor.family);
+    // (#7561) `new X(…)` and `X.prototype` are how a program obtains a wrapper of X or its prototype.
+    const access = node.parent;
+    if (
+      ctor?.family === "wrapper" &&
+      ((ts.isNewExpression(access) && access.expression === node) ||
+        (ts.isPropertyAccessExpression(access) && access.name.text === "prototype"))
+    )
+      wrappers.add(ctor.name);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -62,5 +72,6 @@ export function programObjects(
     namesSymbol,
     globalObject,
     realmFamilies,
+    wrappers,
   };
 }
