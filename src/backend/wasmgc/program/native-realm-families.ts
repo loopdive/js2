@@ -53,6 +53,10 @@ export const isRootMethod = (heldRows: readonly NativeRealmIntrinsic[], row: Nat
       (property) => property.kind === "data" && property.value.kind === "intrinsic" && property.value.id === row.id,
     );
 
+/** (#7580) Whether the realm holds one of the properties the held row `row` fixes (`NativeRealmIntrinsic.fixed`). */
+export const holdsFixedProperty = (row: NativeRealmIntrinsic): boolean =>
+  row.properties.some(({ key }) => key.kind === "string" && row.fixed?.includes(key.value));
+
 /** A family row's data properties, as the kernel defines them (catalog order). */
 export const familyProperties = (row: NativeRealmIntrinsic): NativeBuiltinProperty[] => kernelProperties(row);
 

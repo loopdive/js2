@@ -75,7 +75,7 @@ export interface NativeBuiltinFunctionRequirement {
   readonly properties?: readonly NativeBuiltinProperty[];
   /** (#7350 B3a) A family member the catalog models only as an identity (`NativeRealmIntrinsic.identityOnly`). */
   readonly identityOnly?: true;
-  /** (#7580) A family member whose own properties never change (`NativeRealmIntrinsic.fixed`). */
+  /** (#7580) A family member holding a property no program may change (`NativeRealmIntrinsic.fixed`). */
   readonly fixed?: true;
 }
 export interface NativeBuiltinFunctionRequirements {
