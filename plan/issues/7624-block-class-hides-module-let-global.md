@@ -67,6 +67,11 @@ Measured on 2026-11-28 with node v22.23.5, on `ada18e6bb6` (head of PR #7558) an
 | `fnv_call_and_value` | `c = c*10 + k(); fs.push(k);` in the same iteration; `return c*100 + fs[0]()*10 + fs[1]()` | 4545 | 4544 | 4544 |
 | `fnv_call_mut_value` | the same with `k` returning `h++` | 4556 | 4567 | 4567 |
 | `fnv_identity` | `function k() { return i } fs.push(k)`; `fs[0] === fs[1] ? 1 : 2` | 2 | 1 | 1 |
+| `tdz_iter` (TDZ per iteration) | `for (…) { try { k(); } catch { c++; } let h = i; function k() { return h; } } return c` | 2 | 0 | 0 |
+| `tdz_iter_after_ok` | the same, then `s = s*10 + k()` after `let h = i + 1`; `return c*100 + s` | 212 | 12 | 12 |
+| `sib_value` (sibling read as a value) | `{ function a() { return b; } function b() { return 1; } r = a()(); }` | 1 | 1 | 1 |
+| `sib_mutual_loop` (mutual recursion in a loop) | `for (…) { const n = i + 2; function ev(x) { … od(x-1) } function od(x) { … ev(x-1) } s = s*10 + (ev(n)?1:0) + (od(n)?2:0); }` | 12 | 12 | 12 |
+| `sib_mutual_values` | `for (…) { const n = i + 2; function a() { return b() + n; } function b() { return n * 10; } fs.push(a); } return fs[0]()*100 + fs[1]()` | 2233 | 2222 | 2222 |
 | `m_import_before` | `import { g }`, then `s_let_before`'s body | 25 | 5 | 5 |
 | `m_import_switch` | `import { g }`, then `sw_case_let_early`'s body | 25 | 5 | 5 |
 | (gap-2 rows of #7620) | two sibling blocks / loop body / TDZ before a block `let` | 25 | 5 / 21 / throws | same |
@@ -194,10 +199,12 @@ like any shadow. Nothing name-keyed exists outside the block.
          row.
      - **The change.** At block entry, `preallocateBlockScopedSlots` (`index.ts:13472`) does three things for the
        block's own declarations, in this order:
-       1. mint a fresh cell for each nested-block `let`/`const` record that a function captures;
+       1. mint a fresh cell, and a fresh TDZ flag box where the record has a flag, for each nested-block `let`/`const`
+          record that a function captures;
        2. install those records (step 2);
        3. build the closure object of each direct-child `FunctionDeclaration` record (B2's declaration-keyed record
-          for the block function) over the cells just minted, and store it in that record's value slot.
+          for the block function) that has a non-call reference (the eager-allocation rule below), over the cells and
+          flag boxes just minted, and store it in that record's value slot.
      - **Building the closure** reuses `emitMemoizedNestedFnClosure`'s construction sequence: the
        `struct.new` of funcref, arity, bag and captures. It skips the null-memo guard, and the record's value slot
        is the target in place of the name-keyed memo. The construction is split out of the guard, so the guarded lazy
@@ -207,6 +214,38 @@ like any shadow. Nothing name-keyed exists outside the block.
        closure is built at block entry, before the captured `let` is initialized, so a value capture would copy the
        TDZ hole. The cell is read when the function runs. This is the reason `fnv_no_outer` reads 44 today: a value
        capture snapshotted at the first use.
+   - **The TDZ flag is per iteration too.**
+     - At the same block entry, beside the cell, a fresh #5356 TDZ flag box (`boxedTdzFlags`, the shape
+       `emitEagerCaptureBoxes` already builds for flags) is minted for each captured nested-block record that needs a
+       flag. Its initial value is 0, uninitialized.
+     - The declaration's initialization sets it to 1. The block function's closure, and every direct call, carry the
+       current iteration's flag box next to its cell.
+     - So a call before `let h` throws in every iteration (`tdz_iter`: 2 throws). Today the flag is set in the first
+       iteration and never reset, so it gives 0.
+   - **Sibling block functions are read when the function runs, never copied when a closure is built.**
+     - A block function that refers to a sibling block function (by call or as a value) captures the sibling's
+       record. It captures the record's value slot by cell when the sibling is eagerly allocated (see the
+       eager-allocation rule below), or the sibling's own captures when it is call-only.
+     - It reads the sibling at the moment it runs. Building closures in source order at block entry therefore never
+       copies a sibling that is not built yet.
+     - This replaces, for block functions, the "fill the sibling bindings before the guard" step of
+       `emitMemoizedNestedFnClosure` (`materializeHoistedFunctionValueBinding`, `closures/funcref-as-closure.ts:744`),
+       which copies the value.
+     - `sib_value` and `sib_mutual_loop` already pass and stay green.
+     - `sib_mutual_values` (2222) fails today because both iterations share one cell of `n`. With per-iteration cells
+       and run-time sibling reads it gives 2233.
+   - **Eager-allocation rule.** A block function's closure object is allocated at block entry **only if the function has
+     a non-call reference**: a read of its name anywhere other than the callee position of a call (pushed, passed,
+     returned, stored, compared, `typeof`, or captured as a value by another closure).
+     - The same AST pass as byte gate (b) finds these references. It is one scan of the enclosing function, shared,
+       not a second walk.
+     - A call-only block function gets no closure object: its direct calls pass the current cells and flag boxes, and
+       it has no value to build.
+     - This keeps allocation where the language needs an object. A loop whose block function is only called pays no
+       allocation per iteration, which is the common shape: the `tdz_iter` and `sib_mutual_loop` rows have no
+       non-call references.
+     - If an implementation finds the rule cannot hold for some shape, it measures the allocation cost (allocations
+       and wall time per iteration) on the byte-gate corpus, and justifies the shape in the PR.
    - **How a direct call `k()` and the value `k` share the cell.**
      - The lifted `$k` is compiled once at function entry by `hoistFunctionDeclarations`. Its capture is a cell
        parameter, resolved by declaration (step 4).
@@ -365,8 +404,10 @@ and is not a body-level binding.
 
 ## Acceptance criteria
 
-- **Pin test (red → green).** A new `tests/issue-7624-block-scoped-bindings.test.ts` holds every row of the B1 and
-  B2/B3 tables.
+- **First commit: the red pins.** The PR's first commit adds only `tests/issue-7624-block-scoped-bindings.test.ts`
+  with every row below, red where the tables show a wrong answer. Fix commits follow, and each turns its rows green.
+- **Pin test (red → green).** `tests/issue-7624-block-scoped-bindings.test.ts` holds every row of the B1 and B2/B3
+  tables.
   - It runs single-file rows through `compile` and the `m_*` rows through `compileMulti`.
   - Each row runs × standalone/gc × `experimentalIR` on/off. The IR-on single-file rows are explicit, so an IR claim of
     block bodies is held to the same answers.
@@ -378,6 +419,9 @@ and is not a body-level binding.
   - The design above holds: nested-block slots are keyed only by declaration, and the name enters `localMap` only
     between block entry and exit.
   - There is no hide/expose state, no name-keyed pre-hoist entry, and no dead function-entry slot or flag.
+  - Cells and TDZ flag boxes of nested-block records are minted at block entry, never at function top.
+  - Block-function closures are built only under the eager-allocation rule, by the shared construction sequence.
+  - Siblings are never copied at closure build.
   - The removals listed above are actually gone, the Annex B duplicate is folded into `isVarScopeBoundary`, and no new
     predicate duplicates an existing one.
   - `check-loc-budget` and `check-func-budget` pass, including with `LOC_GATE_BASE` set to the upstream main tip, with
@@ -389,7 +433,10 @@ and is not a body-level binding.
   - `iter_outer_read` and `iter_fn_decl` go red → green (245).
   - `fnv_no_outer` (45), `fnv_outer_after` (245), `fnv_call_and_value` (4545), `fnv_call_mut_value` (4556) and
     `fnv_identity` (2) go red → green.
-  - `iter_no_outer_read` and `iter_no_outer` stay green.
+  - `tdz_iter` (2), `tdz_iter_after_ok` (212) and `sib_mutual_values` (2233) go red → green.
+  - `iter_no_outer_read`, `iter_no_outer`, `sib_value` and `sib_mutual_loop` stay green.
+  - The `tdz_iter*` and `sib_*` rows were measured on `ada18e6bb6` and origin/main `41645f5711`, with identical
+    answers on gc and standalone, IR on and off.
   - The `fnv_*` rows were measured on `ada18e6bb6` and origin/main `41645f5711`; both give the "ours" values above.
   - The PRV-7620 reviewer reported 55 for a block-function-value shape. Mine gives 44 for the immutable capture and 67
     for the mutating one; all of them are one shared closure.
