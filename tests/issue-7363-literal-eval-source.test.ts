@@ -184,7 +184,11 @@ describe("#7363 A2 — the receipt", () => {
     const files: Record<string, string> = { "test.js": entry, ...extra };
     texts.forEach((text, index) => (files[literalEvalFileName(index)] = text));
     const ast = analyzeMultiSource(files, "test.js", undefined, { allowJs: true });
-    const rows = pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, texts.length);
+    const rows = pairLiteralDynamicCodeSources(
+      ast.entryFile,
+      ast.sourceFiles,
+      literalDynamicCodeTexts("test.js", entry),
+    );
     const byName = (name: string) => ast.sourceFiles.find((source) => source.fileName === name)!;
     return { ast, rows, byName };
   };
@@ -244,13 +248,21 @@ describe("#7363 A2 — the receipt", () => {
 
   it("refuses a pairing that misses a script the entry's texts became", () => {
     const { ast } = program('eval("1");');
-    expect(() => pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, 2)).toThrow(
-      PreparedIrProgramInvariantError,
-    );
+    const extra = { kind: "eval", name: literalEvalFileName(1), text: "1" } as const;
+    expect(() =>
+      pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, [
+        ...literalDynamicCodeTexts("test.js", 'eval("1");'),
+        extra,
+      ]),
+    ).toThrow(PreparedIrProgramInvariantError);
     const unpaired = analyzeMultiSource({ "test.js": 'eval("1");' }, "test.js", undefined, { allowJs: true });
-    expect(() => pairLiteralDynamicCodeSources(unpaired.entryFile, unpaired.sourceFiles, 1)).toThrow(
-      /<eval:0>.js is not a script of the analyzed program/,
-    );
+    expect(() =>
+      pairLiteralDynamicCodeSources(
+        unpaired.entryFile,
+        unpaired.sourceFiles,
+        literalDynamicCodeTexts("test.js", 'eval("1");'),
+      ),
+    ).toThrow(/<eval:0>.js is not a script of the analyzed program/);
   });
 });
 

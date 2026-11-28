@@ -385,20 +385,21 @@ function adapterRefusal(entryFile: string, code: string, detail: string, message
     { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
   ]);
 }
-/** Compile a source graph with its analysis; `added` of its scripts are the entry's literal dynamic-code texts. */
-type GraphCompile = (graph: Record<string, string>, ast: MultiTypedAST, added: number) => CompileResult;
+/** Compile a source graph with its analysis; `added` are the entry's literal dynamic-code texts it holds. */
+type GraphCompile = (
+  graph: Record<string, string>,
+  ast: MultiTypedAST,
+  added: readonly LiteralDynamicCodeText[],
+) => CompileResult;
 /**
  * (#7363, #7487) The compile of `files` plus one script per qualifying literal dynamic-code site of the entry
- * (`<eval:N>.js`, `<function:N>.js`), when the scripts add nothing that fails the compile's gates and change no other
- * source's diagnostics, and that compile succeeds; otherwise the compile of `files` with `without`, its analysis,
- * where every site keeps its refusal at select. A script fails the gates exactly as a JavaScript entry does: a syntax
- * error outside the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a
- * read of an undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member
- * store in it declares a JS expando property of a caller binding; such a change names no text, so then none joins. A
- * failure with the texts falls back to the program without them, which is main's: a text the IR cannot lower fails the
- * program even where its site never runs, and so does (#7363 A4, #7487) a site refused at select for a global `eval`
- * or `Function` that may not be pristine, which a site in dead code must not do either. When that fails too, the
- * failure with the texts is the answer: it names the site's own refusal.
+ * (`<eval:N>.js`, `<function:N>.js`) that succeeds, trying every text first and then the eval texts alone; otherwise
+ * the compile of `files` with `without`, its analysis, where every site keeps its refusal at select. The second try
+ * keeps a failing `Function` text from taking the eval texts with it: a program never fares worse than with its eval
+ * texts alone (#7363). A failure with texts falls back this way, whatever its cause: a text the IR cannot lower fails
+ * the program even where its site never runs, and so does (#7363 A4, #7487) a site refused at select for a global
+ * `eval` or `Function` that may not be pristine, which a site in dead code must not do either. When every try fails,
+ * the first failure with texts is the answer: it names the site's own refusal.
  */
 function withLiteralDynamicCodeSources(
   files: Record<string, string>,
@@ -408,12 +409,37 @@ function withLiteralDynamicCodeSources(
   options: Test262CompileOptions,
   compileGraph: GraphCompile,
 ): CompileResult {
-  if (texts.length === 0) return compileGraph(files, without, 0);
+  const evalTexts = texts.filter(({ kind }) => kind === "eval");
+  const tries = evalTexts.length > 0 && evalTexts.length < texts.length ? [texts, evalTexts] : [texts];
+  const failures: CompileResult[] = [];
+  for (const added of tries.filter((tried) => tried.length > 0)) {
+    const joined = joinLiteralDynamicCodeSources(files, without, added, analyze, options, compileGraph);
+    if (joined?.success) return joined;
+    if (joined) failures.push(joined);
+  }
+  const alone = compileGraph(files, without, []);
+  return alone.success ? alone : (failures[0] ?? alone);
+}
+/**
+ * The compile of `files` plus the `added` texts' scripts, or undefined when they fail the compile's gates or change
+ * another source's diagnostics. A script fails the gates exactly as a JavaScript entry does: a syntax error outside
+ * the tolerated list, a hard type error or an ES early error. Any other diagnostic of a text, such as a read of an
+ * undeclared global, is tolerated as in an entry. A text reaches another source's diagnostics when a member store in
+ * it declares a JS expando property of a caller binding; such a change names no text, so then none joins.
+ */
+function joinLiteralDynamicCodeSources(
+  files: Record<string, string>,
+  without: MultiTypedAST,
+  added: readonly LiteralDynamicCodeText[],
+  analyze: (graph: Record<string, string>) => MultiTypedAST,
+  options: Test262CompileOptions,
+  compileGraph: GraphCompile,
+): CompileResult | undefined {
   const supplied = new Set(Object.keys(files).map(normalizeMultiFileName));
-  const codeNames = new Set(texts.map(({ name }) => normalizeMultiFileName(name)));
+  const codeNames = new Set(added.map(({ name }) => normalizeMultiFileName(name)));
   const graph: Record<string, string> = Object.create(null);
   Object.assign(graph, files);
-  for (const { kind, name, text } of texts) {
+  for (const { kind, name, text } of added) {
     if (supplied.has(normalizeMultiFileName(name)))
       invalidRequest(`source name ${name} is reserved for a literal ${kind} source`);
     Object.defineProperty(graph, name, { value: text, enumerable: true });
@@ -432,11 +458,7 @@ function withLiteralDynamicCodeSources(
   const quiet =
     !ast.sourceFiles.some((source) => isCodeSource(source) && sourceFailsCompileGates(source, ast, options)) &&
     othersReport(ast.diagnostics) === othersReport(without.diagnostics);
-  if (!quiet) return compileGraph(files, without, 0);
-  const joined = compileGraph(graph, ast, texts.length);
-  if (joined.success) return joined;
-  const alone = compileGraph(files, without, 0);
-  return alone.success ? alone : joined;
+  return quiet ? compileGraph(graph, ast, added) : undefined;
 }
 function present(
   files: Record<string, string>,
@@ -509,7 +531,6 @@ interface PresentRequest {
   readonly profile: ReturnType<typeof resolveCompileTargetProfile>;
   readonly unlowerableBodies: UnlowerableBodies;
 }
-/** `present`'s compile of one analyzed graph, whose last `added` scripts are the entry's literal dynamic-code texts. */
 /**
  * (#7487) `ast` without TypeScript's TS2300 on a repeated parameter name of a `function` source: sloppy duplicate
  * parameters are valid JavaScript (`Function("a,a", "return a")`), and a strict body's are no source at all.
@@ -525,11 +546,12 @@ function withoutSloppyDuplicateParameters(ast: MultiTypedAST, rows: readonly Lit
     );
   return ast.diagnostics.some(duplicate) ? { ...ast, diagnostics: ast.diagnostics.filter((d) => !duplicate(d)) } : ast;
 }
+/** `present`'s compile of one analyzed graph, which holds the scripts of the entry's literal dynamic-code texts `added`. */
 function presentAnalyzed(
   { exactFiles, entryFile, options, singleSource, profile, unlowerableBodies }: PresentRequest,
   graph: Record<string, string>,
   analyzed: MultiTypedAST,
-  added: number,
+  added: readonly LiteralDynamicCodeText[],
 ): CompileResult {
   if (!completeAnalyzedGraph(graph, entryFile, analyzed))
     return adapterRefusal(
@@ -538,7 +560,7 @@ function presentAnalyzed(
       "frontend did not retain the complete supplied name/text graph",
     );
   const literalDynamicCodeSources =
-    added === 0 ? [] : pairLiteralDynamicCodeSources(analyzed.entryFile, analyzed.sourceFiles, added);
+    added.length === 0 ? [] : pairLiteralDynamicCodeSources(analyzed.entryFile, analyzed.sourceFiles, added);
   // (#7487) The one place a dynamic-code source's diagnostics enter the result.
   const ast = withoutSloppyDuplicateParameters(analyzed, literalDynamicCodeSources);
   // (#7363) A dynamic-code source's supplied text is its own; the entry's is the unelided one.

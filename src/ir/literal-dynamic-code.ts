@@ -25,6 +25,7 @@ import {
   hasScriptOnlyEarlyError,
   parseEvalSource,
   sloppyScriptHasStaticSyntaxError,
+  type ParsedEvalScript,
 } from "../frontend/eval/script.js";
 import { fitsFunctionSourceText, functionSourceText } from "../interp/function-source-text.js";
 import { isCommaExpression } from "../shared/binding-writes.js";
@@ -80,23 +81,24 @@ export function literalDynamicCodeTexts(fileName: string, text: string): readonl
   );
 }
 
-/** Pair the analyzed entry's qualifying sites with the `added` scripts the entry's texts became. */
+/**
+ * Pair the analyzed entry's qualifying sites with the `added` scripts, some of the entry's texts: a site whose text
+ * did not join has no row.
+ */
 export function pairLiteralDynamicCodeSources(
   entry: ts.SourceFile,
   sourceFiles: readonly ts.SourceFile[],
-  added: number,
+  added: readonly LiteralDynamicCodeText[],
 ): readonly LiteralDynamicCodeSource[] {
   const invalid = (detail: string): never => {
     throw new PreparedIrProgramInvariantError("invalid-prepared-data", `literal dynamic code pairing: ${detail}`);
   };
-  const sites = qualifyingSites(entry);
-  if (sites.length !== added) invalid(`the analyzed entry has ${sites.length} sites for ${added} added scripts`);
+  const sites = new Map(qualifyingSites(entry).map((site) => [site.name, site]));
   const byName = new Map(sourceFiles.map((source) => [source.fileName, source]));
-  return sites.map(({ site, kind, name }) => ({
-    site,
-    kind,
-    source: byName.get(name) ?? invalid(`${name} is not a script of the analyzed program`),
-  }));
+  return added.map(({ name }) => {
+    const { site, kind } = sites.get(name) ?? invalid(`the analyzed entry has no site for ${name}`);
+    return { site, kind, source: byName.get(name) ?? invalid(`${name} is not a script of the analyzed program`) };
+  });
 }
 
 /**
@@ -147,36 +149,30 @@ export function verifyLiteralDynamicCodeSources(
   };
 }
 
+/** Each kind's refusal when the global its sites name may not be the realm's built-in. */
+const NOT_PRISTINE: Readonly<Record<LiteralDynamicCodeKind, string>> = {
+  eval: "eval literal: the global eval is not pristine (#7363 A4)",
+  function: "Function literal: the global Function is not pristine (#7487)",
+};
+
 /**
- * (#7363 A4; #7487) Admission of the related sites, before any unit lowers: the first site's select-time refusal
- * of the program, or undefined when every site lowers as the call of its text or a fresh function object.
+ * (#7363 A4; #7487) Admission of the related sites, before any unit lowers: the select-time refusal of the program
+ * when the global a site names, `eval` or `Function`, may not be the realm's built-in there. Otherwise undefined, and
+ * lowering emits each site as the call of its text or a fresh function object. The label keeps the text the lowering
+ * gave it, so census rows compare across the move.
  */
 export function literalDynamicCodeSiteRefusal(
   code: Pick<LiteralDynamicCodeReceipt, "evalCalls" | "functionSites">,
   contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
 ): IrUnsupportedError | undefined {
-  for (const call of code.evalCalls.keys()) {
-    const refusal = literalEvalSiteRefusal(call, contracts);
-    if (refusal) return refusal;
-  }
-  for (const site of code.functionSites.keys())
-    if (!builtinIsPristine(site.expression as ts.Identifier, contracts))
-      return siteRefusal("Function literal: the global Function is not pristine (#7487)");
+  const kinds = [
+    ["eval", code.evalCalls.keys()],
+    ["function", code.functionSites.keys()],
+  ] as const;
+  for (const [kind, sites] of kinds)
+    for (const site of sites)
+      if (!builtinIsPristine(site.expression as ts.Identifier, contracts)) return siteRefusal(NOT_PRISTINE[kind]);
   return undefined;
-}
-
-/**
- * (#7363 A4) The select-time refusal of the program when the global `eval` may not be the realm's %eval% at an eval
- * site. Otherwise nothing, and lowering emits the site as the call of its text. The label keeps the text the lowering
- * gave it, so census rows compare across the move.
- */
-function literalEvalSiteRefusal(
-  call: ts.CallExpression,
-  contracts: Pick<ProgramDynamicContracts, "resolver" | "ambientThisMayBeGlobal">,
-): IrUnsupportedError | undefined {
-  return builtinIsPristine(call.expression as ts.Identifier, contracts)
-    ? undefined
-    : siteRefusal("eval literal: the global eval is not pristine (#7363 A4)");
 }
 
 /**
@@ -253,12 +249,9 @@ function qualifyingSites(file: ts.SourceFile): readonly QualifyingSite[] {
 function literalEvalText(call: ts.CallExpression): string | undefined {
   const [argument] = call.arguments;
   if (
-    call.questionDotToken ||
-    !ts.isIdentifier(call.expression) ||
-    call.expression.text !== "eval" ||
+    !calleeIsUnshadowedGlobal(call, "eval") ||
     call.arguments.length !== 1 ||
     !ts.isStringLiteralLike(argument!) ||
-    resolvesToSourceBinding(call.expression) ||
     !runsInSloppyGlobalCode(call) ||
     !discardsValue(call)
   )
@@ -268,51 +261,79 @@ function literalEvalText(call: ts.CallExpression): string | undefined {
 
 /**
  * The source of the function a qualifying `Function` site creates, its declaration named `name`; undefined when the
- * site does not qualify. The callee is the global `Function` (no scope of the source and no `with` binds the name),
- * and every argument is a string literal.
+ * site does not qualify: every argument is a string literal.
  */
 function literalFunctionText(site: ts.CallExpression | ts.NewExpression, name: string): string | undefined {
   const pieces = site.arguments ?? [];
   const texts = pieces.flatMap((piece) => (ts.isStringLiteralLike(piece) ? [piece.text] : []));
-  if (
-    (ts.isCallExpression(site) && site.questionDotToken) ||
-    !ts.isIdentifier(site.expression) ||
-    site.expression.text !== "Function" ||
-    texts.length !== pieces.length ||
-    resolvesToSourceBinding(site.expression) ||
-    ts.findAncestor(site, ts.isWithStatement) !== undefined
-  )
-    return undefined;
+  if (!calleeIsUnshadowedGlobal(site, "Function") || texts.length !== pieces.length) return undefined;
   const parameters = texts.slice(0, -1).join(",");
   const text = functionSourceText(name, parameters, texts.at(-1) ?? "");
-  return !texts.some(hasHtmlLikeComment) && functionTextIsValid(text, name, parameters) ? text : undefined;
+  return functionTextIsValid(texts, text, name, parameters) ? text : undefined;
+}
+
+/** The site calls (or constructs) the global `name`, unshadowed: no scope of its source and no `with` binds it. */
+function calleeIsUnshadowedGlobal(site: ts.CallExpression | ts.NewExpression, name: string): boolean {
+  return (
+    !(ts.isCallExpression(site) && site.questionDotToken) &&
+    ts.isIdentifier(site.expression) &&
+    site.expression.text === name &&
+    !resolvesToSourceBinding(site.expression) &&
+    ts.findAncestor(site, ts.isWithStatement) === undefined
+  );
 }
 
 /**
- * The assembled text is what CreateDynamicFunction's separate parses accept (`fitsFunctionSourceText`), has no early
- * error the shared checks report, and keeps every rule the eval texts keep: it stores into no identifier and names
- * neither `eval` nor the reserved prefix. Only the assembled declaration is checked for early errors, never a wrapper
- * of the parameters alone: an arrow wrapper would reject sloppy duplicate parameters (`Function("a,a", "return a")` is
- * valid). An early error those checks miss fails the compile's own gates on the joined source, as an eval text's does.
+ * The rules every literal text keeps to run as a separate script of the program, whatever its kind; undefined when it
+ * breaks one. No piece of it may hold an HTML-like comment: its TypeScript parse is not the Script the spec runs. Its
+ * parse has no static SyntaxError (`staticSyntaxError`, the kind's own check) and no Script-only early error. It
+ * stores into no identifier and binds no `var`, `let`, `const` or class (`bindsOrEvaluates`): the proofs over a
+ * script binding see only the writes in its own file. It names neither `eval` nor, other than as its kind's `own`
+ * name, the reserved prefix. The Prepared entry also keeps a text only when the compile's gates pass it as they pass
+ * an entry (`test262-prepared-entry.ts`).
  */
-function functionTextIsValid(text: string, name: string, parameters: string): boolean {
-  const { sourceFile } = parseEvalSource(text, false, false);
-  if (sloppyScriptHasStaticSyntaxError(sourceFile)) return false;
+function separateScript(
+  pieces: readonly string[],
+  text: string,
+  staticSyntaxError: (script: ParsedEvalScript) => boolean,
+  own: (sourceFile: ts.SourceFile) => ts.Identifier | undefined,
+): ParsedEvalScript | undefined {
+  if (pieces.some(hasHtmlLikeComment)) return undefined;
+  const script = parseEvalSource(text, false, false);
+  const { sourceFile } = script;
+  return staticSyntaxError(script) ||
+    hasScriptOnlyEarlyError(sourceFile) ||
+    bindsOrEvaluates(sourceFile) ||
+    reservedPrefixIdentifier(sourceFile, own(sourceFile))
+    ? undefined
+    : script;
+}
+
+/**
+ * A separate script that is also what CreateDynamicFunction's separate parses accept (`fitsFunctionSourceText`). Only
+ * the assembled declaration is checked for early errors, never a wrapper of the parameters alone: an arrow wrapper
+ * would reject sloppy duplicate parameters (`Function("a,a", "return a")` is valid). An early error the shared checks
+ * miss fails the compile's own gates on the joined source, as an eval text's does.
+ */
+function functionTextIsValid(pieces: readonly string[], text: string, name: string, parameters: string): boolean {
+  const script = separateScript(
+    pieces,
+    text,
+    ({ sourceFile }) => sloppyScriptHasStaticSyntaxError(sourceFile),
+    (sourceFile) => literalFunctionDeclaration(sourceFile).name,
+  );
+  if (script === undefined) return false;
+  const { sourceFile } = script;
   // A parse without errors of a text that starts `function <name>(` holds that declaration first; only one with
   // more statements than it, which the span check refuses, may hold it without a body.
-  const declaration = literalFunctionDeclaration(sourceFile);
-  return (
-    fitsFunctionSourceText(
-      text,
-      name,
-      parameters,
-      sourceFile.statements.length,
-      declaration.body?.getStart(sourceFile) ?? -1,
-      declaration.body?.end ?? -1,
-    ) &&
-    !hasScriptOnlyEarlyError(sourceFile) &&
-    !bindsOrEvaluates(declaration) &&
-    !reservedPrefixIdentifier(declaration, declaration.name)
+  const { body } = literalFunctionDeclaration(sourceFile);
+  return fitsFunctionSourceText(
+    text,
+    name,
+    parameters,
+    sourceFile.statements.length,
+    body?.getStart(sourceFile) ?? -1,
+    body?.end ?? -1,
   );
 }
 
@@ -355,24 +376,24 @@ function isLexicalList(node: ts.Node): boolean {
 }
 
 /**
- * The text is a Script, not a Module, that PerformEval runs without a SyntaxError, declares nothing, stores into no
- * identifier, holds no nested eval, names no reserved identifier, and lowers as one init chunk. A text that may hold
- * an HTML-like comment is none: its TypeScript parse is not the Script PerformEval runs. The static check here is the
- * spec's; the Prepared entry also keeps a text only when the compile's gates pass it as they pass an entry
- * (`test262-prepared-entry.ts`).
+ * A separate script that is also a Script, not a Module, that PerformEval runs without a SyntaxError, declares
+ * nothing, and lowers as one init chunk.
  */
 function textRunsAsScript(call: ts.CallExpression, text: string): boolean {
-  if (hasHtmlLikeComment(text)) return false;
-  const script = parseEvalSource(text, false, false);
+  const script = separateScript(
+    [text],
+    text,
+    (parsed) =>
+      foldedEvalStaticSyntaxError(call, true, parsed, foldedEvalDeclarationNames(parsed.sourceFile), undefined) !==
+      undefined,
+    () => undefined,
+  );
+  if (script === undefined) return false;
   const names = foldedEvalDeclarationNames(script.sourceFile);
   return (
     !ts.isExternalModule(script.sourceFile) &&
-    foldedEvalStaticSyntaxError(call, true, script, names, undefined) === undefined &&
-    !hasScriptOnlyEarlyError(script.sourceFile) &&
     names.varNames.size === 0 &&
     names.blockFunctionNames.size === 0 &&
-    !bindsOrEvaluates(script.sourceFile) &&
-    !reservedPrefixIdentifier(script.sourceFile, undefined) &&
     planModuleInitChunks(script.statements.map((node) => ({ node }))).length <= 1
   );
 }

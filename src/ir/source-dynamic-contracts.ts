@@ -394,7 +394,7 @@ export function programDynamicContracts(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
   startupSources: readonly ts.SourceFile[] = sourceFiles,
-  literalFunctionSites = false,
+  { literalFunctionSites = false }: { readonly literalFunctionSites?: boolean } = {},
 ): ProgramDynamicContracts {
   const { checker, policy } = input;
   // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.

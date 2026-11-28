@@ -7,7 +7,11 @@
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource, analyzeSource } from "../src/checker/index.js";
 import { absoluteFuncIndex } from "../src/emit/resolve-layout.js";
-import { literalDynamicCodeFileName, pairLiteralDynamicCodeSources } from "../src/ir/literal-dynamic-code.js";
+import {
+  literalDynamicCodeFileName,
+  literalDynamicCodeTexts,
+  pairLiteralDynamicCodeSources,
+} from "../src/ir/literal-dynamic-code.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
 import {
   buildIrModuleInitPlan,
@@ -58,7 +62,13 @@ function adapterTargets(related: boolean) {
       checker: ast.checker,
       policy: typedOptions.policy,
       deferTopLevelInit: false,
-      literalDynamicCodeSources: related ? pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, 1) : [],
+      literalDynamicCodeSources: related
+        ? pairLiteralDynamicCodeSources(
+            ast.entryFile,
+            ast.sourceFiles,
+            literalDynamicCodeTexts("test.ts", files["test.ts"]),
+          )
+        : [],
     }),
   );
   const accepted = acceptPreparedIrProgram(program, replayOptions("wasmgc", "standalone"));

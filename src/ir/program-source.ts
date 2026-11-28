@@ -1593,9 +1593,10 @@ export function prepareIrProgramSources(
       identityContext: identity,
     });
     const startupSources = sourceFiles.filter((source) => !code.sources.has(source));
-    const dynamicFunctions = code.functionSites.size > 0;
-    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources, dynamicFunctions);
-    // (#7363 A4, A5; #7487) A site that does not lower refuses the program at select, owned by the entry's init.
+    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations, startupSources, {
+      literalFunctionSites: code.functionSites.size > 0,
+    });
+    // (#7363 A4; #7487) A site that does not lower refuses the program at select, owned by the entry's init.
     const refusal = literalDynamicCodeSiteRefusal(code, dynamicContracts);
     if (refusal) {
       diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(input.entrySource);

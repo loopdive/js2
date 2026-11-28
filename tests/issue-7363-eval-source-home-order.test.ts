@@ -80,7 +80,11 @@ function prepare(entry: string, extra: Record<string, string> = {}, edges: reado
       checker: ast.checker,
       policy: typedOptions.policy,
       deferTopLevelInit: false,
-      literalDynamicCodeSources: pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, texts.length),
+      literalDynamicCodeSources: pairLiteralDynamicCodeSources(
+        ast.entryFile,
+        ast.sourceFiles,
+        literalDynamicCodeTexts("test.js", entry),
+      ),
       inventoryOptions: { resolvedDependencies },
     }),
   );

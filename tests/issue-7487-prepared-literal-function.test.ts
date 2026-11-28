@@ -184,7 +184,7 @@ describe("#7487 — the receipt", () => {
     const files: Record<string, string> = { "test.js": entry };
     for (const { name, text } of texts) files[name] = text;
     const ast = analyzeMultiSource(files, "test.js", undefined, { allowJs: true });
-    return { ast, rows: pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, texts.length) };
+    return { ast, rows: pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, texts) };
   };
   const verify = (rows: readonly LiteralDynamicCodeSource[], ast: ReturnType<typeof analyzeMultiSource>) => () =>
     verifyLiteralDynamicCodeSources(rows, ast.sourceFiles, ast.entryFile);
@@ -298,6 +298,12 @@ describe("#7487 — a pristine site evaluates to a fresh function object", () =>
 
 describe("#7487 — claimed only when the source's unit lowered (#7363 A4's admission)", () => {
   const binary = async (source: string) => (await compile(source, options, undefined, "refuse")).binary;
+
+  // RV-PR7556 finding 5: a failing Function text must not take the eval texts with it.
+  it.each(SETTINGS)("keeps the eval texts when a Function text fails (%s)", async (_setting, settings) => {
+    const source = 'eval("1;");\ndo { break; Function("return arguments[1]"); } while (false);';
+    expect(await sourcesOf(source, settings)).toEqual(["test.js", "<eval:0>.js"]);
+  });
 
   it("compiles a never-run site whose body does not lower exactly as without the site", async () => {
     // `b = 1`: a default parameter, not in the IR's scope. The parenthesized argument is no site.
