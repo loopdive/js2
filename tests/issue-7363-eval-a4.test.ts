@@ -10,8 +10,10 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { compile, requiredPreparedEmission, requiredPreparedFailure } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
-import { literalEvalTexts } from "../src/ir/eval-literal.js";
+import { literalDynamicCodeTexts } from "../src/ir/literal-dynamic-code.js";
 import { hasHtmlLikeComment } from "../src/frontend/eval/script.js";
+
+const literalEvalTexts = (file: string, text: string) => literalDynamicCodeTexts(file, text).map((row) => row.text);
 
 // Counts the entry's program compiles; every call passes through.
 const presentations = vi.hoisted(() => ({ count: 0 }));

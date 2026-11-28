@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { editionBucket } from "./lib/test262-edition-bucket.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -586,13 +587,6 @@ export function classifyTest262File(test262Root: string, relFile: string): numbe
 
 type StatusKey = "pass" | "fail" | "ce" | "skip";
 
-function normalizeStatus(s: string): StatusKey {
-  if (s === "pass") return "pass";
-  if (s === "skip") return "skip";
-  if (s === "compile_error" || s === "compile_timeout" || s === "ce") return "ce";
-  return "fail";
-}
-
 // ---------------------------------------------------------------------------
 // (#2910) Landing-page feature-row reconciliation
 // ---------------------------------------------------------------------------
@@ -757,29 +751,6 @@ export function computeFeatureRowCounts(
     out[name] = { ...c, total, pct: total > 0 ? Math.round((c.pass / total) * 100) : 0 };
   }
   return out;
-}
-
-/**
- * (#2914) Resolve a record's edition bucket key, honouring the host-free
- * (standalone) definition of "pass".
- *
- * In `--host-free` mode a raw `status === "pass"` that still leaked a JS host
- * runtime import (`host_import_leak_class` set) is NOT a standalone pass — it
- * only "passed" by pulling an `env::__*` import. This mirrors
- * `build-test262-report.mjs:844` (`hostFreePass = status === "pass" &&
- * !record.host_import_leak_class`) and `check-standalone-highwater.mjs`
- * (`full_summary.host_free_pass`), so the per-edition slider, the donut
- * headline (#2879) and the absolute floor (#2097) all share ONE definition of a
- * standalone pass. A leaky pass is demoted to `fail` (kept in `total`, dropped
- * from `pass`) — exactly how the donut counts it: in the denominator, out of
- * `host_free_pass`. The default (host / `gc`) mode is unchanged: host imports
- * are expected there, so a raw `pass` is counted.
- */
-function resolveStatusKey(record: ResultRecord, hostFree: boolean): StatusKey {
-  if (hostFree && record.status === "pass" && record.host_import_leak_class) {
-    return "fail";
-  }
-  return normalizeStatus(record.status);
 }
 
 /**
@@ -975,7 +946,7 @@ async function main() {
     processed++;
 
     if (record.scope_official === false || record.scope === "proposal") {
-      const proposalKey = resolveStatusKey(record, hostFree);
+      const proposalKey = editionBucket(record, hostFree);
       const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
       proposalBucket[proposalKey]++;
       fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
@@ -997,7 +968,7 @@ async function main() {
     const fm = parseFrontmatter(fullPath);
 
     const edition = classifyEdition(fm, file);
-    const key = resolveStatusKey(record, hostFree);
+    const key = editionBucket(record, hostFree);
 
     // Every non-proposal standard test, indexed by file path (all editions),
     // so headline-only feature rows can be scored by their `testCategories`.

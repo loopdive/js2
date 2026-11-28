@@ -31,6 +31,17 @@ import {
 /** The dynamic value's carrier, the native externref. */
 export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
+/** The Boolean the realm's tests and `delete` answer (the chains' `TEST_RESULT` is unbranded). */
+export const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+
+/** The constant Boolean `value` into `result`. */
+export const booleanConst = (value: boolean, result: IrValueId): IrInstr => ({
+  kind: "const",
+  value: { kind: "bool", value },
+  result,
+  resultType: BOOLEAN,
+});
+
 /** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
 export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
   kind: "coerce.to_externref",
@@ -42,13 +53,13 @@ export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
+export const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
- * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, and
- * the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
- * (`learn`). Any other value may hold every admitted kind.
+ * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, (#7609) a
+ * read of the global object an object, and the legalization records a concatenation's result as a string and (F2) a
+ * ToPrimitive's result as a primitive (`learn`). Any other value may hold every admitted kind.
  */
 export function knownKinds(
   fn: IrFunction,
@@ -66,7 +77,7 @@ export function knownKinds(
             ? carrierKindOf(i.value, types, definitions, i.toType.tag)
             : projected !== undefined
               ? carrierKindOf(projected, types, definitions)
-              : i.kind === "global.get"
+              : i.kind === "global.get" || i.kind === "dyn.global_object"
                 ? carrierKindOf(i.result!, types, definitions)
                 : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, [kind]);
@@ -236,7 +247,10 @@ export function chainBuilders(
     const value = fresh();
     return [i32(selector, value), realmCall(feature, [...args, value], result)];
   };
-  /** (#7354 P1, G1) The realm's built-in function object `id` (`NATIVE_VALUE_INTRINSICS`) into `result`. */
+  /**
+   * (#7354 P1, G1) The realm's value `id` (`NATIVE_VALUE_INTRINSICS`) into `result`: a built-in function object, or
+   * (#7609) the global object.
+   */
   const realmIntrinsic = (id: string, result: IrValueId): IrInstr[] =>
     selectorCall("js.object.intrinsic", [], realmIntrinsicSelector(id), result);
   // A value per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind

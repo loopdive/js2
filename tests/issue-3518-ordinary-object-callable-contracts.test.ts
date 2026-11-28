@@ -35,6 +35,8 @@ const CONTRACTS = [
   ["js.object.descriptor-define", [REF, REF, REF], []],
   ["js.object.descriptors-define", [REF, REF], []],
   ["js.object.own-descriptor", [REF, REF], [REF]],
+  // (#7471) OrdinaryDelete of a canonical key
+  ["js.object.delete", [REF, REF], [BOOL]],
   // (#7377) EnumerateObjectProperties as a snapshot list, the list's length and its key at an index
   ["js.object.for-in-keys", [REF], [REF]],
   ["js.object.key-list-length", [REF], [{ kind: "val", val: { kind: "i32" } }]],

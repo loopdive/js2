@@ -41,6 +41,7 @@ import {
 } from "./native-string-values.js";
 import { readNativeRealmLiteralInput } from "./native-realm-literals.js";
 import { familyObjects, familyProperties } from "./native-realm-families.js";
+import { GLOBAL_OBJECT_ID } from "../../../runtime/contracts/native-realm-catalog.js";
 import {
   reserveNativeVectorTypes,
   requireNativeVectorTypeReservations,
@@ -307,7 +308,9 @@ function beginRealm(
       : undefined;
   };
   // The bootstrap's two functions, then (#7354 P1, G1) the function values the program can reach: one entry each.
-  const intrinsics = [...catalog.bootstrap, ...requirements.description.intrinsics].map((id, index) => {
+  // (#7609) The global object is no function: the realm holds it as an object (`familyObjects`).
+  const functionValues = requirements.description.intrinsics.filter((id) => id !== GLOBAL_OBJECT_ID);
+  const intrinsics = [...catalog.bootstrap, ...functionValues].map((id, index) => {
     const row = held.find((row) => row.id === id),
       call = row?.callable;
     const behavior =

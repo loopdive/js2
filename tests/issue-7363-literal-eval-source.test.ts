@@ -7,12 +7,12 @@
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import {
-  literalEvalFileName,
-  literalEvalTexts,
-  pairLiteralEvalSources,
-  verifyLiteralEvalSources,
-  type LiteralEvalSource,
-} from "../src/ir/eval-literal.js";
+  literalDynamicCodeFileName,
+  literalDynamicCodeTexts,
+  pairLiteralDynamicCodeSources,
+  verifyLiteralDynamicCodeSources,
+  type LiteralDynamicCodeSource,
+} from "../src/ir/literal-dynamic-code.js";
 import { PreparedIrProgramInvariantError } from "../src/ir/program/errors.js";
 import {
   compile,
@@ -22,6 +22,9 @@ import {
 } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { ts } from "../src/ts-api.js";
+
+const literalEvalFileName = (index: number) => literalDynamicCodeFileName("eval", index);
+const literalEvalTexts = (file: string, text: string) => literalDynamicCodeTexts(file, text).map((row) => row.text);
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -181,46 +184,56 @@ describe("#7363 A2 — the receipt", () => {
     const files: Record<string, string> = { "test.js": entry, ...extra };
     texts.forEach((text, index) => (files[literalEvalFileName(index)] = text));
     const ast = analyzeMultiSource(files, "test.js", undefined, { allowJs: true });
-    const rows = pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, texts.length);
+    const rows = pairLiteralDynamicCodeSources(
+      ast.entryFile,
+      ast.sourceFiles,
+      literalDynamicCodeTexts("test.js", entry),
+    );
     const byName = (name: string) => ast.sourceFiles.find((source) => source.fileName === name)!;
     return { ast, rows, byName };
   };
-  const verify = (rows: readonly LiteralEvalSource[], ast: ReturnType<typeof analyzeMultiSource>) => () =>
-    verifyLiteralEvalSources(rows, ast.sourceFiles, ast.entryFile);
+  const verify = (rows: readonly LiteralDynamicCodeSource[], ast: ReturnType<typeof analyzeMultiSource>) => () =>
+    verifyLiteralDynamicCodeSources(rows, ast.sourceFiles, ast.entryFile);
 
   it("accepts the real relation and returns its calls and sources", () => {
     const { ast, rows } = program('eval("1");\neval("2");');
     expect(rows.map((row) => row.source.text)).toEqual(["1", "2"]);
     const related = verify(rows, ast)();
-    expect([...related.calls]).toEqual(rows.map((row) => [row.call, row.source]));
+    expect([...related.evalCalls]).toEqual(rows.map((row) => [row.site, row.source]));
     expect([...related.sources]).toEqual(rows.map((row) => row.source));
   });
 
   it("refuses a source whose text is not the literal's value", () => {
     const { ast, rows } = program('eval("1");\neval("2");');
-    expect(verify([{ call: rows[1]!.call, source: rows[0]!.source }], ast)).toThrow(PreparedIrProgramInvariantError);
-    expect(verify([{ call: rows[1]!.call, source: rows[0]!.source }], ast)).toThrow(
-      /the source text is not the literal's value/,
+    expect(verify([{ site: rows[1]!.site, kind: "eval", source: rows[0]!.source }], ast)).toThrow(
+      PreparedIrProgramInvariantError,
+    );
+    expect(verify([{ site: rows[1]!.site, kind: "eval", source: rows[0]!.source }], ast)).toThrow(
+      /the source text is not the site's text/,
     );
   });
 
   it("refuses two rows for one source, and two rows for one call", () => {
     const { ast, rows } = program('eval("1");\neval("1");');
-    expect(verify([rows[0]!, { call: rows[1]!.call, source: rows[0]!.source }], ast)).toThrow(/occurs in two rows/);
-    expect(verify([rows[0]!, { call: rows[0]!.call, source: rows[1]!.source }], ast)).toThrow(/occurs in two rows/);
+    expect(verify([rows[0]!, { site: rows[1]!.site, kind: "eval", source: rows[0]!.source }], ast)).toThrow(
+      /occurs in two rows/,
+    );
+    expect(verify([rows[0]!, { site: rows[0]!.site, kind: "eval", source: rows[1]!.source }], ast)).toThrow(
+      /occurs in two rows/,
+    );
   });
 
   it("refuses a call that is not in the entry", () => {
     const { ast, rows, byName } = program('eval("1");', { "other.js": 'eval("1");' });
-    expect(verify([{ call: callsOf(byName("other.js"))[0]!, source: rows[0]!.source }], ast)).toThrow(
-      /the call is not in the entry/,
+    expect(verify([{ site: callsOf(byName("other.js"))[0]!, kind: "eval", source: rows[0]!.source }], ast)).toThrow(
+      /the site is not in the entry/,
     );
   });
 
   it("refuses a call that does not qualify", () => {
     const { ast, rows } = program('eval("1");\nfunction f() { eval("1"); }');
-    expect(verify([{ call: callsOf(ast.entryFile)[1]!, source: rows[0]!.source }], ast)).toThrow(
-      /the call is not a qualifying site/,
+    expect(verify([{ site: callsOf(ast.entryFile)[1]!, kind: "eval", source: rows[0]!.source }], ast)).toThrow(
+      /the site is not a qualifying eval site/,
     );
   });
 
@@ -228,18 +241,28 @@ describe("#7363 A2 — the receipt", () => {
     const { ast, rows, byName } = program('eval("1");', { "other.js": "1", "module.js": "export {};" });
     const foreign = analyzeMultiSource({ "x.js": "1" }, "x.js", undefined, { allowJs: true }).entryFile;
     for (const source of [ast.entryFile, foreign, byName("module.js")])
-      expect(verify([{ call: rows[0]!.call, source }], ast)).toThrow(/not a script of the program/);
+      expect(verify([{ site: rows[0]!.site, kind: "eval", source }], ast)).toThrow(/not a script of the program/);
     // Any script of the program with the literal's text will do: the relation, not the name, makes it called.
-    expect(verify([{ call: rows[0]!.call, source: byName("other.js") }], ast)).not.toThrow();
+    expect(verify([{ site: rows[0]!.site, kind: "eval", source: byName("other.js") }], ast)).not.toThrow();
   });
 
   it("refuses a pairing that misses a script the entry's texts became", () => {
     const { ast } = program('eval("1");');
-    expect(() => pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, 2)).toThrow(PreparedIrProgramInvariantError);
+    const extra = { kind: "eval", name: literalEvalFileName(1), text: "1" } as const;
+    expect(() =>
+      pairLiteralDynamicCodeSources(ast.entryFile, ast.sourceFiles, [
+        ...literalDynamicCodeTexts("test.js", 'eval("1");'),
+        extra,
+      ]),
+    ).toThrow(PreparedIrProgramInvariantError);
     const unpaired = analyzeMultiSource({ "test.js": 'eval("1");' }, "test.js", undefined, { allowJs: true });
-    expect(() => pairLiteralEvalSources(unpaired.entryFile, unpaired.sourceFiles, 1)).toThrow(
-      /<eval:0>.js is not a script of the analyzed program/,
-    );
+    expect(() =>
+      pairLiteralDynamicCodeSources(
+        unpaired.entryFile,
+        unpaired.sourceFiles,
+        literalDynamicCodeTexts("test.js", 'eval("1");'),
+      ),
+    ).toThrow(/<eval:0>.js is not a script of the analyzed program/);
   });
 });
 

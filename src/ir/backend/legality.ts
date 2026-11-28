@@ -42,7 +42,8 @@ export type IrBackendTargetCapability =
   | "dynamic-method-call-wrapper"
   | "native-global-function-call"
   | "native-object-statics"
-  | "native-string-uses";
+  | "native-string-uses"
+  | "native-dynamic-to-number";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -176,10 +177,14 @@ export function supportsIrBackendTargetCapability(
     // native object runtime's helpers and a member read that answers for an
     // open `$Object`, measured on host-free standalone only.
     case "native-object-statics":
+    // (#7346) The selector's string-use rules (`select-string-uses.ts`) and a
+    // string module binding read as an ordinary string value
+    // (`module-binding-string.ts`), measured on host-free standalone only.
     case "native-string-uses":
-      // (#7346) The selector's string-use rules (`select-string-uses.ts`) and a
-      // string module binding read as an ordinary string value
-      // (`module-binding-string.ts`), measured on host-free standalone only.
+    // (#7375) ToNumber of a boxed concrete boolean / string operand
+    // (`dyn.to_number` of its box), which a numeric compound assignment reads
+    // its right-hand side with (`compoundWriteAdmissible`).
+    case "native-dynamic-to-number":
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&

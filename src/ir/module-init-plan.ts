@@ -68,7 +68,7 @@ export interface BuildIrModuleInitPlanInput {
   readonly deferTopLevelInit: boolean;
   /** (#7354 F1b) The declarations read as values whose homes this script's bindings hold. */
   readonly functionValues?: readonly ts.FunctionDeclaration[];
-  /** (#7363) The source holds a literal eval's text: its call site runs it, not startup (`src/ir/eval-literal.ts`). */
+  /** (#7363) The source holds a literal eval's text: its call site runs it, not startup (`literal-dynamic-code.ts`). */
   readonly called?: boolean;
   /** (#7377) Which `var` lists declare script vars (`isModuleInitVarList`): the pipeline's own model. */
   readonly scriptVarModel: ScriptVarModel;

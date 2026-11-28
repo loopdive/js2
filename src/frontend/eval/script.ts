@@ -6,7 +6,8 @@
 import { ts } from "../typescript.js";
 import { isUseStrictDirectiveExpression } from "../../shared/use-strict-directive.js";
 import type { FoldedEvalDeclarationNames } from "./declaration-names.js";
-import { evalCallerCapabilities, foldedEvalEarlyError } from "./early-errors.js";
+import { identifierWritesOf } from "../../shared/binding-writes.js";
+import { evalCallerCapabilities, SLOPPY_SCRIPT_GOAL, staticEarlyError } from "./early-errors.js";
 
 /**
  * Synthetic file name for the foreign `SourceFile` an eval source is parsed into. Nodes in this file are absent from
@@ -80,6 +81,58 @@ export function hasHtmlLikeComment(text: string): boolean {
 }
 
 /**
+ * (#7487) Whether a sloppy global Script text, such as a dynamic function's assembled declaration, has a static
+ * SyntaxError: a parse failure or an early error of the shared check.
+ */
+export function sloppyScriptHasStaticSyntaxError(sourceFile: ts.SourceFile): boolean {
+  return hasParseDiagnostics(sourceFile) || staticEarlyError(sourceFile, SLOPPY_SCRIPT_GOAL) !== undefined;
+}
+
+/**
+ * A `return` outside every function of the text, or an `await` outside every async one: Script early errors the
+ * shared check does not report. TypeScript parses both and reports them only as semantic diagnostics, which no
+ * compile gate refuses. Adding the `return` rule to the shared check would change the legacy fold's output for
+ * `eval("return;")` (parse-failure-5.js).
+ */
+export function hasScriptOnlyEarlyError(sourceFile: ts.SourceFile): boolean {
+  return scriptOnlyEarlyError(sourceFile, undefined);
+}
+
+/** `async`: undefined at the top level, else whether the nearest enclosing function is async. */
+function scriptOnlyEarlyError(node: ts.Node, async: boolean | undefined): boolean {
+  if ((ts.isReturnStatement(node) && async === undefined) || (ts.isAwaitExpression(node) && async !== true))
+    return true;
+  const inner = ts.isFunctionLike(node)
+    ? (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Async) !== 0
+    : async;
+  return ts.forEachChild(node, (child) => scriptOnlyEarlyError(child, inner)) === true;
+}
+
+/**
+ * A `var`/`let`/`const` list or a class anywhere under `node`, a store into an identifier, or the name `eval`. A text
+ * run as a separate script of the program may hold none (#7363 RV7432 B2 fix (b)): a store could rewrite a binding of
+ * its caller, and the proofs over a script binding see only the writes in its own file. A store into the text's own
+ * parameter or local counts too: no scope walk tells it from a caller binding.
+ */
+export function bindsOrEvaluates(node: ts.Node): boolean {
+  if (
+    ts.isVariableDeclarationList(node) ||
+    ts.isClassDeclaration(node) ||
+    (ts.isIdentifier(node) && node.text === "eval") ||
+    identifierWritesOf(node).length > 0
+  )
+    return true;
+  return ts.forEachChild(node, bindsOrEvaluates) === true;
+}
+
+/** Whether the parser reported a syntax error in a foreign Script. */
+function hasParseDiagnostics(sourceFile: ts.SourceFile): boolean {
+  // `parseDiagnostics` is an internal field on SourceFile.
+  const parseDiag = (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
+  return parseDiag !== undefined && parseDiag.length > 0;
+}
+
+/**
  * The SyntaxError message PerformEval raises before running the Script, in
  * spec order: a parse failure, a Script early error, then (§19.2.1.3 step 5.a)
  * a VarDeclaredName that collides with a global lexical binding. The last
@@ -94,16 +147,13 @@ export function foldedEvalStaticSyntaxError(
   declarationNames: FoldedEvalDeclarationNames,
   globalLexicals: ReadonlySet<string> | undefined,
 ): string | undefined {
-  // `parseDiagnostics` is an internal field on SourceFile.
-  const parseDiag = (script.sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
-  if (parseDiag && parseDiag.length > 0) return "Invalid eval source";
+  if (hasParseDiagnostics(script.sourceFile)) return "Invalid eval source";
   // (#5157) §15.1.1 NewTarget / SuperProperty / SuperCall admissibility is a
   // property of the CALL SITE, not of the eval source.
-  const earlyError = foldedEvalEarlyError(
-    script.sourceFile,
-    script.evalIsStrict,
-    evalCallerCapabilities(call, directEval),
-  );
+  const earlyError = staticEarlyError(script.sourceFile, {
+    strict: script.evalIsStrict,
+    caller: evalCallerCapabilities(call, directEval),
+  });
   if (earlyError !== undefined || script.evalIsStrict || globalLexicals === undefined) return earlyError;
   for (const name of declarationNames.varNames) {
     if (globalLexicals.has(name)) return `Identifier '${name}' has already been declared`;

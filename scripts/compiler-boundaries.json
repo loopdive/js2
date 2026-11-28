@@ -2041,6 +2041,14 @@
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/this-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend `this` binding (a function's entry receiver, a method's self, script-level this as the global object) and the script-this predicate the Prepared program scan shares; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/arguments-object.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -2442,6 +2450,11 @@
     },
     {
       "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-delete-helper.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -12772,7 +12785,15 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/eval-literal.ts",
+      "path": "src/ir/literal-dynamic-code.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/literal-dynamic-code-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
