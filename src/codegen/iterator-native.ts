@@ -2855,7 +2855,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
       keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
       missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
-      decodeRead: linksRuntimeEvalProvider(ctx)
+      decodeRead: linksRuntimeEvalProvider(ctx) // (#6651 A9) only a linking unit gets a carrier; a type-position `Function` does not link
         ? (locals, paramCount) => buildRuntimeEvalValueUnwrap(ctx, locals, paramCount) // (#6651 A9)
         : undefined,
     };

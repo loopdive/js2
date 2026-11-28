@@ -65,11 +65,7 @@ export function runtimeEvalProviderLinkable(ctx: CodegenContext): boolean {
   return !ctx.wasi;
 }
 
-/**
- * This module imports the provider ABI. The only reliable test (#6651 A9): neither a callback type nor
- * `runtimeEvalCallableBoundaryEnabled` says so, because a type-position `Function` (`Record<string, Function>`)
- * flags units that link no provider at all.
- */
+/** Does this module import the runtime-eval provider ABI (`js2wasm:runtime-eval`)? */
 export function linksRuntimeEvalProvider(ctx: CodegenContext): boolean {
   return ctx.mod.imports.some((imp) => imp.module === RUNTIME_EVAL_IMPORT_MODULE);
 }
