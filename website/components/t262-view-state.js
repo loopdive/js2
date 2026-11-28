@@ -205,6 +205,39 @@
     );
   };
 
+  // #7616: the merge queue's measurement of the current edition at a commit later than the full
+  // run's, with its own commit and date. Every figure the page draws, sums or scales stays the full
+  // run's, which irMeasurementLabel names.
+  const irCurrentEditionLabel = (envelope) => {
+    const row = envelope.currentEdition;
+    if (!row) return "";
+    return (
+      " · newer " +
+      row.edition +
+      " measurement (edition only): " +
+      row.pass +
+      " / " +
+      row.total +
+      " pass (" +
+      row.pct +
+      "%) · source " +
+      row.sourceSha +
+      " · " +
+      row.measuredAt +
+      " · all other figures are the full run's"
+    );
+  };
+
+  /** Sets an IR provenance line, then appends the newer current-edition measurement when one is published. */
+  const showIrProvenance = (node, label, editionsHref) => {
+    node.textContent = label;
+    fetchData(editionsHref)
+      .then((envelope) => {
+        if (node.textContent === label) node.textContent = label + irCurrentEditionLabel(envelope);
+      })
+      .catch(() => {});
+  };
+
   const historicalHostLabel = (data) =>
     "Historical JS Host · retired 2026-10-12 · frozen results · source " +
     (data?.baseline_sha || "unknown") +
@@ -262,6 +295,7 @@
     fetchData,
     bindIrToggle,
     irMeasurementLabel,
+    showIrProvenance,
     historicalHostLabel,
     irStatus,
     applyIrStatus,

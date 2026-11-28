@@ -70,6 +70,7 @@ import {
   ownThisEscapes,
   readsAmbientThisGlobal,
 } from "../shared/body-references-own-this.js";
+import { isScriptThis } from "./this-binding.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -347,6 +348,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicDeleteBoxesExternref?: () => boolean;
     /** (#7377) for-in over a dynamic receiver through the realm's key snapshot (`FOR_IN_PLAN`). */
     readonly dynamicForInPlan?: () => typeof FOR_IN_PLAN;
+    /** (#7609) A `this` of script code reads the realm's global object (`isScriptThis`). */
+    readonly globalObjectThis?: (expr: ts.Expression) => boolean;
   };
   /**
    * (#7363 A4) Some sloppy function binds ambient `this`, which a plain call makes the global object, and lets it
@@ -457,6 +460,7 @@ export function programDynamicContracts(
           dynamicDeleteSymbol: (site) => irDynamicDeleteHelperName(input.codeStrictness?.(site) !== false),
           dynamicDeleteBoxesExternref: () => true,
           dynamicForInPlan: () => FOR_IN_PLAN,
+          globalObjectThis: isScriptThis,
         }
       : {},
     result: (declaration) =>

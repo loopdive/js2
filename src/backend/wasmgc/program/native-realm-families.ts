@@ -52,6 +52,7 @@ export function familyObjects(
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
       // A family's ordinary objects hold no accessor in the catalog.
       properties: familyProperties(row, entryOf, false),
+      ...(row.identityOnly ? { identityOnly: true as const } : {}),
     }));
   return objects.length === 0 ? {} : { objects };
 }

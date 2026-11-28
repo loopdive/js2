@@ -461,6 +461,7 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
+import { bindEntryThis, lowerThis } from "./this-binding.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -768,6 +769,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly get: IrFuncRef;
     readonly has: IrFuncRef;
   } | null;
+  /** (#7609) The `this` expression reads the realm's global object (`this-binding.ts`). */
+  globalObjectThis?(expr: ts.Expression): boolean;
   /**
    * (#7377) The script-var model of a module-init unit (`ScriptVarModel`): which `var` lists declare script vars
    * the unit writes in place. Every resolver that lowers a module-init unit names its pipeline's model; without
@@ -3003,15 +3006,6 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
  *     route through the slot — this preserves the cross-iteration value
  *     semantics without requiring SSA phi nodes.
  */
-/**
- * (#7106) OrdinaryCallBindThis: bind `this` once at entry through
- * `dyn.current_this` — the receiver the caller installed, else legacy's
- * unbound answer for this strictness.
- */
-function bindEntryThis(scope: Map<string, ScopeBinding>, builder: IrFunctionBuilder, strict: boolean): void {
-  scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(strict), type: irDynamic() });
-}
-
 type ScopeBinding =
   | { kind: "local"; value: IrValueId; type: IrType; stringEncoding?: Encoding }
   | {
@@ -5213,24 +5207,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   if (ts.isArrayLiteralExpression(expr)) {
     return lowerArrayLiteral(expr, cx, hint);
   }
-  // #1370 Phase B: `this` reference inside an instance method body.
-  // The integration loop binds `this` in scope to the synthetic
-  // `__self` parameter's SSA value before lowering the body. Outside
-  // of class-method bodies the keyword never enters scope, so this
-  // branch only fires for IR-claimed instance methods.
-  if (expr.kind === ts.SyntaxKind.ThisKeyword) {
-    const p = cx.scope.get("this");
-    if (!p) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: 'this' reference outside an instance method body (${cx.funcName})`,
-      );
-    }
-    if (p.kind !== "local") {
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: unexpected 'this' binding kind ${p.kind} in ${cx.funcName}`);
-    }
-    return p.value;
-  }
+  if (expr.kind === ts.SyntaxKind.ThisKeyword) return lowerThis(expr, cx);
   if (ts.isIdentifier(expr)) {
     const read = classifyIdentifierRead(expr, cx);
     switch (read.kind) {
