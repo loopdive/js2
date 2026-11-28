@@ -42,8 +42,10 @@ import { ProgramAbiMap, type ProgramAbiPlanEntry } from "./program/abi.js";
 import { preparedIrCallableSignature, preparedIrTypeKey, preparedIrDataKey } from "./program-abi-contracts.js";
 import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./program-runtime-abi.js";
 import { preparedIrDataMismatch } from "./program/data.js";
+import { runsAtStartup } from "./module-init-plan.js";
 import {
   assertNativeStringValuePlanIssued,
+  nativePublishedExportNames,
   planNativeStringValuePhysical,
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
@@ -1152,7 +1154,7 @@ function planPhysicalStartup(
   const startupUnits: IrUnitId[] = [];
   let adapter: PhysicalStartup["adapter"] = "none";
   for (const plan of program.startup) {
-    if (!plan.executable || plan.unitId === null) continue;
+    if (!runsAtStartup(plan) || plan.unitId === null) continue;
     if (!bodies.has(plan.unitId))
       gaps.add(`startup source ${plan.sourceId} has no physical initializer body`, plan.unitId);
     startupUnits.push(plan.unitId);
@@ -1383,11 +1385,9 @@ export function planPhysicalSetup(
   }
   appendPhysicalImports(hostNumberBoundary?.imports ?? [], importedFunctions);
   appendAsyncPhysicalResources(asyncFrames, importedFunctions, exports);
-  const exportNames = new Set<string>(native?.plan.output?.stdout ? ["__stdout_prepare", "__stdout_char"] : []);
-  for (const exported of exports) {
-    if (exportNames.has(exported.externalName)) gaps.add(`export ${exported.externalName} is declared twice`);
-    exportNames.add(exported.externalName);
-  }
+  const exportNames = new Set<string>(nativePublishedExportNames(nativeStrings));
+  for (const { externalName: name } of exports)
+    if (exportNames.size === exportNames.add(name).size) gaps.add(`export ${name} is declared twice`);
 
   // 3. Bodies may only reference what the plan reserves; exception use is a reserved resource too.
   const reserved = new Set<string>([

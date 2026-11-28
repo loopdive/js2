@@ -77,7 +77,7 @@ function wrapperMethodTest(
             instr,
             primitive,
             r,
-            (kind, s) => (kind === "number" ? b.abort(instr, s) : text(s)),
+            (kind, s) => (kind === "number" ? b.abort(instr, "Number.prototype.toString with a radix", s) : text(s)),
             PRIMITIVES,
             CARRIER,
           )
@@ -143,6 +143,9 @@ export function conversionMethodTests(
   ];
 }
 
+/** (#7486) The reason of `unlessStringObject`'s run-time abort. */
+const STRING_OBJECT_OWN = "an own-property operation on a String object with a key that may be an index";
+
 /**
  * (#7561) #7350 B3b-1's interim abort: a String object's index properties are virtual and the realm lacks them (B3c),
  * so an own-property query of `object` with a key that may be an array index (`key`, when it is a constant) is the
@@ -166,7 +169,7 @@ export function unlessStringObject(
       b.intrinsic(instr, "js.value.is_string", [data], string),
       b.intrinsic(instr, "js.value.to_boolean", [data], characters),
       { kind: "binary", op: "i32.and", lhs: string, rhs: characters, result: indexed, resultType: BOOLEAN },
-      b.branch(indexed, (s) => b.abort(instr, s), then, r, CARRIER),
+      b.branch(indexed, (s) => b.abort(instr, STRING_OBJECT_OWN, s), then, r, CARRIER),
     ];
   };
 }

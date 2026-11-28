@@ -71,3 +71,48 @@ Never refresh a hash to make the test green without stating the invariant it pro
 - No remaining test in these families compares a whole-file hash of a file that is still edited.
 - Must land before the #7354 stack is complete: the stack's slices currently prove "failing set equal to base" for
   these files, and that proof means nothing once the pins are fixed independently.
+
+## Finding (S8, 2026-11-19)
+
+- **Confirmed red on main `89e47482`.**
+  `tests/issue-3518-runtime-program-relocation.test.ts` fails 298 of 298
+  (re-run 2026-11-19). The pin is the receipt
+  `tests/helpers/ir-runtime-program-relocation.json` (20,038 lines). It has
+  not changed since `4346f628af` (2026-10-01): there is no diff between that
+  commit and main.
+- **Eight byte-pinned files have drifted.** The first one the test loop hits
+  is `src/ir/prepared-component-dependencies.ts`. The full list:
+  - `src/ir/prepared-component-dependencies.ts`
+  - `src/ir/core/types.ts`
+  - `src/ir/identity.ts`
+  - `src/ir/nodes.ts`
+  - `src/ir/prepared-component-ownership.ts`
+  - `src/ir/prepared-instruction-support.ts`
+  - `src/ir/program/abi-lookup.ts`
+  - `src/ir/program/data.ts`
+
+  A refresh means regenerating the ~20k-line receipt.
+- **The first breaker is PR #6582** (merge `e1e07bd468`, 2026-10-07,
+  `linear-memory-layout.ts` +4 lines). Its first parent passes 298; the
+  merge fails 298. Later breaks are hidden behind it:
+  - PR #6597 (merge `d2beec5ce7`, `program/data.ts`);
+  - PR #6807 (merge `87cb29544a`, the first change to
+    `prepared-component-dependencies.ts`);
+  - several #7106 commits.
+- **Why no CI check caught it:** no required check runs the file unless a PR
+  edits it.
+  - `quality`'s "changed root tests must pass" step runs only the test files
+    a PR edits.
+  - `issue-tests-pinned` is fatal but not required, and it runs a fixed
+    15-file list that does not include this file.
+  - `issue-tests-select` and `issue-tests-changed` are `continue-on-error`.
+  - `issue-tests-shard` and `issue-tests-gate` run in seed mode, because
+    `scripts/issue-tests-baseline.json` does not exist.
+  - `issue-tests.yml` is a post-merge detector, not a gate.
+- **`claude/7354-realm` does not fix it.** Its "#3518 pins" commit
+  `f3384fc598` touches other #3518 tests and has no diff on the 46 receipt
+  paths.
+- **Recommendation:** do not make this a required check as it stands. After
+  this issue's rework, either add the file to the fatal pinned list in
+  `scripts/select-changed-issue-tests.mjs`, or seed
+  `scripts/issue-tests-baseline.json` so that `issue-tests-gate` enforces it.

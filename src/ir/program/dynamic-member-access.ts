@@ -25,7 +25,7 @@ import {
   WRAPPER_OF_PRIMITIVE,
 } from "./builtin-prototype-keys.js";
 import type { NativeWrapperConstructor } from "../../runtime/contracts/native-realm-catalog.js";
-import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, article, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, realmConstructorOf, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
@@ -38,8 +38,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
     args: readonly IrValueId[],
     result?: IrValueId | null,
   ) => IrInstr;
-  /** (#7354 C2) The run-time abort, a carrier answer. */
-  readonly abort: (instr: IrInstr, result: IrValueId) => IrInstr[];
+  /** (#7354 C2) The run-time abort with its (#7486) reason, a carrier answer. */
+  readonly abort: (instr: IrInstr, reason: string, result: IrValueId) => IrInstr[];
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
   readonly admitted: readonly CarrierKind[];
   /** (#7354 P1, G1) The realm's built-in function object `id` into `result`. */
@@ -70,8 +70,8 @@ type MemberSet = Extract<IrInstr, { kind: "dyn.member_set" }>;
 
 /** A thrown TypeError with `message` (`typeError`), the arm's unread answer into `result`. */
 type ThrowTypeError = (message: string, result: IrValueId) => IrInstr[];
-/** The run-time abort into `result`, a carrier answer. */
-type Abort = (result: IrValueId) => IrInstr[];
+/** The run-time abort with its (#7486) reason into `result`, a carrier answer. */
+type Abort = (reason: string, result: IrValueId) => IrInstr[];
 
 /** What sets a read and a write apart past the receiver chain they share. */
 interface Access {
@@ -125,9 +125,19 @@ function heldPrototype(b: MemberAccessBuilders, kind: CarrierKind): string | und
 /** (#7561) An array-index key on an object that may be a String object, whose index properties the realm lacks. */
 const stringObjectIndex = (b: MemberAccessBuilders, name: string): boolean =>
   b.wrappers.has("String") && isArrayIndexKey(name);
+/** The (#7486) reason of that access's run-time abort. */
+const stringObjectIndexReason = (operation: string) =>
+  `${operation} of an object that may be a String object: needs its index properties`;
 
-/** "a number", "an object". */
-const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
+/**
+ * The access a receiver of one of `kinds` cannot have, and what the realm lacks for it: "member read 'toFixed' of a
+ * value that may be a number or a string needs Number.prototype's properties and String.prototype's properties".
+ */
+function refusal(access: Access, kinds: readonly CarrierKind[]): string {
+  const receiver = kinds.length === 1 ? article(kinds[0]!) : `a value that may be ${kinds.map(article).join(" or ")}`;
+  const missing = [...new Set(kinds.map((kind) => access.missing(kind)!))].join(" and ");
+  return `${access.operation} of ${receiver} needs ${missing}`;
+}
 const WRAPPER: Readonly<Partial<Record<CarrierKind, string>>> = {
   number: "Number",
   boolean: "Boolean",
@@ -150,16 +160,12 @@ function memberAccess(
 ): IrInstr[] {
   const kinds = b.kindsOf(instr.recv);
   const refused = kinds.filter((kind) => access.missing(kind) !== undefined);
-  if (refused.length === kinds.length) {
-    const receiver = kinds.length === 1 ? article(kinds[0]!) : `a value that may be ${kinds.map(article).join(" or ")}`;
-    const missing = [...new Set(refused.map((kind) => access.missing(kind)!))].join(" and ");
-    gap(`${access.operation} of ${receiver} needs ${missing}`);
-  }
+  if (refused.length === kinds.length) gap(refusal(access, kinds));
   // The TypeError does not complete; the access's unread answer only gives the arm its value.
   const throwTypeError: ThrowTypeError = (message, r) => typeErrorThen(b, message, access.unread(r));
-  const abort: Abort = (r) => b.abort(instr, r);
+  const abort: Abort = (reason, r) => b.abort(instr, reason, r);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
-    if (refused.includes(kind)) return abort(r);
+    if (refused.includes(kind)) return abort(refusal(access, [kind]), r);
     switch (MEMBER_ACCESS_ARM[kind]) {
       case "type-error":
         return throwTypeError(access.nullishMessage(kind), r);
@@ -207,11 +213,13 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
   // (#7354 C2) [[Get]] on the chain from `base`: a key Object.prototype holds is found by `js.object.has` only on the
   // object's own or source-built chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's,
   // which the realm lacks ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
-  const objectRead = (base: IrValueId, r: IrValueId, abort: Abort): IrInstr[] => {
+  const objectRead = (base: IrValueId, kind: CarrierKind, r: IrValueId, abort: Abort): IrInstr[] => {
     const get = (s: IrValueId) => [realmCall("js.object.get", [base, instr.key, instr.recv], s)];
     if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
     const found = b.fresh();
-    return [realmCall("js.object.has", [base, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
+    const absent = (s: IrValueId) =>
+      abort(`member read '${name}' of ${article(kind)} without it: Object.prototype's own, which the realm lacks`, s);
+    return [realmCall("js.object.has", [base, instr.key], found), b.branch(found, get, absent, r, b.carrier)];
   };
   /** A primitive's read of a key its wrapper lacks: Object.prototype's method, or else absent. */
   const inherited = (r: IrValueId): IrInstr[] =>
@@ -242,14 +250,20 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     },
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
-    object: (r, abort) => (stringObjectIndex(b, name) ? abort(r) : objectRead(instr.recv, r, abort)),
+    object: (r, abort) =>
+      stringObjectIndex(b, name)
+        ? abort(stringObjectIndexReason(access.operation), r)
+        : objectRead(instr.recv, "object", r, abort),
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
     // (#7561) [[Get]] on the held prototype, with the primitive as receiver.
     primitive: (kind, r) => {
       const prototype = heldPrototype(b, kind);
       if (prototype === undefined) return inherited(r);
       const base = b.fresh();
-      return [...b.realmIntrinsic(prototype, base), ...objectRead(base, r, (s) => b.abort(instr, s))];
+      return [
+        ...b.realmIntrinsic(prototype, base),
+        ...objectRead(base, kind, r, (reason, s) => b.abort(instr, reason, s)),
+      ];
     },
   };
   return memberAccess(b, instr, access, result);
@@ -295,7 +309,9 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r, abort, throwTypeError) =>
-      stringObjectIndex(b, name) ? abort(r) : putValue("object", r, throwTypeError),
+      stringObjectIndex(b, name)
+        ? abort(stringObjectIndexReason(access.operation), r)
+        : putValue("object", r, throwTypeError),
     function: (r, throwTypeError) => putValue("function", r, throwTypeError),
     primitive: (kind, r, throwTypeError) => {
       const absent = (s: IrValueId) =>
@@ -304,10 +320,12 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
       if (prototype === undefined) return absent(r);
       // (#7561) A key on the held prototype's chain may be a setter or read only (#7350 B3b-2): the run-time abort.
       const [base, found] = [b.fresh(), b.fresh()];
+      const held = (s: IrValueId) =>
+        b.abort(instr, `${access.operation} of ${article(kind)} whose prototype chain holds the key`, s);
       return [
         ...b.realmIntrinsic(prototype, base),
         realmCall("js.object.has", [base, instr.key], found),
-        b.branch(found, (s) => b.abort(instr, s), absent, r, b.carrier),
+        b.branch(found, held, absent, r, b.carrier),
       ];
     },
   };

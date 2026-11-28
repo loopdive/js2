@@ -204,6 +204,7 @@ describe("#7561 — what the slice leaves out refuses by name or aborts", () => 
       abortsAtRunTime(
         `var N = Number; N.isNaN = function () { return 1; }; var out; try { out = Number.isNaN(1); } catch (e) { out = e; }${CALLS}`,
         runnerOptions(),
+        undefined,
         freshRealmOut,
       ),
     SLOW,
