@@ -74,6 +74,16 @@ head `73c3b4070a` and the two commits below it change only plan files. So nothin
 | Y-single, caller before the reassigner (one file) | `function f() {1}; function g() { return f() }; function swap() { f = …5 }; main: g(); swap(); g()` | 15 | 11 | 11 |
 | Y-single, reassigner before the caller | the same with `swap` declared before `g` | 15 | 15 | 15 |
 | Y-single, reassigning `main` first | `main` (reassigns) declared before `g` and `f` | 15 | 15 | 15 |
+| D, from #7530 (routed here by the lead, 2026-11-28) | #7530's row D: `get()` calls `f` and compiles before `swap`'s `f = () => 4` | 314 | 313 (S7, on PR #7569) | 313 (S7, on PR #7569) |
+
+Row D is the same compile-order defect, reported by S7 and not re-measured here. A direct call to a live function
+that compiles before the first assignment to it stays a static call, because the call goes through the live global only
+once `closureMap` holds the name, and the assignment's compile is what sets that.
+- Multi-file D (sources: "Sources" in `plan/issues/7530-same-named-reassigned-functions-share-global.md` on
+  `claude/7530-reassigned-functions`) gives 313 against node's 314 on all four lanes after PR #7569 (`35db004b05`).
+- Its single-file form gives 303 against node's 304 on main.
+- D′, the same graph with `swap` declared before `get`, is fixed by #7530 and pinned in
+  `tests/issue-7530-same-named-reassigned-functions.test.ts`. It is D's control here.
 
 Y is **not specific to cycles**. A single file fails the same way whenever the caller's body compiles before the
 reassigning body. A cycle is just the only way, across files, to compile an importer before its exporter.
@@ -228,7 +238,7 @@ never inlinable, whatever the call site does.
 - **Pin test (red → green).** A new `tests/issue-7627-reassigned-function-calls.test.ts` holds every row of both
   tables, × standalone/gc × `experimentalIR` on/off, compared with node.
   - **Red on `ada18e6bb6`, green after:** N0, N0 before-and-after, N(a), N(b) and through-a-value (IR on); Y, Y
-    non-inlinable, Y-single caller-first (all lanes); Y through a namespace (IR on).
+    non-inlinable, Y-single caller-first, D and D's single-file form (all lanes); Y through a namespace (IR on).
   - **IR-off cells of the namespace rows:** red until #7622; each carries a comment naming #7622.
   - **N(a)/N(b) "4" digit:** green once #7530 lands. This issue only asserts the full value after both.
   - **Controls stay green:** by-name, no-reassignment (IR on), Y3, Y5, Y-single reassigner-first, Y-single
