@@ -7,8 +7,14 @@
 // direct-eval site then closed `$__vec_externref`, could not read the provider's envelope, and every indirect eval or
 // `new Function` with a dynamic source threw `undefined`. Both sides now keep every member open.
 import { describe, expect, it } from "vitest";
+import {
+  buildRuntimeEvalProviderSource,
+  buildRuntimeEvalRefusalProviderSource,
+} from "../scripts/runtime-eval-provider.mjs";
 import { RUNTIME_RECGROUP_TYPE_NAMES } from "../src/emit/canonical-recgroup.js";
 import { compile } from "../src/index.js";
+import { isRuntimeEvalBoundaryProviderName } from "../src/ir/runtime-eval-boundary-plan.js";
+import { ts } from "../src/ts-api.js";
 
 const CONSUMER = `function dyn(s: string): string { return s; }
 export function run(): number { return (0, eval)(dyn("1 + 1")) as number; }`;
@@ -64,12 +70,17 @@ describe("#7643 runtime-eval value-ABI finality", () => {
     expect(Object.entries(finality).filter(([, closed]) => closed)).toEqual([]);
   });
 
-  it.each(LANES)("gives both sides of the seam the same finality for every member (%s)", async (_, target) => {
-    const consumer = await memberFinality(CONSUMER, target);
-    const provider = await memberFinality(PROVIDER, target);
-    for (const name of Object.keys(consumer).filter((name) => name in provider)) {
-      expect({ name, final: consumer[name] }).toEqual({ name, final: provider[name] });
-    }
+  // The stub stands in for the provider only if the shipped provider sources take the same provider-definition
+  // route: a top-level `__runtime_*` function declaration the boundary plan recognises.
+  it.each([
+    ["interpreter", buildRuntimeEvalProviderSource],
+    ["refusal", buildRuntimeEvalRefusalProviderSource],
+  ] as const)("classifies the %s provider source as a provider definition", (_, build) => {
+    const sourceFile = ts.createSourceFile("provider.ts", build(), ts.ScriptTarget.Latest, false);
+    const entries = sourceFile.statements.filter(
+      (statement) => ts.isFunctionDeclaration(statement) && isRuntimeEvalBoundaryProviderName(statement.name?.text),
+    );
+    expect(entries.length).toBeGreaterThan(0);
   });
 
   it.each(LANES)("leaves a module outside the seam alone (%s)", async (_, target) => {
