@@ -210,6 +210,32 @@ describe("#7350 slice 1 — a write of the key stops the fold, whatever reaches 
     expect(facts(source, name, member)).toEqual({ pristine: true, fold: false });
   });
 
+  // Not yet seen (#7628): a key writer reached by a key the source does not spell. The naive rule (any non-literal
+  // key writes every key) costs 14 carrier and 43 o411 passes, because the harness's own `a[i]` reads would stop every
+  // fold. These rows flip when #7628 closes the route.
+  it.fails.each([
+    ["a computed read of a key writer", 'Object["define" + "Property"]((1).constructor, "isNaN", {value: 1});'],
+    [
+      "a template key with a substitution",
+      'var p = "Property"; Object[`define${p}`]((1).constructor, "isNaN", {value: 1});',
+    ],
+    ["a computed read off a constructor", '(1).constructor["__define" + "Getter__"]("isNaN", function () {});'],
+    [
+      "a computed binding-element key",
+      'var {["define" + "Property"]: d} = Object; d((1).constructor, "isNaN", {value: 1});',
+    ],
+    [
+      "a computed key of an assignment pattern",
+      'var d; ({["define" + "Property"]: d} = Object); d((1).constructor, "isNaN", {value: 1});',
+    ],
+    [
+      "own names read back by key",
+      'Object.getOwnPropertyNames(Object).forEach(function (n) { Object[n]((1).constructor, "isNaN", {}); });',
+    ],
+  ])("#7628: %s stops the fold", (_label, source) => {
+    expect(facts(source, "Number", "isNaN")).toEqual({ pristine: true, fold: false });
+  });
+
   it.each([
     ["a: a read of X.prototype.constructor's member", "var v = Number.prototype.constructor.isNaN;", "Number", "isNaN"],
     ["b: another key through a constructor", "(1).constructor.k = 1; ({}).constructor.j = 1;", "Number", "isNaN"],

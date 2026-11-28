@@ -605,6 +605,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
   /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
+  /**
+   * (#7363 A2) The module-init of the called script that holds this direct eval's literal text
+   * (`src/ir/eval-literal.ts`): `null` when the text runs nothing; undefined when the call has no such script.
+   */
+  literalEvalCalledInit?(call: ts.CallExpression): IrFuncRef | null | undefined;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -2489,37 +2494,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       lowerYield(s.expression, cx);
       return false;
     }
-    // (#5163) The mutating shapes this issue adopted — chained assignment,
-    // member compound assignment, and `++`/`--`. Placed BEFORE the
-    // single-target `=` arms because a chain's outer LHS matches those arms
-    // while its RHS is itself an assignment they cannot lower.
-    if (lowerAdoptedMutatingStatement(s.expression, cx)) return false;
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(s.expression.left)
-    ) {
-      lowerIdentifierAssignment(s.expression.left, s.expression.right, cx);
-      return false;
-    }
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(s.expression.left)
-    ) {
-      lowerPropertyAssignment(s.expression, cx);
-      return false;
-    }
-    // (#2856 C2) element store `arr[i] = v;` as a non-tail statement —
-    // quicksort's post-partition swap writes live here (outside any loop).
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(s.expression.left)
-    ) {
-      lowerElementStore(s.expression.left, s.expression.right, cx);
-      return false;
-    }
+    if (lowerStatementMutation(s.expression, cx)) return false;
     // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
     // `cond ? a : b;`. The expression evaluates for its effects and its
     // SSA result is simply never consumed (a discarded ternary becomes an
@@ -2849,52 +2824,8 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     }
     return;
   }
-  // Slice 14 (#1228) — void function tail: any non-return statement that
-  // doesn't terminate the function falls through to an implicit return.
-  // We accept ExpressionStatement (e.g., `f();`) as a tail in void
-  // functions and synthesize the implicit return.
   if (cx.returnType === null && ts.isExpressionStatement(stmt)) {
-    if (ts.isCallExpression(stmt.expression)) {
-      lowerDiscardedExpression(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(stmt.expression.left)
-    ) {
-      lowerIdentifierAssignment(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: property-store assignment as a void tail — the SET accessor
-    // body shape `set name(v) { this.#name = v; }`. Route through the SAME
-    // `lowerPropertyAssignment` the non-tail statement path uses (see
-    // `lowerStatementList`), so a setter's lone assignment produces bytes
-    // identical to the mid-body case, then synthesize the implicit return.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(stmt.expression.left)
-    ) {
-      lowerPropertyAssignment(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: element-store assignment as a void tail (`arr[i] = v;` as the
-    // final statement of a void function) — mirror the non-tail element-store
-    // arm for select↔build parity.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(stmt.expression.left)
-    ) {
-      lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    lowerDiscardedExpression(stmt.expression, cx);
+    if (!lowerStatementMutation(stmt.expression, cx)) lowerDiscardedExpression(stmt.expression, cx);
     cx.builder.terminate({ kind: "return", values: [] });
     return;
   }
@@ -7794,6 +7725,16 @@ function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null 
   return null;
 }
 
+/**
+ * (#7363 A4) A literal direct eval runs its text, a called script of the program (`init`: its module-init, `null` when
+ * the text runs nothing). Admission refused the program unless every site discards its value and the global `eval` is
+ * the realm's %eval% (`refuseUnadmittedLiteralEvalSites`), so the site is just that call.
+ */
+function lowerLiteralEvalCall(init: IrFuncRef | null, cx: LowerCtx): null {
+  if (init !== null) cx.builder.emitCall(init, [], null);
+  return null;
+}
+
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7863,9 +7804,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // call; the backend emits the mandated Wasm `drop` for its externref result.
     return result;
   }
-  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier)) {
+  const literalEvalInit = cx.resolver?.literalEvalCalledInit?.(expr);
+  if (literalEvalInit !== undefined) return lowerLiteralEvalCall(literalEvalInit, cx);
+  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier))
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
-  }
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
     expression: expr,
     statementPosition,
@@ -8088,10 +8030,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   const result = cx.builder.emitCall(direct.target, args, calleeSig.returnType);
   if (result === null) {
-    // (#2856 C4) `quicksort(arr, lo, p - 1);` — a void direct call in
-    // STATEMENT position is legal (the recursion driver shape). Expression
-    // position keeps throwing.
     if (statementPosition) return null;
+    if (calleeSig.returnsImplicitUndefined) return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
     unsupportedVoidCallExpression(
       `ir/from-ast: call to ${calleeName} returned void used as expression in ${cx.funcName}`,
     );
@@ -10955,29 +10895,19 @@ function dynamicCompoundStep(
   return { result, stored: dynamicBinaryOnCarrier(result, cx) };
 }
 
-/**
- * (#5163) Dispatch the mutating expression-statement shapes this issue adopted:
- * chained assignment, and compound assignment and `++`/`--` on any target
- * (#7183 folded the identifier compound arm in from both dispatchers).
- * Returns `true` when it handled the statement.
- *
- * Shared verbatim by BOTH statement dispatchers (`lowerStatementList` and
- * `lowerStmt`) so the two positions cannot drift — a shape lowered one way at
- * top level and another inside a loop body is exactly the class of divergence
- * the selector's parallel arms are written to prevent.
- *
- * Property chains evaluate receivers before the RHS; identifier chains reuse
- * the ordinary assignment producer recursively.
- */
-function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boolean {
+/** Lower assignments and updates whose result is discarded, including the last statement of a void function. */
+function lowerStatementMutation(expression: ts.Expression, cx: LowerCtx): boolean {
+  const expr = peelParensExpr(expression);
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerAdoptedMutatingStatement(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerStatementMutation(expr, cx));
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
-    // S3 — `a = b = e;`.
-    const chain = op === ts.SyntaxKind.EqualsToken ? peelAssignmentChain(expr) : null;
-    if (chain !== null) {
-      lowerBinary(expr, cx, IR_F64);
+    if (op === ts.SyntaxKind.EqualsToken) {
+      if (peelAssignmentChain(expr) !== null) lowerBinary(expr, cx, IR_F64);
+      else if (ts.isIdentifier(expr.left)) lowerIdentifierAssignment(expr.left, expr.right, cx);
+      else if (ts.isPropertyAccessExpression(expr.left)) lowerPropertyAssignment(expr, cx);
+      else if (ts.isElementAccessExpression(expr.left)) lowerElementStore(expr.left, expr.right, cx);
+      else return false;
       return true;
     }
     // `x %= e;` / S1/S2 `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms
@@ -11007,7 +10937,7 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
   if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return false;
   const operand = expr.operand;
   if (ts.isIdentifier(operand)) {
-    lowerIncrementDecrement(operand, expr.operator, cx);
+    lowerIncrementDecrement(operand, expr, cx);
     return true;
   }
   if (ts.isPropertyAccessExpression(operand)) {
@@ -12384,7 +12314,7 @@ function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
   if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) {
     const op = expr.operator;
     if ((op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(expr.operand)) {
-      lowerIncrementDecrement(expr.operand, op, cx);
+      lowerIncrementDecrement(expr.operand, expr, cx);
       return;
     }
   }
@@ -12838,34 +12768,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerYield(stmt.expression, cx);
       return;
     }
-    // (#5163) The adopted mutating shapes — the SAME helper the top-level
-    // dispatcher uses, consulted at the same point in the order.
-    if (lowerAdoptedMutatingStatement(stmt.expression, cx)) return;
-    if (ts.isBinaryExpression(stmt.expression)) {
-      const op = stmt.expression.operatorToken.kind;
-      // Plain assignment `<id> = <expr>` — id MUST resolve to a `slot`
-      // binding (mutation pre-pass should have detected it). For
-      // property assignment, dispatch to `lowerPropertyAssignment`
-      // (the slice-4 helper).
-      if (op === ts.SyntaxKind.EqualsToken) {
-        if (ts.isIdentifier(stmt.expression.left)) {
-          lowerIdentifierAssignment(stmt.expression.left, stmt.expression.right, cx);
-          return;
-        }
-        if (ts.isPropertyAccessExpression(stmt.expression.left)) {
-          lowerPropertyAssignment(stmt.expression, cx);
-          return;
-        }
-        // (#2856 C2) element store `arr[i] = v;` in a body buffer.
-        if (ts.isElementAccessExpression(stmt.expression.left)) {
-          lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-          return;
-        }
-      }
-    }
-    // Slice 12 (#1280): postfix `i++` / `i--` and prefix `++i` / `--i` as
-    // expression statements are handled by `lowerAdoptedMutatingStatement`
-    // above, alongside the #5163 member targets that share their desugaring.
+    if (lowerStatementMutation(stmt.expression, cx)) return;
     // (#4459) Value-discarding statement inside a body buffer — the same
     // `lowerDiscardedExpression` the top-level walker uses. A discarded
     // ternary collects one buffer per arm and emits `if.stmt` (#2952
@@ -13675,18 +13578,28 @@ function lowerCompoundAssignment(
  * f64 (typed `number`) but `type i32 = number` annotated counters use
  * i32. The binop dispatches on the slot ValType.
  */
-function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: LowerCtx): void {
+function lowerIncrementDecrement(
+  id: ts.Identifier,
+  expr: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression,
+  cx: LowerCtx,
+): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
-    withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
+    withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, expr, cx));
     return;
   }
+  const op = expr.operator;
   refuseImmutableWrite(id, "increment/decrement of", cx);
-  const binding = cx.scope.get(id.text);
+  let binding = cx.scope.get(id.text);
   if (!binding) {
-    demoteToLegacy(
-      "compound-assign-unsupported",
-      `ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`,
-    );
+    const writable = cx.resolver?.resolveModuleBinding?.(id, expr);
+    if (!writable)
+      demoteToLegacy(
+        "compound-assign-unsupported",
+        `ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`,
+      );
+    requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
+    lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
+    binding = { kind: "moduleGlobal", globalRef: writable.globalRef, type: writable.type };
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
@@ -14444,15 +14357,14 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       throw new Error(detail);
     }
     case ts.SyntaxKind.TildeToken: {
-      const randType = typeOfValue(rand, cx);
-      if (asVal(randType)?.kind !== "f64") {
-        demoteToLegacy(
-          "operand-coercion-unsupported",
-          `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`,
-        );
+      const host = functionObjectLoweringHost(cx);
+      const number = host.createsFunctionObjects() ? realmToNumber(rand, expr.operand, host) : rand;
+      if (asVal(typeOfValue(number, cx))?.kind !== "f64") {
+        const detail = `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`;
+        demoteToLegacy("operand-coercion-unsupported", detail);
       }
-      const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, irVal({ kind: "f64" }));
-      return cx.builder.emitBinary("js.bitxor", rand, minusOne, irVal({ kind: "f64" }));
+      const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, IR_F64);
+      return cx.builder.emitBinary("js.bitxor", number, minusOne, IR_F64);
     }
     default:
       demoteToLegacy(
@@ -14879,40 +14791,19 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
   return result;
 }
 
-/**
- * (#3144) `value instanceof C` where `C` names a locally-declared class.
- * Class-typed LHS → `class.instanceof` (runtime `__tag` compare against C's
- * tag + descendant tags — exactly legacy `compileInstanceOf`'s non-null-ref
- * path). LHS representations that can never hold a user-class instance
- * (unboxed scalars, strings, plain-object structs, internal closures) fold to
- * constant false with the operand still evaluated for effects (legacy
- * parity: `drop; i32.const 0`). Everything else (boundary callables/externref,
- * dynamic, union, boxed, vec refs) demotes cleanly to legacy, which has the
- * full dynamic `__instanceof_dyn` path.
- */
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
-  if (!ts.isIdentifier(expr.right)) {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: instanceof RHS must be a class identifier (${cx.funcName})`,
-    );
-  }
+  const dynamicInstanceOf = () => functionObjects.lowerDynamicInstanceOf(expr, functionObjectLoweringHost(cx));
+  const withoutStaticTarget = (reason: string): IrValueId => {
+    if (functionObjects.createsFunctionObjects(cx.resolver)) return dynamicInstanceOf();
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: instanceof RHS ${reason} (${cx.funcName})`);
+  };
+  if (!ts.isIdentifier(expr.right)) return withoutStaticTarget("must be a class identifier");
   const className = expr.right.text;
-  // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
-  // legacy's generic runtime operator (`dyn.instanceof`).
-  // (#7354 C2) …or, on the Prepared lane, `<any> instanceof <a dynamic value>` (`bindingHoldsDynamic`).
   if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true || bindingHoldsDynamic(expr.right, cx))
-    return functionObjects.lowerDynamicInstanceOf(expr, functionObjectLoweringHost(cx));
-  if (cx.scope.get(className) !== undefined) {
-    // A local binding shadows the class name — the selector rejects this
-    // shape, so reaching here is only possible via drift; demote cleanly.
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`,
-    );
-  }
+    return dynamicInstanceOf();
+  if (cx.scope.has(className)) return withoutStaticTarget(`"${className}" is shadowed by a local`);
   // (#7106 S3c) `<dynamic> instanceof F` for a self-guarded constructor F: the
   // selector admitted it only behind F's function-object plan, whose exact
   // unit target names the per-function prototype the chain walk reads.
@@ -14977,12 +14868,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     );
   }
   const targetShape = cx.classShapes?.get(className);
-  if (!targetShape) {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: instanceof RHS class "${className}" has no projected shape (${cx.funcName})`,
-    );
-  }
+  if (!targetShape) return withoutStaticTarget(`class "${className}" has no projected shape`);
   const lhs = lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
   const lt = cx.builder.typeOf(lhs);
   if (lt.kind === "class") {
@@ -15024,6 +14910,7 @@ function dynamicLeaves(cx: LowerCtx): CarrierLeaves {
         // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
         // returns whatever the called value returns: the carrier.
         if (cx.scope.has(call.expression.text)) return expressionProducesDynamic(call.expression, cx);
+        if (cx.directCalls?.get(call)?.signature.returnsImplicitUndefined) return true;
         return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
@@ -15152,15 +15039,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     return lowerLogicalAndOr(expr, op, cx, hint);
   }
 
-  // (#3144) `x instanceof C` with a LOCAL-class RHS — intercepted before the
-  // capability gate (like `??` / `&&` above): `instanceof` stays table-deferred
-  // for the general case, but the local-class form has an IR lowering
-  // (`class.instanceof`, a static tag check mirroring legacy
-  // `compileInstanceOf`). The selector accepts exactly this shape
-  // (identifier RHS ∈ localClasses, unshadowed), keeping select↔build parity.
-  if (op === ts.SyntaxKind.InstanceOfKeyword) {
-    return lowerInstanceOf(expr, cx);
-  }
+  if (op === ts.SyntaxKind.InstanceOfKeyword) return lowerInstanceOf(expr, cx);
 
   // (#5164 S1/S3) The comma operator and the bounded dynamic-lane `in`, both
   // intercepted before the capability gate for the same reason as the arms

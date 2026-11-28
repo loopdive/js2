@@ -39,7 +39,8 @@ async function bootPage(options: { withStandalone: boolean; withHost?: boolean; 
   const dom = new JSDOM(html, {
     runScripts: "dangerously",
     pretendToBeVisual: true,
-    url: "https://js2wasm.test/",
+    // The legacy view: the IR view is the default since #7537.
+    url: "https://js2wasm.test/?ir=0",
     virtualConsole,
     beforeParse(w: any) {
       // jsdom lacks these; the page's chart/theme code throws without them and

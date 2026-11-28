@@ -22,6 +22,7 @@ import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import {
   IS_OBJECT,
+  article,
   holdsFamily,
   isOrdinaryObject,
   type CarrierKind,
@@ -100,7 +101,7 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
     b.branch(
       cond,
       (r) => [carried(receiver, r)],
-      (r) => b.abort(instr, r),
+      (r) => b.abort(instr, "a sloppy-mode this that is not an object: needs the global object or a wrapper", r),
       instr.result!,
       CARRIER,
     ),
@@ -160,14 +161,14 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const isFunction = holds(b, instr, callee, ["function"]);
   // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
   // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
-  const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
+  const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, "new on a built-in function the realm holds", r);
   const construct = (r: IrValueId): IrInstr[] => {
     const [prototype, object, answer] = [b.fresh(), b.fresh(), b.fresh()];
     const link = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
       isOrdinaryObject(kind)
         ? [realmCall("js.object.create-with-prototype", [prototype], s)]
         : IS_OBJECT[kind]
-          ? b.abort(instr, s)
+          ? b.abort(instr, `new with a 'prototype' that is ${article(kind)}, not an ordinary object`, s)
           : [realmCall("js.object.create-default", [], s)];
     const isObject = holds(b, instr, answer, b.objects);
     return [

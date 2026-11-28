@@ -5,8 +5,8 @@
  * any level (a `var`, `let`, `const`, `function`, `class`, parameter or pattern element: the checker resolves a
  * script's top-level `function Object(){}` reference to the lib's symbol, so the declaration is looked for by name),
  * and no source assigns the name:
- * `Object = …`, a compound assignment, `++` / `--`, a destructuring target, or a write through a global-object alias
- * (`globalThis.Object = …`).
+ * `Object = …`, a compound assignment, `++` / `--`, `delete`, a destructuring target, or a write through a
+ * global-object alias (`globalThis.Object = …`).
  * The one answer for "this is the global `Object`" of the native statics' call form and of the flow rule beside it.
  * (#7350) Its second answer is the member rule ({@link foldsBuiltinMember}): whether a fold of a writable member of
  * the name still reads the built-in's.
@@ -30,7 +30,7 @@ import {
 import { REALM_GLOBAL_NAMES } from "./program/builtin-prototype-keys.js";
 
 /** The names a global-object alias reaches the global bindings through. */
-const GLOBAL_ALIASES = new Set(["globalThis", "global", "window", "self"]);
+export const GLOBAL_ALIASES: ReadonlySet<string> = new Set(["globalThis", "global", "window", "self"]);
 
 const isAssignment = (kind: ts.SyntaxKind): boolean =>
   kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
@@ -123,6 +123,7 @@ function bindingFacts(sourceFiles: readonly ts.SourceFile[]): {
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     )
       targetNames(node.operand, assigned);
+    else if (ts.isDeleteExpression(node)) targetNames(node.expression, assigned);
     else if (
       (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       !ts.isVariableDeclarationList(node.initializer)
@@ -201,8 +202,9 @@ export function pristineBuiltinGlobal(
  * except by the routes below. A non-writable, non-configurable constant (`Number.MAX_VALUE`) folds wherever the name
  * is pristine: a write of it fails.
  * Not yet seen: a key writer read by a key that is no literal (`Object["define" + "Property"](X, "k", d)`,
- * `` Object[`define${p}`] ``, `var {[k]: d} = Object`, `Object[n]` over `getOwnPropertyNames(Object)`), and code eval
- * or the `Function` constructor runs (#7503; both refuse on the Prepared path today). Not counted: built-ins that write
+ * `` Object[`define${p}`] ``, `var {[k]: d} = Object`, `Object[n]` over `getOwnPropertyNames(Object)`), and code the
+ * runtime-eval provider or the `Function` constructor runs (#7503); a literal eval site's text (#7363) is a program
+ * source and is seen. Not counted: built-ins that write
  * an object's index keys or `length` (`Array.prototype.push.call(X, v)`, an array method's species result): no folded
  * member is one, and a constructor's `length` is not writable.
  */

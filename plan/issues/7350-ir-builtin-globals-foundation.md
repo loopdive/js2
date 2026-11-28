@@ -1663,3 +1663,13 @@ member rule missed a key writer called without its name being spelled. Lead's ca
   (`--base HEAD^1` and `--base origin/main`). With `LOC_GATE_BASE=origin/main` (`91ed0c420c`) loc fails on
   `src/ir/program-physical-plan.ts` (+1) and func on `from-ast.ts::lowerBinary` (+8): neither changes in this round;
   main has moved past the branch (no merge of main here, #7502 not yet merged).
+
+**Fallback for 1(a), chosen by the lead (2026-11-28).** The naive rule costs −14 carrier and −43 o411 passes. Its
+six routes are therefore listed under "Not yet seen" in the `foldsBuiltinMember` doc and pinned as `it.fails` rows
+(fold = false) in `tests/issue-7350-slice1-expando-escape.test.ts`. They are tracked as #7628
+(`plan/issues/7628-realm-write-scan-computed-key-writers.md`), which B3b-1 (#7561) depends on.
+
+**Merge with main after #7502 (2026-11-28).** #7502's `DeleteExpression` arm is now in `bindingFacts`' visit and
+goes into `assigned`, so `delete eval` still lands in `taken`. `GLOBAL_ALIASES` stays exported for #7502's
+`ownThisEscapes`. The `foldsBuiltinMember` doc's eval line follows S2's wording, minus the `globalThis` clause,
+which the write scan now covers.
