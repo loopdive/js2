@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: core-semantics
-related: [7470]
+related: [7470, 7621, 7627, 7635, 7636]
 loc-budget-allow:
   # 2026-11-28 (#7530): +2 in withDirectRuntimeModuleBindings, which keeps the name's live-function kind across a namespace projection (plan step at declarations.ts:1748); the save/restore loop lives in that driver, so the line cannot move to a module
   - src/codegen/declarations.ts
@@ -41,8 +41,15 @@ scheme. The full plan is under "Implementation Plan" below.
 
 ## Acceptance criteria
 
-- **Fixed rows.** A, C, D, F, G, H, X, Y2, Z and AB1 (sources below) answer like node on gc and standalone, with
-  the IR path on and off. I answers like node with the IR path on.
+- **Fixed rows.** A, C, F, H, X, Y2 and Z (sources below), plus D′ (D with `swap` declared before `get`) and G read
+  as a value, answer like node on gc and standalone, with the IR path on and off.
+  - *Amended 2026-11-28, after implementation.* D, G (direct call), AB1 and I were listed here and are **not met**.
+    Each keeps a residual that reproduces on main with no name clash at all, so it is a separate defect (Results):
+    D goes to #7627 (shape Y, the compile-order defect), G to [#7635](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7635-direct-call-through-renamed-import-of-reassigned-function) and AB1 to
+    [#7636](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7636-block-function-resolves-to-other-modules-function).
+  - "I answers like node with the IR path on" is **not met** either: with `k` live, the IR declines `main`, and the
+    bare-name inliner of [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function) substitutes the third file's `k`. Only I read as a value
+    (`const g = k`) is pinned.
 - **Rows that must keep passing:** B, B2, B3, E, Y3, Y5 and AB2.
 - **Pinned.** `tests/issue-7530-same-named-reassigned-functions.test.ts` holds every row above, and the fixed rows
   fail on main.
@@ -60,7 +67,10 @@ scheme. The full plan is under "Implementation Plan" below.
     global-object property), not whether it is live, and moving them into the table is outside this issue.
   - (Review condition e) A live function name is hidden only in a source that spells it, so a module that never
     names it compiles without the projection. lodash-es compile time before and after is under Results.
-  - No budget grants, no new module, no branch for a state the table cannot reach.
+  - No new module, no branch for a state the table cannot reach. One budget grant: `loc-budget-allow` for
+    `src/codegen/declarations.ts`, +2 lines in `withDirectRuntimeModuleBindings` (the namespace projection keeps a
+    name's live-function kind, the plan's step at ~L1748). It was added on the merge with main, 2026-11-28; the
+    reviewer judges it.
 
 ## Implementation Plan
 
@@ -419,9 +429,15 @@ clash-free gates:
 - **AB1.** A block function `f` in one module calls another module's top-level `f` (`funcMap` is keyed by bare
   name and #4133's projection covers top-level functions only). Without any reassignment the base gives 11 for 13.
 
-These three defects (direct live call before the first assignment; direct call of a live import alias; a block
-function colliding with another module's top-level function) have no issue yet. New ids need
-`claim-issue.mjs --allocate`, which writes to the shared ref, so they are left to the lead to file.
+**Routing (2026-11-28).** Each residual reproduces on main without a name clash, so this issue stays done and
+the residuals are separate defects:
+
+| row | clash-free form on main dae2db2cca (all four lanes) | issue |
+| --- | --- | --- |
+| D | single file, 303 for node's 304 | #7627, as a row beside shape Y (same compile-order defect) |
+| G | `G0`, 110 for node's 120 | [#7635](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7635-direct-call-through-renamed-import-of-reassigned-function) |
+| AB1 | `AB0`, 11 for node's 13 | [#7636](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7636-block-function-resolves-to-other-modules-function) |
+| I | I0, 55 for node's 15 with the IR path off | [#7621](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7621-import-alias-named-like-other-files-function) |
 
 ### Deviations from the plan
 
