@@ -119,78 +119,106 @@ folds and never sends to the provider. Both triggers reach the provider:
 - trigger 2, because a source with a nested function is not folded.
 
 **It works whenever the program also contains a direct-eval site, even dead code.** Linked by hand, the same program
-returns 2 and 3 once `function never() { if (false) eval(dyn("0")); }` is added. The difference between the two
-modules is the finality of the shared runtime value types:
+returns 2 and 3 once `function never() { if (false) eval(dyn("0")); }` is added. Both sides decide the finality of the
+shared runtime value types from their own content. `finalizeLeafStructTypes` (`src/codegen/index.ts`) marks a leaf
+struct final unless something in the module subtypes it, and WasmGC treats a final and a non-final type as different
+types.
 
-| type | no direct-eval site | with one |
-| ---- | ------------------- | -------- |
-| `$__vec_externref`, `$__vec_f64`, `$ConsString`, `$HashedString` | `sub final` | `sub` |
+| `RUNTIME_RECGROUP_TYPE_NAMES` member | provider (cached build) | consumer, no direct-eval site | consumer, with one |
+| ------------------------------------ | ----------------------- | ----------------------------- | ------------------ |
+| `$__vec_externref`                    | open                    | `final`                       | open               |
+| `$__vec_f64`, `$ConsString`, `$HashedString` | `final` (PRV-7643, wasm-dis) | `final` | `final` (PRV-7643) |
 
-`finalizeLeafStructTypes` (`src/codegen/index.ts`) marks a leaf struct final unless something subtypes it. A direct
-eval pulls in the object runtime (`$__regexp_match_vec`, `$__arguments_vec_externref`, …), which subtypes those
-types, so they stay open. The provider contains such subtypes too, so its copies are open. WasmGC treats a final and
-a non-final type as different types. So in a consumer with no subtype:
-- `__extern_get_idx` cannot see into the provider's result envelope (`$__vec_externref`): both reads return
-  `undefined`, and `emitRuntimeEvalResultUnwrap` throws the "error" value, which is `undefined`;
-- a provider-minted string is no `$AnyString` to the consumer.
+So the two sides agree only by accident, type by type:
+- **`$__vec_externref` (the result envelope).** It mismatches in a consumer without a direct-eval site.
+  `__extern_get_idx` cannot see into the provider's envelope, so both reads return `undefined`, and
+  `emitRuntimeEvalResultUnwrap` throws the "error" value, which is `undefined`. This is #7643.
+- **The string types.** They match today only because both sides happen to be `final`. Opening them on one side
+  alone breaks provider-built ropes (PRV-7643):
+  - `var a = "abc…z"; var b = a; for (6×) b = b + a; b` returns a provider rope;
+  - `length`, `charCodeAt` and `slice` on it trap "illegal cast" when only the consumer's `$ConsString` is open;
+  - on main, the direct-eval module returns the right answer.
 
-#5383 S2k already names this hazard and pins the ABI roots open, but only when `ctx.mod.canonicalRuntimeRecGroup` is
-set. The runtime-eval seam deliberately does not opt into the rec group (`create-context.ts`: "older provider seams
-(notably QuickJS runtime-eval) already share their own established type layout"). So its finality was left to each
-module's content.
+The gc lane fails too, with `RangeError: stack overflow` (PRV-7643), so the fix there is a repair, not a cosmetic byte
+change.
+
+#5383 S2k names this hazard: "finality of an ABI root must be a CONSTANT of the ABI, never a function of what the
+individual module happens to subtype". It pins the members open only under `ctx.mod.canonicalRuntimeRecGroup`, which
+the runtime-eval seam deliberately does not use (`create-context.ts`: "older provider seams (notably QuickJS
+runtime-eval) already share their own established type layout"). So for this seam the constant was never set, on
+either side.
 
 ## Implementation Plan
 
-**Module.** `finalizeLeafStructTypes` in `src/codegen/index.ts`, the one place that decides finality.
+**Rule.** Every `RUNTIME_RECGROUP_TYPE_NAMES` member is open on **both** sides of the runtime-eval seam: in a consumer
+that imports `js2wasm:runtime-eval`, and in a build that defines the provider ABI. Finality becomes a constant of the
+seam, as #5383 S2k requires, instead of an accident of content.
 
-**Change.** The keep-open rule for the `RUNTIME_RECGROUP_TYPE_NAMES` members applies when
-`ctx.mod.canonicalRuntimeRecGroup !== undefined || linksRuntimeEvalProvider(ctx)`. The existing #5383 S2k comment
-gains one sentence: the runtime-eval seam shares the same types without the group, so a module that links it pins
-them open too.
+**Module.** `finalizeLeafStructTypes` (`src/codegen/index.ts`). Its keep-open condition becomes
+`ctx.mod.canonicalRuntimeRecGroup !== undefined || sharesRuntimeEvalValueAbi(ctx)`, and the #5383 S2k comment gains
+one sentence: the runtime-eval seam shares the same members without the group, on both sides.
+
+**Predicate.** One export, `sharesRuntimeEvalValueAbi(ctx)`, in `src/codegen/expressions/runtime-eval-provider.ts`,
+the seam's owner. It is true when either:
+- the module imports `RUNTIME_EVAL_IMPORT_MODULE` (consumer);
+- `ctx.runtimeEvalBoundaryPlan` has a `provider-definition` site (provider). That site already exists: the plan
+  records it for every top-level `__runtime_*` ABI function (`isRuntimeEvalBoundaryProviderName`). It covers the real
+  provider and the test stubs alike, with no new compile option and no reliance on `canonicalRuntimeTypes`.
 
 **Reuse / duplicate removed.**
-- `linksRuntimeEvalProvider(ctx)` already exists, private, in `src/codegen/iterator-native.ts:496` (#6651 A9).
-- It moves to `src/codegen/expressions/runtime-eval-provider.ts`, the seam's owner, as an export. Both callers import
-  it.
-- No new predicate.
+- The consumer half already exists: the private `linksRuntimeEvalProvider` in `src/codegen/iterator-native.ts:496`
+  (#6651 A9).
+- It moves to `runtime-eval-provider.ts`, and `sharesRuntimeEvalValueAbi` calls it.
+- iterator-native keeps asking its own, narrower question (does this unit import the provider?). That question must
+  stay false for the provider build, or the provider's iterator bytes would change. So iterator-native imports the
+  moved helper.
+- Result: one consumer predicate (moved, not copied) and one seam predicate built on it. There is no second
+  consumer-link sibling.
 
-**The provider side.** The provider imports nothing from the seam, so this rule does not touch it. Its binary is
-byte-identical with the prototype (sha `c3e1df7a…`, 7,154,870 bytes). Its types are open today only because of its
-content. Pinning them there too, for example through the boundary plan's `provider-definition` site, would make the
-seam robust both ways. **Left out on purpose**: no provider today is affected, and the rule cannot reach a provider
-without a second predicate. Noted for the review to accept or reject.
+**Tests** (`tests/issue-7643-runtime-eval-abi-finality.test.ts`):
+- (i) **Unit:** the predicate holds for a consumer, for a provider-shaped source (an `export function
+  __runtime_indirect_eval(…)`) and for neither. After `finalizeLeafStructTypes`, every group member is open in the
+  first two and unchanged in the third.
+- (ii) **Both sides agree:** the finality of every group member in the cached interpreter provider equals the
+  consumer's, read structurally from the binaries or via `canonicalHashOfTypeGroup`. This is the property the bug
+  violates, independent of which type happens to mismatch.
+- (iii) **Control:** a module with no runtime-eval import and no provider definition keeps its leaf finality, so the
+  rule stays scoped.
+- The e1–e8 runtime probes and PRV-7643's rope probe s1 need the interpreter-tier provider build, so they are PR
+  evidence, not tests.
 
-**Tests.**
-- `tests/issue-7643-runtime-eval-abi-finality.test.ts`:
-  - (a) structural, red on main: a module with an indirect eval and no direct-eval site (gc and standalone) declares
-    `$__vec_externref` and `$AnyString`'s string subtypes non-final;
-  - (b) a control: a module that links no provider keeps `sub final`, so the rule stays scoped.
-- The e1–e8 runtime probe needs the interpreter-tier provider build, so it stays PR evidence, not a test.
+**Byte identity.** These change by design:
+- the provider binary, and with it the cache key;
+- every consumer whose group members were `final`, including direct-eval modules, whose `$__vec_f64` and string types
+  flip too;
+- **gc included**, which is broken today (stack overflow).
 
-**Byte identity (prototype vs main a755911c; 150 eval/`Function` test262 files; assert + sta harness).**
-- gc, standalone and Prepared: 33/150 differ as is, and 32/150 with `any`/`string` exports appended. All compiles
-  succeed.
-- WAT diff on a changed file (`built-ins/Function/15.3.2.1-10-6gs.js`), gc and standalone: exactly four lines change,
-  `sub final` → `sub` on the four types above. Nothing else changes.
-- Modules that link no provider cannot change, because the rule is gated on the import.
-- **gc bytes change** for eval modules without a direct-eval site, which needs the owner's OK. The PR repeats the A/B
-  on main after #7572 (a755911c predates it).
+Modules with neither shape cannot change. The implementation PR reruns the A/B on current main (after #7572) over:
+- the 150 eval/`Function` test262 files, as is and with exports appended, on gc, standalone and Prepared;
+- the provider binary;
+- a direct-eval-only sample.
 
-**Probes with the prototype (interpreter tier).**
-- e1–e8 all answer as the acceptance requires (1, except e3, which catches `TypeError: boom`).
-- `(0, eval)(dyn("Function"))` gives a function, and `typeof Object` gives `"function"`.
-- Nested function expressions and an object literal work.
+It must show that the only WAT difference in each changed module is finality on group members.
+
+**Evidence to rerun with the implementation (interpreter tier).**
+- e1–e8;
+- PRV-7643's s1–s7, including the rope probe;
+- `(0, eval)(dyn("Function"))`, `typeof Object`, nested functions and an object literal.
+
+PRV-7643 measured that all ten members open on both sides makes s1–s7 match the baseline and every repro return 1.
 
 **Seen while probing, not this issue.** `(0, eval)(dyn("noSuchName"))` throws `ReferenceError:
 intrinsicErrorConstructor is not defined`, where the message should name `noSuchName`. It needs its own id.
 
 ## Acceptance
 
-- e1–e8 answer as node does (e3 catches `TypeError: boom`; the others return 1), on the interpreter tier.
-- `(0, eval)(dyn(...))` and `new Function(dyn(...))` work in a module with no direct-eval site.
-- The structural test is red on main and green after. Its control shows a module without the seam is unchanged.
-- The byte A/B changes only the four ABI types' finality, and only in modules that import `js2wasm:runtime-eval`.
+- e1–e8 answer as node does (e3 catches `TypeError: boom`; the others return 1), on gc and standalone, on the
+  interpreter tier.
+- PRV-7643's s1–s7 match the baseline, and the rope probe returns the right answer with and without a direct-eval site.
+- Tests (i)–(iii) pass. (ii) fails on main.
+- The byte A/B changes only group-member finality, only in modules with one of the two shapes and in the provider.
+  The provider's cache key changes once, and the PR says so.
 - Code quality:
-  - one predicate, moved to the seam's module (no copy);
+  - one exported seam predicate, built on the moved helper, with no copy;
   - the existing keep-open rule is extended rather than given a sibling;
   - no change to the rec-group opt-in.
