@@ -163,12 +163,15 @@ export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_AR
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values
  * (source closures, which the dispatcher calls), so the function kind is, (O2b) whether it names `Symbol`, the only
  * way to `@@toPrimitive` and `@@toStringTag`, and (G1, #7350 B3a) the realm constructor families it names as values
- * (built-in function values; an Error constructor makes objects).
+ * (built-in function values; an Error constructor makes objects), and (#7609) whether script code reads `this`, the
+ * realm's global object: an ordinary object whose own properties the realm does not know (`identityOnly`), so the
+ * realm's kernel aborts every query of them.
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly functions: boolean;
   readonly namesSymbol: boolean;
+  readonly globalObject: boolean;
   readonly realmFamilies: ReadonlySet<RealmFamily>;
 }
 
@@ -185,6 +188,7 @@ export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   functions: false,
   namesSymbol: false,
+  globalObject: false,
   realmFamilies: new Set<RealmFamily>(),
 });
 
@@ -215,12 +219,12 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
  * (#7354 M1, C2) The one answer to "which kind does the carrier hold `value` as". Without `boxTag`, `value` is in
  * carrier form (the coercion and throw rules); with it, `value` is the operand of a box to the dynamic value with that
  * tag refinement (the box arm, and the kind a box proves to the chains). The rules, in order: a Boolean (its tag or
- * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), the dynamic value itself, a
- * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2) the ordinary object
- * `js.object.create-default` answered (whatever its tag: a function-local object's member access boxes the externref
- * it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
- * tag a declaration's home holds), or, through a coercion or the function-value projection, its operand's kind. Any
- * other value has none.
+ * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), (#7609) the global object (an
+ * object), the dynamic value itself, a native string (its own payload), a number (an f64 or `js.number.box`), (#7354
+ * O2) the ordinary object `js.object.create-default` answered (whatever its tag: a function-local object's member
+ * access boxes the externref it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the
+ * dynamic value under the Function tag a declaration's home holds), or, through a coercion or the function-value
+ * projection, its operand's kind. Any other value has none.
  */
 export function carrierKindOf(
   value: IrValueId,
@@ -233,6 +237,7 @@ export function carrierKindOf(
   const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
   if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
   if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
+  if (definition?.kind === "dyn.global_object") return "object";
   if (type?.kind === "dynamic") return type.tag === JS_TAG_IDS.Function ? "function" : "dynamic";
   if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";

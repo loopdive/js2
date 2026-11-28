@@ -2041,6 +2041,14 @@
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
     },
     {
+      "path": "src/ir/this-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend `this` binding (a function's entry receiver, a method's self, script-level this as the global object) and the script-this predicate the Prepared program scan shares; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/arguments-object.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
