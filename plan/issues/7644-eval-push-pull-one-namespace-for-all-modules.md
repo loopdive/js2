@@ -95,6 +95,7 @@ main(){return run()*10+run2()}` and dep `function f(){return 3} export function 
 | NEST | as EV5, plus `function g(){ eval("0"); return 0 }`, eval `g(); f = function(){return 2}` | 42 | 41 | 42 |
 | NESTIND | as NEST, with `g` running `(0,eval)("0")` | 42 | 41 | 42 |
 | NESTFN | as NEST, with `g` running `new Function("return 0")()` | 42 | 41 | 42 |
+| INIT | c runs its eval at module top level: `function f(){return 1} eval("f = function(){return 2}"); export function run2(){ return f(); }` | 42 | 34 | 42 |
 | THROWCB | c: `try { eval("f = function(){return 2}; t()") } catch {} return f()` with `t` throwing; dep's `run` then calls an eval-made `h` through `[0].map(h)`; entry runs c first | 42 | 41 | 42 |
 | INDIRECT | `run2(){ return (0,eval)("typeof f") === "undefined" ? 1 : 9; }` | 41 | 49 | 41 |
 | NEWFN | `run2(){ return new Function("return typeof f")() === "undefined" ? 1 : 9; }` | 41 | 49 | 41 |
@@ -127,10 +128,19 @@ The provider-active flag `__runtime_eval_provider_active` (`runtime-eval-boundar
 in `object-runtime.ts`).
 
 - **Tags.** 0 = inactive, 1 = shared view, 2 + i = tagged source i.
+- **Decided once, early (review condition A1).** The emitters that consult the tags can run during declaration
+  collection, before every module binding is registered (#7632's note, `runtime-eval-provider.ts` ~L607-611), when
+  the binding table cannot yet say which names collide. So the tag set is computed once, from the AST, in
+  `applyRuntimeEvalBoundaryPlan` (#7572's helper, which runs before declaration collection), and stored on ctx as
+  `runtimeEvalSourceTags`: the tag of each tagged source, and the tagged sources that bind each colliding name.
+  Every consumer reads only that record: the direct eval seeds, the global support functions, `object-runtime.ts`
+  and the push/pull fill. None asks the binding table.
 - **Which sources are tagged.** A source that contains a direct eval site (from `ctx.runtimeEvalBoundaryPlan.sites`,
   kind `"direct-eval"`, matched to the source through the plan's own id, `stableSourceId` in
-  `src/ir/runtime-eval-boundary-plan.ts`, exported for this) **and** binds a mirrored name that another module also
-  binds (`isCollidingModuleName`, `module-binding-table.ts`).
+  `src/ir/runtime-eval-boundary-plan.ts`, exported for this) **and** declares, at top level, a mirrored name that
+  another source also declares. The mirrored per-source names are what the push publishes per source: top-level
+  function declarations, plus top-level `var`s of a Script source (`globalObjectVarBindings`). They are read from
+  the AST.
 - **Which names have arms.** Only colliding mirrored names. Per name, the push and the pull branch on the tag:
   - one arm per tagged source that binds the name, built under `withSourceBindings(ctx, source, …)`;
   - **the default arm emits nothing** (finding 5, lead's call). Indirect eval and `new Function` run at global scope
@@ -141,13 +151,15 @@ in `object-runtime.ts`).
 ### Steps
 
 All tag code lives in `src/codegen/runtime-eval-boundary.ts`, next to `ensureRuntimeEvalProviderActiveGlobal` and
-the flag it owns (finding 7). It is 514 lines; this adds about 80, under the 1,500-line threshold.
-`module-bindings/` only supplies `isCollidingModuleName` and `withSourceBindings`.
+the flag it owns (finding 7). It is 514 lines; this adds about 100, under the 1,500-line threshold.
+`module-bindings/` only supplies `withSourceBindings`.
 
 1. **Constants once.** `runtime-eval-boundary.ts` exports `RUNTIME_EVAL_PUSH_GLOBALS` / `RUNTIME_EVAL_PULL_GLOBALS`.
    Delete the copies at `runtime-eval-provider.ts:58-59` and `runtime-eval-callable.ts:61-62`, and the literals in
    `object-runtime.ts` (~L6946).
 2. **Tag helpers** in `runtime-eval-boundary.ts`:
+   - `planRuntimeEvalSourceTags(ctx, sourceFiles)`: builds `ctx.runtimeEvalSourceTags` (A1), called from
+     `applyRuntimeEvalBoundaryPlan`;
    - `runtimeEvalSourceTag(ctx, source)`: 1, or 2 + i;
    - `runtimeEvalTagsInUse(ctx)`: is any source tagged;
    - `emitPerSourceArms(ctx, fctx, name, emitOne)`: the `if` chain on the tag, each arm under `withSourceBindings`,
@@ -222,9 +234,10 @@ the flag it owns (finding 7). It is 514 lines; this adds about 80, under the 1,5
 New file `tests/issue-7644-eval-per-module-scope.test.ts`, standalone, IR path on and off:
 
 - **Structural, every run:** in EV5, the push and the pull carry both modules' `__mod_f` behind tag arms, and
-  untagged single-source output has no tag compare.
-- **Under QuickJS (skipped where it is not built), against node:** EV5, READ2, NEST, NESTIND, NESTFN, THROWCB, INDIRECT
-  and NEWFN at node's answers; LATER pinned at its limit value; a control where only dep declares `f`.
+  untagged single-source output has no tag compare. In INIT (an eval in c's module-init code, which can compile
+  before every binding is registered), c's direct site sets c's tag (A1).
+- **Under QuickJS (skipped where it is not built), against node:** EV5, READ2, NEST, NESTIND, NESTFN, INIT, THROWCB,
+  INDIRECT and NEWFN at node's answers; LATER pinned at its limit value; a control where only dep declares `f`.
 
 ### Acceptance
 
@@ -262,3 +275,11 @@ New file `tests/issue-7644-eval-per-module-scope.test.ts`, standalone, IR path o
 | N2 | EV1/EV3/EV4 are tagged, so not byte-identical | fixed: out of the byte gate, gated on behaviour; EV2 stays |
 | N3 | the throw wrap does not fit the EH form | fixed: `buildRestoreOnUnwind` in `exception-control.ts`, catching the module's own tag, shared with `restoreThisOnUnwind`; gated on tags in use |
 | minor | lexical cells reachable but untested | lexical names untouched; LEX1 (one module, 30 vs 40) and LEX2 (two modules, 31 vs 42) go to #7645 |
+
+### PRV-7644 approval (revision 3, 18ff7608d4)
+
+Approved with one condition, now in the plan:
+
+| # | condition | settled by |
+| --- | --- | --- |
+| A1 | `runtimeEvalTagsInUse` must give the same answer at every emission site, also before all module bindings are registered | the tag set is computed once from the AST in `applyRuntimeEvalBoundaryPlan` (before declaration collection) and stored on ctx; every consumer reads only it; INIT pinned (today 34, node 42) |
